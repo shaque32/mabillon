@@ -1,6 +1,7 @@
 ## 2026-11-08: Status refresh after #225 (rules 0.5.0, report 0.39.0, plan C not built)
 - Changed: `docs/PRODUCT_STATUS.md` was last refreshed on 2026-10-27 (#144) and still said rules
-  0.3.0. It now matches main `9c4e8b3` (through #225 and #235). It applies the 40 pending
+  0.3.0. It now matches main `b8e14e4` (through #243; versions read at `9c4e8b3`, and #243
+  changed none of them). It applies the 40 pending
   `Status doc` edits of the PRs merged from #145 to #235 and marks them applied, and sets `Where:`
   to main, with GitHub's merge date, on the 82 entries that still named a PR or branch (two
   entries keep the approval notes their old `Where:` held). It also records, read from code:

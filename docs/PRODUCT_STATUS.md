@@ -4,10 +4,10 @@ The technical source of truth for what Mabillon (formerly Baker) does today. Eve
 checked against code, tests or recorded runs. Where something exists only on an unmerged branch,
 or is only reported in a changelog entry or project record, it says so.
 
-- **As of:** 2026-11-08 (status refresh after #225)
-- **main:** `9c4e8b3` (merge of #225, 2026-11-08). Everything merged through #225 and #235 is
-  covered.
-- **Verified on:** main `9c4e8b3`: every version below was read from the code at that commit.
+- **As of:** 2026-11-08 (status refresh after #243)
+- **main:** `b8e14e4` (merge of #243, 2026-11-08). Everything merged through #243 is covered.
+- **Verified on:** main `9c4e8b3`: every version below was read from the code at that commit; #243
+  (`b8e14e4`) touches no file under `core/`.
   This refresh applied the 40 pending `docs/changelog/` edits of the PRs merged from #145 to #235
   and took each PR's merge date from GitHub; it did not re-verify every line number below.
 - **Source labels:** **main** (merged, checked in code), **open PR #N** (not merged),
@@ -219,6 +219,12 @@ approved (07:29Z). `PROBE_PASSED` lists Opus 5.5 at medium (#101), so a case the
 - **eval only:** `eval/bench/claude_bench.py` and `eval/bench/cloud_steps.py` (#68) call
   the Anthropic API on synthetic data, as benchmarks. `eval/bench/open_bench.py` (#225) calls
   hosted open-weight models through OpenRouter on synthetic data, as a benchmark.
+- **Sign-in, built and off (#243, merged 2026-11-08).** `account/`, outside `core/`, checks an
+  Ed25519-signed license; `account/client.py` is the only file that would connect, to
+  https://account.getmabillon.com only, with nothing from a case, each request logged to
+  ~/.mabillon/account/account.log first. It is off on main (`account.SIGNIN_ON = False`, no
+  signing keys): no Account page, `/signin/done` answers 404, every audit starts as before and
+  nothing connects. The license server (`workers/license/`) is not deployed.
 - **Plan C, a Mabillon-hosted model (decided, not built).** Arsh decided on 2026-11-07 that the
   app, input files and case database stay on the expert's machine and only filled-in prompts go
   to a Mabillon GPU server, as the default for ordinary cases, still opted in per case; local
@@ -542,11 +548,12 @@ Merged 2026-11-05 to 2026-11-08: Set up CSS (#200); demo-page fixes (#216); near
 repeat check on an AWS GPU (#224); hosted open-weight screen, eval only (#225); case03 signed
 (#161); Greptile as the merge gate (#227, #232); rules 0.5.0 (#228); backups and dependency scan
 (#230); Windows pilot checks (#231); Safari check (#234); Supported override needs accepted
-support (#205); Mabillon window app (#219); refusal quotes cited (#235).
+support (#205); Mabillon window app (#219); refusal quotes cited (#235); sign-in, built and off
+(#243).
 Closed without merging: #238 and #239 (the counsel review actor and counsel guidance; the
 counsel-as-examiner direction was dropped 2026-11-07), and #191, #233, #237.
-Open: #240 (per-claim guidance, draft), #241 (hosted agent bench, eval only, draft), #243
-(sign-in, built and off by default), #244 (plan C model server pieces, draft), #203 (site,
+Open: #240 (per-claim guidance, draft), #241 (hosted agent bench, eval only, draft), #244 (plan
+C model server pieces, draft), #203 (site,
 draft), and Dependabot #236 and #242.
 Branch only: small stance model (#50, parked). PRs #70, #80, #90 and #100 are empty Grok
 Product review PRs, never merged.
