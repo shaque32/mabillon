@@ -14,7 +14,7 @@
   claims (Kimi K3.1 Pro: 17 of 48), so the step-only bar failed or could not be scored even when
   more claims ended testable, and the exact sheet match counted a recipient the claim names
   (DeepSeek's C38) as a wrong person.
-- Where: PR #246, held until Arsh approves the bar text.
+- Where: PR #246. Arsh approved the bar text in the project thread on 2026-11-08 at 01:20Z.
 - Verified: unit tests (the bar at, above and below 40%; too few testable claims is
   insufficient; a first pass that leaves the step nothing still gets a decision; the party
   exception covers only a claim-named party to a record; the old check still flags the same
