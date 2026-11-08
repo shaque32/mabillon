@@ -44,10 +44,11 @@ with the reason and the exact diff you want, then finish the rest of your task w
   accepted it. Neither ai_reviewed nor counsel_reviewed ever displays or exports as confirmed. A
   human decision always overrides the AI reviewer, and an expert's decision overrides counsel's.
 - The AI reviewer only reviews evidence items. It never confirms identity links or claims.
-- The AI reviewer runs on the local model in core/. Only the stance labeler may use a cloud model
-  in core/. The AI reviewer, claim proposal and assumption filling stay local.
-- Agents (the testability step, core/audit/testability.py) are local jobs on the local model
-  that only propose. Code checks every proposal, each is logged, and only an examiner's
+- The AI reviewer, claim proposal and assumption filling run on the case's open-weight model:
+  the local model, or the Mabillon model server when the case opted in to it. Only the stance
+  labeler may use a third-party cloud model (the Anthropic API).
+- Agents (the testability step, core/audit/testability.py) are jobs on the case's open-weight
+  model that only propose. Code checks every proposal, each is logged, and only an examiner's
   acceptance puts it in a case. An agent never labels, accepts, dismisses, links identities or
   sets a verdict, and never changes a claim's text. They stay off by default: only the eval
   and the scripted demo (eval/demo.py, scripted answers, no model) run them, until a real-data
@@ -63,17 +64,31 @@ with the reason and the exact diff you want, then finish the rest of your task w
 ## Data safety
 - Never use real case data. Synthetic data only, generated under `eval/`.
 - Never put real discovery material in the repo, in prompts, in tests or in fixtures.
-- No network calls in `core/` except the stance labeler's cloud call in `core/llm/cloud.py`, to
-  the Anthropic API with the expert's own key. No telemetry. Local models load from local paths.
-- Mabillon is local by default. A case uses cloud AI only when the expert opts in at case setup,
-  attesting that the case's protective order allows it, and a key is set up. A case marked as
-  possibly containing CSAM never uses cloud.
-- A case's stance labels never mix models. If the cloud model fails mid-run, the audit pauses and
-  the expert chooses to retry the cloud model or run the whole case again locally.
-- Only the filled-in stance prompt is sent (assumption, record, nearby messages, claim, and a
-  group chat's member list), never input files or the case database. Every request is written
-  to the case's audit log, with its time, before it is sent. The report says which model
-  labelled the case.
+- No network calls in `core/` except two model clients: `core/llm/cloud.py` (the stance
+  labeler, to the Anthropic API with the expert's own key) and `core/llm/remote.py` (to the
+  Mabillon model server). No telemetry. Local models load from local paths.
+- The Mabillon model server runs only the pinned open-weight model (today DeepSeek V4.1 Flash,
+  deepseek-ai/DeepSeek-V4.1-Flash-1017 at commit 1bae0e1088993b9b82de08f59de5be5a34e42170, FP8,
+  with its weight files' SHA-256 recorded) and a pinned engine version, answers one request at
+  a time, keeps no request or answer bodies, and writes
+  nothing about a case to disk. The client checks the reported model SHA-256 and engine
+  version before each case and refuses a mismatch.
+- A case's files never leave the expert's machine: input files and the case database stay
+  local. Model prompts leave the machine only when the expert opts in for that case at case
+  setup, attesting that the case's protective order allows it. For an ordinary case the
+  default choice at setup is the Mabillon model server; the expert may keep the case on the
+  local model instead. The Anthropic cloud option also needs the expert's own key.
+- A case marked as possibly containing CSAM never sends anything off the machine, and neither
+  does a case whose protective order does not allow it: both run on the local model. Never
+  describe a case that uses the model server as "offline."
+- A case's model answers never mix models: each job uses one model for the whole case. If a
+  model off the machine fails mid-run, the audit pauses and the expert chooses to retry it or
+  run the whole case again locally.
+- Only filled-in prompts are sent (for stance: assumption, record, nearby messages, claim, and
+  a group chat's member list; for the other jobs, their own signed prompt filled the same
+  way), never input files or the case database. Every request is written to the case's audit
+  log, with its time, before it is sent. The report says which model, and where it ran, for
+  each job in the case.
 - Inputs are opened read-only and SHA-256 hashed on import.
 - case02 is the hidden held-out case. Never read `eval/synthetic/case02*`, `eval/gold/case02/`,
   `eval/out/case02/` or any test whose name contains `case02`, unless your task names case02.
