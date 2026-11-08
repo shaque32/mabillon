@@ -7,7 +7,7 @@
   alike keep their ids beside the name, on the screen and in the report. Only the filler's own
   count wording ("holds eq 13") becomes words, so quoted text stays verbatim. Report 0.27.0
   (after #166's 0.26.0). Display only: no verdict, rule, stored text or log changed.
-- Where: PR #174
+- Where: main (#174, merged 2026-10-29)
 - Verified: make check (lint; 3334 passed, 9 skipped; case01 model-free PASS accuracy 1.00,
   false-supported 0; hostile PASS; case02 aggregate 0.90, false-supported 0); the demo's five
   claims decided on a failed check (C04, C08, C10, C11, C14) still show the mark and sentence.

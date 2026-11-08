@@ -7,7 +7,7 @@
   verbatim in one of the case's claims (case, curly quotes and runs of spaces not counted).
   Quoted words no claim holds stay the tool's own and are still checked. Report 0.33.0. Found
   on a validation run on a public test phone, where the report for the run was not written.
-- Where: branch claude/project-thread-ds0ify
+- Where: main (#217, merged 2026-11-04)
 - Verified: 4 new tests in `tests/test_report_names.py`; 3 fail without the fix. The claim
   page test in `tests/test_agent_fail_confirm.py` now reads the detail with the cited marks
   stripped, since its quoted name is the claim's. The run's

@@ -16,7 +16,7 @@
   evidence is lost mainly at the stance step or at the quote check before any agent work. It
   needs no model and changes no rule, prompt, pin, contract, schema, gold or scorer file, and
   nothing under `eval/validation/` (run 2).
-- Where: PR #148 (branch `claude/project-thread-6i2msb`)
+- Where: main (#148, merged 2026-10-27)
 - Verified: `tests/test_loss_report.py` (synthetic rows: every stage, the furthest stage across
   assumptions, the last call per pair, stored irrelevant items, the main-leak line, choosing a
   stance run, an earlier run's items found through its claim entries, an earlier audit's
@@ -35,11 +35,4 @@
   container (it would be produced by `make eval-real` on the Mac). Real data waits on run 2
   (the case01 half only, per Arsh). One case, one run.
 - Affects: none (eval tool; no product behaviour changes)
-- Status doc: pending: section 7, "Opus case01 detail": replace "381 of 493 labels were dropped
-  before storage (this count includes "irrelevant" answers, which carry no quote; the split is not
-  broken out, inferred from `core/pipeline.py`)" with "In the 2026-10-20 Opus v1.2 case01 run,
-  374 labels were dropped: 373 irrelevant answers and 1 quote failure. Of 71 gold key records,
-  44 surfaced, 18 were on claims a failed core check settles (retrieval skipped by design), 8
-  were labelled irrelevant and 1 was dropped at the quote check; retrieval missed none where it
-  ran (`eval/loss_report.py` 1.0.0, #148)"; section 9 item 5: add "Where it ran, the fixed
-  retrieval found every key record on case01; the loss is at the stance step (#148)"
+- Status doc: applied 2026-11-08

@@ -39,7 +39,7 @@
     still show "Supported (expert override)" with the note, and bundle verify expects the same
     basis. An override to Supported on a verdict with no cited evidence that the checks did not
     support is unchanged here (#205 handles it).
-- Where: PR #228
+- Where: main (#228, merged 2026-11-07)
 - Verified: `make check` (lint, tests, eval) on this branch, run 2026-11-06 in a Linux x86_64
   cloud container (4 vCPU, Python 3.13.18, no GPU). `make eval` there is model-free: no model
   runs, gold assumption sheets, scripted labels and the simulated expert, so these numbers do
@@ -61,15 +61,4 @@
   follow-up PR that first writes one.
 - Affects: capabilities, customer-facing claims (a claim can now be supported with no expert's
   acceptance, by code checks; "nothing is supported until an expert accepts it" is no longer true)
-- Status doc: pending: header: rule version 0.5.0, contracts 0.8.0 (#228). Section 4, "Opus's
-  influence on verdicts": a "supports" label never makes a claim SUPPORTED by itself; an expert or
-  counsel must accept it, or code checks alone carry a communication, timing or count claim with
-  no label used. Section 6 table, SUPPORTED row: add "or, for communication, timing and count
-  claims, every core assumption passed all its checks and one cites records (basis checked, no
-  label, no reviewer)", and "expert- or counsel-accepted support". Under the table, replace "so
-  every SUPPORTED verdict is expert-confirmed" with "a SUPPORTED verdict is expert-confirmed,
-  supported by the records (code checks), or reviewed by counsel; the last two never display as
-  confirmed". Display tiers: add counsel_reviewed. Section 12 claim 2, "Nothing is Supported until
-  the expert accepts it": mark it no longer true and say that code checks alone can support
-  communication, timing and count claims (rule 3c'), and that counsel review gives "Supported
-  (reviewed by counsel)". Section 9: add the same-account gap on curated reports.
+- Status doc: applied 2026-11-08

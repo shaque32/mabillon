@@ -7,7 +7,7 @@
   your call, and a failed check. Copy shortened about by half, keeping the safe wording in
   PRODUCT_STATUS section 12 (status line, formats line and caveats unchanged). Demo form fields,
   action and privacy page text unchanged.
-- Where: PR #146
+- Where: main (#146, merged 2026-10-27)
 - Verified: pages rendered in Chromium (desktop 1280 px, phone 390 px), no console errors; the
   walkthrough steps through all five states on scroll; without the script the finished first claim
   shows. Demo form not re-submitted (markup and action unchanged).

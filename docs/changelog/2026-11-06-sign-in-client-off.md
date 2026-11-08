@@ -21,7 +21,7 @@
   links, codes and tokens, sign-in emails limited to 5 a minute for each address and for each
   IP, an email that fails to send answering the same as any other, and Ed25519-signed licenses. Not deployed; Arsh sets it up
   (`workers/license/README.md`). Plan and privacy wording: plans/desktop-sign-in.md.
-- Where: branch claude/project-thread-jvh1pc, PR #243 (draft, off by default)
+- Where: main (#243, merged 2026-11-08), off by default
 - Verified: `tests/test_account.py` (signatures, edited or foreign licenses refused, status
   through a license's life, file permissions, license files, the RFC 7636 example challenge,
   one-use state within 10 minutes, the client against a fake server: exactly the fields sent,

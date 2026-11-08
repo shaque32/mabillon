@@ -14,7 +14,7 @@
   finding has a test that failed before its fix.
   Why: case04's go/no-go run showed affidavit designations ("SUBJECT-1", "HAL", "DEZ") as the
   first reason the filler refused 11 claims. A person had only one name.
-- Where: PR #186 (branch claude/project-thread-ds0ify), on main after #181.
+- Where: main (#186, merged 2026-10-31)
 - Verified: on this container, 2026-10-30.
   - 9 new filler tests and 1 alias test. The alias reads failed first; the guards are part of
     an alias, a longer name, a handle and a shared alias. `make check` passes.
@@ -34,6 +34,4 @@
   lookups change it too, so a before/after with the step on must count both.
 - Affects: capabilities (claims written with an alias can now be tested by code). No privacy,
   network or verdict-rule change; no customer-facing claim.
-- Status doc: pending: in section 2 "Pipeline (main)", row "5. Assumptions", append "A person
-  is read by their name or by an alias the expert entered (whole only; an alias two persons
-  share matches neither)."
+- Status doc: applied 2026-11-08

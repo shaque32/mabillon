@@ -11,7 +11,7 @@
   - the repeat was byte-identical (110 calls compared);
   - 1.88 calls and 71.2 s per claim.
   case05 is now spent as held-out data and is not re-run. The testability step stays off.
-- Where: PR #208
+- Where: main (#208, merged 2026-11-03)
 - Verified: Arsh's run on a MacBook Air M4, 24 GB, macOS 15.6.1 arm64, from 2026-11-02 20:38Z
   until the go/no-go was written at 2026-11-03 08:46Z. It used filler code version 3, rules
   0.4.0, and qwen3-14b-q4_k_m (SHA-256 500a8806e85e) for assumptions, stance and testability,
@@ -33,8 +33,4 @@
   Bar 3 counts only false supported, so this is not a bar. Other hardware is not measured.
 - Affects: performance (the testability step's measured readiness for pilots). No capability,
   privacy, network, model or verdict change; nothing is claimed to customers.
-- Status doc: pending: section 8 item 2 ("Audit"), in the testability go/no-go line that
-  2026-10-29-testability-go-no-go-evaluator.md adds, replace "none has been run yet" with "two
-  have been run with the local model on the M4 Air, both NO-GO, so the step stays off: case04
-  (2026-10-30; conversion 2 of 34, and 4 tries named another person, phone or window) and
-  case05 (2026-11-03; conversion 5 of 33, 15%, every other bar passed)".
+- Status doc: applied 2026-11-08

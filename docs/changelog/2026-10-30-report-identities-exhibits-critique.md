@@ -9,7 +9,7 @@
   the link rules sit under "How links are proposed and used" (same words). Exhibits: the
   curated-coverage warning moves above the form, and "One message per" is a fieldset with its
   options stacked. Placeholder text is darker (#6f6b64, about 5:1 on white).
-- Where: branch report-identities-fixes
+- Where: main (#178, merged 2026-10-31)
 - Verified: ruff; pytest and make eval (see PR description); rendered at 1280px and in a 390px
   frame on the demo case.
 - Open: Per-claim format notices still repeat on every claim; collapsing them changes what the

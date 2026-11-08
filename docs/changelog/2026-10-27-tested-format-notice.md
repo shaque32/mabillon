@@ -23,7 +23,7 @@
   0.2.1 (payload gains `format_check`; records unchanged). Report 0.18.0. No schema change: the
   stated version lives in the coverage payload and the existing `sources.tool_version`. Spec:
   Grok Product on PR #100 (comment 6433304729).
-- Where: PR #145 (branch `claude/project-thread-40jhbx`)
+- Where: main (#145, merged 2026-10-27)
 - Verified: `tests/test_tested_formats.py` (synthetic only): UFDR 7.48 gets the tested notice;
   UFDR 7.50, a UFDR with no version, Cellebrite Excel (7.70.0.1), Cellebrite PDF (7.70.0.1),
   AXIOM Excel (SYNTHETIC) and AXIOM XML (no version) get "Not tested" with the version as
@@ -39,15 +39,4 @@
   this PR. Not checked on a real export in this PR.
 - Affects: capabilities (screen, claim page and report disclose per-format test status),
   customer-facing claims (only UFDR report version 7.48 is called tested)
-- Status doc: pending: header "Report version" 0.18.0 (#145: each source's tested or "Not
-  tested" notice); "Importers (main)" UFDR 0.3.2, Cellebrite Excel and PDF 0.3.2, AXIOM 0.2.1,
-  each recording `format_check` and an `import.format` audit entry; section 2 step 1 and the
-  limitations item "Real-data formats unverified": replace "UFDR and AXIOM imports say 'not yet
-  verified' on screen and in the report; Cellebrite Excel and PDF imports carry no such notice"
-  with "Every evidence source shows a format notice on the case screen, each claim page that
-  rests on it and in the report (`core/ingest/tested.py`): UFDR stating reportVersion 7.48 gets
-  'Imported without errors from three public test-phone packages (UFDR report version 7.48).
-  Counts not yet compared with Cellebrite Reader. Not tested on your case data.';
-  every other format or version gets 'Not tested: ...' with its version as written. AXIOM
-  also keeps its 'not yet verified' item"; pilot gate 5 section: the pilot-rule banner exists
-  on main (#145)
+- Status doc: applied 2026-11-08

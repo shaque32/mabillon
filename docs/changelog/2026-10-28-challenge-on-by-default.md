@@ -29,7 +29,7 @@
     mark, and C16 stays unproven whatever the presenter decides. `docs/demo.md` gains the live
     step, and says the search is real and its "complicates" label is scripted: the demo shows
     where the step's finds land, not what it catches with a model.
-- Where: PR #162 (branch `claude/project-thread-6i2msb-challenge-default`)
+- Where: main (#162, merged 2026-10-29)
 - Verified: `make check` passes; its eval numbers are in the PR. New and changed tests:
   - `tests/test_challenge.py`: the step is on by default and a run can skip it, with the report
     saying "skipped for this run"; the CLI runs it unless `--no-challenge`; the review screen's
@@ -62,10 +62,4 @@
   page time is unmeasured.
 - Affects: capabilities (the challenge step runs by default), performance (more stance calls on
   claims close to supported), customer-facing demo
-- Status doc: pending: section 8 item 2 ("Audit"): in place of #154's pending line, add "A
-  challenge step runs by default (`mabillon audit --no-challenge`, or "Skip the challenge step"
-  on the screen, turns it off for one run): code's counter-searches on claims close to
-  supported, storing only contradicts and complicates labels, each search logged and re-run by
-  verify-bundle; its finds are marked "found by the challenge step" on screen and in the report;
-  its effect with a real labeler is unmeasured (#154, #162)". Keep #154's section 7 or 10
-  line on the simulated experts as written.
+- Status doc: applied 2026-11-08

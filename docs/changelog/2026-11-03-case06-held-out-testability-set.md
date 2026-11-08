@@ -73,7 +73,7 @@
     keeps exact ids. Account mismatches never counted toward the wrong person, phone or window
     bar; they cost conversion and the sheet-reject figure beside it. The signed sheet is
     unchanged.
-- Where: PR #211 (branch `claude/project-thread-6i2msb-case06`; #201, #209 and #210 are merged)
+- Where: main (#211, merged 2026-11-06)
 - Verified: `tests/test_synthetic_case06.py` (synthetic only, 38 tests): the generator gives the
   same bytes twice and the committed drafts match a fresh build; the importer reads all three
   reports, and every key and wrong-reading record exists at its story time with the right offset

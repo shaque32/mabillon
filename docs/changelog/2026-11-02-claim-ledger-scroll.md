@@ -13,7 +13,7 @@
   the page. Code: `ui/pages.py` (`_ledger`), `ui/css/claim.py`, `ui/identity_pages.py`.
   CI: the Mac clean-install job drives Safari through safaridriver on the demo case
   (`packaging/safari_scroll.py`), report only for now.
-- Where: PR #204
+- Where: main (#204, merged 2026-11-02)
 - Verified: new test in `tests/test_review_screen.py`. Headless Chromium 153 on the scripted
   demo: every form on every page except Set up and run's audit, case and key forms (about 360
   posts) lands on its anchor or stays near the top it started at; before this change only the

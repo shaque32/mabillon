@@ -10,7 +10,7 @@
   recall was 45 of 45 under both. The speed criterion was not counted: one v1.1 timed-audit
   stance call gave invalid output, and the preregistered rule needs every call of both timed
   audits answered.
-- Where: branch claude/project-thread-lt1vdp (results file only)
+- Where: main (#187, merged 2026-10-31)
 - Verified: Arsh's MacBook Air M4 24 GB, macOS 15.6.1 arm64, llama-cpp-python 0.3.36, flash
   runtime, seed 1234, n_ctx 8192, model SHA-256 500a8806...b6b81f0, commit 6018293 (the same
   tree as main 085c48e), 2026-10-31 06:49Z. Scored by `eval.probe.v14.score`; the criteria
