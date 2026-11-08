@@ -1711,11 +1711,15 @@ def _agent_card(
         f"<li>&ldquo;{e(str(f.get('written', '')))}&rdquo;: {e(str(f.get('means', '')))}</li>"
         for f in x.lookups
     )
-    sheet = (
-        " The case's signed assumption sheet names the same people, phones and time ranges."
-        if x.check == testability.SHEET_CHECK
-        else ""
-    )
+    sheet = {
+        testability.SHEET_CHECK: (
+            " The case's signed assumption sheet names the same people, phones and time ranges."
+        ),
+        testability.SHEET_CHECK_PARTIES: (
+            " The case's signed assumption sheet names the same people, phones and time ranges,"
+            " apart from parties to the record that the claim itself names."
+        ),
+    }.get(x.check, "")
     fields = (
         f"<input type='hidden' name='claim' value='{e(x.claim_id)}'>"
         f"<input type='hidden' name='run' value='{e(x.run_id)}'>"
