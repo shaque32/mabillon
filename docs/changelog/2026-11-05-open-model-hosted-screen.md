@@ -11,7 +11,7 @@
   and repeat-checked (`eval/probe/aws_repeat.sh`). A model with no thinking mode is not asked to
   reason; a model no 8-bit provider serves may widen only its own precision list, recorded in
   the model list. `candidates.verdict` takes the model names.
-- Where: PR #225
+- Where: main (#225, merged 2026-11-08)
 - Verified: unit tests with a stand-in API (no network). Run 2026-11-07 from a cloud container
   (results: `eval/probe/results/2026-11-07-hosted-open-bench.md`): only DeepSeek V4.1 Flash
   (contradicts precision 92% of 12, Wilson 65%-98%) and Kimi K3.1 Pro (100% of 10, 72%-100%)
@@ -29,10 +29,4 @@
   Opus 5.5). Eval network use: synthetic probe items, synthetic case01 prompts and the signed
   stance prompts go to OpenRouter and the providers it routes to (data collection denied);
   nothing from a real case, and `core/` makes no new network call.
-- Status doc: pending: in section 7 (Benchmarks and hardware), after the paragraph on newer
-  local models screened on 2026-10-22, add: "Hosted open-weight models were screened on the same
-  signed set through OpenRouter (cloud container, 2026-11-07, both signed prompts, one run each;
-  eval only, #225; hosted answers are not reproducible): of eleven models, only DeepSeek V4.1
-  Flash (contradicts precision 92% of 12) and Kimi K3.1 Pro (100% of 10) passed stage 1, both
-  with prompt v1.2; both scored 95% with 0 false supported on synthetic case01. Neither has been
-  self-hosted or repeat-checked. Source: `eval/probe/results/2026-11-07-hosted-open-bench.md`."
+- Status doc: applied 2026-11-08

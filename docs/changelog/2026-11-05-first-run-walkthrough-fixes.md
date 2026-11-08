@@ -67,7 +67,7 @@
     - Files explains why Records differs from rows imported.
     - Set up notes two phones listing the same own number, and a document whose numbers match
       none of the phones. Nothing is merged.
-- Where: branch claude/project-thread-ngqisv (draft PR).
+- Where: main (#223, merged 2026-11-05)
 - Verified: the full test suite passes. New tests cover each group: tests/test_stale_tab.py,
   test_redecide_carry.py, test_recovery_key.py, test_import_dead_ends.py,
   test_audit_log_lock.py (it fails without the fix), test_small_fixes.py, and new tests in
@@ -79,9 +79,4 @@
   needed after it merges.
 - Affects: capabilities (remove a file before the first audit, new recovery key, carried
   verdict decisions, accept all proposed claims); customer-facing claims none.
-- Status doc: pending: in section 8 (Implemented features) add "Re-run verdicts keeps an
-  expert's confirmation or override when the verdict is unchanged (logged as verdict.carry)",
-  "A wrong file can be removed before the first audit, logged with its SHA-256 and reason",
-  "Make a new recovery key (screen and mabillon recovery-key)" and "Forms are bound to their
-  case"; in the header set the report version to 0.35.0; in section 9 (Known limitations) add
-  "The report's # column is not stored; cards cite the spreadsheet row".
+- Status doc: applied 2026-11-08

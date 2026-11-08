@@ -18,7 +18,7 @@
   again in a console window, in the browser, so closing that window stops it). New optional
   dependency group `app` (pywebview, pythonnet on Windows); the installers include it. Second PR
   of the desktop-app plan (plans/desktop-app-sign-in.md). No sign-in, no new network use.
-- Where: PR #219
+- Where: main (#219, merged 2026-11-07)
 - Verified: `tests/test_app_window.py` (stand-in pywebview: launch link, private mode, close
   prompt only while auditing, fallback to the browser, second launch, downloads saved without
   overwriting, back to the page asked from); `make check` on Linux. Windows staging resolved
@@ -35,8 +35,4 @@
 - Affects: capabilities (desktop app); customer-facing claims (Mabillon can be described as a
   desktop app on Mac and Windows once seen working); privacy: none (same local server and key;
   pywebview and the web view load only 127.0.0.1).
-- Status doc: pending: in the section that says experts work in the browser on their own
-  computer (`mabillon serve`, http://127.0.0.1:8765), add "Mabillon also opens in its own window
-  (`mabillon serve --window`; the Mac apps in ~/Applications and the Windows Start-menu
-  shortcuts), WebKit on a Mac and Edge WebView2 on Windows; seen working on a Mac 2026-11-06, unverified on
-  a Windows PC."
+- Status doc: applied 2026-11-08

@@ -13,7 +13,7 @@
   only form. Run id, versions, audit log, flags count and custody hashes sit in a quiet "Record"
   list. A hash chain that fails verification now shows as an error at the top of the case page.
   The flags tool (pilot name and "Download the redacted summary") moved to the Audit log page.
-- Where: PR #177
+- Where: main (#177, merged 2026-10-30)
 - Verified: make check (see the PR description for the run); tests changed only where content
   moved: tests/test_flags.py (summary download now on /log), tests/test_demo.py (case status
   counts follow the Claims screen grouping instead of one pill per label). Two new tests in
@@ -24,6 +24,4 @@
   screen reader.
 - Affects: capabilities (where the flags summary download lives; stipulations are edited only on
   Set up and run)
-- Status doc: pending: wherever docs/PRODUCT_STATUS.md says the case page offers the redacted
-  flags summary download or edits stipulations, say the download is on the Audit log page and
-  stipulations are edited on Set up and run; the case page shows both read-only.
+- Status doc: applied 2026-11-08

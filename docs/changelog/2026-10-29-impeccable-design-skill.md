@@ -7,7 +7,7 @@
   Its edit hooks are not installed, and its 21 MB engine binary is not committed: the launcher
   downloads it from the project's GitHub releases on first use and checks it against
   `scripts/engine-checksums.txt`.
-- Where: PR #171
+- Where: main (#171, merged 2026-10-29)
 - Verified: installed into a sandbox copy with `impeccable install --providers=claude
   --scope=project` from the signed 4.8.0 release bundle; engine SHA-256 matched the shipped
   checksum; `impeccable detect` ran on saved pages of the demo case (calm look, PR #167 branch).

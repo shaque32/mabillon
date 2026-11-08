@@ -15,7 +15,7 @@
   - Input placeholders are #75716a (about 4.6:1 on white, was 2.9:1).
   Why: the critique found raw machine text, a filler column and a destructive button beside the
   reorder buttons; placeholder contrast failed WCAG AA.
-- Where: branch pages-critique-fixes
+- Where: main (#180, merged 2026-10-30)
 - Verified: on the owner's Mac, 2026-10-30. Rendered each page from the scripted demo and
   checked the new markup; `make check` lint and tests (one environment-only failure, see the
   PR); case01 model-free eval PASS, accuracy 1.00, 0 false supported.

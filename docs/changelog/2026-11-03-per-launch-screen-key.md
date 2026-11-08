@@ -10,7 +10,7 @@
   Ctrl+C, SIGTERM or the Terminal window closing (SIGHUP). The install smoke tests
   (`packaging/smoke_ui.py`, `packaging/safari_scroll.py`) read that file and go through the
   launch link. First PR of the desktop-app plan (plans/desktop-app-sign-in.md).
-- Where: PR #215
+- Where: main (#215, merged 2026-11-04)
 - Verified: `tests/test_screen_key.py` (11 tests: refused without the key, launch link sets the
   cookie, wrong keys and other ports refused, app token check still behind the key, key file
   mode and cleanup, a second launch on a busy port gets its own port and key); a demo run on Linux driven by
@@ -27,6 +27,4 @@
 - Affects: privacy (stronger: an open case is no longer readable by other accounts on the
   computer); customer-facing claims (docs/SECURITY_PRIVACY.md could add this protection; wording
   left for Arsh).
-- Status doc: pending: in the privacy and network section, after "The UI serves only 127.0.0.1.",
-  add "Each launch makes a random screen key held in an HttpOnly cookie; requests without it are
-  refused, so other accounts on the computer cannot read an open case (ui/screen_key.py)."
+- Status doc: applied 2026-11-08

@@ -14,7 +14,7 @@
   with the pass and every flag (no code read the old list). Why: Arsh asked on 2026-10-30
   for a fine-tuned, smaller and faster local model; stance labelling is about 74% of local model
   time (case04, estimated from call timestamps).
-- Where: PR #185
+- Where: main (#185, merged 2026-10-31)
 - Verified: tests/test_stancedata_sft.py (5 tests: generated items and synthetic overlap
   reports, no model). On the full training file
   (`python -m eval.train.generate --n 12000 --seed 1`, eval.train 1.5.0 and eval.train.baker

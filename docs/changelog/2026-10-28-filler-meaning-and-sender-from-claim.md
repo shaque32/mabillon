@@ -19,7 +19,7 @@
     as `code_version`. Stored model answers are still reused across filler versions.
 
   Assumption filling stays local. No frozen file changes.
-- Where: PR #164
+- Where: main (#164, merged 2026-10-28)
 - Verified: on this container, 2026-10-28.
   - New tests in tests/test_assumption_filler.py: meaning from the quote, the quote rules
     (names, two quotes, a saved name, a wrapped quote, the model's own words), the sender
@@ -37,7 +37,4 @@
   code.
 - Affects: capabilities (more meaning claims tested, each still needing expert acceptance);
   no privacy or customer-facing claim change
-- Status doc: pending: in "2. Pipeline (main)", row "5. Assumptions", append to the description:
-  "Code adds a meaning assumption on the claim's one quoted message and a sender for the
-  writer the claim names; every quoted message needs a sender; runs record the filler
-  version"
+- Status doc: applied 2026-11-08

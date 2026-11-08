@@ -8,7 +8,7 @@
   theme, so page-level work (this decluttering series and the Set up and run rework) never edits
   the same CSS lines. Look only: no markup a test or packaging/smoke_ui.py selects on changed,
   no wording, verdict, label or behavior change. The exported report is unchanged.
-- Where: PR #194
+- Where: main (#194, merged 2026-11-01)
 - Verified: ruff; UI tests (158 selected) and `make check` (numbers in the PR); screenshots of
   the demo's claim page and Set up checkboxes (checked and unchecked) at 1440 px.
 - Open: Windows browsers not looked at; the per-page modules are empty until the page PRs fill
