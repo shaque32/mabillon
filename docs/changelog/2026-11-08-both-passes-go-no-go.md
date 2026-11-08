@@ -1,4 +1,4 @@
-## 2026-11-08: Testability go/no-go scored on both passes, and a party the claim names is no wrong person (eval only) (#PR)
+## 2026-11-08: Testability go/no-go scored on both passes, and a party the claim names is no wrong person (eval only) (#246)
 - Changed: the go/no-go's coverage bar (`eval/run_pipeline.py`, `testability_go_no_go`) now
   reads: at least 40% of the claims the signed sheet makes testable (at least 15 such claims, or
   "insufficient") end the audit with core assumptions, from the first pass or a repair the
@@ -14,7 +14,7 @@
   claims (Kimi K3.1 Pro: 17 of 48), so the step-only bar failed or could not be scored even when
   more claims ended testable, and the exact sheet match counted a recipient the claim names
   (DeepSeek's C38) as a wrong person.
-- Where: branch claude/project-thread-6i2msb-both-passes, held until Arsh approves the bar text.
+- Where: PR #246, held until Arsh approves the bar text.
 - Verified: unit tests (the bar at, above and below 40%; too few testable claims is
   insufficient; a first pass that leaves the step nothing still gets a decision; the party
   exception covers only a claim-named party to a record; the old check still flags the same
