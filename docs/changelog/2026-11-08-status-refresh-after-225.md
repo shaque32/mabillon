@@ -16,7 +16,7 @@
   "files never leave your machine" among the claims not to make until plan C ships. Section 8
   lists the merges from #144 to #235, the PRs closed without merging (#238 and #239, the counsel
   direction dropped 2026-11-07) and the open PRs.
-- Where: PR #245
+- Where: PR #247
 - Verified: versions read from code at `9c4e8b3`; merge dates from GitHub's PR list; validation
   tags from `git ls-remote --tags`; `python tools/changelog.py pending` lists nothing; `make
   check` in the PR description. Docs only: no code, signed file or eval number changed.
