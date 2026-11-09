@@ -538,3 +538,15 @@ section[id] { scroll-margin-top: 96px; }
   .demo-form { padding: 24px 18px; }
   .demo-form .row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* About: the founders, one ruled row each, with a round photo */
+.prose .people { list-style: none; margin: 14px 0 6px; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
+.people li { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 28px; align-items: start; padding: 28px 0; border-bottom: 1px solid var(--line); }
+.people img { width: 128px; height: 128px; border-radius: 50%; object-fit: cover; background: var(--panel); }
+.people div { display: grid; gap: 6px; }
+.prose .people h2 { margin-top: 4px; font-size: 1.3rem; color: var(--fg); }
+.people .role { color: var(--fg); font-size: 0.95rem; font-weight: 500; margin-bottom: 4px; }
+@media (max-width: 620px) {
+  .people li { grid-template-columns: 88px minmax(0, 1fr); gap: 18px; }
+  .people img { width: 88px; height: 88px; }
+}
