@@ -9,7 +9,8 @@
 - Where: PR #249
 - Verified: `tests/test_site_assets.py` passes with the new `?v=`; page checked by screenshot at
   1280 px and 390 px wide in headless Chromium (2026-11-09, cloud container).
-- Open: bio wording waits for Arsh's approval before merge. Whether Mir's FBI line needs FBI
+- Open: Arsh approved the bio wording on 2026-11-09, with the LineupOptimization.com line
+  removed from Shayan's bio. Whether Mir's FBI line needs FBI
   pre-publication review is unconfirmed (it is already in the pitch deck). Whether "MS in
   Analytics at Georgia Tech" is finished or in progress is not recorded; the page repeats the
   deck's wording.
