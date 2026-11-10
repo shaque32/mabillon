@@ -2323,10 +2323,20 @@ _SAYING = (
 _NAMES_A_WRITER_RE = re.compile(
     rf"\b(?:(?!read\b|reads\b|reading\b)(?:{_SAYING})|from|by|via)\b", re.IGNORECASE
 )
+# After the verb, the one it went to may be written with "to", "the" or as a number, and the
+# app it went by after or before them ('wrote to SUBJECT-1 on WhatsApp "..."', 'texted
+# (212) 555-0199 by iMessage "..."', 'told REYES via Signal direct message "..."'). These words
+# only mark the quote as a message: no party or app is read from them here.
+_CUE_TO = rf"(?:\s+to)?\s+(?:(?:the\s+)?(?-i:{_RECIPIENT})|\+?\(?\d[\d\s().-]{{5,}}\d)"
+_CUE_BY = (
+    r"\s+(?:on|over|via|by|in|through|using)\s+(?:an?\s+|the\s+)?"
+    r"(?-i:(?:[A-Z]|i(?=[A-Z]))[\w'.-]*)(?:\s+(?-i:[A-Z][\w'.-]*))?"
+    r"(?:\s+(?:chat|messages?|direct\s+messages?|dms?|texts?|group|thread))?"
+)
 # A word for a message dated right before its quote is a cue too: 'the Wickr message of May 7,
 # 2023, "..."' (PAST-30 fill a).
 _MESSAGE_CUE_RE = re.compile(
-    rf"(?:\b(?:{_SAYING})(?:\s+(?-i:{_RECIPIENT}))?|\b{_QUOTE_NOUNS}"
+    rf"(?:\b(?:{_SAYING})(?:{_CUE_TO})?(?:{_CUE_BY})?(?:{_CUE_TO})?|\b{_QUOTE_NOUNS}"
     rf"(?:\s+of\s+(?:{_DATE_RE.pattern}))?|:)\s*,?\s*$",
     re.IGNORECASE,
 )
@@ -3074,12 +3084,14 @@ class LocalAssumptionFiller:
         display name: 'the Teams user "ThisIs DfirTwo"'), led by what leads a message
         (_MESSAGE_CUE_RE: "PETROV wrote: ...", "a message reading ...", not "saved as ..."),
         on one line. Two such quotes, or any doubt, give None: code never picks one."""
+        return self._quote_and_why(claim, out)[0]
+
+    def _quote_and_why(self, claim: Claim, out: list[Proposal]) -> tuple[str | None, str]:
+        """`the_quote`, and when it is None, why: what the claim quotes that is not one
+        message, so a refusal names the real cause."""
         text, names = _nfc(claim.text), self._names(claim.text)
-        spans = [
-            m.span()
-            for m in _QUOTE_SPAN_RE.finditer(_flat(text))
-            if m.group(0)[1:-1].strip() and m.group(0)[1:-1].strip().casefold() not in names
-        ]
+        quoted = [m for m in _QUOTE_SPAN_RE.finditer(_flat(text)) if m.group(0)[1:-1].strip()]
+        spans = [m.span() for m in quoted if m.group(0)[1:-1].strip().casefold() not in names]
         messages = [(s, e) for s, e in spans if _MESSAGE_CUE_RE.search(text[:s])]
         used = {
             str(p.params["quoted_text"])
@@ -3090,16 +3102,28 @@ class LocalAssumptionFiller:
         }
         if used:
             # The model's words, when they lie in a quote that is a message.
-            (words,) = used if len(used) == 1 else (None,)
-            inside = words is not None and any(
-                _flat(_nfc(words)) in _flat(text)[s + 1 : e - 1] for s, e in messages
-            )
-            return words if inside else None
+            if len(used) != 1:
+                return None, "the kept assumptions quote different words"
+            (words,) = used
+            if any(_flat(_nfc(words)) in _flat(text)[s + 1 : e - 1] for s, e in messages):
+                return words, ""
+            return None, f"{words!r} is not inside a quote the claim marks as a message"
+        if not quoted:
+            return None, "the claim quotes no words"
+        if not spans:
+            return None, "the claim's only quoted words are a name, not a message"
+        if len(messages) > 1:
+            return None, f"the claim quotes {len(messages)} messages; code never picks one"
         if len(spans) != 1 or len(messages) != 1:
-            return None
+            return None, (
+                "no single quote is led by what marks a message (a verb of writing, a word for"
+                " a message, or a colon)"
+            )
         start, end = messages[0]
         words = text[start + 1 : end - 1].strip()
-        return None if "\n" in words or "\r" in words else words
+        if "\n" in words or "\r" in words or not words:
+            return None, "the quoted message is empty or runs over two lines"
+        return words, ""
 
     def _events(self) -> list[case_events.CaseEvent]:
         """The defined events code may date a claim by (case_events.readable), read once."""
@@ -3260,11 +3284,28 @@ class LocalAssumptionFiller:
             return out
         if any(p.template_id == "meaning" for p in out):
             return out
-        quote = self.the_quote(claim, out)
+        quote, why = self._quote_and_why(claim, out)
+        if quote is not None and (n := self._message_quotes(claim)) > 1:
+            # 'PETROV wrote "ok" and REYES replied "fine", showing ...': the meaning of one of
+            # them is not the claim's reading, and the other's writer may be untested.
+            quote, why = None, f"the claim quotes {n} messages; code never picks one"
         if quote is None:
-            self._drop(claim, None, "meaning from the claim: no one quoted message", call_id)
+            why = f"meaning from the claim: no one quoted message ({why})"
+            self._drop(claim, None, why, call_id)
             return out
         return [*out, Proposal("meaning", {"quoted_text": quote}, is_core=True, code_made=True)]
+
+    def _message_quotes(self, claim: Claim) -> int:
+        """How many quotes of the claim are messages: not empty, not a name, and led by what
+        leads a message (_MESSAGE_CUE_RE)."""
+        text, names = _nfc(claim.text), self._names(claim.text)
+        return sum(
+            1
+            for m in _QUOTE_SPAN_RE.finditer(_flat(text))
+            if m.group(0)[1:-1].strip()
+            and m.group(0)[1:-1].strip().casefold() not in names
+            and _MESSAGE_CUE_RE.search(text[: m.start()])
+        )
 
     def _add_record_time(
         self, claim: Claim, para: str, out: list[Proposal], allowed_ids: set[str]
