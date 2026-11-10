@@ -1,4 +1,4 @@
-## 2026-11-10: Stay local for any case involving a minor and sexual conduct, awaiting Arsh's signature (#256)
+## 2026-11-10: Stay local for any case involving a minor and sexual conduct, signed by Arsh (#256)
 - Changed: the stay-local box at setup named only child sexual abuse material. It now reads
   "This case concerns sexual material or conduct involving a minor, or someone presented as a
   minor: for example child sexual abuse material, enticement, sextortion or trafficking. This
@@ -17,10 +17,11 @@
   Also, the Fast explanation at setup (FAST_EXPLAINED) now opens with what each step sends:
   each paragraph of the government's document to propose claims, and, to test a claim, the
   claim and its paragraph, the assumption, one record and the messages around it, the case's
-  app names and a group chat's member list. The signed text left out the document's paragraphs
+  app names and a group chat's member list. The earlier text left out the document's paragraphs
   and the app names (Greptile on #256), and its "Never your files" becomes "The phone
   extractions themselves and the case database never leave this computer."
-  All six texts are drafts awaiting Arsh's "approved" (plans/minor-sexual-stay-local.md).
+  Arsh approved all six texts on 2026-11-10 19:12Z ("i approve the rest",
+  plans/minor-sexual-stay-local.md).
 - Where: PR #256 (merges after #254)
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`: the attestation and box
   texts are pinned; a marked case stays local with the exact reason and keeps the words ticked;
@@ -29,8 +30,8 @@
   and saves a local choice with the new message; the report shows the new sentence; the Fast
   explanation names what each signed prompt carries, and a prompt that gains a field fails the
   test. No API calls.
-- Open: the texts are not signed yet, so this must not merge before Arsh approves them.
-  Mabillon does not scan for such content; the box and the attestation are the examiner's own
+- Open: the CLAUDE.md line is signed but not applied yet (`PROPOSED_CHANGES.md`). Mabillon
+  does not scan for such content; the box and the attestation are the examiner's own
   statements. `docs/ONE_PAGER.md`, `docs/PILOT_ONBOARDING.md`, the `.greptile` privacy rule and
   site/ (Arsh's) still say "possibly containing CSAM" and need a separate refresh. Whether an
   excerpt sent from such a case would in fact trigger a report is a question for a lawyer; this

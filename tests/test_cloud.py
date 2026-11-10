@@ -590,7 +590,7 @@ _BEFORE_MINORS = (
 def test_any_sexual_case_involving_a_minor_stays_local_with_the_words_ticked(case_db):
     """The stay-local box covers enticement, sextortion and trafficking as well as CSAM, and an
     officer presented as a minor; a provider must report all of them to NCMEC (18 U.S.C. 2258A).
-    The texts are pinned so they cannot drift from what Arsh signs."""
+    The texts are pinned to what Arsh signed (2026-11-10 19:12Z) so they cannot drift."""
     assert cloud_policy.ATTESTATION == (
         f"{_BEFORE_MINORS} This case does not concern sexual material or conduct involving a "
         "minor, or someone presented as a minor."
