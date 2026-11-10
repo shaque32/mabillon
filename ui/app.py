@@ -1386,7 +1386,7 @@ class App:
             page,
             inputs_folder=str(case.inputs),
             order=order,
-            ready=cases.readiness(case, conn),
+            ready=cases.readiness(case, conn, self._cloud_choice(conn)),
             counts=cases.source_counts(conn),
             model_lines=model_lines,
             model_note=note,
@@ -1425,9 +1425,13 @@ class App:
             on_cloud = False
         else:
             try:
-                on_cloud = self._cloud_choice(conn).use
+                choice = self._cloud_choice(conn)
+                where = cases.where_ai_runs(conn, choice)
+                on_cloud = choice.use
             finally:
                 conn.close()
+            if not where.ok:  # claims are proposed on the case's model, so it is chosen first
+                raise ReviewError(where.text[0].lower() + where.text[1:] + " See step 4.")
         self.jobs.start(
             jobs.Job("propose", case.db),
             jobs.propose_job(extractor_for=self.extractor_for),
@@ -1489,20 +1493,33 @@ class App:
 
     def _cloud_case(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
         _ = self._open()
-        entry = cloud_policy.set_cloud(
-            conn,
-            self.actor,
-            allowed=f.get("allowed") == "1",
-            csam=f.get("csam") == "1",
-        )
+        mode = f.get("mode", "")
+        csam = f.get("csam") == "1"
+        if mode not in ("fast", "local"):
+            raise ReviewError(
+                f"choose where this case's AI runs: {cloud_policy.FAST} or "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        if mode == "fast" and csam:
+            raise ReviewError(
+                "a case that may contain CSAM never uses cloud AI: choose "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        if mode == "fast" and f.get("allowed") != "1":
+            raise ReviewError(
+                "Fast needs your statement about the protective order, the key's zero data "
+                "retention and your client's consent: tick it, or choose "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        entry = cloud_policy.set_cloud(conn, self.actor, allowed=mode == "fast", csam=csam)
         if entry["csam"]:
-            return "Saved: this case may contain CSAM, so it runs on the local model only."
+            return "Saved: this case may contain CSAM, so every model step runs on this computer."
         if entry["allowed"]:
             return (
-                "Saved: this case may use cloud AI. If the cloud model stops answering, the audit"
-                " pauses."
+                f"Saved: {cloud_policy.FAST} for this case. If the cloud model stops answering,"
+                " the audit pauses."
             )
-        return "Saved: this case runs on the local model only."
+        return "Saved: every model step of this case runs on this computer."
 
     def _cloud_key_remove(self) -> str:
         _ = self.actor
@@ -1549,7 +1566,7 @@ class App:
             allowed, why = self.signin.may_start_audit()
             if not allowed:
                 raise ReviewError(why)
-        ready = cases.readiness(case, conn)
+        ready = cases.readiness(case, conn, self._cloud_choice(conn))
         todo = [
             r for r in ready if not r.ok and not (r.acknowledge and f.get(r.acknowledge) == "1")
         ]

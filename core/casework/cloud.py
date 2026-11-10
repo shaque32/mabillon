@@ -1,8 +1,11 @@
 """Whether a case's model steps run on the cloud model, decided per case.
 
-Cloud only by opt-in. A case runs every model step (stance labels, assumption filling, claim
+Each case needs the expert's explicit choice before the app proposes claims or starts the audit
+(chosen): Fast (the cloud model, the recommended choice at setup for an ordinary case, CLAUDE.md)
+or on this computer. Nothing is pre-chosen and the attestation is never pre-ticked, since it is
+the expert's statement. A case runs every model step (stance labels, assumption filling, claim
 proposal, the AI reviewer and the testability step) on the cloud model (core/llm/cloud.py) only
-when all of these hold, and otherwise on the local model, exactly as before:
+when all of these hold, and otherwise on the local model:
 1. The expert attested, for this case, that its protective order allows cloud AI.
 2. The expert did not mark the case as possibly containing CSAM. Such material stays in the
    government's control (18 U.S.C. 3509(m)), so a marked case never uses cloud, whatever (1) says.
@@ -36,10 +39,25 @@ from core.llm import cloud as cloud_llm
 from core.review.actions import _expert
 
 ACTION = "set_cloud"
+# Approved by Arsh 2026-11-10 07:27Z. A case attested under an earlier text reads as not chosen
+# (case_cloud), so the expert chooses again rather than drifting to either side.
 ATTESTATION = (
-    "This case's protective order (or the court or the government's consent) allows its "
-    "evidence to be sent to a cloud AI service under my firm's account, and my client has "
-    "given informed consent to it."
+    "This case's protective order (or the court's or the government's written consent) allows "
+    "excerpts of its evidence to be sent to Anthropic for AI processing. The Anthropic key used "
+    "for it belongs to an organization with zero data retention in writing. My client has given "
+    "informed consent."
+)
+FAST = "Fast: Opus through Anthropic"
+LOCAL = "On this computer"
+# Approved by Arsh 2026-11-10 07:27Z, the setup page's explanation of Fast.
+FAST_EXPLAINED = (
+    "With Fast, Mabillon sends one question at a time to Anthropic: the claim, the assumption "
+    "being tested, one record and the messages around it, and for a group chat its member list. "
+    "Never your files or the case database. Under a zero-retention account Anthropic keeps no "
+    "prompts or answers after it replies, except content its safety systems flag (kept up to 2 "
+    "years) or what the law requires, and it never trains on them. Every request is recorded in "
+    "the case's audit log before it is sent. If the cloud model stops answering, the audit "
+    "pauses and you choose to retry or run the whole case on this computer."
 )
 CSAM_NOTE = "This case may contain child sexual abuse material."
 
@@ -79,13 +97,21 @@ def case_cloud(conn: sqlite3.Connection) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     csam = payload.get("csam") is True
-    allowed = payload.get("allowed") is True and not csam
-    allowed = allowed and payload.get("attestation") == ATTESTATION
-    out: dict[str, Any] = {"allowed": allowed, "csam": csam}
+    asked = payload.get("allowed") is True and not csam
+    allowed = asked and payload.get("attestation") == ATTESTATION
+    # chosen: the expert picked a side under the current text. Asking for cloud under another
+    # attestation text is no choice at all: the case waits for the expert to choose again.
+    out: dict[str, Any] = {"allowed": allowed, "csam": csam, "chosen": allowed or not asked}
     if allowed:
         out["attested_by"] = row[1]
         out["attested_at"] = row[0]
     return out
+
+
+def chosen(conn: sqlite3.Connection) -> bool:
+    """Has an expert chosen where this case's AI runs (Fast or on this computer)? The app's
+    audit and claim proposal wait for this, so no case drifts to either side by accident."""
+    return case_cloud(conn).get("chosen") is True
 
 
 def choose(

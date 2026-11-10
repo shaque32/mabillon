@@ -49,7 +49,7 @@ def test_a_form_from_another_cases_page_is_refused_and_saves_nothing(tmp_path):
     app = _app(tmp_path)
     one, _ = _two_cases(app)  # case two is open now, as if a second tab opened it
     assert app.case is not None and app.case.name == "Case two"
-    r = post(app, "/cloud/case", allowed="1", for_case=one)
+    r = post(app, "/cloud/case", mode="fast", allowed="1", for_case=one)
     assert r.status == 303
     msg = app.flash[0] if app.flash else ""
     assert "Nothing was saved" in msg and "Case one" in msg and "Case two" in msg
@@ -63,7 +63,7 @@ def test_a_form_from_another_cases_page_is_refused_and_saves_nothing(tmp_path):
 def test_a_form_for_the_open_case_still_works(tmp_path):
     app = _app(tmp_path)
     _, two = _two_cases(app)
-    post(app, "/cloud/case", allowed="1", for_case=two)
+    post(app, "/cloud/case", mode="fast", allowed="1", for_case=two)
     conn = connect(app.case.db)
     try:
         assert cloud_policy.case_cloud(conn).get("allowed")

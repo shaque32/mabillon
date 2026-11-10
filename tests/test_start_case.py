@@ -198,6 +198,7 @@ def _make_case(app: App, inputs: dict[str, Path]) -> cases.Case:
     post(app, "/expert", name="Test Expert")
     post(app, "/case/new", name="United States v. Petrov (synthetic)")
     assert app.case is not None
+    post(app, "/cloud/case", mode="local", next="/setup")  # where the AI runs: the local model
     assert send_file(app, inputs["affidavit"], "govdoc").status == 303
     for sid in ("item1", "item2"):
         assert send_file(app, inputs[sid], "report").status == 303
