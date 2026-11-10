@@ -27,9 +27,16 @@
     FILLER_VERSION 9; the testability step uses the same gate). A communication, timing or
     count claim now needs every person it names outside quoted words bound to a core
     assumption: named in it, or tied to an account it names by a confirmed identity link, or
-    the confirmed owner of the phone whose own account it names. A person written only as the
-    one written to ("texted the COURIER"), or only inside a kept time range's words, is not
-    asked for. A day the claim dates from another ("Two days before the LOCKER BURGLARY", "the
+    the confirmed owner of a phone that holds that account as its own (matched by account
+    key, as the checks read a party). The one a quoted message went to is asked for too
+    (Arsh's decision of 2026-11-10: a checked SUPPORTED proves who received the message): a
+    person by name, and a handle or number written as the recipient through a core time or
+    count row naming both sides. Code adds the one recipient the claim writes to a message's
+    time row ("On March 12, 2026, PETROV wrote to @northstar: ..." is timed between PETROV
+    and @northstar), and gives a time row with no side the claim's one sender. An undated
+    "PETROV texted REYES: ..." stays unproven, since only a time or count check can test
+    REYES. A person named only inside a kept time range's words is not asked for. A day the
+    claim dates from another ("Two days before the LOCKER BURGLARY", "the
     next morning", "later that night") needs a time range even when that other day is no
     defined event. Either gap leaves the claim unproven. Before, case05 C04 ("Two days before
     the LOCKER BURGLARY, SUBJECT-1 texted the COURIER from the BURNER: ...") kept one sender row
@@ -49,17 +56,22 @@
   Linux cloud container, at the head of PR #257: 4,413 passed, 7 skipped. Eval unchanged:
   case01 unreviewed 0.70 (report only), after the simulated expert 1.00 with 0 false
   supported, hostile PASS, case02 aggregate 0.90 with 0 false supported.
-- Open: the sender check tests who wrote a message, not whom it went to; a claim's
-  addressee ("PETROV wrote to REYES") stays untested, as before this PR. A quote set off by quotation marks inside a message ('wade said "bring the cash
+- Open: the signed case01 sheet (`eval/gold/case01/assumptions.jsonl`) does not name the
+  recipient on C05 and C16, so the model-free eval, which reads the sheets, still scores
+  them on the writer alone; changing it needs Arsh's signature. An undated quoted message to
+  a named person can no longer be SUPPORTED (checked). A quote set off by quotation marks inside a message ('wade said "bring the cash
   friday"') is still part of a sentence, so it stays inconclusive; reading it as whole would
   also pass 'never say "..."'. Five synthetic contradictions now rest on an expert's decision,
   not a check.
 - Affects: verdicts (fewer CONTRADICTED and SUPPORTED (checked) outcomes from the sender and
   time checks; both fail closed to inconclusive); customer-facing claims (a contradiction from
-  the sender check now always rests on a record or a confirmed fact). No privacy or network
-  change.
+  the sender check now always rests on a record or a confirmed fact, and a SUPPORTED
+  (checked) on a quoted message now tests both who sent it and who received it). No privacy
+  or network change.
 - Status doc: pending: section 2, step 6 (Checks): add "the sender check fails only when a
   record or a confirmed fact says the sender is someone else (a phone's own account, a confirmed
   link, or a copy the owner's phone received), and the sender and time checks never judge words
-  that are only part of a sentence of a message"; header "Other versions": sender 1.2.0, time
-  1.1.0.
+  that are only part of a sentence of a message"; step 5 (Assumptions): add "a communication, timing or count claim is
+  tested only when every person it names, the one a quoted message went to included, is tied
+  to the records its assumptions test, and a day it dates from another day has a time range";
+  header "Other versions": sender 1.2.0, time 1.1.0, filler 9.

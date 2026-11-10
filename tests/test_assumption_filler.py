@@ -1972,12 +1972,23 @@ def test_code_made_assumptions_say_so_and_model_ones_do_not(conn):
     made = {a.template_id: a for a in assumptions}
     assert is_code_made(made["sender"].text) and is_code_made(made["record_time"].text)
     assert made["sender"].text.endswith("Filled from the claim's wording.")
+    # C05's and C16's time ranges name the writer alone; code adds the one each went to
+    # (@northstar, REYES), so the time check tests both sides (_add_recipient), and the row
+    # says code filled it.
+    recipient = {"C05": "record_time", "C16": "record_time"}
     for cid in sorted(GOOD):
         model_made, *_ = build(conn, cid)
         whole = [
-            a for a in model_made if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
+            a
+            for a in model_made
+            if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
+            and a.template_id != recipient.get(cid)
         ]
         assert not any(is_code_made(a.text) for a in whole if a.template_id != "meaning"), cid
+    (timed,) = [a for a in build(conn, "C05")[0] if a.template_id == "record_time"]
+    assert is_code_made(timed.text) and timed.params.handles == ("@northstar",)
+    (timed,) = [a for a in build(conn, "C16")[0] if a.template_id == "record_time"]
+    assert is_code_made(timed.text) and timed.params.person_ids == (REYES,)
 
 
 def test_a_count_of_calls_is_read_and_made_from_a_calls_time(call_log):
@@ -3122,14 +3133,15 @@ def test_a_named_writer_no_assumption_ties_to_the_account_leaves_the_claim_unpro
     assumptions, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
     assert assumptions == []
     (drop,) = [d.reason for d in filler.drops if "ties them" in d.reason]
-    # REYES is the one written to, whom a sender row never tests; PETROV is the writer.
-    assert "Daniel Petrov" in drop and "Marcus Reyes" not in drop
+    # PETROV wrote it and REYES got it: a sender row tests neither here, and no time row names
+    # REYES (Arsh, 2026-11-10: a checked SUPPORTED proves who received the message).
+    assert "Daniel Petrov" in drop and "Marcus Reyes" in drop
 
 
 def test_a_writer_the_assumption_names_is_bound(conn):
     answer = [P("sender", people=["PETROV"], accounts=[ALEX], quoted_text="need 2 more by friday")]
     _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
-    assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+    assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
 
 
 def test_a_confirmed_link_or_an_owned_phone_binds_the_writer(conn):
@@ -3142,14 +3154,35 @@ def test_a_confirmed_link_or_an_owned_phone_binds_the_writer(conn):
     )
     try:
         _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
-        assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+        assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
     finally:
         conn.execute("DELETE FROM identity_links WHERE id = 'link:test:alex'")
     # dp_garage is PETROV's own Instagram account on Item 1, whose owner the expert confirmed.
     text = 'PETROV, using the Instagram account dp_garage, told REYES "got the money, come get it".'
     answer = [P("sender", accounts=[DP_GARAGE], quoted_text="got the money, come get it")]
     _, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
-    assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+    assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
+
+
+def test_the_one_a_message_went_to_is_tested_on_its_time_row(conn):
+    # Arsh, 2026-11-10: a checked SUPPORTED proves who received the message. With a date, code
+    # adds REYES to the time row it makes, so the time check asks for both sides.
+    text = 'On March 12, 2026, PETROV texted REYES: "need 2 more by friday".'
+    answer = [P("sender", people=["PETROV"], quoted_text="need 2 more by friday")]
+    assumptions, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert not filler.drops, filler.drops
+    (timed,) = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert timed.person_ids == (PETROV, REYES)
+    # Undated, nothing can test REYES: the claim stays unproven.
+    undated = 'PETROV texted REYES: "need 2 more by friday".'
+    assumptions, filler = build_text(conn, undated, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    assert any("Marcus Reyes" in d.reason for d in filler.drops), filler.drops
+    # A handle written as the one it went to needs a time or count row naming both sides.
+    to_handle = 'PETROV wrote to @northstar: "need 2 more by friday".'
+    assumptions, filler = build_text(conn, to_handle, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    assert any("whom the message went to" in d.reason for d in filler.drops), filler.drops
 
 
 QUOTE16 = "got the money, come get it"

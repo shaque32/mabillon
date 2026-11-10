@@ -125,6 +125,7 @@ from core.audit._llm_json import (
 from core.audit._local_model import LocalModel, open_job_run
 from core.audit.assumptions import (
     CODE_ONLY_TEMPLATES,
+    PARTY_FIELDS,
     TEMPLATES,
     Proposal,
     Template,
@@ -187,8 +188,9 @@ MAX_PROPOSALS = 8
 #   8: a comma the claim writes inside a closing quotation mark is the claim's, not the
 #      message's, and is dropped from the quoted words.
 #   9: a communication, timing or count claim needs every person it names (outside quoted
-#      words, not only as the one written to or inside a time range's words) bound to a core
-#      assumption, and a day dated from another ("two days before ...") needs a time range.
+#      words and a time range's words) bound to a core assumption, the one a quoted message
+#      went to included, and a day dated from another ("two days before ...") needs a time
+#      range; code adds the one recipient the claim writes to a message's time row.
 FILLER_VERSION = "9"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
@@ -225,13 +227,27 @@ TEMPLATE_HELP: dict[str, str] = {
     "caller": "who placed one call, read by code from the claim's plain words.",
 }
 
-# A person written right after a verb of telling ("PETROV instructed REYES by Telegram"): the
-# one written to, whom a sender assumption does not test (unbound_person leaves them out).
+# A party written right after a verb of telling ("PETROV instructed REYES by Telegram"): the
+# one written to, whom only a two-sided assumption tests (_writes_a_recipient).
 _TOLD_RE = re.compile(
     r"\b(?:instructed|asked|ordered|directed|warned|reminded|urged|informed|told|answered|"
     r"replied\s+to|wrote\s+to|sent\s+to)\s+(?:the\s+)?$",
     re.IGNORECASE,
 )
+
+# The templates whose check asks every record to involve each side (involves_all): only these
+# test whom a message went to; a sender row tests its writer alone.
+_TWO_SIDED = frozenset({"record_time", "message_count"})
+
+
+def _sides(p: Proposal) -> int:
+    """How many sides a proposal names: each person, and its accounts and handles as one more
+    (core/audit/checks/_common.parties)."""
+    params = p.params if isinstance(p.params, Mapping) else p.params.model_dump()
+    return len(params.get("person_ids") or []) + bool(
+        params.get("account_ids") or params.get("handles")
+    )
+
 
 # The claim types rules 0.5.0 may make SUPPORTED (checked) on checks alone: every person such a
 # claim names must be bound to the records its assumptions test (unbound_person).
@@ -2946,8 +2962,11 @@ class LocalAssumptionFiller:
         A person is bound when a core proposal names them (person_ids), or names an account
         (by its id, or a handle that is its identifier or display name) an expert's confirmed
         identity link ties to them, or one of a phone's own accounts whose owner an expert
-        confirmed (a device_owner stipulation). A person the claim writes only as the one
-        written to, or only inside a kept time range's words, is not asked for. Otherwise "SUBJECT-1
+        confirmed (a device_owner stipulation). The one written to is asked for too, since a
+        sender row tests the writer alone: a person by name, and a number or a handle through
+        a core time or count row naming both sides (Arsh, 2026-11-10: a checked SUPPORTED
+        proves who received the message). A person named only inside a kept time range's
+        words is not asked for. Otherwise "SUBJECT-1
         texted the COURIER from the BURNER: ..." is judged on the BURNER having sent the
         words, with SUBJECT-1's use of the BURNER untested (case05 C04, a false SUPPORTED)."""
         if claim.claim_type not in _CHECKED_TYPES:
@@ -2978,14 +2997,9 @@ class LocalAssumptionFiller:
             for pid, found in spans.items()
             if found
             and not all(
-                only_addressed(_nfc(claim.text)[s:e], claim.text, None)
-                or _TOLD_RE.search(flat[:s])
-                or (pid != writer and any(a <= s and e <= b for a, b in stated))
-                for s, e in found
+                pid != writer and any(a <= s and e <= b for a, b in stated) for s, e in found
             )
         }
-        if not named:
-            return None
         data = self.data
         # By account key (app and identifier), as the checks read a party (person_party): a
         # confirmed link or owner on one phone's copy of an account binds every copy of it.
@@ -3013,11 +3027,43 @@ class LocalAssumptionFiller:
                 if acc.id in (params.get("account_ids") or []) or written & handles:
                     bound |= by_key.get(acc.key, set())
         loose = sorted(named - bound)
-        if not loose:
-            return None
-        names = person_names(self.conn)
-        who = ", ".join(names[pid][0] if pid in names else pid for pid in loose)
-        return f"the claim names {who} but no assumption ties them to the records it tests"
+        if loose:
+            names = person_names(self.conn)
+            who = ", ".join(names[pid][0] if pid in names else pid for pid in loose)
+            return f"the claim names {who} but no assumption ties them to the records it tests"
+        # Whom the message went to, written as a number or a handle ("PETROV wrote to
+        # @northstar"): a sender row tests the writer only, so some core time or count row must
+        # hold both sides (its check asks every record to involve each side, involves_all).
+        if (
+            _QUOTED_MESSAGE.search(claim.text)
+            and self._writes_a_recipient(_unquoted(_nfc(claim.text)), stated)
+        ) and not any(
+            p.is_core and p.template_id in _TWO_SIDED and _sides(p) >= 2 for p in proposals
+        ):
+            return "the claim names whom the message went to but no assumption tests it"
+        return None
+
+    def _writes_a_recipient(self, bare: str, stated: list[tuple[int, int]]) -> bool:
+        """True when the words write a phone number or a handle as the one a message went to
+        ("to @northstar", "texted (919) 888-7386", "+1 212 555 0122 received"), outside a
+        kept time range's words. A person is asked for by name (unbound_person)."""
+        spans = [m.span() for m in _HANDLE_RE.finditer(bare)]
+        spans += [
+            m.span()
+            for m in _PHONE_RE.finditer(bare)
+            if phone_digits(m.group(0).strip(" .,-")) is not None
+        ]
+        spans += [(start, end) for _, start, end in self._numbers_named(bare)]
+        return any(
+            not any(a <= s and e <= b for a, b in stated)
+            and (
+                _RECEIVED_AFTER_RE.match(bare, e)
+                or _TO_BEFORE_RE.search(bare[:s])
+                or _ADDRESSED_RE.search(bare[:s])
+                or _TOLD_RE.search(bare[:s])
+            )
+            for s, e in spans
+        )
 
     def _exchange_from_event(
         self,
@@ -3845,12 +3891,100 @@ class LocalAssumptionFiller:
         try:
             out = self._shaped(claim, self._add_sender(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
+            out = self._shaped(claim, self._add_recipient(claim, out), call_id)
             out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             return self._add_meaning(claim, out, allowed_ids, call_id)
         except Reject as e:
             self._drop(claim, None, f"code could not read the claim's own words: {e}", call_id)
             return []
+
+    def _add_recipient(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
+        """A message's time range that names its writer alone gets the one the claim writes it
+        went to, from code, so the time check asks each record to involve both sides
+        (involves_all): "On March 12, 2026, PETROV wrote to @northstar: ..." times PETROV's
+        message to @northstar, not to anyone. Only for a claim whose checks alone can make it
+        SUPPORTED, and only when the claim writes exactly one recipient code reads
+        (`recipient_party`); otherwise the row stays as it was, and unbound_person leaves the
+        claim unproven (Arsh, 2026-11-10)."""
+        if claim.claim_type not in _CHECKED_TYPES:
+            return out
+        rows = [
+            i
+            for i, p in enumerate(out)
+            if p.is_core
+            and p.template_id == "record_time"
+            and isinstance(p.params, dict)
+            and _sides(p) <= 1
+            and p.params.get("quoted_text")
+        ]
+        if not rows:
+            return out
+        party = self.recipient_party(claim, out)
+        if party is None:
+            return out
+        # A time row naming no side takes the writer from the claim's one sender row on the
+        # same words ("PETROV texted REYES 'its done' at 2:31 a.m.": the model timed the words
+        # with no party).
+        senders = [
+            p.params
+            for p in out
+            if p.template_id == "sender" and p.is_core and isinstance(p.params, dict)
+        ]
+        writer = {
+            k: list(v)
+            for k, v in (senders[0] if len(senders) == 1 else {}).items()
+            if k in PARTY_FIELDS and v
+        }
+        made = list(out)
+        for i in rows:
+            params = dict(made[i].params)
+            if _sides(made[i]) == 0:
+                if not writer or senders[0].get("quoted_text") != params.get("quoted_text"):
+                    continue
+                params |= writer
+            if "person_ids" in party:
+                if set(party["person_ids"]) & set(params.get("person_ids") or []):
+                    continue  # the writer is no recipient of their own message
+                params["person_ids"] = sorted(
+                    {*(params.get("person_ids") or []), *party["person_ids"]}
+                )
+            elif params.get("account_ids") or params.get("handles"):
+                continue  # accounts and handles are one side together (checks/_common.parties)
+            else:
+                params |= party
+            made[i] = Proposal("record_time", params, is_core=True, code_made=True)
+        return made
+
+    def recipient_party(self, claim: Claim, out: list[Proposal]) -> dict[str, list[str]] | None:
+        """The one party the claim writes a message went to, as time-check parameters, or
+        None: a person the expert created whom every place the claim names is as the one
+        written to ("wrote to REYES", "texted REYES", "instructed REYES"), or a handle written
+        so ("wrote to @northstar"). A phone number or a second recipient gives None, and the
+        claim stays unproven rather than timed against a guess."""
+        text = _nfc(claim.text)
+        bare, flat = _unquoted(text), _flat(text)
+        quote = self.the_quote(claim, out)
+        found: list[dict[str, list[str]]] = []
+        try:
+            spans = self._person_spans(bare)
+        except Reject:
+            return None
+        for pid, places in spans.items():
+            if places and all(
+                only_addressed(text[s:e], claim.text, quote) or _TOLD_RE.search(flat[:s])
+                for s, e in places
+            ):
+                found.append({"person_ids": [pid]})
+        for m in _HANDLE_RE.finditer(bare):
+            s, e = m.span()
+            if _TO_BEFORE_RE.search(bare[:s]) or _ADDRESSED_RE.search(bare[:s]):
+                found.append({"handles": [m.group(0)]})
+        if self._numbers_named(bare) or any(
+            phone_digits(m.group(0).strip(" .,-")) is not None for m in _PHONE_RE.finditer(bare)
+        ):
+            return None
+        return found[0] if len(found) == 1 else None
 
     def _add_call_count(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str]
