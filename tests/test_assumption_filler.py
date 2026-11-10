@@ -3182,7 +3182,34 @@ def test_the_one_a_message_went_to_is_tested_on_its_time_row(conn):
     to_handle = 'PETROV wrote to @northstar: "need 2 more by friday".'
     assumptions, filler = build_text(conn, to_handle, ClaimType.COMMUNICATION, answer)
     assert assumptions == []
-    assert any("whom the message went to" in d.reason for d in filler.drops), filler.drops
+    assert any("as whom the message went to" in d.reason for d in filler.drops), filler.drops
+
+
+def test_a_time_row_with_another_recipient_does_not_test_the_one_written(conn):
+    # Greptile on #257: a row timing PETROV's words to @northstar does not test "PETROV wrote
+    # to @alex92"; only a row naming @alex92 does.
+    text = 'On March 12, 2026, PETROV wrote to @alex92: "need 2 more by friday".'
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    sender = Proposal("sender", {"quoted_text": "need 2 more by friday", "person_ids": [PETROV]})
+
+    def timed(**side) -> Proposal:
+        return Proposal(
+            "record_time",
+            {"quoted_text": "need 2 more by friday", "person_ids": [PETROV], **side},
+        )
+
+    other = filler.unbound_person(c, [sender, timed(handles=["@northstar"])])
+    assert other is not None and "'@alex92'" in other
+    assert filler.unbound_person(c, [sender, timed(handles=["@alex92"])]) is None
+    by_account = timed(account_ids=["acct:item1:Telegram:5551234"])  # display name @alex92
+    assert filler.unbound_person(c, [sender, by_account]) is None
 
 
 QUOTE16 = "got the money, come get it"

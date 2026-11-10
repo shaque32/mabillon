@@ -3034,36 +3034,60 @@ class LocalAssumptionFiller:
         # Whom the message went to, written as a number or a handle ("PETROV wrote to
         # @northstar"): a sender row tests the writer only, so some core time or count row must
         # hold both sides (its check asks every record to involve each side, involves_all).
-        if (
-            _QUOTED_MESSAGE.search(claim.text)
-            and self._writes_a_recipient(_unquoted(_nfc(claim.text)), stated)
-        ) and not any(
-            p.is_core and p.template_id in _TWO_SIDED and _sides(p) >= 2 for p in proposals
-        ):
-            return "the claim names whom the message went to but no assumption tests it"
+        # The row must name that very recipient: a time row between PETROV and @northstar
+        # does not test "PETROV wrote to @other" (Greptile on #257).
+        if _QUOTED_MESSAGE.search(claim.text):
+            two_sided = [
+                p for p in proposals if p.is_core and p.template_id in _TWO_SIDED and _sides(p) >= 2
+            ]
+            for words in self._written_recipients(_unquoted(_nfc(claim.text)), stated):
+                if not any(self._row_names(p, words) for p in two_sided):
+                    return (
+                        f"the claim names {words.strip()!r} as whom the message went to but no"
+                        " assumption tests it"
+                    )
         return None
 
-    def _writes_a_recipient(self, bare: str, stated: list[tuple[int, int]]) -> bool:
-        """True when the words write a phone number or a handle as the one a message went to
-        ("to @northstar", "texted (919) 888-7386", "+1 212 555 0122 received"), outside a
-        kept time range's words. A person is asked for by name (unbound_person)."""
-        spans = [m.span() for m in _HANDLE_RE.finditer(bare)]
+    def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
+        """The phone numbers, handles and names the expert gave a number or an account that
+        the words write as the one a message went to ("to @northstar", "texted (919)
+        888-7386", "+1 212 555 0122 received"), outside a kept time range's words, as
+        identifiers or as written. A person is asked for by name (unbound_person)."""
+        spans = [(m.group(0), *m.span()) for m in _HANDLE_RE.finditer(bare)]
         spans += [
-            m.span()
+            (m.group(0).strip(" .,-"), *m.span())
             for m in _PHONE_RE.finditer(bare)
             if phone_digits(m.group(0).strip(" .,-")) is not None
         ]
-        spans += [(start, end) for _, start, end in self._numbers_named(bare)]
-        return any(
-            not any(a <= s and e <= b for a, b in stated)
+        spans += self._numbers_named(bare)
+        return [
+            words
+            for words, s, e in spans
+            if not any(a <= s and e <= b for a, b in stated)
             and (
                 _RECEIVED_AFTER_RE.match(bare, e)
                 or _TO_BEFORE_RE.search(bare[:s])
                 or _ADDRESSED_RE.search(bare[:s])
                 or _TOLD_RE.search(bare[:s])
             )
-            for s, e in spans
-        )
+        ]
+
+    def _row_names(self, p: Proposal, words: str) -> bool:
+        """True when this proposal names the party these words write: the same handle, or an
+        account whose identifier or display name it is, a number by its digits."""
+        params = p.params if isinstance(p.params, Mapping) else p.params.model_dump()
+        want = _nfc(words).strip().casefold()
+        digits = phone_digits(words)
+        if any(_nfc(h).strip().casefold() == want for h in params.get("handles") or []):
+            return True
+        for account_id in params.get("account_ids") or []:
+            acc = self.data.accounts.get(account_id)
+            if acc is None:
+                continue
+            names = {_nfc(x).strip().casefold() for x in (acc.identifier, acc.display_name) if x}
+            if want in names or (digits is not None and phone_digits(acc.identifier) == digits):
+                return True
+        return False
 
     def _exchange_from_event(
         self,
