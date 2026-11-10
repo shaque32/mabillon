@@ -148,7 +148,7 @@ from core.identity.aliases import spans as alias_spans
 from core.review import account_names
 from core.review.device_names import keys as phone_keys
 from core.review.device_names import logged_names, name_key
-from core.zones import resolve_zone
+from core.zones import device_zones, resolve_zone
 
 PROMPT_FILE = "assumptions.md"
 PLACEHOLDERS = frozenset({"claim", "paragraph", "templates", "channels"})
@@ -2615,6 +2615,7 @@ class LocalAssumptionFiller:
         named_on: set[str] = set()  # the apps it wrote them on
         own_ids: set[str] = set()  # a phone's own accounts, the phone written as an account
         for acc in p.accounts:
+            acc = self._call_log_account(acc, claim.text, tpl.id)
             try:
                 account_ids |= self._accounts(
                     acc, device_ids, claim.text, one_number=tpl.id != "contact_entry"
@@ -3771,14 +3772,19 @@ class LocalAssumptionFiller:
                 " absence is read on it"
             )
 
-    def _call_log_account(self, acc: _Account, claim_text: str) -> _Account:
+    def _call_log_account(self, acc: _Account, claim_text: str, template_id: str) -> _Account:
         """A number the model wrote on the call channel ("call") as if it were an app is a
         number in the phone's call log, on the terms ruling R1 reads a call there: the claim
-        names no app, the case has a call log, and the words are a phone number. Otherwise
-        the account is left as written, and an app no account is on still matches nothing."""
+        is about a call and names no app, the case has a call log, and the words are a phone
+        number. Never for a count or an absence, which read every record on the app they
+        search: "no contact with (212) 555-0199" read on the call log alone would miss texts
+        with the number (Greptile on #253). Otherwise the account is left as written, and an
+        app no account is on still matches nothing."""
         app = acc.app.strip().casefold()
         if (
             app in _CALL_CHANNEL_WORDS
+            and template_id not in WHOLE_APP_TEMPLATES
+            and _CALL_WORD_RE.search(_unquoted(_nfc(claim_text)))
             and not any(a.app.casefold() == app for a in self.data.accounts.values())
             and NATIVE_CALL_APP in self.channels()
             and phone_digits(acc.as_written) is not None
@@ -3798,7 +3804,6 @@ class LocalAssumptionFiller:
         party: the same digits, only the formatting differs (ruling R6). Not for a contact
         entry (`one_number` False), which names the one account written exactly so, or else the
         only one that holds the number."""
-        acc = self._call_log_account(acc, claim_text)
         app = acc.app.strip().casefold()
         ident = re.sub(r"(?i)^(user\s*id|id|number|no\.)\s*", "", acc.as_written.strip())
         # A name the expert gave a number or id ("the BURNER") is that identifier, and the
@@ -4461,7 +4466,7 @@ class LocalAssumptionFiller:
         return tz
 
     def _phone_zone(self, device_ids: list[str]) -> str:
-        rows = self.conn.execute("SELECT id, timezone FROM devices ORDER BY id").fetchall()
+        rows = list(device_zones(self.conn).items())
         zones = {resolve_zone(tz) for did, tz in rows if not device_ids or did in device_ids}
         if len(zones) != 1 or None in zones:
             raise Reject("the phones do not share one known time zone; name the phone")

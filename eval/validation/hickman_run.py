@@ -110,7 +110,9 @@ def render_affidavit(claims: list[dict], path: Path) -> Path:
     return path
 
 
-def build(ufdr: Path, claims: list[dict], out: Path, log) -> None:  # noqa: ANN001
+def build(  # noqa: ANN001
+    ufdr: Path, claims: list[dict], out: Path, log, phone_zone: str | None = None
+) -> None:
     from core.ingest.govdoc import PdfGovDocIngester
     from core.ingest.ufdr import UfdrImporter
     from core.review import actions
@@ -133,6 +135,14 @@ def build(ufdr: Path, claims: list[dict], out: Path, log) -> None:  # noqa: ANN0
         kind = ClaimType(c["claim_type"])
         actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
     actions.name_device(conn, f"dev:{SOURCE_ID}", [PHONE_NAME], ACTOR)
+    if phone_zone:
+        # The examiner's statement of the zone, for a package that records none; the action
+        # refuses it when the package does (core/review/actions.set_device_zone).
+        try:
+            actions.set_device_zone(conn, f"dev:{SOURCE_ID}", phone_zone, ACTOR)
+        except actions.ReviewError as e:
+            raise SystemExit(f"--phone-zone: {e}") from None
+        log(f"the phone's zone, as the examiner gives it: {phone_zone}")
     actions.stipulate_device_owner(conn, f"dev:{SOURCE_ID}", OWNER, ACTOR)
     others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - {OWNER})
     linked = {}
@@ -401,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--effort", default=None, help="the cloud model's effort (default: medium)")
     ap.add_argument(
+        "--phone-zone",
+        help="the phone's zone, as the examiner gives it, for a package that records none",
+    )
+    ap.add_argument(
         "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
     )
     a = ap.parse_args(argv)
@@ -455,7 +469,8 @@ def main(argv: list[str] | None = None) -> int:
         if a.report_sha256 and report_sha != a.report_sha256:
             raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
         run["report_xml_sha256"] = report_sha
-        build(a.ufdr, claims, a.out, log)
+        build(a.ufdr, claims, a.out, log, a.phone_zone)
+        run["phone_zone_given"] = a.phone_zone
         inputs = {"claims_sha256": claims_sha, "report_xml_sha256": report_sha, "setup": SETUP}
         built.write_text(json.dumps(inputs), encoding="utf-8")
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")

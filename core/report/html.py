@@ -126,6 +126,7 @@ from core.review.status import (
 from core.review.status import verdict_label as _verdict_label
 from core.review.withheld import Withheld
 from core.review.withheld import summary as withheld_summary
+from core.zones import given_zones
 
 # 0.4.0 (#76): a "Quote check" row in Versions and the run line, and a call's UTC and printed
 # time beside its line (the review screen shows the same line, through record_line).
@@ -238,7 +239,9 @@ from core.review.withheld import summary as withheld_summary
 # counsel_reviewed. Neither displays as expert-confirmed.
 # 0.39.0: a not-tested claim's refusals cite the claim's own words when the filler printed them
 # in single quotes, so a claim that says "deleted" no longer stops the report (14B Mac baseline).
-REPORT_VERSION = "0.39.0"
+# 0.40.0: a time zone the expert gave a phone whose extraction records none is listed as an
+#   expert statement
+REPORT_VERSION = "0.40.0"
 
 # what each provenance tier means, in the report's Limitations and on the Help page
 TIER_WORDS = (
@@ -777,6 +780,14 @@ def _limitations(
             f"finding.</strong> {e(by)} said on {e(at)} that the document's {said} is "
             f"{q(label)} ({e(did)}). Mabillon did not verify it. Every claim that names the "
             "phone this way was audited on that device.</li>"
+        )
+    labels = dict(conn.execute("SELECT id, label FROM devices"))
+    for did, (zone, by, at) in sorted(given_zones(conn).items()):
+        items.append(
+            "<li><strong>The phone's time zone is an expert statement, not a finding.</strong> "
+            f"The extraction of {q(labels.get(did, did))} ({e(did)}) records no time zone; "
+            f"{e(by)} said on {e(at)} that it kept time in {e(zone)}. Mabillon did not verify "
+            "it. Every time range on this phone was read in that zone.</li>"
         )
     for ident, by, at, names in account_names.named_by(conn):
         said = ", ".join(q(n) for n in names)

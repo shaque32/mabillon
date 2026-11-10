@@ -1883,6 +1883,23 @@ def test_a_number_the_model_puts_on_the_call_channel_is_read_in_the_call_log(cal
     assert t.account_ids == ("acct:t:log1", "acct:t:log2"), filler.drops
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "On March 12, 2026, PETROV had no contact with (212) 555-0199 on dev:item1.",
+        "On March 12, 2026, there were no calls between dev:item1 and (212) 555-0199.",
+    ],
+)
+def test_the_call_channel_as_an_app_is_never_the_call_log_for_an_absence(call_log, text):
+    # Read on the call log alone, an absence would miss texts with the number (Greptile on #253).
+    window = W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00")
+    prop = {"template_id": "no_contact", "phones": ["dev:item1"], "window": window,
+            "accounts": [{"as_written": "(212) 555-0199", "app": "call"}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.ABSENCE, [prop])
+    made = [a.params for a in assumptions if a.template_id == "no_contact"]
+    assert not any(set(p.account_ids) & {"acct:t:log1", "acct:t:log2"} for p in made), made
+
+
 def test_the_call_channel_as_an_app_is_not_the_call_log_when_the_claim_names_an_app(call_log):
     text = (
         "On March 12, 2026, at approximately 9:00 p.m., dev:item1 had a Telegram call with"

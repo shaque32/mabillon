@@ -282,3 +282,10 @@ def test_a_capped_run_on_a_model_without_a_price_is_refused(ufdr, tmp_path):
     with pytest.raises(SystemExit, match="no price for"):
         hickman_run.main([*args, "--cloud", "claude-unpriced", "--max-usd", "5"])
     assert not out.exists()
+
+
+def test_a_phone_zone_is_refused_when_the_package_records_one(ufdr, tmp_path):
+    claims, out = _claims(tmp_path), tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake"]
+    with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
+        hickman_run.main([*args, "--phone-zone", "America/New_York"])

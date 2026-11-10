@@ -16,11 +16,13 @@
   this way, so a model that copies only the bare date cannot widen it either (Greptile on
   #253). A capped run on a model with no price is refused before anything is sent. Last, a
   resumed cloud case reuses a stored cloud answer that quoted nothing (an irrelevant label),
-  where before every such answer was sent again: on the iOS 15 rerun (2026-11-10) about 74% of
+  where before every such answer was sent again: on the iOS 15 rerun (2026-11-10, run from the
+  cloud container against hosted Opus 5.5 at medium effort) about 74% of
   stance calls were such answers, and the first resume re-sent them at about $3.40.
   The filler also reads a phone number the model writes on the call channel ("call") as if it
-  were an app as a number in the phone's call log, on ruling R1's terms (the claim names no app,
-  the case has a call log, the words are a number). Opus did this on 6 iOS 15 claims, which
+  were an app as a number in the phone's call log, on ruling R1's terms (the claim is about a
+  call and names no app, the case has a call log, the words are a number), never for a count or
+  an absence, which would then miss texts with the number (Greptile on #253). Opus did this on 6 iOS 15 claims, which
   then went untested; replaying the stored Opus answers on this code fills B01, B04, B05, C24
   and C25 (not re-scored).
 - Where: PR #253
