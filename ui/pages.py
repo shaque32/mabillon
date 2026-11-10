@@ -142,7 +142,7 @@ class Page:
         self.busy = busy  # an audit is running: no re-run of the verdicts
         self.many_cases = many_cases  # the screen was started on a cases folder
         self.path = path  # the page's own path, to mark its tab
-        self.cloud = cloud  # the open case sends stance questions to the cloud model
+        self.cloud = cloud  # the open case runs its model steps on the cloud model
         # the folded demo or test-run banner (stand_in_note), on every page of the case
         self.stand_in = stand_in
 
@@ -216,9 +216,10 @@ class Page:
             f"{MARK}<span>Mabillon</span></a>{case}<div class='right'>"
             + (
                 "<a class='pill' href='/setup#cloud' title='One question at a time goes to "
-                "Anthropic'>Cloud labels on</a>"
+                "Anthropic'>Fast: Opus</a>"
                 if self.cloud
-                else "<span class='pill' title='Nothing leaves this computer'>Offline</span>"
+                else "<span class='pill' title='Every model step runs on this computer'>"
+                "On this computer</span>"
             )
             + who
             + ("<a href='/account' class='help'>Account</a>" if self.account else "")
@@ -2632,18 +2633,27 @@ def _upload_form(
     )
 
 
-def _step_strip(ready: list, audit_busy: bool, model_ok: bool | None = None) -> str:
+def _step_strip(
+    ready: list, audit_busy: bool, model_ok: bool | None = None, local: bool = True
+) -> str:
     """The five steps as one row of links, each marked done or to do from the readiness checks
-    (core.casework.cases.readiness: document, reports, claims, then phone owners if any)."""
-    oks = [r.ok for r in ready]
-    files = all(oks[:2]) if len(oks) >= 2 else False
-    claims = oks[2] if len(oks) >= 3 else False
-    people = oks[3] if len(oks) >= 4 else None
+    (core.casework.cases.readiness, by each check's step). `local`: the case runs on this
+    computer (or has not chosen), so the local model's check counts for step 4."""
+
+    def step(name: str) -> bool | None:
+        oks = [r.ok for r in ready if getattr(r, "step", "") == name]
+        return all(oks) if oks else None
+
+    files = step("files") or False
+    claims = step("claims") or False
+    people = step("owners")
+    chosen = step("model")
+    model = model_ok if chosen is None else chosen and (model_ok is not False or not local)
     steps = [
         ("files", "Files", files),
         ("claims", "Claims", claims),
         ("owners", "Who used each phone", people),
-        ("model", "The model", model_ok),
+        ("model", "The model", model),
         ("run", "Run", True if audit_busy else None),
     ]
     items = []
@@ -2692,7 +2702,8 @@ def setup_page(
         recovery_box(page, recovery_key, recovery_unconfirmed),
         name_form(page),
     ]
-    out.append(_step_strip(ready, audit_busy, model_ok))
+    local = not (cloud_case or {}).get("allowed")
+    out.append(_step_strip(ready, audit_busy, model_ok, local))
 
     # 1. files
     out.append("<h2 id='files'>Files</h2>")
@@ -2888,10 +2899,22 @@ def setup_page(
     out.append(_devices(conn, page, "/setup", heading=False))
     out.append(_identities_step(conn))
 
-    # 4. model and run: the local model first, since every case needs it
+    # 4. where the AI runs (chosen first: claims are proposed on it), then the local model
     out.append("<h2 id='model'>The model</h2>")
     if cloud is not None:
+        out.append(
+            cloud_section(
+                page,
+                cloud,
+                cloud_case or {},
+                cloud_key,
+                job_kind in ("audit", "propose"),
+                key_from=cloud_key_from,
+                encrypted=protection != "plain",
+            )
+        )
         out.append("<h3>The local model</h3>")
+        out.append("<p class='muted'>Needed only for a case that runs on this computer.</p>")
     if model_lines:
         out.append(
             "<ul>"
@@ -2914,23 +2937,6 @@ def setup_page(
             anchor="model",
         )
     )
-    if cloud is not None:
-        out.append(
-            cloud_section(
-                page,
-                cloud,
-                cloud_case or {},
-                cloud_key,
-                job_kind == "audit",
-                key_from=cloud_key_from,
-                encrypted=protection != "plain",
-            )
-        )
-        out.append(
-            "<p class='muted'>The local model is still needed with cloud AI: it proposes "
-            "claims and fills in assumptions on this computer. Only stance questions go to "
-            "the cloud.</p>"
-        )
 
     out.append("<h2 id='run'>Run the audit</h2>")
     blocking = [r for r in ready if not r.ok and r.blocks and r.acknowledge is None]
@@ -2943,7 +2949,7 @@ def setup_page(
         )
         + (
             ""
-            if model_ok is None
+            if model_ok is None or not local
             else "<li class='ok'>Done: the model passed its check.</li>"
             if model_ok
             else "<li class='todo'><strong>To do</strong>: the model failed its check. "
@@ -3008,37 +3014,45 @@ def cloud_section(
     key_from: str | None = None,
     encrypted: bool = False,
 ) -> str:
-    """Step 4's cloud part: which model labels this case, the per-case attestation, the key."""
-    from core.casework.cloud import ATTESTATION, CSAM_NOTE
+    """Step 4's choice of where the case's AI runs: Fast (Opus through Anthropic, recommended)
+    or on this computer, then the key. Nothing is pre-chosen and the attestation is never
+    pre-ticked: it is the expert's own statement, made each time Fast is chosen."""
+    from core.casework.cloud import ATTESTATION, CSAM_NOTE, FAST, FAST_EXPLAINED, LOCAL
 
     use = bool(getattr(choice, "use", False))
     why = str(getattr(choice, "why", ""))
     off = " disabled" if busy else ""
+    chosen = saved.get("chosen") is True
     allowed = saved.get("allowed") is True
     csam = saved.get("csam") is True
+    if not chosen:
+        now = "Not chosen yet. Choose where this case's AI runs before proposing claims."
+    elif use:
+        now = f"{FAST}. {why}"
+    elif allowed:
+        now = f"{FAST} is chosen, but it cannot run yet. {why.removeprefix('Local model: ')}"
+    else:
+        now = f"{LOCAL}. {why.removeprefix('Local model: ')}"
+    fast_pick = " checked" if chosen and allowed else ""
+    local_pick = " checked" if chosen and not allowed else ""
     out = [
-        "<div id='cloud'><h3>Cloud AI for this case</h3>",
-        f"<p><strong>{'Cloud AI on for this case' if use else 'Local only'}.</strong> {e(why)}</p>",
-        "<details class='fold'><summary>What cloud AI sends, and what it never sends</summary>"
-        "<p class='muted'>With cloud AI, Mabillon sends one question at a time to Anthropic under "
-        "your own key: the assumption being tested, one record, the messages around it, the "
-        "claim, and for a group chat its member list (up to 20 accounts, with the names you "
-        "confirmed for them). Never your files or the case database. The cloud model only "
-        "labels evidence; the verdict rules and your review are unchanged. A case's labels never "
-        "mix models: if the cloud model stops answering, the audit pauses and you choose to "
-        "retry it or turn cloud AI off here and run the whole case locally. Every request is "
-        "recorded in the case's audit log, with its time, before it is sent. How long Anthropic "
-        "keeps API data: <a href='https://privacy.claude.com/en/articles/7996866-how-long-do-you-"
-        "store-my-organization-s-data' rel='noreferrer'>Anthropic's commercial retention "
-        "policy</a>.</p></details>",
+        "<div id='cloud'><h3>Where this case's AI runs</h3>",
+        f"<p><strong>{e(now)}</strong></p>",
+        f"<p class='muted'>{e(FAST_EXPLAINED)}</p>",
         page.form(
             "/cloud/case",
-            "<div class='checks'><label><input type='checkbox' name='allowed' value='1'"
-            f"{' checked' if allowed else ''}> {e(ATTESTATION)}</label>"
+            "<fieldset class='checks'><legend>Choose one</legend>"
+            f"<label><input type='radio' name='mode' value='fast' required{fast_pick}> "
+            f"{e(FAST)} (recommended). Every model step runs on Opus.</label>"
+            f"<label><input type='radio' name='mode' value='local' required{local_pick}> "
+            f"{e(LOCAL)}. Every model step runs on the local model; slower.</label>"
+            "</fieldset><div class='checks'>"
+            "<label><input type='checkbox' name='allowed' value='1'> "
+            f"For Fast: {e(ATTESTATION)}</label>"
             "<label><input type='checkbox' name='csam' value='1'"
-            f"{' checked' if csam else ''}> {e(CSAM_NOTE)} This case then never uses cloud AI."
-            "</label></div>"
-            f"<div class='inline-actions'><button type='submit'{off}>Save the cloud choice"
+            f"{' checked' if csam else ''}> {e(CSAM_NOTE)} This case then runs only on this "
+            "computer.</label></div>"
+            f"<div class='inline-actions'><button type='submit'{off}>Save the choice"
             "</button></div>",
             back="/setup",
             anchor="cloud",

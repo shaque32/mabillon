@@ -1369,7 +1369,7 @@ def _versions(conn: sqlite3.Connection, run: dict | None) -> str:
         rows.append(("Challenge step", challenge_label(conn, run)))
         cloud = (run.get("config") or {}).get("cloud")
         if isinstance(cloud, dict):
-            rows.append(("Stance labels", str(cloud.get("why", ""))))
+            rows.append(("Case's model", str(cloud.get("why", ""))))
     for sid, name, version in conn.execute(
         "SELECT source_id, importer, importer_version FROM source_coverage ORDER BY source_id"
     ):

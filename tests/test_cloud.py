@@ -5,6 +5,7 @@ No network: the API is a stand-in client and the local model a scripted fake.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import stat
@@ -405,17 +406,16 @@ def test_the_report_shows_who_attested_and_the_words_they_agreed_to(tmp_path):
     cloud_policy.set_cloud(conn, "expert:Ana", allowed=True, csam=False)
     page = render_report(conn)
     assert "expert:Ana" in page and "set_cloud" in page
-    assert "allows its evidence to be sent to a cloud AI service under my firm" in page
-    assert "informed consent" in page
+    assert "excerpts of its evidence to be sent to Anthropic for AI processing" in page
+    assert "zero data retention in writing" in page and "informed consent" in page
 
 
-def test_a_cloud_estimate_keeps_assumption_filling_at_the_local_speed():
+def test_a_cloud_estimate_runs_every_call_at_the_cloud_speed():
     from core.casework import jobs
 
     local_only = jobs.estimate_seconds(20, 40.0)
-    mixed = jobs.estimate_seconds(20, 40.0, jobs.CLOUD_SECONDS_PER_CALL)
-    stance_calls = jobs.CALLS_PER_CLAIM - jobs.LOCAL_CALLS_PER_CLAIM
-    assert mixed == 20 * (40.0 + stance_calls * jobs.CLOUD_SECONDS_PER_CALL) < local_only
+    on_cloud = jobs.estimate_seconds(20, 40.0, jobs.CLOUD_SECONDS_PER_CALL)
+    assert on_cloud == 20 * jobs.CALLS_PER_CLAIM * jobs.CLOUD_SECONDS_PER_CALL < local_only
 
 
 def test_a_stalled_cloud_request_gives_up_in_minutes():
@@ -558,12 +558,12 @@ def test_the_choice_is_logged_under_the_expert_and_nowhere_readable(case_db):
     entry = cloud_policy.set_cloud(
         case_db, "expert:Ana", allowed=True, csam=False, clock=lambda: at
     )
-    assert entry == {"allowed": True, "csam": False, "attested_by": "expert:Ana",
+    assert entry == {"allowed": True, "csam": False, "chosen": True, "attested_by": "expert:Ana",
                      "attested_at": "2026-10-15T00:00:00Z"}  # fmt: skip
     choice = cloud_policy.choose(case_db, _key)
     assert "attested by Ana on 2026-10-15" in choice.why
     entry = cloud_policy.set_cloud(case_db, "expert:Ana", allowed=True, csam=True)
-    assert entry == {"allowed": False, "csam": True}
+    assert entry == {"allowed": False, "csam": True, "chosen": True}
     rows = case_db.execute("SELECT actor, action, payload_json FROM audit_log").fetchall()
     assert [(a, b) for a, b, _ in rows] == [("expert:Ana", "set_cloud")] * 2
     assert json.loads(rows[0][2])["attestation"] == cloud_policy.ATTESTATION
@@ -632,7 +632,8 @@ def _screen(tmp_path: Path, monkeypatch):  # noqa: ANN001, ANN202
 def test_the_setup_page_attests_per_case_and_keeps_the_key_local(tmp_path, monkeypatch):
     app, get, post = _screen(tmp_path, monkeypatch)
     page = get("/setup").text
-    assert "Cloud AI for this case" in page and "Local only" in page
+    assert "Where this case&#x27;s AI runs" in page or "Where this case's AI runs" in page
+    assert "Not chosen yet" in page and "On this computer" in page
     assert "No cloud key yet" in page
 
     post("/cloud/key", api_key="not a key")
@@ -642,14 +643,94 @@ def test_the_setup_page_attests_per_case_and_keeps_the_key_local(tmp_path, monke
     page = get("/setup").text
     assert KEY not in page and "An Anthropic key is saved on this computer" in page
 
-    post("/cloud/case", allowed="1")
+    post("/cloud/case", mode="fast", allowed="1")
     assert "cloud" not in app.case.settings  # kept in the case database, not case.json
     page = get("/setup").text
-    assert "Cloud AI on for this case" in page and "Cloud labels on" in page
+    assert "Every model step" in page and "Fast: Opus</a>" in page
 
-    post("/cloud/case", allowed="1", csam="1")
+    post("/cloud/case", mode="local", csam="1")
     page = get("/setup").text
-    assert "Local only" in page and "Offline" in page
+    assert "On this computer</span>" in page
+    assert "Offline" not in page  # CLAUDE.md: never describe Mabillon as offline
+
+
+def _cloud_entry(app) -> dict:  # noqa: ANN001
+    from core.db import connect
+
+    conn = connect(app.case.db)
+    try:
+        return cloud_policy.case_cloud(conn)
+    finally:
+        conn.close()
+
+
+def test_a_new_case_has_no_choice_made_and_nothing_is_pre_ticked(tmp_path, monkeypatch):
+    app, get, post = _screen(tmp_path, monkeypatch)
+    form = get("/setup").text.split('action="/cloud/case"', 1)[1].split("</form>", 1)[0]
+    assert " checked" not in form  # neither side, nor the attestation, is chosen for the expert
+    assert cloud_policy.ATTESTATION.split(" (", 1)[0] in html.unescape(form)
+    assert _cloud_entry(app) == {}
+
+
+def test_fast_needs_the_attestation_ticked_and_never_takes_a_csam_case(tmp_path, monkeypatch):
+    app, get, post = _screen(tmp_path, monkeypatch)
+    post("/cloud/case", allowed="1")  # no side chosen
+    post("/cloud/case", mode="fast")  # Fast without the expert's statement
+    post("/cloud/case", mode="fast", allowed="1", csam="1")
+    assert _cloud_entry(app) == {}  # nothing was saved
+    post("/cloud/case", mode="fast", allowed="1")
+    assert _cloud_entry(app)["allowed"] is True
+    form = get("/setup").text.split('action="/cloud/case"', 1)[1].split("</form>", 1)[0]
+    assert "name='allowed' value='1'>" in form  # shown unticked again, even once attested
+    post("/cloud/case", mode="local")
+    entry = _cloud_entry(app)
+    assert entry["chosen"] is True and entry["allowed"] is False
+
+
+def test_claims_and_the_audit_wait_for_the_choice(tmp_path, monkeypatch):
+    from core.casework import cases
+    from core.db import connect
+
+    app, get, post = _screen(tmp_path, monkeypatch)
+    post("/claims/propose", next="/setup")
+    assert app.jobs.current is None  # nothing proposed on a model nobody chose
+    assert app.flash and "choose where the ai runs" in app.flash[0].lower()
+    conn = connect(app.case.db)
+    try:
+        todo = [r.text for r in cases.readiness(app.case, conn) if not r.ok]
+    finally:
+        conn.close()
+    assert any("Choose where the AI runs" in t for t in todo)
+
+
+def test_fast_chosen_without_a_key_waits_rather_than_running_locally(tmp_path, monkeypatch):
+    from core.casework import cases
+    from core.db import connect
+
+    app, get, post = _screen(tmp_path, monkeypatch)
+    post("/cloud/case", mode="fast", allowed="1")  # no key on this computer
+    conn = connect(app.case.db)
+    try:
+        choice = app._cloud_choice(conn)
+        where = cases.where_ai_runs(conn, choice)
+    finally:
+        conn.close()
+    assert not choice.use and not where.ok and "Fast is chosen, but it cannot run" in where.text
+    post("/claims/propose", next="/setup")
+    assert app.jobs.current is None
+
+
+def test_a_case_attested_under_the_old_text_must_choose_again(tmp_path):
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    from core.casework.cases import _logged
+
+    old = "This case's protective order allows its evidence to be sent to a cloud AI service."
+    _logged(conn, datetime.now(UTC), "expert:Ana", cloud_policy.ACTION,
+            {"allowed": True, "csam": False, "attestation": old})  # fmt: skip
+    assert cloud_policy.case_cloud(conn) == {"allowed": False, "csam": False, "chosen": False}
+    assert not cloud_policy.chosen(conn)
 
 
 def test_a_key_from_the_environment_is_not_silently_replaced(tmp_path, monkeypatch):
@@ -860,11 +941,146 @@ def test_the_pill_stays_on_while_a_cloud_audit_runs_after_the_key_goes(tmp_path,
 
     app, get, post = _screen(tmp_path, monkeypatch)
     post("/cloud/key", api_key=KEY)
-    post("/cloud/case", allowed="1")
+    post("/cloud/case", mode="fast", allowed="1")
     job = jobs.Job("audit", app.case.db)
     job.cloud = True
     app.jobs.current = job  # a cloud audit started with the key in place
     (tmp_path / "cloud.json").unlink()  # then the key file goes
-    assert "Cloud labels on" in get("/setup").text
+    assert "Fast: Opus</a>" in get("/setup").text
     job.end("done", "finished")
-    assert "Offline" in get("/setup").text
+    assert "On this computer</span>" in get("/setup").text
+
+
+# ---------------------------------------------------------------- every job on the case's model
+
+
+ACCEPT = '{"decision": "accept", "reason": "Plainly says so."}'
+
+
+def _review_item(n: int, assumption_id: str) -> object:
+    from core.contracts import EvidenceItem, EvidenceStatus, Stance
+
+    return EvidenceItem(
+        id=f"ev:{n}",
+        assumption_id=assumption_id,
+        record_id=f"msg:{n}",
+        ref=SourceRef(source_id="s", locator="l"),
+        stance=Stance.SUPPORTS,
+        quote="meet me at the garage",
+        quote_verified=True,
+        rationale="",
+        tier=ProvenanceTier.OBSERVED,
+        status=EvidenceStatus.OPEN,
+        model_run_id="r",
+    )
+
+
+def test_every_model_job_opens_its_run_on_the_cloud_model(case_db, fake_context):
+    """CLAUDE.md: every model job runs on the case's model. No local model is handed in, so a
+    job that fell back to it would fail to load one."""
+    from core.audit import assumption_filler, review, testability
+    from core.claims import extract
+
+    filler = assumption_filler.create(case_db, cloud_model=FakeCloud([]))
+    jobs_on_cloud = [
+        stance_mod.create(case_db, cloud_model=FakeCloud([])),
+        review.create(case_db, cloud_model=FakeCloud([])),
+        filler,
+        extract.create(case_db, cloud_model=FakeCloud([])),
+        testability.create(case_db, filler, None, 3, cloud_model=FakeCloud([])),
+    ]
+    runs = [r for job in jobs_on_cloud for r in job.model_runs]
+    assert {r.purpose for r in runs} == {"stance", "review", "assumptions", "claims", "testability"}
+    assert {(r.model_name, r.model_sha256) for r in runs} == {
+        ("claude-opus-5-5", "api:claude-opus-5-5")
+    }
+
+
+def test_the_ai_reviewer_on_the_cloud_logs_each_request_and_pauses_when_it_stops(case_db):
+    from core.audit import review
+    from core.audit._local_model import SENT_ACTION
+    from core.contracts import EvidenceStatus
+
+    case_db.execute("PRAGMA foreign_keys = OFF")
+    up = FakeCloud([ACCEPT, cloud.CloudError("ConnectionError: down", sticky=True)])
+    rev = review.create(case_db, cloud_model=up)
+    assert rev.reviewer == "ai:claude-opus-5-5"
+    a = make_assumption("The sender asked to meet at the garage.")
+    assert rev.review(a, _review_item(1, a.id), ">> line").status is EvidenceStatus.AI_ACCEPTED
+    with pytest.raises(CloudPaused):
+        rev.review(a, _review_item(2, a.id), ">> line")
+    sent = case_db.execute("SELECT COUNT(*) FROM audit_log WHERE action = ?", (SENT_ACTION,))
+    assert sent.fetchone()[0] == len(up.prompts) == 2
+
+
+def test_a_sticky_cloud_failure_pauses_assumption_filling(tmp_path):
+    from core.audit import assumption_filler
+    from core.audit._local_model import SENT_ACTION
+    from core.audit.assumptions import TEMPLATES
+    from core.contracts import Claim, ClaimStatus, ClaimType
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    claim = Claim(
+        id="X",
+        paragraph_id="para:1",
+        text="PETROV texted REYES on March 3 to meet at the garage.",
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    up = FakeCloud([cloud.CloudError("ConnectionError: down", sticky=True)])
+    filler = assumption_filler.create(conn, cloud_model=up)
+    with pytest.raises(CloudPaused):
+        filler(claim, list(TEMPLATES.values()))
+    sent = conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = ?", (SENT_ACTION,))
+    assert sent.fetchone()[0] == len(up.prompts) == 1
+
+
+def test_a_cloud_case_builds_every_model_part_on_the_cloud_model(tmp_path, monkeypatch):
+    from core import pipeline
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    monkeypatch.setattr(cloud, "ClaudeModel", lambda cfg: FakeCloud([]))
+    choice = cloud_policy.CloudChoice(True, "allowed", cloud.CloudConfig(api_key=KEY))
+    comps = pipeline.real_components(conn, ai_review=True, cloud=choice)
+    by_job = {r.purpose: r.model_sha256 for r in comps.model_runs}
+    assert {"stance", "assumptions", "review"} <= set(by_job)
+    assert set(by_job.values()) == {"api:claude-opus-5-5"}
+
+
+def test_a_cloud_choice_without_its_settings_never_falls_back_to_the_local_model(tmp_path):
+    from core import pipeline
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    choice = cloud_policy.CloudChoice(True, "allowed", None)
+    with pytest.raises(pipeline.ComponentsMissing):
+        pipeline.real_components(conn, ai_review=True, cloud=choice)
+
+
+def test_the_cli_proposes_claims_on_the_case_model():
+    src = (Path(__file__).resolve().parents[1] / "cli" / "main.py").read_text(encoding="utf-8")
+    assert "extract.create(conn, cloud=choice.config)" in src
+
+
+def test_the_cloud_choice_and_key_cannot_change_while_claims_are_proposed(tmp_path, monkeypatch):
+    """A running claim proposal keeps the model it started on, so withdrawing cloud permission
+    or marking the case CSAM mid-proposal must wait for it, as it does for an audit."""
+    from core.casework import jobs
+
+    app, get, post = _screen(tmp_path, monkeypatch)
+    post("/cloud/key", api_key=KEY)
+    post("/cloud/case", mode="fast", allowed="1")
+    job = jobs.Job("propose", app.case.db)
+    app.jobs.current = job  # a cloud proposal is running
+    post("/cloud/case", mode="local", csam="1")
+    post("/cloud/key/remove")
+    entry = _cloud_entry(app)
+    assert entry["allowed"] is True and entry["csam"] is False  # nothing changed mid-proposal
+    assert cloud.load_config(tmp_path / "cloud.json").api_key == KEY
+    form = get("/setup").text.split('action="/cloud/case"', 1)[1].split("</form>", 1)[0]
+    assert "disabled" in form
+    job.end("done", "finished")
+    post("/cloud/case", mode="local", csam="1")
+    assert _cloud_entry(app)["csam"] is True

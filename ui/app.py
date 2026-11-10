@@ -146,9 +146,9 @@ NEEDS_NO_JOB: dict[str, tuple[str, ...]] = {
     "/claims/propose": ("audit", "propose", "model_check"),
     "/model/check": ("audit", "propose", "model_check"),
     "/audit/start": ("audit", "propose", "model_check"),
-    "/cloud/case": ("audit",),
-    "/cloud/key": ("audit",),
-    "/cloud/key/remove": ("audit",),
+    "/cloud/case": ("audit", "propose"),  # a running job keeps the model it started on
+    "/cloud/key": ("audit", "propose"),  # a running job keeps the model it started on
+    "/cloud/key/remove": ("audit", "propose"),  # a running job keeps the model it started on
     "/case/import": ("audit", "propose", "model_check"),
     "/case/remove_file": ("audit", "propose", "model_check"),
     "/case/new": ("audit", "propose", "model_check"),
@@ -187,9 +187,15 @@ def _real_components(
     return pipeline.real_components(conn, ai_review=ai_review, cloud=cloud)
 
 
-def _real_extractor(conn: sqlite3.Connection) -> object:
+def _real_extractor(
+    conn: sqlite3.Connection, cloud: cloud_policy.CloudChoice | None = None
+) -> object:
+    """The claim extractor on the case's model: the cloud model when the case's cloud choice
+    allows it (CLAUDE.md: every model job runs on the case's model), else the local model."""
     from core.claims import extract
 
+    if cloud is not None and cloud.use:
+        return extract.create(conn, cloud=cloud.config)
     return extract.create(conn)
 
 
@@ -271,7 +277,7 @@ class App:
         self._reported: jobs.Job | None = None  # the finished job whose result Set up showed
         self._claim_draft: dict[str, str] | None = None  # a refused Add a claim, to refill
         self.components_for = components_for or _real_components
-        self.extractor_for = extractor_for or _real_extractor
+        self.extractor_for = extractor_for or self._case_extractor
         self.model_check = model_check
         self.last_check: ModelCheck | None = None
         self.session = secrets.token_hex(8)  # names this screen's page views in the trail
@@ -573,7 +579,7 @@ class App:
             what = {
                 "audit": f"The audit is running: {job.done} of {job.total} claims finished."
                 + ("" if self.path == "/run" else " <a href='/run'>See its progress</a>."),
-                "propose": f"The local model is proposing claims: {job.done} of {job.total} "
+                "propose": f"The model is proposing claims: {job.done} of {job.total} "
                 "paragraphs. <a href='/setup'>See the claims</a>.",
                 "model_check": "Checking the model. <a href='/setup'>See the result</a>.",
             }
@@ -1357,8 +1363,8 @@ class App:
             calls = f"about {jobs.CALLS_PER_CLAIM} model calls per claim at {spc:.0f} s per call"
         else:
             calls = (
-                f"per claim, about {jobs.CALLS_PER_CLAIM - jobs.LOCAL_CALLS_PER_CLAIM} cloud calls"
-                f" at {cloud_spc:.0f} s and {jobs.LOCAL_CALLS_PER_CLAIM} local call at {spc:.0f} s"
+                f"about {jobs.CALLS_PER_CLAIM} cloud model calls per claim"
+                f" at {cloud_spc:.0f} s per call"
             )
         estimate = (
             f"Rough estimate for {n} claims: "
@@ -1390,7 +1396,7 @@ class App:
             page,
             inputs_folder=str(case.inputs),
             order=order,
-            ready=cases.readiness(case, conn),
+            ready=cases.readiness(case, conn, self._cloud_choice(conn)),
             counts=cases.source_counts(conn),
             model_lines=model_lines,
             model_note=note,
@@ -1417,13 +1423,31 @@ class App:
         cid = f.get("claim", "")
         return f"{_named(conn, cid)} now runs at position {order.index(cid) + 1}."
 
+    def _case_extractor(self, conn: sqlite3.Connection) -> object:
+        return _real_extractor(conn, self._cloud_choice(conn))
+
     def _propose(self) -> str:
         _ = self.actor  # a named expert starts model work on the case
+        case = self._open()
+        try:
+            conn = connect(case.db)
+        except (*db.Error, CaseLocked, EncryptionError):
+            on_cloud = False
+        else:
+            try:
+                choice = self._cloud_choice(conn)
+                where = cases.where_ai_runs(conn, choice)
+                on_cloud = choice.use
+            finally:
+                conn.close()
+            if not where.ok:  # claims are proposed on the case's model, so it is chosen first
+                raise ReviewError(where.text[0].lower() + where.text[1:] + " See step 4.")
         self.jobs.start(
-            jobs.Job("propose", self._open().db),
+            jobs.Job("propose", case.db),
             jobs.propose_job(extractor_for=self.extractor_for),
         )
-        return "The local model is proposing claims in the background. " + UPDATES
+        who = "The cloud model" if on_cloud else "The local model"
+        return f"{who} is proposing claims in the background. " + UPDATES
 
     def _check_model(self) -> str:
         if self.model_check is None:
@@ -1447,7 +1471,7 @@ class App:
         return cloud_policy.choose(conn, self._cloud_load)
 
     def _case_uses_cloud(self) -> bool:
-        """For the header pill: does the open case send stance questions to the cloud?"""
+        """For the header pill: does the open case run its model steps on the cloud?"""
         if self.case is None:
             return False
         job = self._job("audit")
@@ -1479,20 +1503,33 @@ class App:
 
     def _cloud_case(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
         _ = self._open()
-        entry = cloud_policy.set_cloud(
-            conn,
-            self.actor,
-            allowed=f.get("allowed") == "1",
-            csam=f.get("csam") == "1",
-        )
+        mode = f.get("mode", "")
+        csam = f.get("csam") == "1"
+        if mode not in ("fast", "local"):
+            raise ReviewError(
+                f"choose where this case's AI runs: {cloud_policy.FAST} or "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        if mode == "fast" and csam:
+            raise ReviewError(
+                "a case that may contain CSAM never uses cloud AI: choose "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        if mode == "fast" and f.get("allowed") != "1":
+            raise ReviewError(
+                "Fast needs your statement about the protective order, the key's zero data "
+                "retention and your client's consent: tick it, or choose "
+                f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
+            )
+        entry = cloud_policy.set_cloud(conn, self.actor, allowed=mode == "fast", csam=csam)
         if entry["csam"]:
-            return "Saved: this case may contain CSAM, so it runs on the local model only."
+            return "Saved: this case may contain CSAM, so every model step runs on this computer."
         if entry["allowed"]:
             return (
-                "Saved: this case may use cloud AI. If the cloud model stops answering, the audit"
-                " pauses."
+                f"Saved: {cloud_policy.FAST} for this case. If the cloud model stops answering,"
+                " the audit pauses."
             )
-        return "Saved: this case runs on the local model only."
+        return "Saved: every model step of this case runs on this computer."
 
     def _cloud_key_remove(self) -> str:
         _ = self.actor
@@ -1539,7 +1576,7 @@ class App:
             allowed, why = self.signin.may_start_audit()
             if not allowed:
                 raise ReviewError(why)
-        ready = cases.readiness(case, conn)
+        ready = cases.readiness(case, conn, self._cloud_choice(conn))
         todo = [
             r for r in ready if not r.ok and not (r.acknowledge and f.get(r.acknowledge) == "1")
         ]
@@ -1568,7 +1605,8 @@ class App:
                 actor=actor,
                 order=order,
                 components_for=components_for,
-                model_check=model_check_once if check is not None else None,
+                # A case on the cloud model loads no local model, so it needs no local check.
+                model_check=model_check_once if check is not None and not choice.use else None,
                 cloud_opt_in=choice.use,
                 ai_review=f.get("ai_review") == "1",
                 label_all=f.get("label_all") == "1",
@@ -1576,8 +1614,8 @@ class App:
             ),
         )
         where = (
-            f" Stance labels come from the cloud model ({choice.config.model}); if it stops "
-            "answering, the audit pauses. The local model does the other steps."
+            f" Every model step runs on the cloud model ({choice.config.model}); if it stops "
+            "answering, the audit pauses."
             if choice.use and choice.config is not None
             else ""
         )
@@ -1591,7 +1629,7 @@ class App:
             what = f"the {left} claims left ({reused} already finished are reused)"
         first = (
             f"Checking the model first; if it passes, the audit runs on {what}"
-            if check is not None
+            if check is not None and not choice.use
             else f"The audit started on {what}"
         )
         return (

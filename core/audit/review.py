@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
@@ -41,7 +41,7 @@ from core.audit._llm_json import (
     run_json_call,
     utc_now,
 )
-from core.audit._local_model import LocalModel, open_run
+from core.audit._local_model import LocalModel, open_job_run
 from core.audit.translation import needs_human_reader
 from core.contracts import (
     Assumption,
@@ -212,11 +212,27 @@ def _failed(why: str) -> str:
     return f"Dismissed because the AI review could not be completed ({why})."
 
 
-def create(conn: sqlite3.Connection, *, model: LocalModel | None = None) -> LocalEvidenceReviewer:
-    """The pipeline's AI reviewer: the signed reviewer prompt and the configured local model,
-    with prior decisions read from evidence_reviews. Raises if the model config is missing."""
+def create(
+    conn: sqlite3.Connection,
+    *,
+    model: LocalModel | None = None,
+    cloud: Any = None,
+    cloud_model: Any = None,
+) -> LocalEvidenceReviewer:
+    """The pipeline's AI reviewer: the signed reviewer prompt and the case's model, with prior
+    decisions read from evidence_reviews. Raises if the model config is missing. `cloud` (the
+    CloudConfig of a case that opted in to cloud AI) or `cloud_model` (a stand-in) puts it on
+    the cloud model, with every request logged before it is sent (open_cloud_run)."""
     template = load_prompt(PROMPT_FILE)
-    opened = open_run(conn, "review", template, model=model, schema=REVIEW_SCHEMA)
+    opened = open_job_run(
+        conn,
+        "review",
+        template,
+        model=model,
+        cloud=cloud,
+        cloud_model=cloud_model,
+        schema=REVIEW_SCHEMA,
+    )
     reviewer = LocalEvidenceReviewer(
         opened.port,
         model_name=opened.model_name,

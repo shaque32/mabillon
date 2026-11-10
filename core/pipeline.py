@@ -444,16 +444,23 @@ def real_components(
     from core.audit.assumption_filler is used; it resolves names only to persons already in
     the case, so the expert records device-owner stipulations before the audit runs.
 
-    cloud is the case's CloudChoice (core/casework/cloud.py). When it allows cloud, the stance
-    labeler is the cloud model with the local model behind it (core/audit/stance.py create);
-    every other part stays local.
+    cloud is the case's CloudChoice (core/casework/cloud.py). When it allows cloud, every model
+    part (the stance labeler, the assumption filler and the AI reviewer) runs on the cloud model
+    for the whole case (CLAUDE.md: every model job runs on the case's model), each request
+    logged before it is sent and a sticky failure pausing the audit (core/audit/_local_model.py
+    open_cloud_run). No local model is loaded for such a case. A filler handed in (an expert's
+    or the signed eval spec's entries) is used as given.
     """
     built: dict[str, object] = dict(replace or {})
     use_cloud = cloud is not None and bool(getattr(cloud, "use", False))
+    cfg = getattr(cloud, "config", None) if use_cloud else None
+    if use_cloud and cfg is None:  # never fall back to the local model for part of the case
+        raise ComponentsMissing("the case's cloud choice has no cloud model settings")
+    on_cloud: dict[str, object] = {"cloud": cfg} if use_cloud else {}
     if use_cloud and "labeler" not in built:
         from core.audit import stance as stance_mod
 
-        built["labeler"] = stance_mod.create(conn, cloud=getattr(cloud, "config", None))
+        built["labeler"] = stance_mod.create(conn, cloud=cfg)
     if not ai_review:
         built.setdefault("reviewer", None)
     missing: list[str] = []
@@ -464,7 +471,7 @@ def real_components(
             missing.append("core.audit.assumption_filler")
         else:
             try:
-                filler = filler_mod.create(conn)
+                filler = filler_mod.create(conn, **on_cloud)
             except Exception as e:  # noqa: BLE001 - e.g. the signed prompt or model is missing
                 raise ComponentsMissing(f"assumption filler not ready: {e}") from e
     reviewable: Callable[[EvidenceItem], bool] = _always
@@ -480,9 +487,12 @@ def real_components(
         if create is None:
             missing.append(f"{module}.create")
             continue
-        built[key] = (
-            create(conn, filler=filler) if key == "assumptions" and filler else create(conn)
-        )
+        if key == "assumptions" and filler:
+            built[key] = create(conn, filler=filler)
+        elif key == "reviewer":
+            built[key] = create(conn, **on_cloud)
+        else:
+            built[key] = create(conn)
         if key == "reviewer" and hasattr(mod, "is_reviewable"):
             reviewable = mod.is_reviewable
     if missing:

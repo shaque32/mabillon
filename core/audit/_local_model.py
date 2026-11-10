@@ -275,7 +275,7 @@ def next_call_seq(conn: sqlite3.Connection, run_id: str) -> int:
 
 @dataclass(frozen=True)
 class OpenedRun:
-    port: RunPort
+    port: RunPort | CloudPort  # CloudPort for a job of a case on the cloud model
     run: ModelRun
     recorder: CallRecorder
     model_name: str
@@ -456,10 +456,11 @@ class SentLog:
 
 
 class CloudPort:
-    """The stance labeler's port for a case that opted in to cloud AI.
+    """The port of a model job (stance labels, AI review, assumption filling, claim proposal,
+    the testability step) for a case that opted in to cloud AI.
 
-    Every stance label in the case comes from the cloud model, so a case's labels never mix
-    models. A sticky failure (no network, a rejected key, the API down after its retries)
+    Every answer of that job in the case comes from the cloud model, so a case's labels never
+    mix models. A sticky failure (no network, a rejected key, the API down after its retries)
     pauses the run (CloudPaused): the expert then resumes to retry the cloud model, or turns
     cloud AI off for the case and runs it again, which labels the whole case locally (stored
     outputs are keyed by model, so no cloud label is reused). Any other failure (a refusal, an
@@ -491,3 +492,69 @@ class CloudPort:
             if e.sticky:
                 raise CloudPaused(f"the cloud model stopped answering ({e.reason})") from e
             raise  # recorded as an error; the label is dropped
+
+
+def open_cloud_run(
+    conn: sqlite3.Connection,
+    purpose: str,
+    template: str,
+    *,
+    cloud: Any = None,
+    cloud_model: Any = None,
+    schema: Mapping[str, Any] | None = None,
+    reuse: bool = True,
+    code_version: str | None = None,
+) -> OpenedRun:
+    """A model run on the cloud model for one job of a case that opted in to cloud AI (CLAUDE.md:
+    every model job runs on the case's model). The same safeguards for every job: each request is
+    written to the case's audit log before it is sent (SentLog), a sticky failure pauses the
+    audit (CloudPort), and an unusable stored answer is asked again rather than reused.
+    `cloud` is the case's CloudConfig (core/llm/cloud.py); `cloud_model` stands in for the API
+    in tests and the eval."""
+    if cloud_model is None:
+        if cloud is None:
+            raise ValueError("open_cloud_run needs the case's cloud config or a cloud model")
+        from core.llm.cloud import ClaudeModel  # the network client is imported only here
+
+        cloud_model = ClaudeModel(cloud)
+    up = open_run(
+        conn,
+        purpose,
+        template,
+        model=SentLog(cloud_model, conn),  # type: ignore[arg-type]
+        schema=schema,
+        reuse=reuse,
+        reuse_unusable=False,
+        code_version=code_version,
+    )
+    return OpenedRun(CloudPort(up), up.run, up.recorder, up.model_name)
+
+
+def open_job_run(
+    conn: sqlite3.Connection,
+    purpose: str,
+    template: str,
+    *,
+    model: LocalModel | None = None,
+    cloud: Any = None,
+    cloud_model: Any = None,
+    schema: Mapping[str, Any] | None = None,
+    reuse: bool = True,
+    code_version: str | None = None,
+) -> OpenedRun:
+    """The run for one model job: on the cloud model when the case opted in (`cloud` or
+    `cloud_model` given, open_cloud_run), else on the local model (open_run)."""
+    if cloud is not None or cloud_model is not None:
+        return open_cloud_run(
+            conn,
+            purpose,
+            template,
+            cloud=cloud,
+            cloud_model=cloud_model,
+            schema=schema,
+            reuse=reuse,
+            code_version=code_version,
+        )
+    return open_run(
+        conn, purpose, template, model=model, schema=schema, reuse=reuse, code_version=code_version
+    )

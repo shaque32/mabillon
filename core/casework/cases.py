@@ -614,10 +614,14 @@ class Ready:
     text: str
     blocks: bool = True  # the audit cannot start until this is ok
     acknowledge: str | None = None  # form field that lets the expert go on anyway
+    step: str = ""  # the setup step it belongs to: files, claims, owners or model
 
 
-def readiness(case: Case, conn: sqlite3.Connection) -> list[Ready]:
-    """What must be true before the audit starts, in the order the setup page shows it."""
+def readiness(case: Case, conn: sqlite3.Connection, cloud: object | None = None) -> list[Ready]:
+    """What must be true before the audit starts, in the order the setup page shows it.
+    `cloud` is the case's CloudChoice (core/casework/cloud.py choose) when the caller has it: a
+    case whose expert chose Fast but whose cloud model cannot run then waits, rather than
+    running on the local model."""
     out: list[Ready] = []
     govdocs = conn.execute("SELECT COUNT(*) FROM govdocs").fetchone()[0]
     reports = conn.execute("SELECT COUNT(*) FROM sources WHERE kind != 'govdoc'").fetchone()[0]
@@ -627,6 +631,7 @@ def readiness(case: Case, conn: sqlite3.Connection) -> list[Ready]:
             "The government document is imported."
             if govdocs
             else "Import the government document.",
+            step="files",
         )
     )
     out.append(
@@ -635,22 +640,28 @@ def readiness(case: Case, conn: sqlite3.Connection) -> list[Ready]:
             f"{reports} phone report(s) imported."
             if reports
             else "Import at least one phone report.",
+            step="files",
         )
     )
     proposed = conn.execute("SELECT COUNT(*) FROM claims WHERE status = 'proposed'").fetchone()[0]
     order = claim_order(case, conn)
     if not order:
-        out.append(Ready(False, "Add claims: propose them with the local model, or add your own."))
+        out.append(
+            Ready(False, "Add claims: propose them with the model, or add your own.", step="claims")
+        )
     elif proposed:
         out.append(
             Ready(
                 False,
                 f"{proposed} proposed claim(s) still need your decision: accept, edit "
                 "or remove each one.",
+                step="claims",
             )
         )
     else:
-        out.append(Ready(True, f"{len(order)} claim(s) to audit, in the order shown."))
+        out.append(
+            Ready(True, f"{len(order)} claim(s) to audit, in the order shown.", step="claims")
+        )
     devices = list(conn.execute("SELECT id FROM devices ORDER BY id"))
     stipulated = {
         r[0]
@@ -674,8 +685,36 @@ def readiness(case: Case, conn: sqlite3.Connection) -> list[Ready]:
                 f"{'has' if len(named) == 1 else 'have'} no stipulated user. "
                 "Without one, checks on who sent a message come back inconclusive.",
                 acknowledge="owners_ok",
+                step="owners",
             )
         )
     elif devices:
-        out.append(Ready(True, "Every phone has a stipulated user."))
+        out.append(Ready(True, "Every phone has a stipulated user.", step="owners"))
+    out.append(where_ai_runs(conn, cloud))
     return out
+
+
+def where_ai_runs(conn: sqlite3.Connection, cloud: object | None = None) -> Ready:
+    """The expert's choice of where the case's AI runs (core/casework/cloud.py). Nothing is
+    pre-chosen: the app proposes claims and starts the audit only once it is made."""
+    from core.casework import cloud as cloud_policy
+
+    saved = cloud_policy.case_cloud(conn)
+    if saved.get("chosen") is not True:
+        return Ready(
+            False,
+            f"Choose where the AI runs for this case: {cloud_policy.FAST} (recommended) or "
+            f"{cloud_policy.LOCAL.lower()}.",
+            step="model",
+        )
+    if saved.get("allowed") is not True:
+        return Ready(True, f"Where the AI runs: {cloud_policy.LOCAL.lower()}.", step="model")
+    if cloud is not None and not bool(getattr(cloud, "use", False)):
+        why = str(getattr(cloud, "why", "")).removeprefix("Local model: ")
+        return Ready(
+            False,
+            f"Fast is chosen, but it cannot run: {why} Fix that, or choose "
+            f"{cloud_policy.LOCAL.lower()}.",
+            step="model",
+        )
+    return Ready(True, "Where the AI runs: Fast, Opus through Anthropic.", step="model")

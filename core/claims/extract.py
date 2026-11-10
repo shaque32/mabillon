@@ -14,7 +14,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
@@ -31,7 +31,7 @@ from core.audit._llm_json import (
     required_placeholders,
     run_json_call,
 )
-from core.audit._local_model import LocalModel, open_run
+from core.audit._local_model import LocalModel, open_job_run
 from core.contracts import Claim, ClaimStatus, ClaimType, GovDocParagraph, ModelRun
 
 PROMPT_FILE = "claims.md"
@@ -206,13 +206,29 @@ class LocalClaimExtractor:
 
 
 def create(
-    conn: sqlite3.Connection, *, model: LocalModel | None = None, reuse: bool = True
+    conn: sqlite3.Connection,
+    *,
+    model: LocalModel | None = None,
+    reuse: bool = True,
+    cloud: Any = None,
+    cloud_model: Any = None,
 ) -> LocalClaimExtractor:
-    """The product's claim extractor: the signed claims prompt and the configured local model
-    (core/audit/_local_model.py). Raises if the signed prompt or the model config is missing.
-    Its ModelRun is in `model_runs`; core/claims/propose.py stores it with the calls."""
+    """The product's claim extractor: the signed claims prompt and the case's model
+    (core/audit/_local_model.py): the configured local model, or with `cloud` (or a stand-in
+    `cloud_model`) the cloud model of a case that opted in. Raises if the signed prompt or the
+    model config is missing. Its ModelRun is in `model_runs`; core/claims/propose.py stores it
+    with the calls."""
     template = load_prompt(PROMPT_FILE)
-    opened = open_run(conn, "claims", template, model=model, schema=CLAIMS_SCHEMA, reuse=reuse)
+    opened = open_job_run(
+        conn,
+        "claims",
+        template,
+        model=model,
+        cloud=cloud,
+        cloud_model=cloud_model,
+        schema=CLAIMS_SCHEMA,
+        reuse=reuse,
+    )
     extractor = LocalClaimExtractor(opened.port, template=template, recorder=opened.recorder)
     extractor.model_runs = (opened.run,)
     return extractor

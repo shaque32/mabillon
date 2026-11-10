@@ -249,7 +249,7 @@ def cmd_govdoc(a: argparse.Namespace) -> int:
 def cmd_claims(a: argparse.Namespace) -> int:
     conn = _open(a.db)
     if a.action == "propose":
-        return _propose(conn, a.only)
+        return _propose(conn, a.only, Path(a.db))
     if a.action == "list":
         for c in pipeline.load_claims(conn, include_removed=True):
             print(f"{c.id}\t{c.status.value}\t{c.claim_type.value}\t{c.paragraph_id}\t{c.text}")
@@ -262,22 +262,35 @@ def cmd_claims(a: argparse.Namespace) -> int:
     return 0
 
 
-def _propose(conn, paragraph_ids: list[str] | None) -> int:  # noqa: ANN001
-    from core.audit._llm_json import PromptMissingError
+def _propose(conn, paragraph_ids: list[str] | None, case_db: Path | None = None) -> int:  # noqa: ANN001
+    import functools
+
+    from core.audit._llm_json import ModelUnavailable, PromptMissingError
     from core.audit._local_model import ModelConfigError
+    from core.casework import cloud as cloud_policy
     from core.claims import extract
     from core.claims.propose import load_paragraphs, propose_claims
+    from core.llm import cloud as cloud_llm
 
+    # The case's model proposes the claims, as it runs every other model step.
+    choice = cloud_policy.choose(conn, functools.partial(cloud_llm.load_config, case_db=case_db))
+    print(f"claims propose: {choice.why}", file=sys.stderr)
     try:
         paragraphs = load_paragraphs(conn, paragraph_ids)
-        extractor = extract.create(conn)
+        extractor = (
+            extract.create(conn, cloud=choice.config) if choice.use else extract.create(conn)
+        )
     except (ValueError, ModelConfigError, PromptMissingError) as e:
         print(f"claims propose: {e}", file=sys.stderr)
         return 2
     if not paragraphs:
         print("claims propose: no paragraphs; import the government document first")
         return 2
-    r = propose_claims(conn, extractor, paragraphs)
+    try:
+        r = propose_claims(conn, extractor, paragraphs)
+    except ModelUnavailable as e:
+        print(f"claims propose stopped: {e}. Run it again to continue.", file=sys.stderr)
+        return 1
     for c in r.claims:
         print(f"{c.id}\tproposed\t{c.claim_type.value}\t{c.paragraph_id}\t{c.text}")
     for d in r.drops:

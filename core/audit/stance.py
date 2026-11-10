@@ -43,9 +43,8 @@ from core.audit._llm_json import (
     run_json_call,
 )
 from core.audit._local_model import (
-    CloudPort,
     LocalModel,
-    SentLog,
+    open_cloud_run,
     open_run,
 )
 from core.audit.checks._common import fold_text
@@ -374,16 +373,10 @@ def create(
         opened = open_run(conn, "stance", template, model=model, schema=STANCE_SCHEMA)
         port, recorder, runs = opened.port, opened.recorder, (opened.run,)
     else:
-        if cloud_model is None:
-            from core.llm.cloud import ClaudeModel
-
-            assert cloud is not None  # noqa: S101 - narrowed by the branch
-            cloud_model = ClaudeModel(cloud)
-        logged = SentLog(cloud_model, conn)
-        up = open_run(
-            conn, "stance", template, model=logged, schema=STANCE_SCHEMA, reuse_unusable=False
+        up = open_cloud_run(
+            conn, "stance", template, cloud=cloud, cloud_model=cloud_model, schema=STANCE_SCHEMA
         )
-        port, recorder, runs = CloudPort(up), up.recorder, (up.run,)
+        port, recorder, runs = up.port, up.recorder, (up.run,)
     names = case_names(conn)
 
     def claim_text(claim_id: str) -> str | None:
