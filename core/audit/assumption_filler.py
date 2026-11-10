@@ -946,6 +946,22 @@ def unquoted_time_quote(claim_text: str, p: _ProposalOut) -> tuple[_ProposalOut,
     return p.model_copy(update={"quoted_text": ""}), note
 
 
+def _without_claims_comma(words: str, text: str) -> str:
+    """The quoted words without a comma that ends them right before the closing mark: in
+    '"Yep, ready when needed," shows that ...' the comma is the claim's own punctuation (a
+    closing mark goes after a comma in American usage), not the message's. Dropping it only
+    shortens words the claim writes inside its quotes, so they stay verbatim from the claim, and
+    a message that does end in the comma still holds them. Any other end is kept as written."""
+    w = words.strip()
+    if not w.endswith(",") or w.endswith(",,"):
+        return w
+    flat = _flat(_nfc(text))
+    spans = [m.group(0) for m in _QUOTE_SPAN_RE.finditer(flat)]
+    if not any(span[1:-1].rstrip().endswith(_flat(_nfc(w))) for span in spans):
+        return w
+    return w[:-1].rstrip()
+
+
 def _in_quotes(value: str, text: str) -> bool:
     """True when the value lies inside one quoted span of the text: words the claim quotes,
     not words it uses itself ("call" in "placed a Telegram call")."""
@@ -2965,7 +2981,11 @@ class LocalAssumptionFiller:
                 if any(_nfc(n.strip()) == _nfc(p.quoted_text.strip()) for n in names):
                     # 'the Teams user "ThisIs DfirTwo"': a quoted name is a party, not words.
                     raise Reject(f"{p.quoted_text.strip()!r} is a party's name, not a message")
-            params["quoted_text"] = p.quoted_text.strip()
+            params["quoted_text"] = (
+                _without_claims_comma(p.quoted_text, claim.text)
+                if tpl.id in MESSAGE_TEXT_TEMPLATES
+                else p.quoted_text.strip()
+            )
         if tpl.id == "sender":
             for value in [*p.people, *p.handles, *(a.as_written for a in p.accounts)]:
                 if only_addressed(value, claim.text, p.quoted_text):
@@ -3591,7 +3611,7 @@ class LocalAssumptionFiller:
                 " a message, or a colon)"
             )
         start, end = messages[0]
-        words = text[start + 1 : end - 1].strip()
+        words = _without_claims_comma(text[start + 1 : end - 1], text)
         if "\n" in words or "\r" in words or not words:
             return None, "the quoted message is empty or runs over two lines"
         return words, ""
