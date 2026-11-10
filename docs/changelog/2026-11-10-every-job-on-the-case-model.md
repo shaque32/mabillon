@@ -13,8 +13,8 @@
   the cloud model (app and `mabillon claims`), and estimates time at the cloud rate for every
   call. A cloud choice that arrives without its settings stops the audit
   (`ComponentsMissing`) rather than putting part of the case on the local model. The report's
-  versions row reads "Case's model". Cloud stays opt-in per case; making it the default choice
-  at setup, with the attestation and setup text Arsh approved on 2026-11-10, is the next PR.
+  versions row reads "Case's model". The setup choice that makes Fast the recommended option
+  is its own entry (`2026-11-10-fast-recommended-at-setup.md`, same PR).
 - Where: PR #254
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`, on stand-in models with
   no network: every job opens its run on the cloud model; the AI reviewer and the assumption
