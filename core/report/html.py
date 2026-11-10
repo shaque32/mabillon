@@ -781,11 +781,11 @@ def _limitations(
             f"{q(label)} ({e(did)}). Mabillon did not verify it. Every claim that names the "
             "phone this way was audited on that device.</li>"
         )
-    labels = dict(conn.execute("SELECT id, label FROM devices"))
+    device_labels = dict(conn.execute("SELECT id, label FROM devices"))
     for did, (zone, by, at) in sorted(given_zones(conn).items()):
         items.append(
             "<li><strong>The phone's time zone is an expert statement, not a finding.</strong> "
-            f"The extraction of {q(labels.get(did, did))} ({e(did)}) records no time zone; "
+            f"The extraction of {q(device_labels.get(did, did))} ({e(did)}) records no time zone; "
             f"{e(by)} said on {e(at)} that it kept time in {e(zone)}. Mabillon did not verify "
             "it. Every time range on this phone was read in that zone.</li>"
         )

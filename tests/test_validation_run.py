@@ -133,6 +133,12 @@ def test_a_resume_with_other_inputs_is_refused(ufdr, tmp_path):
             ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake",
              "--report-sha256", "0" * 64]
         )  # fmt: skip
+    # the zone is given only at build, so a resume that names one is refused, not ignored
+    with pytest.raises(SystemExit, match="--phone-zone: .* was built with no zone given"):
+        hickman_run.main(
+            ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake",
+             "--phone-zone", "America/New_York"]
+        )  # fmt: skip
     assert (out / "run.json").read_text(
         encoding="utf-8"
     ) == run  # the record still names the case's inputs

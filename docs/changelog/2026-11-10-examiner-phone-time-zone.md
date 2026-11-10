@@ -13,7 +13,11 @@
   - Every reader of a phone's zone now goes through `core/zones.device_zones`, so the given zone
     is read alike everywhere: the filler, the checks, local time, timelines, paired selection
     and the report's "why" lines.
-  - The validation driver gains `--phone-zone`.
+  - Giving, changing or clearing a zone after an audit marks that audit's verdicts as not
+    current (`core/review/status.case_changed_after`), counted from the full audit a rules-only
+    re-run reuses. The bundle check counts it among the inputs that may change a repair.
+  - The validation driver gains `--phone-zone`. The zone is given only when the case is built,
+    so a resume that names a different zone is refused.
   - Found on 2026-11-10: the public Android 12 and Android 13 Hickman packages
     (report.xml-only UFDRs) record no device zone, so the Android 12 shakedown tested 0 of 16
     claims.
@@ -24,10 +28,12 @@
   - abbreviations and offsets are refused;
   - a recorded zone is kept;
   - expert only;
-  - the report line passes the report text invariants.
+  - the report line passes the report text invariants, and the report still defines the
+    verdict labels it uses;
+  - a zone given after an audit makes its verdicts not current, also after a rules-only re-run.
 
   `tests/test_validation_run.py` also checks that `--phone-zone` is refused on a package that
-  records a zone. `make check` ran on 2026-11-10 in the cloud container.
+  records a zone, and that a resume naming another zone is refused. `make check` ran on 2026-11-10 in the cloud container.
 - Open: how often real Android exports lack a device zone is unverified; only the two public
   Hickman packages were checked. The given zone is the examiner's statement, and Mabillon does
   not check it against the records (for example, a phone that changed zones while travelling).

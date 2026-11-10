@@ -455,6 +455,14 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 f"{a.out} was built from report.xml {was['report_xml_sha256']}; use a new --out"
             )
+        # The zone is given only when the case is built, so a resume never changes it.
+        zone_was = was.get("phone_zone", run.get("phone_zone_given"))
+        if (a.phone_zone or None) != (zone_was or None):
+            raise SystemExit(
+                f"--phone-zone: {a.out} was built with "
+                + (f"the zone {zone_was}" if zone_was else "no zone given")
+                + "; resume with the same --phone-zone, or use a new --out"
+            )
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -471,7 +479,12 @@ def main(argv: list[str] | None = None) -> int:
         run["report_xml_sha256"] = report_sha
         build(a.ufdr, claims, a.out, log, a.phone_zone)
         run["phone_zone_given"] = a.phone_zone
-        inputs = {"claims_sha256": claims_sha, "report_xml_sha256": report_sha, "setup": SETUP}
+        inputs = {
+            "claims_sha256": claims_sha,
+            "report_xml_sha256": report_sha,
+            "setup": SETUP,
+            "phone_zone": a.phone_zone,
+        }
         built.write_text(json.dumps(inputs), encoding="utf-8")
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     from core.audit._llm_json import CloudPaused

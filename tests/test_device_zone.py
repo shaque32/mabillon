@@ -13,8 +13,9 @@ from core.audit.checks._common import CaseData
 from core.audit.invariants import check_report_text
 from core.enrich.local_time import device_zone
 from core.report.html import _limitations, sources
-from core.review import actions, audit_log
+from core.review import actions, audit_log, status
 from core.review.actions import ReviewError
+from core.review.status import SUPPORTED_CHECKED
 from core.zones import GIVEN_ACTION, device_zones, given_zones
 from eval.synthetic.generate import generate
 
@@ -95,3 +96,28 @@ def test_the_report_lists_the_zone_as_the_experts_statement(conn):
     assert "The phone's time zone is an expert statement" in text
     assert "America/New_York" in text and "dev:item1" in text and EXPERT in text
     check_report_text(text)
+    # the device labels never stand in for the verdict labels the report defines
+    text = _limitations(conn, sources(conn), {SUPPORTED_CHECKED})
+    assert f"<strong>{SUPPORTED_CHECKED}</strong> means every core assumption" in text
+
+
+def test_a_zone_given_after_an_audit_makes_its_verdicts_not_current(conn):
+    run = {"run_id": "run:x", "started_at_utc": "2026-11-10T11:00:00Z"}
+    assert not status.case_changed_after(conn, run)
+    actions.set_device_zone(conn, "dev:item1", "America/New_York", EXPERT, lambda: AT)
+    assert status.case_changed_after(conn, run)
+    # a rules-only re-run reuses the full audit's checks, so it counts from that audit
+    conn.execute(
+        "INSERT INTO pipeline_runs (id, started_at_utc, status, baker_version, contracts_version,"
+        " rule_version, config_json) VALUES ('run:full', '2026-11-10T11:00:00Z', 'completed',"
+        " 'x', 'x', 'x', '{}')"
+    )
+    rerun = {"run_id": "run:y", "started_at_utc": "2026-11-10T13:00:00Z",
+             "evidence_from_run": "run:full"}  # fmt: skip
+    assert status.case_changed_after(conn, rerun)
+
+
+def test_the_bundle_check_lets_a_given_zone_change_a_repair():
+    from core.bundle import verify
+
+    assert GIVEN_ACTION in verify._REPAIR_INPUTS
