@@ -1,4 +1,4 @@
-## 2026-11-09: CLAUDE.md: fast cases on Opus through a zero-retention Anthropic account
+## 2026-11-09: CLAUDE.md: fast cases on Opus through a zero-retention Anthropic account (#250)
 - Changed: Arsh signed new CLAUDE.md wording on 2026-11-09 ("approved", 23:54Z) after a cost
   study found our own GPU server would cost an estimated $47 to $153 a case against about $5 for
   Opus 5.5 (measured on synthetic case01, all jobs). Every model job may now run on the cloud
@@ -9,7 +9,7 @@
   is the default choice for an ordinary case; CSAM-flagged cases and cases whose order does not
   allow it stay local; never "offline". Each job uses one model for the whole case, and the report
   names the model for each job. Supersedes the plan C server wording signed 2026-11-08 (#245).
-- Where: branch claude/project-thread-fujfti
+- Where: PR #250
 - Verified: make check (see PR). Rules text only; no code changed.
 - Open: the code still sends only stance labels to the cloud, on the examiner's own key; routing
   the other jobs, a Mabillon key per pilot and the setup default come as their own PRs. Zero
