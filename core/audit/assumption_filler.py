@@ -2356,6 +2356,8 @@ _CLAUSE_JOINER_RE = re.compile(
 # What may be a call's party whatever the case knows: a handle, an address, or a run of five
 # or more digits.
 _UNREAD_PARTY_RE = re.compile(r"@[\w.-]*\w|\S+@\S*\w|(?<![\w-])\+?\d[\d\s().-]{3,}\d(?![\w-])")
+# An address a no-contact claim may write as its other party: "thisisdfirtwo@gmail.com".
+_ADDRESS_PARTY_RE = re.compile(r"(?<![\w.+@-])[\w.+-]*\w@\w[\w-]*(?:\.[\w-]*\w)+(?![\w@])")
 # Words that hand on what another wrote: 'REYES forwarded what PETROV posted: "ok"'.
 _PASSED_ON_RE = re.compile(
     r"\b(?:forward\w*|quot(?:e|ed|es|ing)|relay\w*|repost\w*|shared|screenshot\w*)\b",
@@ -2791,7 +2793,17 @@ class LocalAssumptionFiller:
         if tpl.id == "no_contact" and not (params.get("person_ids") or account_ids or handles):
             # "The TARGET PHONE never communicated with (919) 555-0142": the model named the
             # phone but no party; code reads both from the claim (validation ruling R5).
-            device_ids = self._absence_parties(claim, params, device_ids)
+            device_ids = self._absence_parties(claim, params, device_ids, para)
+            code_made = True
+        elif (
+            tpl.id == "no_contact"
+            and not handles
+            and len(params.get("person_ids", [])) + bool(account_ids) == 1
+            and self._written_phones(_unquoted(_nfc(claim.text)))
+        ):
+            # "... between the TARGET PHONE and (919) 888-7386": the model named the phone and
+            # one other party; the phone is the other side, as its own accounts.
+            device_ids = self._phone_as_party(claim, params, device_ids, para)
             code_made = True
         open_range = tpl.id == "no_contact" and _open_range_wording(_unquoted(_nfc(claim.text)))
         if open_range and not device_ids:
@@ -4010,20 +4022,29 @@ class LocalAssumptionFiller:
         return sorted(people), sorted(accounts), phone
 
     def _absence_parties(
-        self, claim: Claim, params: dict[str, Any], device_ids: list[str]
+        self,
+        claim: Claim,
+        params: dict[str, Any],
+        device_ids: list[str],
+        para: str = "",
+        given: tuple[list[str], list[str]] | None = None,
     ) -> list[str]:
         """The two sides of "no contact" read from the claim when the model named none: the
         one phone it writes, as its owner by confirmed stipulation when that person is exactly
-        the phone's own accounts, and one other party, a person the expert created or a phone
+        the phone's own accounts, and one other party, a person the expert created, a phone
         number (every account on the phone's sources whose identifier is that number, on the
-        apps the proposal names, or on any app when it names none). Returns the device ids.
-        Raises Reject when either side is not exactly one."""
+        apps the proposal names, or on any app when it names none) or an address on the app
+        the claim names (every account there with that identifier). Returns the device ids.
+        Raises Reject when either side is not exactly one.
+
+        `given` is the model's one party, (people, accounts), when it named the phone as the
+        other side (`_phone_as_party`): it must be the party the claim's words give, the same
+        person, or accounts with the same number or address."""
         bare = _unquoted(_nfc(claim.text))
         phones = sorted(set(device_ids) or self._written_phones(bare))
         if len(phones) != 1:
             raise Reject("no contact: the claim writes no one phone for its side")
-        own = {a.id for a in self.data.accounts.values() if a.device_id == phones[0]}
-        owner = self._exact_owner(own) if own else None
+        owner = self._phone_owner(phones[0])
         if owner is None:
             raise Reject("no contact: the phone's side is no one person code can name")
         people: set[str] = set()
@@ -4032,8 +4053,14 @@ class LocalAssumptionFiller:
             if pid != owner and found:
                 people.add(pid)
                 spans += found
+        # An address ("thisisdfirtwo@gmail.com") is read whole, before any number in it.
+        addresses: set[str] = set()
+        for m in _ADDRESS_PARTY_RE.finditer(bare):
+            addresses.add(m.group(0).casefold())
+            spans.append(m.span())
+        unaddressed = _ADDRESS_PARTY_RE.sub(lambda m: " " * len(m.group(0)), bare)
         numbers: set[str] = set()
-        for m in _PHONE_RE.finditer(bare):
+        for m in _PHONE_RE.finditer(unaddressed):
             if (d := phone_digits(m.group(0).strip(" .,-"))) is not None:
                 numbers.add(d)
                 spans.append(m.span())
@@ -4044,17 +4071,30 @@ class LocalAssumptionFiller:
                 raise Reject(f"no contact: {bare[start:end]!r} names an id, not a number")
             numbers.add(d)
             spans.append((start, end))
-        if joiner := self._absence_joiner(bare):
+        # "On May 7, 2023, ... after 10:00 a.m. EDT": the part of the stated day is the range's
+        # own words (stated_part_day reads it), not another clause or a word beyond contact.
+        part_day = []
+        if stated_part_day(claim.text, para) is not None:
+            part_day = [m.span() for m in _PART_DAY_RE.finditer(bare)]
+        unjoined = bare
+        for start, end in part_day:
+            unjoined = unjoined[:start] + " " * (end - start) + unjoined[end:]
+        if joiner := self._absence_joiner(unjoined):
             # "never communicated with SMITH while REYES was abroad" (Codex on #169)
             raise Reject(f"no contact: the claim joins another clause ({joiner!r})")
         for start, end in spans:
             # "REYES's assistant" or "a friend of REYES" is not REYES (Codex on #169).
             if _NOT_A_PARTY_AFTER.match(bare, end) or _NOT_A_PARTY_BEFORE.search(bare[:start]):
                 raise Reject(f"no contact: {bare[start:end]!r} may not be the other party")
-        if len(people) + len(numbers) != 1 or _UNREAD_PARTY_RE.search(
-            _PHONE_RE.sub(" ", bare) if numbers else bare
+        if len(people) + len(numbers) + len(addresses) != 1 or _UNREAD_PARTY_RE.search(
+            _PHONE_RE.sub(" ", unaddressed) if numbers else unaddressed
         ):
             raise Reject("no contact: the claim does not write exactly one other party")
+        if given is not None and not self._given_is_read(given, people, numbers, addresses):
+            # The model's party and the claim's words must be one party: code never picks
+            # between them (a number the model wrote on one app is read on every app the
+            # claim leaves open, so contact on another app is not missed).
+            raise Reject("no contact: the model's party is not the one party the claim writes")
         # "never called X" says nothing of messages, whatever channels the model gave: the
         # absence check would search both, so a call-only claim is not filled (Codex on #169).
         if _CALL_WORD_RE.search(bare):
@@ -4064,12 +4104,18 @@ class LocalAssumptionFiller:
         if _ONE_DIRECTION_RE.search(bare):
             # "never sent anything to REYES": the absence check reads both ways (Codex on #169)
             raise Reject("no contact one way: code reads no one-direction scope")
-        named = self._named_apps(claim.text)
+        # The phone's own name is no word for a channel: "the TARGET PHONE" says nothing of
+        # the Phone app's calls, nor "the WHATSAPP PHONE" of WhatsApp.
+        unnamed = list(bare)
+        for _, start, end in self._phone_spans(bare):
+            unnamed[start:end] = " " * (end - start)
+        scope = "".join(unnamed)
+        named = self._named_apps(scope)
         if not named and _names_an_app_off_the_case(bare):
             # "never communicated by Signal" on a case with no Signal: the scope cannot be
             # kept, so code does not widen it to every app (Codex on #169).
             raise Reject("no contact: the claim names an app the case does not hold")
-        if self._absence_leftover(bare, phones[0], spans):
+        if self._absence_leftover(bare, phones[0], [*spans, *part_day]):
             # "never communicated with REYES about narcotics": a topic, or any word beyond
             # plain contact, is a scope the absence check cannot keep (Codex on #169).
             raise Reject("no contact: the claim says more than plain contact code can check")
@@ -4078,28 +4124,102 @@ class LocalAssumptionFiller:
             # comes from the claim's own words (Codex on #169).
             if named:
                 params["channels"] = named
-            elif self._message_apps(claim.text) != []:
+            elif self._message_apps(scope) != []:
                 # "texted" or "by SMS" may be SMS or iMessage, and a phone app may hold calls
                 raise Reject("no contact by text: code reads no phone-message scope")
+        for app in params.get("channels", []):
+            # "never communicated by iMessage": iOS "Native Messages" holds SMS too, so an
+            # absence there would fail on messages the claim does not name.
+            said = [w for w in APP_ALIASES.get(app.casefold(), ()) if _has_alias(claim.text, w)]
+            if app.casefold() in WIDER_APPS and said:
+                raise Reject(
+                    f"{app!r} holds more than the claim's {said[0]!r} names, so no absence is"
+                    " read on it"
+                )
+        mine = person_party(self.data, owner).keys
         params["device_ids"] = phones
         if people:
+            (other,) = people
+            if person_party(self.data, other).keys & mine:
+                raise Reject("no contact: the other party holds an account of the phone's own")
             params["person_ids"] = sorted({owner, *people})
             return phones
-        (number,) = numbers
         sources = set(self.data.sources_for(phones))
         apps = {c.casefold() for c in params.get("channels", []) if c != CALL_CHANNEL}
-        found = {
-            a.id
-            for a in self.data.accounts.values()
-            if a.source_id in sources
-            and (not apps or a.app.casefold() in apps)
-            and _same_number(number, a)
-        }
+        if addresses:
+            (address,) = addresses
+            if not apps:
+                # An address alone never picks the app it is an account on.
+                raise Reject("no contact: the claim writes an address but names no app")
+            found = {
+                a.id
+                for a in self.data.accounts.values()
+                if a.source_id in sources
+                and a.app.casefold() in apps
+                and a.identifier.strip().casefold() == address
+            }
+        else:
+            (number,) = numbers
+            found = {
+                a.id
+                for a in self.data.accounts.values()
+                if a.source_id in sources
+                and (not apps or a.app.casefold() in apps)
+                and _same_number(number, a)
+            }
         if not found:
-            raise Reject("no contact: the number is on no account on the phone")
+            raise Reject("no contact: the party is on no account on the phone")
+        if any(self.data.accounts[a].key in mine for a in found):
+            # "no contact between the TARGET PHONE and (its own number)": one side, not two.
+            raise Reject("no contact: the other party is one of the phone's own accounts")
         params["person_ids"] = [owner]
         params["account_ids"] = sorted(found)
         return phones
+
+    def _given_is_read(
+        self,
+        given: tuple[list[str], list[str]],
+        people: set[str],
+        numbers: set[str],
+        addresses: set[str],
+    ) -> bool:
+        """True when the model's one party is the one party the claim's words give: the same
+        person, or accounts whose identifiers are all the number or address the claim writes."""
+        given_people, given_accounts = given
+        if given_people:
+            return not given_accounts and set(given_people) == people
+        accs = [self.data.accounts.get(a) for a in given_accounts]
+        if not accs or None in accs or people:
+            return False
+        if numbers:
+            (number,) = numbers
+            return all(_same_number(number, a) for a in accs if a is not None)
+        (address,) = addresses
+        return all(a.identifier.strip().casefold() == address for a in accs if a is not None)
+
+    def _phone_owner(self, device: str) -> str | None:
+        """The phone's exact owner by confirmed stipulation (`_exact_owner`), or None."""
+        own = {a.id for a in self.data.accounts.values() if a.device_id == device}
+        return self._exact_owner(own) if own else None
+
+    def _phone_as_party(
+        self, claim: Claim, params: dict[str, Any], device_ids: list[str], para: str
+    ) -> list[str]:
+        """No contact with the phone as a side ("There was no contact between the TARGET PHONE
+        and (919) 555-0142"): the model named the phone and one other party. The phone the
+        claim writes as a side stands for that phone's own accounts on it, never for whoever
+        held it: its exact owner by confirmed stipulation, a person whose accounts are exactly
+        the phone's own (`_exact_owner`), so the check searches those accounts and no other.
+        Code reads both sides from the claim's words as when the model named none
+        (`_absence_parties`), and the model's party must be the one the claim writes. Exactly
+        one phone, written in the claim itself. Returns the device ids; raises Reject
+        otherwise, and the claim stays untested."""
+        bare = _unquoted(_nfc(claim.text))
+        written = self._written_phones(bare)
+        if len(written) != 1 or (device_ids and set(device_ids) != written):
+            raise Reject("no contact: the claim does not write exactly one phone as a side")
+        given = (list(params.pop("person_ids", [])), list(params.pop("account_ids", [])))
+        return self._absence_parties(claim, params, sorted(written), para, given)
 
     def _names_a_recipient(self, bare: str) -> bool:
         """True when the words write a person the case knows, a phone number or a handle as
