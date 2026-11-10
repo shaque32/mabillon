@@ -19,7 +19,7 @@
   - Claim order: each move that changes the order is logged as `claim.move` (claim id, old and
     new place) before `case.json` is saved. A move past the top or bottom changes nothing and
     logs nothing.
-- Where: PR #230
+- Where: main (#230, merged 2026-11-07)
 - Verified: `make check` on Linux (see the PR). New `tests/test_backup.py` restores plain and
   encrypted backups (rows, files, audit chain and anchors match; the same passphrase opens it),
   and checks the refusals and that a backup failing verification is deleted. After Greptile's
@@ -37,11 +37,4 @@
 - Affects: capabilities (backup), privacy (input names hidden in encrypted cases, more actions
   logged), customer-facing claims (docs/SECURITY_PRIVACY.md and docs/PILOT_ONBOARDING.md
   updated to match).
-- Status doc: pending: section 2 (Pipeline), Import row: add "In an encrypted case each copy is
-  renamed input-<random> once its import is stored; the real name is in the encrypted database
-  (#230)". Section 8 (Implemented features): add "Case backup: `mabillon backup` and 'Back up this
-  case' make a verified copy of a case folder (`core/casework/backup.py`, #230), logged as
-  case.backup" and "Claim moves are logged as claim.move (#230)". Section 9 (Known limitations):
-  drop "input file names not encrypted" and "claim order not logged" where listed; add "a case
-  encrypted after import keeps those files' names". Section 10 (Tests and results): add "CI also
-  runs pip-audit (dependency-audit workflow) and Dependabot opens monthly update PRs (#230)".
+- Status doc: applied 2026-11-08

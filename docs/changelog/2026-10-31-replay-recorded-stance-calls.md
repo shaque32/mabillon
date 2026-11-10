@@ -19,7 +19,7 @@
   its label, checked on the replayed audit's own gold file and on at least one key-record call; at least 10% faster per call with no failed call in either replay; supports lost
   on at most 5% of the baseline's supports calls, and no assumption losing all of them);
   `bash eval/probe/mac_replay.sh` runs it on the Mac (about 4 hours, estimated).
-- Where: PR #185
+- Where: main (#185, merged 2026-10-31)
 - Verified: tests/test_probe_replay.py (a case01 audit labelled by a stand-in model through the
   product's wiring; synthetic folders for the decision). `replay check` on the case04 database
   of Arsh's go/no-go Mac run (main 67dabdb, 2026-10-29), no model, re-run on main 085c48e:

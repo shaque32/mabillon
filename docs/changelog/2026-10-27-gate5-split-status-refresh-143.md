@@ -18,7 +18,7 @@
   (0 of 106 tested), the run 2 plan (#140, #141) with its 30-claim minimum, and scorer 1.2.0
   (#142, #143). Each fact is labelled main, open PR or reported. No accuracy or runtime figure
   is added.
-- Where: PR #144
+- Where: main (#144, merged 2026-10-27)
 - Verified: every version read from code at `d478705`; merge dates from main's first-parent
   history; `python tools/changelog.py pending` lists nothing; the banner check read
   `core/ingest/coverage.py`, `core/ingest/ufdr.py`, `core/ingest/axiom.py`,

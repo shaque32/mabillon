@@ -8,7 +8,7 @@
   Technical details (the stored reasons) and Rules' working tables (assumption text, what was
   searched, check detail) now mark the claim's quoted words as cited too, with ids left as
   written (`Names.cite`), so the page is no longer withheld for such a claim. Report 0.34.0.
-- Where: branch claude/project-thread-ds0ify
+- Where: main (#218, merged 2026-11-04)
 - Verified: 2 new tests in `tests/test_report_names.py` (whole words; own claim only). New
   `tests/test_cited_quotes_page.py` renders the report and GETs the claim page for a synthetic
   case01 claim that quotes "ok. it was deleted"; it fails without the fix, and fails again if

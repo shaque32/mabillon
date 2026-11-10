@@ -16,7 +16,7 @@
   back (a refusal prints a line break as \n and a quote mark as \'). The report's not-tested line goes through `Names.cite`,
   and the claim page's "Why code could not set it up" through `Names.for_claim(...).html`.
   Quoted words no claim holds stay the tool's own and are still checked. Report 0.39.0 (#228 took 0.38.0).
-- Where: branch claude/project-thread-ds0ify
+- Where: main (#235, merged 2026-11-07)
 - Verified: new test in `tests/test_cited_quotes_page.py` builds synthetic case01 with one claim
   refused the same way (one line, a line break, both quote marks), renders the report, runs the
   forbidden-word check and opens the claim page; it fails without the fix, and the line-break

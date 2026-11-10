@@ -10,7 +10,7 @@
   runs, so nothing is logged in a case's audit log. On Windows the server no longer sets
   SO_REUSEADDR (`ui/server.py`), which there let a second server bind a port another one held
   instead of failing.
-- Where: PR #212
+- Where: main (#212, merged 2026-11-03)
 - Verified: tests/test_serve_port.py (7 tests: free port, next free port, another Mabillon on
   the port named and not reused, all ports taken, other bind errors, a real Mabillon server
   recognised, another program not taken for Mabillon); by hand on Linux: a second `serve` on a

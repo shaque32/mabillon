@@ -13,7 +13,7 @@
   - The assumption's text is unchanged: it is what the stance model reads
     (`core/audit/readable.py`), so the note is in the report and on screen only.
   - Display only: no verdict, check, rule, prompt, contract, schema, gold or scorer changes.
-- Where: PR #155 (branch `claude/project-thread-6i2msb-nativenote`), stacked on #150
+- Where: main (#155, merged 2026-10-28)
 - Verified: new `tests/test_mixed_app_note.py`, 5 tests on synthetic case01:
   - the filler and the note read the same map, and every app in it is one an alias names;
   - case01 has no such app, so no claim gets the note;
@@ -28,8 +28,4 @@
   is not checked on a real export; if one does, the importer could keep it and the note could
   go. The note says nothing about how the claim was set up (an alias or the app's own name).
 - Affects: customer-facing claims (what the report says on such a claim)
-- Status doc: pending: the "Report version" line: "0.19.0 on main" and add "0.19.0 a claim
-  that names or rests on Native Messages says it holds iMessages and SMS together (#155)";
-  section 9 item 3 ("Real-data formats unverified"): add "Native Messages records do not say
-  whether a message is an iMessage or an SMS; the report and claim page say so on each claim
-  resting on them (#155)".
+- Status doc: applied 2026-11-08

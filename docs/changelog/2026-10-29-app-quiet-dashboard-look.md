@@ -30,7 +30,7 @@
   Curated report, File system) instead of stored values. The stored text, verdict rules, rule
   reasons as stored and the audit log keep the ids. `mabillon demo` without reportlab now says
   how to install it instead of a traceback.
-- Where: PR #167
+- Where: main (#167, merged 2026-10-29)
 - Verified: make check (lint, tests, eval); demo case screens rendered in Chromium at 1440x900
   and 390x844 before and after (preview images shared with Arsh, who approved the look).
 - Open: from the same audit, left for Arsh or later: one record shown once per assumption it
@@ -39,6 +39,4 @@
   (Arsh's wording). Dark mode not done; the pilot installers in the R2 bucket predate this and
   #149 and need a fresh upload after merge.
 - Affects: none (look only; no capability, privacy, performance or claim change)
-- Status doc: pending: in the review-screen paragraph, replace "The top tabs (#110) come in
-  three groups (review; tools to look closer; set-up)" with "The sidebar navigation (#110, moved
-  from top tabs by #167) comes in three groups (review; tools to look closer; set-up)".
+- Status doc: applied 2026-11-08

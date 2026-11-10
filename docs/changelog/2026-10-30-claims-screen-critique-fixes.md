@@ -9,7 +9,7 @@
   claims" (a `<details>`, no script). The Unproven tile's dot is a visible ring, and notices and
   the next-up paragraph stop at a readable line length. Look only, in `ui/pages.py` and
   `ui/theme.py`; the exported report is unchanged.
-- Where: PR #184
+- Where: main (#184, merged 2026-10-31)
 - Verified: ruff; pytest (see PR description for the full run and eval numbers).
 - Open: A reason line on Contradicted rows and clickable Unproven reason chips were proposed
   and not done. The demo banner text was not shortened, because it is shared with the report.

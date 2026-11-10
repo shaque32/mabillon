@@ -14,7 +14,7 @@
     no accuracy figure from it is quoted outside the validation write-up.
   Why: the plan needs the replay at the tag before it binds, and the Grok audit on #165 asked
   for the check changes by direction.
-- Where: PR #176 (branch claude/project-thread-ds0ify)
+- Where: main (#176, merged 2026-10-31)
 - Verified: on this container, 2026-10-30. Replay of run 2's recorded 14B answers through
   e5ce04b's code (no model), with the checks on a copy of run 2's case database, made both with
   and without the run driver's R4 links. The check comparison runs each core check with the
@@ -25,8 +25,4 @@
   repeats run 2's answers byte for byte, which is unmeasured on AWS. The 11 failed core checks
   are scored by measure 7 only after the run.
 - Affects: none (plan text only; no code change)
-- Status doc: pending: in section "Real-export validation", add a bullet "Run 3 plan
-  (`eval/validation/PREREGISTERED_v3.md`): a coverage check on the same 106 claims, now
-  development data, at tag `validation-v1-run3` on e5ce04b; the replay there predicts 34
-  code-checked of 106 against a minimum of 30; no accuracy claim from it. Approved by Arsh
-  2026-10-30, binding."
+- Status doc: applied 2026-11-08

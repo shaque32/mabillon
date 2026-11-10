@@ -101,7 +101,7 @@
     phone" name a call.
   Agreed with the validation thread, which owns assumption_filler.py, on 2026-11-03, on top of
   #201 (case events, FILLER_VERSION 4).
-- Where: PR #209 (merge after #201)
+- Where: main (#209, merged 2026-11-04)
 - Verified: tests/test_account_names.py (83 tests on synthetic case01): entering, replacing
   and clearing names; every refusal; holders across apps and WhatsApp ids; the name never
   resolves to a person and adds no person or link; Not current; bundle repair inputs; the
@@ -142,10 +142,5 @@
 - Affects: capabilities (expert-entered number names; the filler resolves more of an
   affidavit's own names, so more claims can be tested by code); no privacy, network or verdict
   rule change; no customer-facing claim.
-- Status doc: pending: section 8, in the item that says "The expert can record the document's
-  names for each phone (TARGET PHONE, Item 1); ... (#139).", add after it: "The expert can also
-  record the document's names for a number or account id ("the BURNER"), with `mabillon
-  name-account`; the audit reads a claim's use of the name as that number, never as a person,
-  and every report lists the names as the expert's statement. A name matches with or without a
-  leading "the", and a name in capitals (a person's alias, a phone's, a number's or an event's)
+- Status doc: applied 2026-11-08
 only where it is written in capitals (#209)."

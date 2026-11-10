@@ -57,7 +57,7 @@
     differently. With the step on (the eval), its lookups give the model the person an alias
     names, and its check accepts that person as the claim's own, so the step's conversion on
     case04 can change with this PR alone. That is unmeasured. No verdict rule changes.
-- Where: PR #181 (branch `claude/project-thread-6i2msb-aliases`)
+- Where: main (#181, merged 2026-10-31)
 - Verified: new `tests/test_person_aliases.py`, 34 tests:
   - recording, replacing and clearing aliases, each logged;
   - every refusal: another person's whole name, surname or alias; the person's own surname;
@@ -93,8 +93,4 @@
   would add, not aliases, and the eval's case setup does not add them. Whether aliases raise
   the testability step's conversion is unmeasured until case05.
 - Affects: capabilities (a new expert input, with its own limitation line in every report)
-- Status doc: pending: section 8 item 5 ("Case safety and delivery"), after "...as the expert's
-  statement (#139).": add "The expert can also record the document's other names for a person
-  (SUBJECT-1, HAL) on the Identities page; each is matched whole, an alias that could match two
-  people is refused, and every report lists them as the expert's statement (schema 0.6.0, #181).
-  The testability step's lookups use them; the assumption filler does not yet."
+- Status doc: applied 2026-11-08
