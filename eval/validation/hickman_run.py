@@ -404,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
         "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
     )
     a = ap.parse_args(argv)
+    if a.cloud and a.max_usd is not None and a.cloud not in PRICES_PER_MTOK:
+        # Without a price the spend counter never moves, so the cap would never stop a call.
+        raise SystemExit(f"--max-usd: no price for {a.cloud}; add it to PRICES_PER_MTOK")
     a.out.mkdir(parents=True, exist_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 

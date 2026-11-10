@@ -2787,6 +2787,14 @@ def test_a_part_of_the_day_is_not_counted_over_the_whole_day(conn):
     )
     made, filler = _count(conn, text, 1, phones=["dev:item1"])
     assert made == [], [a.params for a in made]
+    # nor when the model copies only the bare date the claim also writes (Greptile on #253)
+    bare = W("March 21, 2026", "2026-03-21T00:00", "2026-03-22T00:00")
+    prop = P("message_count", count={"value": 1}, people=["PETROV", "REYES"],
+             channels=["Telegram"], phones=["dev:item1"], window=bare)  # fmt: skip
+    assumptions, filler = build_text(conn, text, ClaimType.COUNT, [prop])
+    made = [a for a in assumptions if a.template_id == "message_count"]
+    assert made == [], [a.params for a in made]
+    assert any("part code does not read" in d.reason for d in filler.drops), filler.drops
 
 
 @pytest.mark.parametrize("phrase", ["with each other", "with one another"])

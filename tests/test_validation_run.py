@@ -274,3 +274,11 @@ def test_the_driver_prices_match_the_bench_prices():
     from eval.bench.claude_bench import PRICES_PER_MTOK
 
     assert hickman_run.PRICES_PER_MTOK == PRICES_PER_MTOK
+
+
+def test_a_capped_run_on_a_model_without_a_price_is_refused(ufdr, tmp_path):
+    claims, out = _claims(tmp_path), tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out)]
+    with pytest.raises(SystemExit, match="no price for"):
+        hickman_run.main([*args, "--cloud", "claude-unpriced", "--max-usd", "5"])
+    assert not out.exists()

@@ -4288,6 +4288,11 @@ class LocalAssumptionFiller:
         if zone is None and w.zone == "UTC":
             raise Reject("the range does not say UTC")
         check_window(start, end, w.as_written, claim_text, para, template_id)
+        if end - start >= timedelta(days=1) and _PART_OF_DAY_RE.search(_unquoted(claim_text)):
+            # "In the early hours of November 2, 2025" with the model copying only "November 2,
+            # 2025": the whole day would let an afternoon record pass a claim that narrowed it
+            # (Greptile on #253), as stated_windows refuses it when code reads the date.
+            raise Reject("the claim narrows the day to a part code does not read")
         tied = event_windows(claim_text, self._events())
         if tied and not any(t.start <= start and end <= t.end for t in tied):
             # "On March 22, 2026, the day after the RAID" with the RAID on March 20: the claim's
