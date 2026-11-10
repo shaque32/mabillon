@@ -412,6 +412,17 @@ def test_the_sender_check_fails_only_on_a_record_or_a_confirmed_fact(words, part
         ("got the money", "got the money - come get it", True),
         ("got the money", "got the money; come get it", True),
         ("send", "pls re-send", False),  # a hyphen inside a word is no dash
+        # A clause mark after a denial or a report puts the words in another mouth or denies
+        # them: never a start (Greptile on #257). A full stop still starts a sentence.
+        ("bring the cash", "never say: bring the cash", False),
+        ("bring the cash", "I didnt tell him, bring the cash", False),
+        ("bring the cash", "I didn't tell him, bring the cash", False),
+        ("bring the cash", 'he said, "bring the cash"', False),
+        ("bring the cash", "dont ever say it - bring the cash", False),
+        ("bring the cash", "she was like: bring the cash", False),
+        ("bring the cash", "no, bring the cash", False),
+        ("bring the cash", "never say that. bring the cash", True),
+        ("bring the cash", "got the van, bring the cash", True),
         # A sentence of a longer message, between sentence ends, curly or straight.
         ("Lets go now", "Yes. Lets go now. Bring it.", True),
         ("Let's go now", "Yes. Let’s go now. Bring it.", True),
@@ -444,6 +455,39 @@ def test_a_communication_claim_quoting_a_reversing_fragment_is_not_supported(con
     assert {r.outcome for r in checks} == {CheckOutcome.INCONCLUSIVE}, reasons(filler)
     assert all("dont text me about it, use telegram" in r.detail for r in checks)
     assert decision.verdict is Verdict.UNPROVEN
+
+
+def test_words_after_a_denial_never_support_a_communication_claim(conn):
+    # "never say: bring the cash": the colon does not free the quote from the denial before
+    # it, so neither the sender nor the time check rests on it (Greptile on #257). The message
+    # is a copy of case01's "dont text me about it" row with the denial's words.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(messages)")]
+    row = conn.execute(
+        "SELECT * FROM messages WHERE body = 'dont text me about it, use telegram'"
+    ).fetchone()
+    copy = dict(zip(cols, row, strict=True)) | {
+        "id": "m:denial",
+        "body": "never say: bring the cash",
+    }
+    conn.execute(
+        f"INSERT OR REPLACE INTO messages ({', '.join(cols)})"
+        f" VALUES ({', '.join('?' * len(cols))})",
+        [copy[c] for c in cols],
+    )
+    quote = "bring the cash"
+    text = f'On March 19, 2026, PETROV texted REYES "{quote}".'
+    window = W("On March 19, 2026", "2026-03-19T00:00", "2026-03-20T00:00")
+    props = [P("sender", people=["PETROV"], quoted_text=quote),
+             P("record_time", people=["PETROV"], quoted_text=quote, window=window)]  # fmt: skip
+    try:
+        c, made, filler = build(conn, text, ClaimType.COMMUNICATION, props)
+        decision, checks = verdict(conn, c, made)
+        assert checks and {r.outcome for r in checks} == {CheckOutcome.INCONCLUSIVE}, reasons(
+            filler
+        )
+        assert decision.verdict is Verdict.UNPROVEN
+    finally:
+        conn.execute("DELETE FROM messages WHERE id = 'm:denial'")
 
 
 def test_the_whole_message_still_passes(conn):

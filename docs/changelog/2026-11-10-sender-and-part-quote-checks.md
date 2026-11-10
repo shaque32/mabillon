@@ -15,7 +15,10 @@
     judged. Its copy is unknown to the sender check, and its time is not used. Before, such a
     fragment passed both checks, so a communication claim whose message says the opposite could
     be SUPPORTED (checked). Words that are a whole message, a whole sentence, or a clause ended
-    by a comma or a sentence mark still match.
+    by a comma or a sentence mark still match. A clause mark after a denial or a report
+    ("never say: bring the cash", "he said, bring the cash", "I didnt tell him, ...": the cue
+    read in the last three words before the mark) starts no quote, so those words are never
+    judged either (Greptile on #257).
   - Filler (`_without_claims_comma`, FILLER_VERSION 8). A comma the claim writes inside a
     closing quotation mark ('"..., ready when needed," shows') is the claim's punctuation and is
     dropped from the quoted words, so the checks search for words the message holds. It was held
@@ -24,7 +27,7 @@
     `case05` and `case06` move to inconclusive, and five contradicted claims on case04 to case06
     move to unproven. The draft keys (`eval/synthetic/case0{2,4,5,6}*`) match, and each case04
     to case06 signing sheet lists the moved rows under "Check change (2026-11-10)".
-- Where: branch, not yet in a PR (opens after #255 merges)
+- Where: PR #257
 - Verified: new tests in `tests/test_fill_quotes.py` for the sender rule (a phone's own account,
   a confirmed link, a received copy, an account linked to nobody) and for whole and part
   sentences, with the adversarial fragments; `tests/checks/test_unit.py` and

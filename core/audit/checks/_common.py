@@ -431,8 +431,22 @@ def fold_text(text: str) -> str:
 # such a match. A clause cut at a comma is taken: affidavits quote them ('he was "driving
 # tonight"' from "driving tonight, back late"), and a negation sits inside its clause.
 _SENTENCE_ENDS = ".!?\u2026,;:\u2013\u2014"  # and a hyphen with a space after it, as a dash
+_FULL_STOPS = ".!?\u2026"
 _MARKS = "\"'()[]{}\u00ab\u00bb"
 _JOINERS = "\ufe0f\u200d"
+# A clause mark starts a quote only when the clause before it does not govern what follows: a
+# denial or a report ("never say: bring the cash", "I didnt tell him, bring the cash", "he said,
+# bring the cash") puts the quoted words in another mouth or denies them (Greptile on #257). The
+# cue is read in the last three words before the mark, apostrophes optional, so a whole clause
+# that only holds a denial ("dont text me about it, use telegram") still starts one.
+_GOVERNING_RE = re.compile(
+    r"\b(?:not|never|no|nobody|nothing|neither|nor|without|stop|quit|deny|denied|denies"
+    r"|(?:do|does|did|is|was|are|were|wo|ca|could|should|would|must|have|has|had)n'?t|cannot"
+    r"|dont|wont|cant|say|says|said|saying|tell|tells|told|telling|ask|asks|asked|asking"
+    r"|write|writes|wrote|writing|text|texts|texted|texting|quote|quotes|quoted|like|goes"
+    r"|went|reply|replied|replies|answer|answered|claim|claimed|claims|supposedly|allegedly)\b",
+    re.IGNORECASE,
+)
 
 
 def _is_emoji(ch: str) -> bool:
@@ -447,9 +461,13 @@ def _starts_sentence(head: str) -> bool:
     core = stripped.rstrip(_MARKS + _JOINERS)
     if not core:
         return True  # the message's start, or only opening marks before the quote
-    if core == "-" or core.endswith((" -", " --")):
-        return True  # a dash, not the hyphen of "re-send"
-    return core[-1] in _SENTENCE_ENDS or _is_emoji(core[-1])
+    if core[-1] in _FULL_STOPS or _is_emoji(core[-1]):
+        return True
+    dash = core == "-" or core.endswith((" -", " --"))  # a dash, not the hyphen of "re-send"
+    if not dash and core[-1] not in _SENTENCE_ENDS:
+        return False
+    clause = re.split(r"[.!?\u2026\n\r]", core)[-1].rstrip(_SENTENCE_ENDS + "- " + _MARKS)
+    return not _GOVERNING_RE.search(" ".join(clause.split()[-3:]))
 
 
 def _ends_sentence(quote: str, tail: str) -> bool:
