@@ -25,6 +25,9 @@
     SMITH's. The check version is not bumped here; the lead bumps once.
   - Code: `_phone_as_party`, `_absence_parties`, `_given_is_read` and `_phone_owner` in
     `core/audit/assumption_filler.py`; `_party_gaps` in `core/audit/checks/absence.py`.
+  - Review fix (Greptile on #255): a model channel the claim names only inside the phone's name
+    ("Phone" in "the TARGET PHONE") is dropped, so the claim's open scope is read and contact on
+    another app is not missed.
 - Where: PR #255
 - Verified: `tests/test_fill_absence.py`, 23 tests on synthetic case01, and the existing filler
   and check tests. Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. `make check` on the merged branch: see the PR.

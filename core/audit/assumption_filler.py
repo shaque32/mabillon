@@ -1149,6 +1149,19 @@ def check_window(
         # stated ones (wider, for an event).
         if (start, end) != months:
             raise Reject("a range of whole months is the months the words state, first to last")
+        # "May 2023" copied from "In April and May 2023" is the claim's run cut short: the
+        # range is the whole run the claim writes around the words, never part of it.
+        words = _flat(_nfc(as_written.strip()))
+        plain_claim = _unquoted(_flat(_nfc(claim)))
+        at = plain_claim.find(words) if words else -1
+        while at >= 0:
+            for run in _MONTH_RUN_RE.finditer(plain_claim):
+                if run.start() < at + len(words) and at < run.end():
+                    if months_stated(run.group(0)) != months:
+                        raise Reject(
+                            "the words are cut from a longer run of months the claim states"
+                        )
+            at = plain_claim.find(words, at + 1)
         return
     after = []
     for m in _DATE_RE.finditer(as_written):
@@ -1316,6 +1329,31 @@ _CUT_AFTER_RE = re.compile(
     rf"(?:{_ABOUT_W}\s+)?(?:\d|noon\b|midnight\b|(?:{_MONTH_RE})\b\.?\s*\d)|[-–]\s*\d|or\s+so\b)",
     re.IGNORECASE,
 )
+
+
+# Words that make what follows the time of another act the claim names, not of its records:
+# "arranged by text to meet at 7 p.m. on Thursday, October 30", "planned for May 9", "a
+# meeting on June 2". Up to six words may sit between the cue and "for", "at" or "on", none
+# across a comma or a stop.
+_OTHER_ACT_BEFORE_RE = re.compile(
+    r"\b(?:meet|meeting|arranged|planned|scheduled|set|agreed)\b"
+    r"(?:\s+[^\s,.;:]+){0,6}?\s+(?:for|at|on)\s*$",
+    re.IGNORECASE,
+)
+
+
+def time_of_another_act(as_written: str, claim: str) -> bool:
+    """True when the model's words, wherever the claim writes them outside quoted words, follow
+    a cue that makes them the time of another act ("to meet at 7 p.m. on Thursday, October 30,
+    2025"): the time a meeting was set for is not when the messages that set it were sent."""
+    words = _flat(_nfc(as_written.strip()))
+    plain = _unquoted(_flat(_nfc(claim)))
+    i = plain.find(words) if words else -1
+    while i >= 0:
+        if _OTHER_ACT_BEFORE_RE.search(plain[:i]):
+            return True
+        i = plain.find(words, i + 1)
+    return False
 
 
 def cut_from_longer(as_written: str, claim: str) -> bool:
@@ -1565,7 +1603,6 @@ _CALL_FORM_RE = re.compile(
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
 # direction word its verb allows, and a word for a phone call.
 _CALL_ARTICLES = frozenset({"a", "an", "another"})
-_CALL_ORDINALS = frozenset({"second", "third", "fourth", "fifth", "further"})
 _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
 _CALL_LENGTH_TAIL_RE = re.compile(
@@ -4627,8 +4664,9 @@ class LocalAssumptionFiller:
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
-        """True when the words before "call" are only an article (or, for "had", a number),
-        an ordinal, the direction word the verb allows, the app's name and a phone word."""
+        """True when the words before "call" are only an article (or, for "had", a number), the
+        direction word the verb allows, the app's name and a phone word. An ordinal ("a second
+        call") is refused: it states an earlier call that no check reads."""
         words = _words(np).split()
         if verb == "called":
             return not words
@@ -4640,8 +4678,6 @@ class LocalAssumptionFiller:
                 return False
         elif head not in _CALL_ARTICLES:
             return False
-        if words and words[0] in _CALL_ORDINALS and head in ("a", "an"):
-            words.pop(0)
         allowed = {"placed": "outgoing", "made": "outgoing", "received": "incoming"}
         allowed["missed"] = "incoming"
         if words and words[0] in ("outgoing", "incoming"):
@@ -4764,7 +4800,9 @@ class LocalAssumptionFiller:
             "person_ids": persons,
             "sent_by": sorted(accounts) if caller == "accounts" else [caller],
             "window": rt["window"],
-            "channels": rt["channels"],
+            # the claim's app always scopes the caller, even when the proposal wrote only
+            # "call": a call on another app is never the claim's call
+            "channels": sorted({CALL_CHANNEL, app}),
         }
         if accounts:
             params["account_ids"] = sorted(accounts)
@@ -4864,6 +4902,18 @@ class LocalAssumptionFiller:
             unnamed[start:end] = " " * (end - start)
         scope = "".join(unnamed)
         named = self._named_apps(scope)
+        kept = []
+        for app in params.get("channels", []):
+            try:
+                kept += self._channels(scope, [app])
+            except Reject:
+                pass  # named only inside the phone's name ("the TARGET PHONE" for Phone)
+        if params.get("channels") and kept != params["channels"]:
+            # the model's channel stands only on words the claim writes outside the phone's
+            # name; otherwise the claim leaves every app open and code reads its scope below
+            params.pop("channels")
+            if kept:
+                params["channels"] = kept
         if not named and _names_an_app_off_the_case(bare):
             # "never communicated by Signal" on a case with no Signal: the scope cannot be
             # kept, so code does not widen it to every app (Codex on #169).
@@ -5199,6 +5249,12 @@ class LocalAssumptionFiller:
             # 2:22 p.m.", "10:00 a.m." from "after 10:00 a.m.", or words only in quotes: the
             # model's words are not the claim's range, so `_stated` reads the claim instead.
             raise Reject("the window's words are cut from a longer range the claim writes")
+        if template_id in ("record_time", "message_count", "no_contact") and time_of_another_act(
+            w.as_written, claim_text
+        ):
+            # "arranged by text to meet at 7 p.m. on Thursday, October 30, 2025": the meeting's
+            # time, not when the texts were sent, so `_stated` reads the claim instead.
+            raise Reject("the window's words are the time of another act the claim names")
         bare_words = _unquoted(w.as_written)
         if _ANY_TIME_RE.search(bare_words) and not (
             date_mentions(bare_words) or _NUM_DATE_RE.search(bare_words)

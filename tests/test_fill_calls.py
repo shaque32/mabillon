@@ -52,6 +52,10 @@ CALLS = [
     ("c:wa", "WhatsApp", REYES_WA, PETROV_WA, "incoming", "2026-06-09T01:00:00Z", 90),
     # June 9, 9:00 p.m.: another number called the phone; the claim's number has no call then.
     ("c:other", "unknown", OTHER, None, "incoming", "2026-06-10T01:00:00Z", 60),
+    # June 11, 9:00 p.m.: the number called the phone (100 s), then the phone called it, its
+    # length not recorded.
+    ("c:len:in", "unknown", NUM[0], None, "incoming", "2026-06-12T01:00:00Z", 100),
+    ("c:len:out", "unknown", None, NUM[0], "outgoing", "2026-06-12T01:03:00Z", None),
 ]
 
 
@@ -146,6 +150,22 @@ def test_a_stated_length_picks_the_call(conn):
     assert r.outcome is CheckOutcome.INCONCLUSIVE and not r.record_ids
 
 
+def test_a_call_of_unknown_length_may_be_the_stated_one_and_never_lets_a_fail_stand(conn):
+    # The claim: the phone placed a 100 s call. The 100 s call was incoming, but the outgoing
+    # call has no recorded length, so it may be the claimed call.
+    r = caller(conn, 11, PETROV, duration_s=(99, 101))
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "no recorded length" in r.detail and "c:len:out" in r.record_ids
+    assert caller(conn, 11, "num", duration_s=(99, 101)).outcome is CheckOutcome.INCONCLUSIVE
+
+
+def test_the_app_named_beside_call_scopes_the_calls(conn):
+    p = {"people": (PETROV, REYES), "accounts": ()}
+    assert caller(conn, 8, REYES, channels=["call", "WhatsApp"], **p).outcome is CheckOutcome.PASS
+    r = caller(conn, 8, REYES, channels=["call", "Telegram"], **p)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and not r.record_ids
+
+
 def test_a_call_with_someone_else_is_not_this_call(conn):
     r = caller(conn, 9, "num")
     assert r.outcome is CheckOutcome.INCONCLUSIVE and not r.record_ids
@@ -212,7 +232,6 @@ AT = "On June 1, 2026, at about 9:00 p.m. EDT,"
         ("(212) 555-0199 placed a call to Item 1.", "num"),
         ("(212) 555-0199 called Item 1.", "num"),
         ("Item 1 received an incoming call from (212) 555-0199.", "num"),
-        ("Item 1 received a second telephone call from (212) 555-0199.", "num"),
     ],
 )
 def test_a_plain_form_names_the_caller(conn, words, by):
@@ -263,6 +282,9 @@ def test_a_stated_length_must_be_the_time_range_s(conn):
         "Item 1 placed two calls to (212) 555-0199.",
         "Item 1 placed a video call to (212) 555-0199.",
         "Item 1 placed a call to (212) 555-0199, who did not answer.",
+        # an ordinal states an earlier call no check reads
+        "Item 1 received a second telephone call from (212) 555-0199.",
+        "Item 1 placed a third call to (212) 555-0199.",
         # no direction at all
         "Item 1 had a call with (212) 555-0199.",
         "Item 1 and (212) 555-0199 spoke by phone.",
@@ -293,6 +315,15 @@ def test_two_persons_read_by_name(conn):
                    window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
     assert list(made["caller"].params.sent_by) == [REYES]
     assert set(made["caller"].params.person_ids) == {PETROV, REYES}
+
+
+def test_the_claims_app_scopes_the_caller_when_the_model_writes_only_call(conn):
+    # The model wrote only "call"; the claim names WhatsApp, so a call on another app between
+    # the two is never the claim's call.
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV."
+    made, _ = fill(conn, text, channels=["call"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert list(made["caller"].params.channels) == ["WhatsApp", "call"]
 
 
 def test_the_model_is_never_offered_the_caller_template(conn):

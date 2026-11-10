@@ -101,9 +101,10 @@ class CallerCheck(TemplateCheck):
                 continue
             if apps and r["app"].strip().lower() not in apps:
                 continue
-            if p.duration_s is not None:
+            no_length = p.duration_s is not None and r["duration_s"] is None
+            if p.duration_s is not None and not no_length:
                 lo, hi = p.duration_s
-                if r["duration_s"] is None or not lo <= r["duration_s"] <= hi:
+                if not lo <= r["duration_s"] <= hi:
                     continue
             phone_at = _phone_side(data, r["device_id"], pids)
             # the other side's accounts must sit on the row for it to be a call between them
@@ -122,6 +123,11 @@ class CallerCheck(TemplateCheck):
                 lines.append(f"{r['id']} has no usable time ({when}), so it may be this call")
                 continue
             times.append((ts, r["id"]))
+            if no_length:
+                # a call of unknown length may be the claimed one, so it never lets a fail stand
+                unread.append(r["id"])
+                lines.append(f"{r['id']} at {when} has no recorded length, so it may be this call")
+                continue
             if phone_at is None:
                 unread.append(r["id"])
                 lines.append(

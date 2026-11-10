@@ -32,6 +32,12 @@
     month between two stated ones (`months_stated`). `coverage_gap` now refuses a claim dated
     only by a month or a year (outside quoted words) that no time range tests. Before, "In
     April 2023, PETROV wrote ..." could be judged on its sender alone.
+  - Review fixes (Greptile on #255, and the agents thread on spent case05): model words that
+    are one month of a longer run the claim writes ("May 2023" of "In April and May 2023") are
+    refused; for record_time, message_count and no_contact, model words that follow "meet",
+    "meeting", or "arranged", "planned", "scheduled", "set" or "agreed" ... "for", "at" or "on"
+    (not across a comma) are the time of another act and are refused (`time_of_another_act`),
+    so code reads the claim's own range or refuses.
 - Where: PR #255
 - Verified: new `tests/test_fill_windows.py` (67 tests, synthetic case01), covering:
     - the bounds of every approximate form, at their boundary instants, for record_time,

@@ -169,6 +169,21 @@ def test_the_same_claim_on_every_app_finds_the_sms_and_the_call(conn):
     assert "on SMS" in r.detail and "on Phone" in r.detail
 
 
+def test_a_model_channel_named_only_by_the_phones_name_is_not_the_claims_scope(conn):
+    # The model wrote channels ["Phone"]; "Phone" is in the claim only inside "the TARGET
+    # PHONE", so the claim leaves every app open, and the SMS contact is found.
+    claim = "There was no contact between the TARGET PHONE and (212) 555-0122 on March 22, 2026."
+    prop = P(accounts=[acc("(212) 555-0122", "Phone")], phones=["TARGET PHONE"],
+             channels=["Phone"],
+             window=W("on March 22, 2026", "2026-03-22T00:00", "2026-03-23T00:00"))  # fmt: skip
+    (a,), filler = build(conn, claim, prop)
+    assert a.params.channels == (), filler.drops
+    full_extraction(conn)
+    r = run(conn, a)
+    assert r.outcome is CheckOutcome.FAIL
+    assert "on SMS" in r.detail
+
+
 def test_a_person_with_the_phone_is_the_phones_owner_and_that_person(conn):
     claim = "The TARGET PHONE never communicated with REYES over Telegram."
     prop = P(people=["REYES"], phones=["TARGET PHONE"], channels=["Telegram"])

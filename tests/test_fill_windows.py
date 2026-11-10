@@ -445,6 +445,58 @@ def test_a_whole_month_window_is_exactly_the_stated_months(conn):
             model_window(conn, text, W(words, s, e), "no_contact")
 
 
+def test_one_month_copied_from_a_longer_run_of_months_is_refused(conn):
+    # The model copied only "May 2023" from "In April and May 2023": May alone would leave
+    # April's contact unsearched, so an absence could pass on half the claim's range.
+    text = "In April and May 2023, PETROV and REYES had no contact."
+    for words in ("May 2023", "April and May 2023"):
+        for template in ("record_time", "no_contact"):
+            if words == "April and May 2023":
+                w = model_window(
+                    conn, text, W(words, "2023-04-01T00:00", "2023-06-01T00:00"), template
+                )
+                assert local(w) == (D(2023, 4, 1), D(2023, 6, 1))
+                continue
+            with pytest.raises(Reject, match="cut from a longer run of months"):
+                model_window(conn, text, W(words, "2023-05-01T00:00", "2023-06-01T00:00"), template)
+
+
+MEET = (
+    "On October 28, 2025, PETROV and REYES arranged by text to meet at 7 p.m. on Thursday,"
+    " October 30, 2025, at the lot by the grain elevator."
+)
+
+
+@pytest.mark.parametrize("template", ["record_time", "message_count", "no_contact"])
+def test_the_time_of_a_planned_meeting_is_not_when_the_messages_were_sent(conn, template):
+    # The model's words are the meeting's time; the texts that set it were sent on October 28.
+    words = "7 p.m. on Thursday, October 30, 2025"
+    with pytest.raises(Reject, match="time of another act"):
+        model_window(conn, MEET, W(words, "2025-10-30T18:52", "2025-10-30T19:09"), template)
+    # Code's own reading never takes the meeting's day: it reads October 28 or refuses.
+    try:
+        w = code_window(conn, MEET, template)
+    except Reject:
+        return
+    assert local(w)[0].date() == D(2025, 10, 28).date(), local(w)
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ("On October 30, 2025, at 7 p.m., PETROV texted REYES.", "On October 30, 2025, at 7 p.m."),
+        # "agreed" across a comma is no cue for the time that follows
+        (
+            "At 7 p.m. on Thursday, October 30, 2025, PETROV texted REYES, who agreed, on"
+            " WhatsApp.",
+            "7 p.m. on Thursday, October 30, 2025",
+        ),
+    ],
+)
+def test_a_time_no_other_act_names_is_still_read(conn, text, words):
+    model_window(conn, text, W(words, "2025-10-30T18:52", "2025-10-30T19:09"), "record_time")
+
+
 def test_a_claim_dated_by_a_month_is_never_judged_without_a_time_range():
     sender = Proposal("sender", {"quoted_text": QUOTE, "person_ids": [PETROV]}, is_core=True)
     for text in (

@@ -30,6 +30,10 @@
   - A phone written as one side of a plain call clause now counts as a side for a call count
     ("the TARGET PHONE had eight Telegram calls with SUBJECT-2"; `_call_parties`
     `phone_is_side`). "On the TARGET PHONE, PETROV called Jonathan" is still refused.
+  - Review fixes (Greptile on #255): a call with no recorded length may be the stated one, so
+    it leaves the check inconclusive and never lets a fail stand; the caller is always scoped to
+    the claim's app, even when the model wrote only "call"; an ordinal ("a second call") names
+    no caller, since it states an earlier call no check reads.
 - Where: PR #255
 - Verified: `tests/test_fill_calls.py` (48 tests, synthetic case01 with invented calls).
   `tests/test_call_parties.py`'s helper now drops the caller assumption, because those tests
