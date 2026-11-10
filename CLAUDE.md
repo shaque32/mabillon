@@ -39,14 +39,15 @@ with the reason and the exact diff you want, then finish the rest of your task w
   set, and only through a change to `core/audit/rules.py` that bumps RULE_VERSION.
 - Every derived record carries a `source_ref` back to the original artifact.
 - Every displayed item carries a provenance tier: observed, derived, inferred, ai_reviewed,
-  counsel_reviewed or confirmed. ai_reviewed means the local AI reviewer accepted it.
+  counsel_reviewed or confirmed. ai_reviewed means the AI reviewer accepted it.
   counsel_reviewed means a named defense lawyer accepted it. confirmed means a human expert
   accepted it. Neither ai_reviewed nor counsel_reviewed ever displays or exports as confirmed. A
   human decision always overrides the AI reviewer, and an expert's decision overrides counsel's.
 - The AI reviewer only reviews evidence items. It never confirms identity links or claims.
-- The AI reviewer runs on the local model in core/. Only the stance labeler may use a cloud model
-  in core/. The AI reviewer, claim proposal and assumption filling stay local.
-- Agents (the testability step, core/audit/testability.py) are local jobs on the local model
+- Every model job (the stance labeler, the AI reviewer, claim proposal, assumption filling and
+  agents) runs on the case's model: the local model, or the cloud model when the case opted in
+  to cloud AI. The only cloud model in core/ is Claude through the Anthropic API.
+- Agents (the testability step, core/audit/testability.py) are jobs on the case's model
   that only propose. Code checks every proposal, each is logged, and only an examiner's
   acceptance puts it in a case. An agent never labels, accepts, dismisses, links identities or
   sets a verdict, and never changes a claim's text. They stay off by default: only the eval
@@ -63,17 +64,23 @@ with the reason and the exact diff you want, then finish the rest of your task w
 ## Data safety
 - Never use real case data. Synthetic data only, generated under `eval/`.
 - Never put real discovery material in the repo, in prompts, in tests or in fixtures.
-- No network calls in `core/` except the stance labeler's cloud call in `core/llm/cloud.py`, to
-  the Anthropic API with the expert's own key. No telemetry. Local models load from local paths.
-- Mabillon is local by default. A case uses cloud AI only when the expert opts in at case setup,
-  attesting that the case's protective order allows it, and a key is set up. A case marked as
-  possibly containing CSAM never uses cloud.
-- A case's stance labels never mix models. If the cloud model fails mid-run, the audit pauses and
-  the expert chooses to retry the cloud model or run the whole case again locally.
-- Only the filled-in stance prompt is sent (assumption, record, nearby messages, claim, and a
-  group chat's member list), never input files or the case database. Every request is written
-  to the case's audit log, with its time, before it is sent. The report says which model
-  labelled the case.
+- No network calls in `core/` except the cloud model calls in `core/llm/cloud.py`, to the
+  Anthropic API, with a key from an Anthropic organization that has zero data retention in
+  writing: Mabillon's, or the examiner's own organization if it has such an agreement. The
+  provider must keep no prompts or answers after it replies; any request mode it retains (such as
+  the Batch API) is never used. Mabillon runs no server and keeps no case data. No telemetry.
+  Local models load from local paths.
+- Files never leave the examiner's machine. A case uses cloud AI only when the expert opts in at
+  case setup, attesting that the case's protective order allows it, and a key is set up. For an
+  ordinary case cloud AI is the default choice at setup. A case marked as possibly containing
+  CSAM, or whose order does not allow it, stays local. Never describe Mabillon as "offline".
+- Each model job uses one model for the whole case; a case's stance labels never mix models. If
+  the cloud model fails mid-run, the audit pauses and the expert chooses to retry the cloud model
+  or run the whole case again locally.
+- Only filled-in prompts are sent (for stance: assumption, record, nearby messages, claim, and a
+  group chat's member list; for the other jobs, only the text their signed prompts name), never
+  input files or the case database. Every request is written to the case's audit log, with its
+  time, before it is sent. The report says which model ran each job.
 - Inputs are opened read-only and SHA-256 hashed on import.
 - case02 is the hidden held-out case. Never read `eval/synthetic/case02*`, `eval/gold/case02/`,
   `eval/out/case02/` or any test whose name contains `case02`, unless your task names case02.
