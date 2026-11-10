@@ -306,6 +306,14 @@ def cmd_name_device(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_device_zone(a: argparse.Namespace) -> int:
+    conn = _open(a.db)
+    zone = actions.set_device_zone(conn, a.device, a.zone, a.by)
+    said = zone or "no zone (cleared)"
+    print(f"{a.device} now keeps time in {said}; run the audit again to apply it")
+    return 0
+
+
 def cmd_name_account(a: argparse.Namespace) -> int:
     conn = _open(a.db)
     names = actions.name_account(conn, a.identifier, a.name or [], a.by)
@@ -1028,6 +1036,15 @@ def parser() -> argparse.ArgumentParser:
     sp = add("stipulate", cmd_stipulate, "stipulate who used a device")
     sp.add_argument("--device", required=True)
     sp.add_argument("--person", required=True)
+    sp.add_argument("--by", required=True)
+
+    sp = add(
+        "set-device-zone",
+        cmd_set_device_zone,
+        "give the time zone of a phone whose extraction records none",
+    )
+    sp.add_argument("--device", required=True)
+    sp.add_argument("--zone", required=True, help="a place name, such as America/New_York")
     sp.add_argument("--by", required=True)
 
     sp = add("name-device", cmd_name_device, "record the document's names for a device")

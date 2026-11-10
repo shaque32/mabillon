@@ -53,7 +53,7 @@ from typing import Literal
 from core.enrich.local_time import parse_utc
 from core.review.status import ClaimState
 from core.selection.audit import EXCHANGE_GAP, SelectionAudit
-from core.zones import resolve_zone
+from core.zones import device_zones, resolve_zone
 
 MATCH_WINDOW = timedelta(seconds=60)  # the same record printed by two exports of one phone
 NEAR = EXCHANGE_GAP  # one hour: what counts as near a claim's record, as in the selection audit
@@ -261,11 +261,17 @@ def _sources(conn: sqlite3.Connection) -> list[SourceLine]:
         "SELECT id, file_name, fidelity, extracted_at_utc FROM sources WHERE kind != 'govdoc'"
         " ORDER BY id"
     ):
-        zone = conn.execute(
-            "SELECT timezone FROM devices WHERE source_id = ? AND timezone IS NOT NULL"
-            " ORDER BY id LIMIT 1",
-            (sid,),
-        ).fetchone()
+        zones = device_zones(conn)
+        zone = next(
+            (
+                (zones[did],)
+                for (did,) in conn.execute(
+                    "SELECT id FROM devices WHERE source_id = ? ORDER BY id", (sid,)
+                )
+                if zones.get(did)
+            ),
+            None,
+        )
         models = sorted(
             {
                 norm(m).casefold()
