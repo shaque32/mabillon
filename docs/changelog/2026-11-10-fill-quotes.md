@@ -10,7 +10,7 @@
   refusal now says why there is no one quote (no quote, only a name quoted, two messages, no
   lead-in, model words outside a message quote). No meaning assumption is ever covered by a
   check, and no claim type changes.
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #255
 - Verified: `tests/test_fill_quotes.py` (synthetic case01: the widened cue and lead-ins that
   stay names; a nested quote; claims that complain, threaten or admit keep an uncovered core
   meaning and stay UNPROVEN with passing sender and time checks; a fragment that reverses its

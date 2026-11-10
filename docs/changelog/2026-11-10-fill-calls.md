@@ -30,7 +30,7 @@
   - A phone written as one side of a plain call clause now counts as a side for a call count
     ("the TARGET PHONE had eight Telegram calls with SUBJECT-2"; `_call_parties`
     `phone_is_side`). "On the TARGET PHONE, PETROV called Jonathan" is still refused.
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #255
 - Verified: `tests/test_fill_calls.py` (48 tests, synthetic case01 with invented calls).
   `tests/test_call_parties.py`'s helper now drops the caller assumption, because those tests
   are about the time range. The eval runs the signed assumption sheet, not the filler, so its

@@ -21,7 +21,7 @@
     WhatsApp number are refused.
   - No identity is linked and no account merged; a name never picks an app. FILLER_VERSION is
     not bumped here (the lead bumps once for the batch).
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #255
 - Verified: `tests/test_fill_accounts.py` (22 tests, synthetic case01): the reading, the call
   log never searched for a text, count and absence refused, another app named, two phone
   message apps, a call and a text, "the text" of a message, a model channel that is not the
