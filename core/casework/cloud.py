@@ -56,15 +56,21 @@ ATTESTATION = (
 )
 FAST = "Fast: Opus through Anthropic"
 LOCAL = "On this computer"
-# Approved by Arsh 2026-11-10 07:27Z, the setup page's explanation of Fast.
+# Approved by Arsh 2026-11-10 07:27Z, the setup page's explanation of Fast. Its opening, up to
+# "never leave this computer.", awaits his approval (plans/minor-sexual-stay-local.md, item 6):
+# the signed text left out that claim proposal sends each paragraph of the government's document
+# (core/audit/prompts/claims.md) and that assumption filling sends the case's app names
+# (assumptions.md), which docs/SECURITY_PRIVACY.md section 5 already lists.
 FAST_EXPLAINED = (
-    "With Fast, Mabillon sends one question at a time to Anthropic: the claim, the assumption "
-    "being tested, one record and the messages around it, and for a group chat its member list. "
-    "Never your files or the case database. Under a zero-retention account Anthropic keeps no "
-    "prompts or answers after it replies, except content its safety systems flag (kept up to 2 "
-    "years) or what the law requires, and it never trains on them. Every request is recorded in "
-    "the case's audit log before it is sent. If the cloud model stops answering, the audit "
-    "pauses and you choose to retry or run the whole case on this computer."
+    "With Fast, Mabillon sends one question at a time to Anthropic. To propose claims, it sends "
+    "each paragraph of the government's document. To test a claim, it sends the claim and its "
+    "paragraph, the assumption being tested, one record and the messages around it, the names "
+    "of the case's apps, and for a group chat its member list. The phone extractions themselves "
+    "and the case database never leave this computer. Under a zero-retention account Anthropic "
+    "keeps no prompts or answers after it replies, except content its safety systems flag (kept "
+    "up to 2 years) or what the law requires, and it never trains on them. Every request is "
+    "recorded in the case's audit log before it is sent. If the cloud model stops answering, the "
+    "audit pauses and you choose to retry or run the whole case on this computer."
 )
 # The stay-local box (awaits Arsh's approval, same plan as the attestation's last sentence). It
 # covers more than CSAM: enticement, sextortion and trafficking cases are mostly chat text, often

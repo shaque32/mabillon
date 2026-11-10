@@ -757,6 +757,27 @@ def test_the_setup_box_keeps_any_sexual_case_involving_a_minor_on_this_computer(
     )
 
 
+def test_the_fast_explanation_names_what_each_step_sends(tmp_path, monkeypatch):
+    """The setup page says what Fast sends before the examiner chooses it, as the signed prompts
+    fill it (docs/SECURITY_PRIVACY.md section 5). A prompt that gains a field fails here, so the
+    explanation is read again."""
+    from core.audit import assumption_filler, review
+    from core.claims import extract
+
+    assert extract.PLACEHOLDERS == {"paragraph"}  # claim proposal
+    assert assumption_filler.PLACEHOLDERS == {"claim", "paragraph", "templates", "channels"}
+    assert stance_mod.PLACEHOLDERS == {"assumption", "record", "context", "claim"}
+    assert review.PLACEHOLDERS == {"assumption", "quote", "context"}
+    explained = cloud_policy.FAST_EXPLAINED
+    for words in ("each paragraph of the government's document", "the claim and its paragraph",
+                  "the assumption being tested", "one record and the messages around it",
+                  "the names of the case's apps", "its member list"):  # fmt: skip
+        assert words in explained
+    assert "Never your files" not in explained  # the document's paragraphs are sent
+    app, get, post = _screen(tmp_path, monkeypatch)
+    assert explained in html.unescape(get("/setup").text)
+
+
 def test_claims_and_the_audit_wait_for_the_choice(tmp_path, monkeypatch):
     from core.casework import cases
     from core.db import connect

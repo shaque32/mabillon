@@ -14,14 +14,21 @@
   name, `csam`, so a case marked under the earlier box still stays local; each new entry records
   the wider words in `csam_note`. `docs/SECURITY_PRIVACY.md` (intro and section 5, items 1 and
   2) and `docs/ARCHITECTURE.md` match. The CLAUDE.md line is proposed in `PROPOSED_CHANGES.md`.
-  All five texts are drafts awaiting Arsh's "approved" (plans/minor-sexual-stay-local.md).
+  Also, the Fast explanation at setup (FAST_EXPLAINED) now opens with what each step sends:
+  each paragraph of the government's document to propose claims, and, to test a claim, the
+  claim and its paragraph, the assumption, one record and the messages around it, the case's
+  app names and a group chat's member list. The signed text left out the document's paragraphs
+  and the app names (Greptile on #256), and its "Never your files" becomes "The phone
+  extractions themselves and the case database never leave this computer."
+  All six texts are drafts awaiting Arsh's "approved" (plans/minor-sexual-stay-local.md).
 - Where: PR #256 (merges after #254)
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`: the attestation and box
   texts are pinned; a marked case stays local with the exact reason and keeps the words ticked;
   a case marked under the earlier box still stays local; a case attested before the new
   sentence must choose again; the setup form shows both texts, refuses Fast on a marked case
-  and saves a local choice with the new message; the report shows the new sentence. No API
-  calls.
+  and saves a local choice with the new message; the report shows the new sentence; the Fast
+  explanation names what each signed prompt carries, and a prompt that gains a field fails the
+  test. No API calls.
 - Open: the texts are not signed yet, so this must not merge before Arsh approves them.
   Mabillon does not scan for such content; the box and the attestation are the examiner's own
   statements. `docs/ONE_PAGER.md`, `docs/PILOT_ONBOARDING.md`, the `.greptile` privacy rule and
