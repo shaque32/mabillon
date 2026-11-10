@@ -21,6 +21,13 @@
 - Added after the first DeepSeek run: 36 of its 95 calls stopped at open_bench's 8,000-token
   cap (reasoning counts against it), each one an invalid answer. `--max-tokens` runs a larger cap
   as a second arm, reported beside the first; the first stays the run as fixed beforehand.
+- Added 2026-11-10, the Opus arm: Arsh moved every model job to Opus (#250) and chose "Opus check
+  on case05 first" (card, 01:13Z). `--claude MODEL` runs core.llm.cloud.ClaudeModel as both jobs
+  at the product's effort and max_tokens; a refused, cut-off or failed call is an invalid answer.
+  Tests with a stand-in client (no network): case06 refused before any model is made, a key
+  needed outside a dry run, cut-off, refusal and wrong-model answers invalid, a retryable failure
+  retried. Run on case05 (2026-11-10, cloud container, $1.65, development data): both passes 19 of
+  48 (39.6%), first pass 15 matching, step 4 of 17, 1 wrong-window try (C43), 0 invalid.
 - Open: hosted results (2026-11-07, case05, cloud thread's container) are development data only. Hosted answers do not
   repeat byte for byte (many providers), so nothing here is a go/no-go: case05 is spent, and the
   result is development data, never quoted as evidence that the step works. The 14B's case05
