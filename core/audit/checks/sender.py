@@ -12,6 +12,7 @@ from core.audit.checks._common import (
     messages_with_text,
     parties,
     person_party,
+    sentence_aligned,
     sentences,
 )
 from core.audit.checks.base import TemplateCheck
@@ -78,7 +79,9 @@ class SenderCheck(TemplateCheck):
     # 1.0.2: curly quotes and runs of spaces fold (TEXT_MATCH). 1.1.0: a copy from an account
     # that is not the party's fails only when a record or a confirmed fact says it is someone
     # else's (_someone_else); otherwise it is unknown.
-    version = "1.1.0"
+    # 1.2.0: a copy that holds the words only inside a longer sentence (sentence_aligned) is
+    # unknown.
+    version = "1.2.0"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         sources = data.sources_for(p.device_ids)
@@ -123,6 +126,14 @@ class SenderCheck(TemplateCheck):
                 lines.append(
                     f"{row.id} on {row.app} is marked as forwarded or as carrying a forwarded "
                     "or quoted message; Mabillon has not verified who first wrote the words"
+                )
+                continue
+            if not sentence_aligned(p.quoted_text or "", row.text or ""):
+                # 'text me about it' in 'dont text me about it, use telegram'
+                unknown.append(row.id)
+                lines.append(
+                    f"{row.id} on {row.app} holds the words only inside a longer sentence, so it"
+                    f" may not say what the claim quotes; the whole message reads {row.text!r}"
                 )
                 continue
             if acc is None:

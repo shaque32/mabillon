@@ -20,6 +20,7 @@ from core.audit.checks._common import (
     local_str,
     messages_with_text,
     parties,
+    sentence_aligned,
     sentences,
     window_str,
     zone_notes,
@@ -38,7 +39,9 @@ class TimeCheck(TemplateCheck):
 
     name = "time"
     # 1.0.2: a call is on the app named beside "call". 1.0.3: the text match folds (TEXT_MATCH).
-    version = "1.0.3"
+    # 1.1.0: a message that holds the words only inside a longer sentence (sentence_aligned)
+    # neither passes nor fails it.
+    version = "1.1.0"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None:
@@ -84,8 +87,11 @@ class TimeCheck(TemplateCheck):
         inside: list[Row] = []
         outside: list[Row] = []
         unknown: list[Row] = []
+        partial: list[Row] = []  # the words only inside a longer sentence: never pass or fail
         for row in rows:
-            if row.ts_utc is None:
+            if by_text and not sentence_aligned(p.quoted_text or "", row.text or ""):
+                partial.append(row)
+            elif row.ts_utc is None:
                 unknown.append(row)
             elif in_window(row.ts_utc, p.window):
                 inside.append(row)
@@ -101,12 +107,18 @@ class TimeCheck(TemplateCheck):
             show("Inside the window", inside),
             show("Outside the window", outside),
             show("No usable time", unknown),
+            *(
+                f"{r.id} holds the words only inside a longer sentence, so it may not say what"
+                f" the claim quotes, and its time is not used; the whole message reads"
+                f" {r.text!r}"
+                for r in partial
+            ),
         ]
         # record_ids are the records the outcome rests on.
-        ids = [r.id for r in inside + outside + unknown]
+        ids = [r.id for r in inside + outside + unknown + partial]
         if inside:
             outcome, ids = CheckOutcome.PASS, [r.id for r in inside]
-        elif outside and not unknown and by_text:
+        elif outside and not unknown and not partial and by_text:
             outcome = CheckOutcome.FAIL
         else:
             outcome = CheckOutcome.INCONCLUSIVE

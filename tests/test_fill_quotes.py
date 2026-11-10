@@ -17,6 +17,7 @@ from core.audit.assumption_filler import (
 )
 from core.audit.assumptions import TemplateAssumptionBuilder, is_code_made
 from core.audit.checks import run_checks
+from core.audit.checks._common import sentence_aligned
 from core.audit.rules import decide_verdict
 from core.contracts import (
     AssumptionKind,
@@ -218,8 +219,9 @@ def test_a_characterized_quote_stays_for_the_expert(conn, verb):
 
 def test_a_fragment_that_reverses_the_message_stays_unproven(conn):
     # The record reads "dont text me about it, use telegram"; the claim quotes a fragment that
-    # says the opposite. The words are in the record, so who sent it and when pass, but what
-    # they mean is the expert's to judge: the meaning stays uncovered.
+    # says the opposite. The words sit inside a longer sentence, so who sent it and when are
+    # not settled (sender 1.2.0, time 1.1.0), and what they mean is the expert's to judge: the
+    # meaning stays uncovered.
     quote = "text me about it"
     text = f'On March 19, 2026, PETROV texted REYES "{quote}", inviting more messages.'
     window = W("On March 19, 2026", "2026-03-19T00:00", "2026-03-20T00:00")
@@ -386,3 +388,85 @@ def test_the_sender_check_fails_only_on_a_record_or_a_confirmed_fact(words, part
     assert r.outcome is want, r.detail
     if words in {"alpha", "foxtrot", "golf"} and want is CheckOutcome.INCONCLUSIVE:
         assert "no confirmed link ties" in r.detail
+
+
+# --- a quote that sits inside a longer sentence (sender 1.2.0, time 1.1.0)
+
+
+@pytest.mark.parametrize(
+    ("quote", "body", "aligned"),
+    [
+        ("dont text me about it, use telegram", "dont text me about it, use telegram", True),
+        ("text me about it", "dont text me about it, use telegram", False),  # reverses it
+        ("I did not say", "I did not say go", False),
+        ("not say go", "I did not say go", False),
+        ("van is back at gus", "home. van is back at gus", True),
+        ("back at gus", "home. van is back at gus", False),  # inside its clause
+        # No punctuation at all: the whole message aligns; a quote that stops before more
+        # words with no mark between does not.
+        ("ok see you at 5", "ok see you at 5", True),
+        ("ok see you at 5", "ok see you at 5 bring the stuff", False),
+        # A clause cut at a comma, a semicolon, a colon or a dash.
+        ("use telegram", "dont text me about it, use telegram", True),
+        ("got the money", "got the money, come get it", True),
+        ("got the money", "got the money - come get it", True),
+        ("got the money", "got the money; come get it", True),
+        ("send", "pls re-send", False),  # a hyphen inside a word is no dash
+        # A sentence of a longer message, between sentence ends, curly or straight.
+        ("Lets go now", "Yes. Lets go now. Bring it.", True),
+        ("Let's go now", "Yes. Let’s go now. Bring it.", True),
+        ("Yes.", "Yes. Lets go now.", True),
+        # An emoji or a line break ends a sentence.
+        ("come get it", "got the money 😀 come get it", True),
+        ("got the money", "got the money 😀 come get it", True),
+        ("come get it", "got the money\ncome get it", True),
+        ("got the money", "got the money\n\ncome get it", True),
+        # An ellipsis ends one; the message's own quotation marks do not hide its start.
+        ("bring it", "I'll be there... bring it", True),
+        ("ok", '"ok"', True),
+        ("ok", "  ok  ", True),
+    ],
+)
+def test_sentence_aligned(quote, body, aligned):
+    assert sentence_aligned(quote, body) is aligned
+
+
+def test_a_communication_claim_quoting_a_reversing_fragment_is_not_supported(conn):
+    # Code-checked support (rule 3c') must not rest on words cut out of a sentence that says
+    # the opposite: "text me about it" from "dont text me about it, use telegram".
+    quote = "text me about it"
+    text = f'On March 19, 2026, PETROV texted REYES "{quote}".'
+    window = W("On March 19, 2026", "2026-03-19T00:00", "2026-03-20T00:00")
+    props = [P("sender", people=["PETROV"], quoted_text=quote),
+             P("record_time", people=["PETROV"], quoted_text=quote, window=window)]  # fmt: skip
+    c, made, filler = build(conn, text, ClaimType.COMMUNICATION, props)
+    decision, checks = verdict(conn, c, made)
+    assert {r.outcome for r in checks} == {CheckOutcome.INCONCLUSIVE}, reasons(filler)
+    assert all("dont text me about it, use telegram" in r.detail for r in checks)
+    assert decision.verdict is Verdict.UNPROVEN
+
+
+def test_the_whole_message_still_passes(conn):
+    quote = "dont text me about it, use telegram"
+    text = f'On March 19, 2026, PETROV texted REYES "{quote}".'
+    window = W("On March 19, 2026", "2026-03-19T00:00", "2026-03-20T00:00")
+    props = [P("sender", people=["PETROV"], quoted_text=quote),
+             P("record_time", people=["PETROV"], quoted_text=quote, window=window)]  # fmt: skip
+    c, made, _ = build(conn, text, ClaimType.COMMUNICATION, props)
+    decision, checks = verdict(conn, c, made)
+    assert {r.outcome for r in checks} == {CheckOutcome.PASS}
+    assert decision.verdict is Verdict.SUPPORTED
+
+
+def test_a_fragment_never_fails_the_time_check(conn):
+    # The fragment's message is dated outside the window: it may be another message, so the
+    # time check does not fail on it.
+    window = W("On March 1, 2026", "2026-03-01T00:00", "2026-03-02T00:00")
+    props = [P("record_time", people=["PETROV"], quoted_text="text me about it", window=window)]
+    text = 'On March 1, 2026, PETROV texted REYES "text me about it".'
+    _, made, _ = build(conn, text, ClaimType.TIMING, props + [P("sender", people=["PETROV"],
+                       quoted_text="text me about it")])  # fmt: skip
+    (rt,) = [a for a in made if a.template_id == "record_time"]
+    (r,) = run_checks(rt, conn)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert "inside a longer sentence" in r.detail
