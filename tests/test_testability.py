@@ -1035,7 +1035,15 @@ def test_the_eval_reports_the_measures_and_gives_no_go_no_go_until_arsh_sets_the
     assert t["wrong_entity_rate_without_the_claim_check"] == 0.0
     assert t["x_percent"] == 40.0 and t["y_budget"] == {"calls": 2, "seconds": 120}
     assert t["cap_set"] == 2 and t["min_testable"] == 15 and not t["go_no_go_case"]
-    assert "an upper bound: the signed sheet filters every try" in capsys.readouterr().out
+    # Both passes together (Arsh, 2026-11-08): C01, the one claim run, ends with the repair's
+    # assumptions, which match its sheet row; the first pass kept nothing for it.
+    assert t["scoring"] == "both passes (Arsh, 2026-11-08)"
+    assert t["sheet_testable_claims"] == 1 and t["ending_with_sheet_matching_assumptions"] == 1
+    assert t["coverage_rate"] == 1.0 and t["first_pass_kept_on_sheet_testable_claims"] == 0
+    assert t["first_pass_naming_another_person_phone_or_window"] == 0
+    printed = capsys.readouterr().out
+    assert "an upper bound: the signed sheet filters every try" in printed
+    assert "both passes: 1 of the 1 claims the sheet makes testable end with" in printed
     r = rp.testability_go_no_go(
         t, expert="simulated", false_supported=0, repeat=None, gold="signed"
     )
@@ -1090,3 +1098,102 @@ def test_the_eval_refuses_the_step_without_a_cap_or_outside_real_mode():
         rp.main(["--mode", "model-free", "--testability", "1"])
     with pytest.raises(SystemExit):
         rp.main(["--mode", "real", "--testability-prompt", "x.md"])
+
+
+# C12, "On March 19, 2026, PETROV texted REYES: ...": the sheet's rows name PETROV only.
+QUOTE_C12 = "dont text me about it, use telegram"
+WIN_C12 = {
+    "as_written": "On March 19, 2026",
+    "start": "2026-03-19T00:00",
+    "end": "2026-03-20T00:00",
+    "zone": "phone",
+}
+C12_WITH_REYES = [
+    P("sender", people=["PETROV"], quoted_text=QUOTE_C12),
+    P("record_time", people=["PETROV", "REYES"], quoted_text=QUOTE_C12, window=WIN_C12),
+]
+
+
+def test_a_party_the_claim_names_is_no_wrong_person_under_the_parties_check(conn):
+    """Arsh, 2026-11-08 (decision card): the go/no-go scores both passes, and a party the claim
+    names is not a wrong person. Under SHEET_CHECK_PARTIES, REYES as a party to the message's
+    time (the claim names him) matches a sheet whose rows name PETROV only; under the old
+    SHEET_CHECK, which earlier logs replay with, it is a mismatch as before."""
+    filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
+    sheet = testability.sheet_named(SHEET)["C12"]
+    assert sheet.people == {PETROV}
+    old = testability.check_answer(
+        filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK
+    )
+    assert old[0] == "mismatch" and old[2].parties == frozenset()
+    assert old[1] == [f"names the person {REYES!r}, which the signed sheet does not name"]
+    outcome, reasons, got, kept = testability.check_answer(
+        filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK_PARTIES
+    )
+    assert (outcome, reasons) == ("proposed", []) and got.parties == {REYES}
+    assert {a.template_id for a in kept} == {"sender", "record_time"}
+    assert got.payload() == old[2].payload()  # the log entry shows what it named, as before
+
+
+def test_only_a_claim_named_party_to_the_record_is_spared(conn):
+    filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
+    both = "On March 19, 2026, PETROV texted REYES."
+    party = [("record_time", {"person_ids": [PETROV, REYES]})]
+    assert testability.claim_parties(filler, both, party) == {PETROV, REYES}
+    # the claim does not name REYES: he stays a wrong person
+    assert testability.claim_parties(filler, "On March 19, 2026, PETROV texted.", party) == {PETROV}
+    # as a sender, or as the one the words refer to, a claim-named person still counts
+    as_sender = [("sender", {"person_ids": [REYES]}), *party]
+    assert testability.claim_parties(filler, both, as_sender) == {PETROV}
+    meaning = [("meaning", {"person_ids": [REYES]})]
+    assert testability.claim_parties(filler, both, meaning) == frozenset()
+    sheet = testability.Named(people=frozenset({PETROV}))
+    spared = testability.Named(people=frozenset({PETROV, REYES}), parties=frozenset({REYES}))
+    assert testability.mismatch(spared, sheet) == []
+    assert testability.mismatch(testability.Named(people=frozenset({PETROV, REYES})), sheet)
+
+
+def test_the_eval_step_runs_the_parties_check_with_a_sheet(conn):
+    filler, _, _ = first_pass(conn, "C01", BAD_C01)
+    s = testability.Testability(
+        FakeModel(GOOD_C01), filler, testability.sheet_named(SHEET), 1, template=DRAFT
+    )
+    assert s.check == testability.SHEET_CHECK_PARTIES
+    assert s.repair(claim("C01"), []).entries()[0]["check"] == testability.SHEET_CHECK_PARTIES
+
+
+def test_both_passes_counts_the_first_pass_s_matching_claims_and_the_step_s(tmp_path):
+    """The go/no-go's coverage on a run: C12's first pass keeps PETROV's message with REYES, whom
+    the claim names, as a party to its time (a match under the parties check), and the step
+    converts C01. Both of the two claims the sheet makes testable end matching it."""
+
+    def answers(prompt: str) -> str:
+        if "Templates you may use for this claim" not in prompt:
+            return '{"stance": "irrelevant", "quote": "", "rationale": "n"}'
+        if QUOTE_C12 in prompt and "[REFUSED START]" not in prompt:
+            return json.dumps({"assumptions": C12_WITH_REYES})
+        return _answers(prompt)
+
+    model = RuntimeFake(respond=answers)
+    rp.run_once("case01", "real", "accept", tmp_path, None, "simulated", labeler_model=model,
+                claim_ids=["C01", "C12"], filler_model=model, testability_cap=1,
+                testability_prompt=ROOT / "docs/prompts/agent_testability.md",
+                testability_model=model)  # fmt: skip
+    t = json.loads((tmp_path / "run.json").read_text("utf-8"))["testability"]
+    assert t["claims_the_filler_left_untested"] == 1 and t["converted_and_accepted"] == 1
+    assert t["sheet_testable_claims"] == 2 and t["ending_with_sheet_matching_assumptions"] == 2
+    assert t["first_pass_kept_on_sheet_testable_claims"] == 1
+    assert t["first_pass_matching_the_sheet"] == 1
+    assert t["first_pass_naming_another_person_phone_or_window"] == 0
+    db = sqlite3.connect(tmp_path / "case01.db")
+    try:
+        people = [
+            json.loads(p)["person_ids"]
+            for (p,) in db.execute(
+                "SELECT params_json FROM assumptions WHERE claim_id = 'C12'"
+                " AND template_id = 'record_time'"
+            )
+        ]
+    finally:
+        db.close()
+    assert [len(p) for p in people] == [2]  # PETROV and REYES, by the built case's ids

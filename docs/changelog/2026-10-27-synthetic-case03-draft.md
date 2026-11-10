@@ -16,9 +16,9 @@
   explain.py directions list it (a builder's report, not a test). `eval/run_pipeline.py` gains a
   case03 entry in DRAFT_GOLD and case03 branches for the reports and the affidavit PDF. Not wired
   into `make eval` or any gate; the challenge-step code was not read or used.
-- Where: PR #151 (branch `claude/project-thread-6i2msb-case03`). Arsh approved the draft key and
-  sheet as drafted on 2026-10-28 (05:15Z, in the project thread). The signed copies under
-  `eval/gold/case03/` are his to write; the exact commands are in `PROPOSED_CHANGES.md`.
+- Where: main (#151, merged 2026-10-28). Arsh approved the draft key and sheet as drafted on
+  2026-10-28 (05:15Z, in the project thread); the signed copies are in `eval/gold/case03/`
+  (#161, merged 2026-11-06).
 - Verified: `tests/test_synthetic_case03.py` (synthetic only): the generator gives the same
   bytes twice (reports included); the committed drafts match a fresh build; every key-evidence,
   counter and decoy record exists after the real Cellebrite Excel importer reads both reports;

@@ -8,7 +8,7 @@
   options drop the repeated paragraph number and cut at a word; the empty state links to the
   form. Placeholder text contrast raised; intro paragraphs capped at a readable measure.
   The exported report is unchanged.
-- Where: PR #179
+- Where: main (#179, merged 2026-10-30)
 - Verified: make check; impeccable detect on the rendered demo case: low-contrast, tiny-text,
   placeholder and skipped-heading findings cleared on these four screens. No browser
   screenshot (extension not connected).

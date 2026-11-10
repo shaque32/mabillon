@@ -54,7 +54,7 @@
     by Arsh in the same commit. Both are recorded in `PROPOSED_CHANGES.md`.
   - No rule, prompt, pin, contract, schema, gold or scorer file changes, and nothing under
     `eval/validation/` or the `validation-v1-run2` tag. Off by default, so no default run changes.
-- Where: PR #159 (branch `claude/project-thread-6i2msb-testability`)
+- Where: main (#159, merged 2026-10-29)
 - Verified: new `tests/test_testability.py`, 35 tests on synthetic case01 with scripted models:
   - a try that names no assumption for C05 gets code's sender and time range, exactly as the
     first pass does with the same answer (fails with the order before #160 and #164);
@@ -100,9 +100,4 @@
   - A real examiner's accept step (UI) is a later change. So is a `proposed_by` contract field,
     if wanted; the mark is read from the log.
 - Affects: capabilities (behind a flag, off by default, eval only)
-- Status doc: pending: section 8 item 2 ("Audit"): add "An eval-only testability step
-  (`eval/run_pipeline.py --testability CAP`, off by default) asks the local model to retry a
-  claim the assumption filler left untested; code checks each try with the filler's checks and
-  against the signed sheet, only an examiner's acceptance uses it, each try is logged and
-  re-run by verify-bundle, and the report marks it "Proposed by agent, accepted by examiner".
-  Its prompt is signed (v1.0); its effect is unmeasured".
+- Status doc: applied 2026-11-08

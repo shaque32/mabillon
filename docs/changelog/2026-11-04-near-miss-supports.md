@@ -11,8 +11,8 @@
   bundle check accepts both rewrites. Why: on a validation run on a public test phone, the
   local stance model labelled near misses as support ("Dominant" for a quoted "Dominion",
   "trashed" for "deleted"), so a false claim showed the expert support alone.
-- Where: branch claude/project-thread-ds0ify (Arsh chose "near-miss complicates, rest
-  irrelevant" in the validation thread on 2026-11-04)
+- Where: main (#220, merged 2026-11-06). Arsh chose "near-miss complicates, rest irrelevant"
+  in the validation thread on 2026-11-04.
 - Verified: New tests in `tests/test_stance.py` (five records: folded exact match, two near
   misses, two unrelated), `tests/test_bundle.py` (the bundle check accepts both rewrites and
   refuses others) and `tests/test_withheld_rationale.py` (the notes hold no forbidden word);
@@ -31,6 +31,4 @@
   message may still be read as supporting its meaning). A call's direction is still not
   tested by any assumption. The 0.7 ratio is set from a handful of examples.
 - Affects: capabilities (what evidence counts as support for an expert to accept)
-- Status doc: pending: in section 2, Pipeline, row "8. Stance", add to the job column: "Code
-  stores a label on a record that is not the quoted message of a one-message assumption as
-  complicates (a near miss) or irrelevant, never supports or contradicts."
+- Status doc: applied 2026-11-08

@@ -46,7 +46,7 @@
     The report is 0.28.0 for this wording.
   Why: run 3 of the Hickman iOS 15 validation needs as many code-checked claims as the data
   allows; one-way and "exchanged" counts were refused only for want of a field.
-- Where: branch claude/project-thread-ds0ify (the R2/R3 PR)
+- Where: main (#172, merged 2026-10-30)
 - Verified: on this container, 2026-10-29. New tests in tests/checks/test_unit.py (one side's
   count passes and fails, each way passes and never fails on silence, refused directions, the
   contract validators, a message with no recorded sender) and tests/test_assumption_filler.py
@@ -74,6 +74,4 @@
   is a follow-up.
 - Affects: capabilities (one-way and "exchanged" message counts; count check 1.2.0); no privacy
   change; no customer-facing claim change
-- Status doc: pending: in the count check's capabilities, add "counts one side's messages
-  ('X sent Y three messages') and 'exchanged' messages (at least one each way, never failed on
-  one side's silence)"
+- Status doc: applied 2026-11-08

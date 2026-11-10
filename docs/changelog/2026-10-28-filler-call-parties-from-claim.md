@@ -32,7 +32,7 @@
   app "unknown", which is the ingest step of the coverage plan. Direction is not checked
   ("placed a call to" passes on a call either way); the assumption says "a call between".
   No frozen file changes. Assumption filling stays local.
-- Where: PR #164
+- Where: main (#164, merged 2026-10-28)
 - Verified: on this container, 2026-10-28.
   - New tests/test_call_parties.py: parties from persons, numbers, a quoted display name and
     a written identifier; refusals for no app, two apps, an address, an unknown name and no
@@ -45,6 +45,4 @@
   refused, never joined.
 - Affects: capabilities (more call claims tested; the time check is stricter for app calls);
   no privacy or customer-facing claim change
-- Status doc: pending: in "2. Pipeline (main)", row "5. Assumptions", append to the description:
-  "Code reads a call's parties from the claim on the one app it names; the time check reads a
-  call with an app as that app's calls only"
+- Status doc: applied 2026-11-08

@@ -8,7 +8,7 @@
     invalid: "Please check the fields marked below.",
     busy: "Too many requests from your connection. Please wait a minute and try again.",
     unreadable: "We could not read the form. Please try again.",
-    unavailable: "We could not send that just now. Please try again, or email support@getmabillon.com.",
+    unavailable: "We could not send that just now. Please try again, or email team@getmabillon.com.",
   };
 
   const store = {

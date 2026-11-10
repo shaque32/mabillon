@@ -31,7 +31,7 @@
     marks, and for a contact entry the saved name as the claim writes it, quoted or not (as the
     filler reads it); a sender names only the sender; a message count names its two sides. Its header lists each
     change. PROPOSED_CHANGES.md has the exact edit to the signed copy, which stays v1.0.
-- Where: PR #210 (merge after #209)
+- Where: main (#210, merged 2026-11-04)
 - Verified: tests/test_case_setup_names.py (case.json matches the generators; case04 and
   case05 setup enter the names under the eval's expert actor; the names resolve in the filler
   to the affidavit's phones and number; "COURIER" reads as the alias "the COURIER"; the FENCE
@@ -52,7 +52,4 @@
   the new lookups aim at. Dev numbers on case04 and case05 can flatter; only case06 counts.
 - Affects: performance (eval only: what the testability dev check measures); no capability,
   privacy or customer-facing claim. The signed prompt is unchanged until Arsh signs v1.1.
-- Status doc: pending: section 8, in the item that describes the testability step's go/no-go
-  (the one #208's entry edits), add after its results: "case04 and case05 are spent and give
-  no go/no-go again; the eval's case setup enters the affidavits' phone and number names, and
-  `--no-stance` runs a dev check of the filler and the step without the stance model."
+- Status doc: applied 2026-11-08

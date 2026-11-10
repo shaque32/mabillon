@@ -58,7 +58,7 @@
   Why: run 2 of the Hickman iOS 15 validation tested 9 of 106 claims, and run 3 needs at
   least 30 code-checked. Every step only lets code read what the claim plainly writes; the
   expert still accepts each assumption, and rules 0.3.0 are unchanged.
-- Where: PR #169 (branch claude/project-thread-ds0ify)
+- Where: main (#169, merged 2026-10-29)
 - Verified: on this container, 2026-10-29. New tests in tests/test_assumption_filler.py,
   tests/test_account_lookups.py (two tests changed from "refused" to "one party" under R6)
   and tests/test_validation_run.py. Replaying run 2's recorded model answers through this
@@ -78,8 +78,4 @@
 - Affects: capabilities (which claims the filler can make checkable; number matching; call
   counts, count check 1.1.0; the code-made note on assumption text); no privacy change; no
   customer-facing claim change
-- Status doc: pending: in the assumption filler's capabilities, add "reads native calls by
-  number, one number written several ways as one party, writers from 'instructed ...,
-  writing' and 'after receiving it from', part-day ranges on a stated day, open no-contact
-  ranges ('never', 'before', 'since') to the extraction's first or last dated record; code-made
-  assumptions say 'Filled from the claim's wording.'"
+- Status doc: applied 2026-11-08

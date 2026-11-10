@@ -21,7 +21,7 @@
   (Arsh, 2026-10-30). The speed rule from that plan holds: nothing here can ship a model; any
   candidate still needs 0 contradicting records and 0 moved traps shown as supports on both
   test sets.
-- Where: PR #199
+- Where: main (#199, merged 2026-11-02)
 - Verified: on a Linux container, 2026-11-01. 98 training generator tests pass, 3 of them new,
   one per family's shape (a told frame's report frame, never the message as the subject or the
   record's minute, beside the record's denial or other value; an undated denial's record,

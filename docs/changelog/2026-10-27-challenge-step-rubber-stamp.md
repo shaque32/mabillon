@@ -40,7 +40,7 @@
     rate has no default: it is Arsh's to set. Time per item is not simulated.
   - No rule, prompt, pin, contract, schema, gold or scorer file changes, and nothing under
     `eval/validation/` or the `validation-v1-run2` tag. Off by default, so no default run changes.
-- Where: PR #154 (branch `claude/project-thread-6i2msb-challenge`)
+- Where: main (#154, merged 2026-10-27)
 - Verified: new `tests/test_challenge.py`, 21 tests on synthetic case01:
   - which claims are close to SUPPORTED, and that only doubt is kept;
   - the invariant fails on a stored "supports" or "irrelevant" item, and a run whose step would
@@ -80,11 +80,4 @@
   per-claim cap, are Arsh's to set. A case that uses cloud AI sends the step's records to the
   cloud labeller like any retrieved record, under the case's opt-in.
 - Affects: capabilities (behind a flag, off by default)
-- Status doc: pending: section 8 item 2 ("Audit"): add "An optional challenge step (`mabillon
-  audit --challenge`, off by default) runs code's counter-searches on claims close to supported,
-  stores only contradicts and complicates labels, logs each search, and is re-run by
-  verify-bundle; its effect is unmeasured (#154)"; section 7 or 10: "The eval has a rubber-stamp
-  simulated expert (`--expert rubber-stamp`); on case01 model-free it lets 6 of 20 claims through
-  as false supported, with or without the challenge step; and a fallible simulated expert
-  (`--expert fallible --error-rate RATE`), wrong at a set rate, whose rate is not set yet
-  (#154)".
+- Status doc: applied 2026-11-08

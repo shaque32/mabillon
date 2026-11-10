@@ -55,7 +55,7 @@
     - No message count and no absence is read from "Native Messages" by an alias, because it
       holds iMessage and SMS together. A count could include messages the claim does not name,
       and an SMS could fail a claim of no iMessages.
-- Where: PR #150 (branch `claude/project-thread-6i2msb-coverage`)
+- Where: main (#150, merged 2026-10-28)
 - Verified: new `tests/test_affidavit_wording.py`, 105 tests on synthetic case01 with made-up
   wording:
     - the date-first forms and written zones, each also passing `check_window`;
@@ -113,11 +113,4 @@
 - Affects: capabilities. More claims can be set up from real affidavit wording. A claim whose
   written zone the phone was not in is now refused, where before it was read in the phone's
   zone.
-- Status doc: pending: two edits.
-  - Section 7, "Real-export validation", run 1 bullet: after "run 1's 43 model-side refusals
-    are not fixed" add "; the date-first time wording, written time zones and export app names
-    behind many of them are read by code since #150 (unmeasured until a run under a new signed
-    plan)".
-  - Section 9 item 8 ("Other gaps"): add "a time zone written beside a claim's time must match
-    the phone's zone at that time, or the claim's range is refused; 'between approximately X
-    and Y', 24-hour times and zones other than US and UTC are left to the model (#150)".
+- Status doc: applied 2026-11-08

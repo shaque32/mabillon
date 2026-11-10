@@ -19,7 +19,7 @@
   Why: the go bar already counts told frames and undated denials as moved traps (`GO_BAR.md`
   bars 2 and 3), and a fine-tuned model must be scored on held-out ones written apart from the
   training side (#199).
-- Where: PR #202
+- Where: main (#202, merged 2026-11-03)
 - Verified: on a Linux container, 2026-11-01. 80 held-out generator tests pass: the existing ones
   with the new counts and plain-file pins, plus 5 new (records drawn from denials, values and
   statements, never a corrected one; told frames in the supports frames, never "the message"

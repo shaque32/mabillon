@@ -12,7 +12,7 @@
   Activity: narrower intro, the CSV link as a quiet button beside the summary, the
   activity-in-report switch on one row, tidy numeric columns. No form action, field, entry or
   caveat removed.
-- Where: PR #198
+- Where: main (#198, merged 2026-11-01)
 - Verified: per-page pytest selections (cases/help 379, log/activity 229 passed), ruff, a
   replay of packaging/smoke_ui.py's cases-screen steps in Node Playwright, and `make check` on
   the combined branch (numbers in the PR). Impeccable detect, before to after: /help 3 to 1,

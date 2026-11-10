@@ -7,7 +7,7 @@
   with one easing curve; a small diagram shows a pulse stopping at the "off unless you opt in" gate;
   the header is frosted. Body font is IBM Plex Sans (OFL, Fontsource 5.3.0); Inter and JetBrains
   Mono files removed from site/. Reduced motion turns all motion off.
-- Where: PR #156
+- Where: main (#156, merged 2026-10-27)
 - Verified: Chromium at 1280x800, 1280x720, 1920x1080, 1280x900 and 390x844, light and dark, no
   console errors; walkthrough steps advance in order. Safari iOS unverified.
 - Open: hero statuses are illustrative and must keep matching the rules (Supported only after the

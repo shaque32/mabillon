@@ -99,7 +99,7 @@ from core.audit.assumption_filler import (
     phone_digits,
     unquoted_time_quote,
 )
-from core.audit.assumptions import Proposal, from_proposal, templates_for
+from core.audit.assumptions import CODE_ONLY_TEMPLATES, Proposal, from_proposal, templates_for
 from core.audit.checks._common import key
 from core.audit.invariants import InvariantViolation
 from core.contracts import (
@@ -127,6 +127,14 @@ CONFIRM_ACTION = "testability.confirm"
 PROPOSED_MARK = "Proposed by agent"
 CLAIM_CHECK = "claim"  # the claim-only check, all a case without a signed sheet gets
 SHEET_CHECK = "claim and sheet"  # the eval's: the claim-only check, then the signed sheet
+# The eval's sheet check from 2026-11-08 (Arsh: the go/no-go scores both passes together, and a
+# party the claim names is not a wrong person): as SHEET_CHECK, except that a person the claim's
+# own words name, named only as a party to the record (PARTY_TEMPLATES), is not counted as one
+# the sheet does not name. Logs that say SHEET_CHECK (or no check) replay with SHEET_CHECK.
+SHEET_CHECK_PARTIES = "claim and sheet, parties the claim names"
+# Templates whose person_ids are who the record was between, not its sender, the one its words
+# refer to, or whose account it is: naming one more party the claim names only narrows the search.
+PARTY_TEMPLATES = frozenset({"record_time", "message_count", "no_contact"})
 MAX_LOOKUPS = 30  # per claim, in code's fixed order: people, phones, accounts
 MIN_NAME = 3  # an identifier or display name shorter than this is never looked up ("J")
 
@@ -276,6 +284,9 @@ class Named:
     apps: frozenset[str] = frozenset()  # channels, casefolded
     templates: frozenset[str] = frozenset()
     quotes: frozenset[str] = frozenset()  # casefolded, whitespace folded
+    # Of `people`, the claim-named parties the sheet check does not count (claim_parties; set
+    # only under SHEET_CHECK_PARTIES). Not in the payload: a replay computes it again.
+    parties: frozenset[str] = frozenset()
 
     def payload(self) -> dict[str, list[Any]]:
         return {
@@ -382,10 +393,11 @@ def account_copies(conn: sqlite3.Connection) -> Callable[[str], frozenset[str]]:
 
 def mismatch(repair: Named, sheet: Named) -> list[str]:
     """What the repaired set names that the sheet does not. Empty: the same people, phones,
-    windows, accounts, handles, apps, templates and quoted words as the sheet, or fewer."""
+    windows, accounts, handles, apps, templates and quoted words as the sheet, or fewer. A
+    person in `repair.parties` (a party the claim's own words name) is not counted."""
     out = []
     for what, got, want in (
-        ("person", repair.people, sheet.people),
+        ("person", repair.people - repair.parties, sheet.people),
         ("phone", repair.phones, sheet.phones),
         ("time window", repair.windows, sheet.windows),
         ("account", repair.accounts, sheet.accounts),
@@ -398,6 +410,23 @@ def mismatch(repair: Named, sheet: Named) -> list[str]:
             shown = " to ".join(x) if isinstance(x, tuple) else repr(x)
             out.append(f"names the {what} {shown}, which the signed sheet does not name")
     return out
+
+
+def claim_parties(
+    filler: LocalAssumptionFiller, text: str, rows: Iterable[tuple[str, Mapping[str, Any]]]
+) -> frozenset[str]:
+    """The people a set of (template id, parameters) names only as parties to a record
+    (PARTY_TEMPLATES), never as a sender or in any other role, whom code's lookups find in the
+    claim's own text (`text`; its paragraph does not count). Under SHEET_CHECK_PARTIES the sheet
+    check does not count them: "ODUM texted MERROW ..." may name MERROW as a party to the
+    message's time even where the sheet's row names only the sender. Code already refuses the
+    one a claim writes as the recipient when an answer gives them as the sender."""
+    party: set[str] = set()
+    other: set[str] = set()
+    for template_id, p in rows:
+        (party if template_id in PARTY_TEMPLATES else other).update(p.get("person_ids") or ())
+    own = {xid for x, xid in _found(filler, (text,)) if x.kind == "person"}
+    return frozenset((party - other) & own)
 
 
 def outside_claim(filler: LocalAssumptionFiller, claim: Claim, got: Named) -> list[str]:
@@ -531,8 +560,8 @@ def check_answer(
     check: str = SHEET_CHECK,
 ) -> tuple[Outcome, list[str], Named, list[Assumption]]:
     """Code's verdict on one answer: the filler's own checks, the claim-only check, then (with
-    check SHEET_CHECK, the eval's) the signed sheet's. The same code runs live and in
-    verify-bundle, so a stored answer gives the same outcome again."""
+    check SHEET_CHECK or SHEET_CHECK_PARTIES, the eval's) the signed sheet's. The same code runs
+    live and in verify-bundle, so a stored answer gives the same outcome again."""
     para = filler.paragraph_text(claim)
     allowed = {t.id for t in templates_for(claim.claim_type)}
     reasons: list[str] = []
@@ -568,7 +597,10 @@ def check_answer(
             return "refused", [*reasons, f"template {p.template_id!r}: {e}"], Named(), []
         out.setdefault(a.id, a)
     assumptions = list(out.values())
-    got = named((a.template_id, a.params.model_dump()) for a in assumptions if a.is_core)
+    rows = [(a.template_id, a.params.model_dump()) for a in assumptions if a.is_core]
+    got = named(rows)
+    if check == SHEET_CHECK_PARTIES:
+        got = dataclasses.replace(got, parties=claim_parties(filler, claim.text, rows))
     outside = outside_claim(filler, claim, got)
     if outside:
         return "outside", outside, got, []
@@ -868,7 +900,7 @@ class Testability:
         self.model = model
         self.filler = filler
         self.sheet = dict(sheet) if sheet is not None else None
-        self.check = CLAIM_CHECK if sheet is None else SHEET_CHECK
+        self.check = CLAIM_CHECK if sheet is None else SHEET_CHECK_PARTIES
         self.cap = cap
         self.examiner = examiner
         self.template = template if template is not None else load_prompt(PROMPT_FILE, prompts_dir)
@@ -888,7 +920,10 @@ class Testability:
         return self.filler.conn
 
     def prompt(self, claim: Claim, found: list[Lookup], refused: list[str]) -> str:
-        allowed = sorted(templates_for(claim.claim_type), key=lambda t: t.id)
+        allowed = sorted(
+            (t for t in templates_for(claim.claim_type) if t.id not in CODE_ONLY_TEMPLATES),
+            key=lambda t: t.id,
+        )
         para = self.filler.paragraph_text(claim)
         return fill_prompt(
             self.template,
@@ -911,7 +946,7 @@ class Testability:
         run_id = model_run_id(self.model)
         if run_id is None:
             return "model has no run id", None
-        allowed = {t.id for t in templates_for(claim.claim_type)}
+        allowed = {t.id for t in templates_for(claim.claim_type)} - CODE_ONLY_TEMPLATES
         schema = fill_schema(allowed, self.filler.channels())
         try:
             items, call = run_json_call(

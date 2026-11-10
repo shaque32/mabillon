@@ -13,7 +13,7 @@
   verified quote, its source line, its tier and stance tags and its own Accept and Dismiss, and
   says it is the same message as the item above; nothing about how items are stored or decided
   changes.
-- Where: PR #222
+- Where: main (#222, merged 2026-11-06)
 - Verified: ruff; `make check` (numbers in the PR); tests/test_demo.py checks C05 draws one
   conversation with two decision forms, the Selection, Case and Set up wording, and that the
   exported report still prints the ids; the demo at 1280 px before and after.

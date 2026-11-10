@@ -47,7 +47,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 from urllib.parse import parse_qs, urlsplit
 
 from core import db, encryption, pipeline
@@ -88,6 +88,10 @@ from ui import (
     timeline_pages,
     upload,
 )
+from ui.account_page import account_page
+
+if TYPE_CHECKING:
+    from account.session import SignIn
 
 CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'none'; "
@@ -125,6 +129,7 @@ NEEDS_NO_JOB: dict[str, tuple[str, ...]] = {
     "/stipulate": ("audit",),
     "/stipulation/withdraw": ("audit",),
     "/device/names": ("audit",),
+    "/device/zone": ("audit",),
     "/person/add": ("audit",),
     "/person/remove": ("audit",),
     "/person/aliases": ("audit",),
@@ -155,6 +160,9 @@ NEEDS_NO_JOB: dict[str, tuple[str, ...]] = {
 NO_CASE_GET = {"/cases"}
 HELP_GET = {"/help", "/help/bug-report.json"}  # with or without a case open
 NO_CASE_POST = {"/expert", "/case/new", "/case/open"}
+# Sign-in (account/session.py): answered with or without a case, and only while sign-in is on
+ACCOUNT_GET = {"/account"}
+ACCOUNT_POST = {"/signin/start", "/signout"}
 # Posts that must not have the case database open while they run: encrypting replaces the
 # database file (Windows cannot replace an open file), and locking forgets its key.
 OWN_DB_POST = {"/case/encrypt", "/case/lock", "/case/recovery/done", "/case/backup"}
@@ -270,6 +278,7 @@ class App:
         self._last_view: tuple[tuple, datetime] | None = None  # the last page loaded, and when
         self._unrecorded: list[str] = []  # views that could not be written, not yet shown
         self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        self.signin: SignIn | None = None  # cli/main.py hands it over; None: no sign-in
         self.cloud_config = (
             cloud_config  # None: $MABILLON_CLOUD_CONFIG, else ~/.mabillon/cloud.json
         )
@@ -376,6 +385,10 @@ class App:
             return self._stale_page()
         if req.method == "POST":
             self._last_view = None  # whatever the post did, the next page is a new view
+        if (req.method, req.path) in {("GET", p) for p in ACCOUNT_GET} | {
+            ("POST", p) for p in ACCOUNT_POST
+        }:
+            return self._account(req)
         if req.method == "GET" and req.path in HELP_GET:
             if self._opened_here(req):
                 self._last_view = None  # the examiner left the case pages
@@ -577,6 +590,7 @@ class App:
             cloud=self._case_uses_cloud(),
             case_key="" if self.case is None else _case_key(self.case),
             stand_in=self._stand_in if self.case is not None else "",
+            account=self._signin_on(),
         )
 
     def _get(self, conn: sqlite3.Connection, req: Request) -> Response:
@@ -715,6 +729,7 @@ class App:
             "/stipulate": lambda: self._stipulate(conn, f),  # type: ignore[arg-type]
             "/stipulation/withdraw": lambda: self._withdraw(conn, f),  # type: ignore[arg-type]
             "/device/names": lambda: self._name_device(conn, f),  # type: ignore[arg-type]
+            "/device/zone": lambda: self._set_zone(conn, f),  # type: ignore[arg-type]
             "/person/add": lambda: self._add_person(conn, f),  # type: ignore[arg-type]
             "/person/remove": lambda: self._remove_person(conn, f),  # type: ignore[arg-type]
             "/person/aliases": lambda: self._set_aliases(conn, f),  # type: ignore[arg-type]
@@ -1017,6 +1032,14 @@ class App:
             return "Names cleared." + _applies(conn, " Run the audit again to apply it.")
         return f"Saved {', '.join(kept)}." + _applies(
             conn, " Run the audit again so claims that name it are tested."
+        )
+
+    def _set_zone(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
+        zone = actions.set_device_zone(conn, f.get("device", ""), f.get("zone", ""), self.actor)
+        if zone is None:
+            return "Time zone cleared." + _applies(conn, " Run the audit again to apply it.")
+        return f"Saved {zone}." + _applies(
+            conn, " Run the audit again so time ranges on this phone are read in it."
         )
 
     def _stipulate(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
@@ -1512,6 +1535,10 @@ class App:
     def _start_audit(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
         case = self._open()
         actor = self.actor
+        if self.signin is not None:  # sign-in off: always allowed (account/session.py)
+            allowed, why = self.signin.may_start_audit()
+            if not allowed:
+                raise ReviewError(why)
         ready = cases.readiness(case, conn)
         todo = [
             r for r in ready if not r.ok and not (r.acknowledge and f.get(r.acknowledge) == "1")
@@ -1806,6 +1833,24 @@ class App:
         finally:
             if conn is not None:
                 conn.close()
+
+    def _signin_on(self) -> bool:
+        return self.signin is not None and self.signin.on
+
+    def _account(self, req: Request) -> Response:
+        """The Account page and its two buttons. Not there while sign-in is off. Nothing here
+        touches a case, so it works with or without one open."""
+        signin = self.signin
+        if signin is None or not signin.on:
+            return self._not_found(self._page(), "no such page")
+        if req.method == "GET":
+            note = signin.renew_if_due()
+            return self._html(account_page(self._page(), signin.status(), note))
+        if req.path == "/signin/start":
+            self.flash = (signin.start(), False)
+        else:
+            self.flash = (signin.sign_out(), False)
+        return self._redirect("/account")
 
     def _help(self, path: str) -> Response:
         previewed = getattr(self, "_previewed_report", None)

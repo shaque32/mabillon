@@ -4,8 +4,8 @@
   2026-11-08 at 01:25Z ("just waive 4 and 5", then "waive"). Gate 5 counts as met only through 5a,
   and 5b was already after the first pilot, so "5" is read as 5a. `docs/PILOT_GATES.md` records
   both rows as "Not met; waived for the first pilot", with what the waiver leaves in place. A
-  waived gate is not met: the count stays 14 of 19, and the gates still open for the first pilot
-  are 9, 11 and 16. No code changes. Forwarded and quoted messages still fail closed (a claim
+  waived gate is not met: the count stays 15 of 19 (gate 11 was met on 2026-11-10), and the gates
+  still open for the first pilot are 9 and 16. No code changes. Forwarded and quoted messages still fail closed (a claim
   resting on one stays Unproven with its warning), the UFDR importer keeps
   `FORMAT_SUPPORT = "unverified"`, and the pilot rule (only UFDR from Cellebrite Reader 7.48;
   every other format shows "Untested export format") still holds.
@@ -16,6 +16,6 @@
   Reader's own counts. Arsh also decided on 2026-11-07 that the first pilot waits for plan C (the
   hosted model), which adds plan C steps outside this file's gate list.
 - Affects: customer-facing claims (pilot readiness); no capability, privacy or performance change.
-- Status doc: pending: section 11, after "14 of 19 met (...)", add "Gates 4 and 5a are waived for
+- Status doc: pending: section 11, after the gate count sentence ("N of 19 met (...)"), add "Gates 4 and 5a are waived for
   the first pilot (Arsh, 2026-11-08); they stay not met, and the gates still open for the first
-  pilot are 9, 11 and 16."
+  pilot are 9 and 16."

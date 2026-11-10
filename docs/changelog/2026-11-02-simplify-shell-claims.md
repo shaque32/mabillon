@@ -42,17 +42,10 @@
   progress: the Stop button and the resume line say it in a few words.
   Kept on purpose: demo banner, "not tested" notices, verdict and review-state names, provenance
   tiers, the claim page's gap sentences and absence coverage.
-- Where: PR #206
+- Where: main (#206, merged 2026-11-02)
 - Verified: ruff; `make check` (numbers in the PR); screenshots of the demo at 1280 px before and
   after in /mnt/project-files/baker/simplify/.
 - Open: splitting ui/pages.py per page follows (plan: plans/simplify-app.md in the project
   files). Windows browsers not looked at.
 - Affects: none (wording and layout of the local screen; no verdict, rule or label change)
-- Status doc: pending: section on the review screen (the `/claims` paragraph): replace "opens
-  with how many claims need the expert and a progress bar" with "opens with how many claims need
-  the expert and one count per group"; replace "with a plain gap line per unproven claim for
-  each kind of core assumption not covered" with "with each unproven claim's gap topics as tags
-  (the claim page and the report print the full gap line for each kind of core assumption not
-  covered)"; replace "The top tabs (#110) come in three groups (review; tools to look closer;
-  set-up)" with "The sidebar's links come in three groups (review; tools to look closer; set-up
-  and record), with Cases on the case card and Help in the sidebar's foot".
+- Status doc: applied 2026-11-08
