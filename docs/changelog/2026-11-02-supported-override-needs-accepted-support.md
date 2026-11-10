@@ -21,7 +21,7 @@
   Under rules 0.5.0 (#228) a verdict the rules supported by code checks alone (rule 3c', the
   checked basis, demo C05 now) keeps main's behavior: an override back to Supported keeps
   the checked basis and needs no accepted evidence. The tests use C06 (unproven).
-- Where: PR #205
+- Where: main (#205, merged 2026-11-07)
 - Verified: tests/test_verdict_override.py (10 tests: refusal stores and logs nothing; the screen
   flashes the reason and every page stays 200; dismissed support does not count; accepted
   support is cited, logged, renders, and the exported bundle verifies, also after overriding
@@ -36,9 +36,4 @@
   message and the `mabillon redecide` command that repairs it.
 - Affects: capabilities (override to Supported narrowed to accepted support; bad stored row
   recoverable from the screen)
-- Status doc: pending: §4 "Verdicts come from code or the expert", after "under the expert's
-  name in the audit log.", add "An override to Supported needs at least one supporting item
-  the expert accepted on an observed record of a core assumption, and cites those items; the
-  bundle verifier replays them (#205)." §12 table row 1 (Verdicts come from versioned rules),
-  after "as the expert's decision;", add "an override to Supported needs expert-accepted support
-  and cites it;".
+- Status doc: applied 2026-11-08

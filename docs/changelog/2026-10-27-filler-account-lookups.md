@@ -26,7 +26,7 @@
   - A count or an absence on an account of an app that holds more than the claim's word names
     is refused, however the account was found (review fix). Native Messages holds iMessages
     and SMS together, so a count of "iMessages" on its account would count SMS too.
-- Where: PR #152 (branch `claude/project-thread-6i2msb-accounts`), stacked on #150
+- Where: main (#152, merged 2026-10-28)
 - Verified: new `tests/test_account_lookups.py`, 35 tests on synthetic case01 with made-up
   wording:
     - phone_digits forms, including a UK number with and without "+" and digits run together;
@@ -69,6 +69,4 @@
   - A display name is the export's own field. Whether that name belongs to the person the
     claim means is still the expert's question, as it is for any account.
 - Affects: capabilities. More claims can be set up from real affidavit wording.
-- Status doc: pending: section 9 item 8 ("Other gaps"): add "an account the claim writes by a
-  number in another format, a person's name or one account's display name is found by code;
-  a number or display name several accounts carry is refused, never merged (#152)".
+- Status doc: applied 2026-11-08

@@ -8,7 +8,7 @@
   verification of model labels (`core/audit/quotes.py`) stays exact; the fold is only for
   finding records. The hypotheses explainer uses the same match. Each check's searched text now
   says how it matched. Check versions: sender 1.0.2, weekday 1.0.2, time 1.0.3.
-- Where: PR #165
+- Where: main (#165, merged 2026-10-29)
 - Verified: on this container, 2026-10-28. New tests in tests/checks/test_unit.py:
   - the fold matches in both directions, and for double quotes, two spaces and a line break;
   - it does not fold a missing apostrophe or a backtick;
@@ -23,7 +23,4 @@
   typographic forms are not folded: dashes, ellipses and prime marks.
 - Affects: capabilities (which records the sender, time and weekday checks find); no privacy
   or customer-facing claim change
-- Status doc: pending: in "Other versions (main)", change "check versions same_account, sender,
-  time, weekday and absence 1.0.1" to "check versions same_account and absence 1.0.1, sender
-  and weekday 1.0.2, time 1.0.3 (#165: curly quotes and runs of spaces fold in the text match;
-  time 1.0.2 was #164)"
+- Status doc: applied 2026-11-08

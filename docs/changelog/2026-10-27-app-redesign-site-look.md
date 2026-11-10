@@ -8,7 +8,7 @@
   Downloaded report: report 0.20.0, the same type and table style; visual only, no wording,
   fact or section changed. Windows installer: wizard artwork and Setup icon drawn from the
   app's mark (packaging/windows/art/make_art.py). Mac installer: bold step titles.
-- Where: PR #149
+- Where: main (#149, merged 2026-10-28)
 - Verified: make check (lint, tests, eval); demo case screens rendered in Chromium at 1440x900
   and 390x844 before and after. Windows installer art checked as images only; the built
   wizard is unverified until the Windows CI build and a Windows install.

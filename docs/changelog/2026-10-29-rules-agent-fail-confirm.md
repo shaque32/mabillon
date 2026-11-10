@@ -34,7 +34,7 @@
     re-applies the rules with the same inputs, read at each verdict's log position, and fails a
     confirm that is not an expert's.
   - `docs/METHODS.md` names rules 0.4.0 and the new wait.
-- Where: PR #166, branch `claude/project-thread-6i2msb-agent-fail-confirm`
+- Where: main (#166, merged 2026-10-29)
 - Verified: `make check` passes with Arsh's applied rules (75ea6eb and after); its eval numbers
   are in the PR. Under rules 0.3.0 the 21 new tests fail, as they should. New tests:
   - `tests/contract/test_rules.py`: a waiting failure keeps the claim unproven with the rule 1a
@@ -66,9 +66,4 @@
 - Affects: verdict path (rule 1a, rules 0.4.0, only for assumptions the testability agent
   proposed; the agent stays off by default), capabilities (the confirm card), customer-facing
   claims (`docs/METHODS.md`). No privacy, network or model change.
-- Status doc: pending: section "11. Verdict" row: "applies rules 0.3.0" becomes "applies rules
-  0.4.0 (#<this PR>)". The outcome table's heading "(rules 0.3.0)" becomes "(rules 0.4.0)", and
-  its Contradicted row adds: "a failed check on an assumption the testability agent proposed
-  counts once the expert confirms it". Section 8 item 2 ("Audit"), after #163's pending line:
-  "A failed check on an assumption the agent proposed waits for the expert's confirm (rules
-  0.4.0)".
+- Status doc: applied 2026-11-08

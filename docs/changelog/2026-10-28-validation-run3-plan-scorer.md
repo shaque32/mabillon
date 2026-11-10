@@ -16,7 +16,7 @@
     counted on the code-checked tier;
   - measure 7, the claims that a failed check on a core assumption (the checks the
     Contradicted verdict cites) contradicted although gold does not.
-- Where: PR #165
+- Where: main (#165, merged 2026-10-29)
 - Verified: on this container, 2026-10-28. New tests in tests/test_validation_score.py cover
   the tiers on the synthetic scored run (all 3 check unsettled), which outcomes make a claim
   code-checked, the run 3 minimum on the code-checked tier only, a row from before 1.3.0
@@ -26,11 +26,4 @@
   replay, not a run, and determinism on the A10G is unmeasured.
 - Affects: performance (what validation reports); no capability, privacy or customer-facing
   claim change
-- Status doc: pending: in the validation section, after the "Scorer 1.2.0" bullet, add "Scorer
-  1.3.0 (#165): run 3's tiers (code-checked, check unsettled or expert only; minimum 30
-  code-checked) and measure 7
-  (contradicted by a failed check, gold not contradicted), beside the 1.2.0 measures. Run 3 plan
-  `eval/validation/PREREGISTERED_v3.md` (#165): coverage check only on development data; [approval
-  as the file records]"; in the build line, change "validation scorer 1.2.0
-  (`eval/validation/score_hickman.py`, #143)" to "validation scorer 1.3.0
-  (`eval/validation/score_hickman.py`, #165)"
+- Status doc: applied 2026-11-08

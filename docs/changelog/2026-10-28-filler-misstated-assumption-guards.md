@@ -14,7 +14,7 @@
     received, because the count check counts messages in both directions.
 
   Nothing is loosened, and no frozen file changes.
-- Where: PR #160
+- Where: main (#160, merged 2026-10-28)
 - Verified: on this container, 2026-10-28.
   - New tests in tests/test_assumption_filler.py cover each guard and the count refusals.
   - tests/test_filler_replay.py (synthetic case01, Mac-run answers): 10 → 8 tested, 12 → 10
@@ -33,7 +33,4 @@
     counts stay in the project's validation write-up (PREREGISTERED_v2).
 - Affects: capabilities (fewer claims tested, none on a misstated assumption); no privacy or
   customer-facing claim change
-- Status doc: pending: in "2. Pipeline (main)", row "5. Assumptions", append to the description:
-  "A message's quoted words must sit inside quotation marks; a party the claim writes only as
-  the one written to is never the sender; counts of calls, "times" or one side's messages are
-  refused; coverage is judged only on proposals that fit their template (#160)".
+- Status doc: applied 2026-11-08

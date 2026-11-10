@@ -30,7 +30,7 @@
   A wrong writer would fail the sender check and contradict the claim, so each new wording
   has a test that it names the claim's writer and a test that a near wording names none. No
   frozen file changes. Assumption filling stays local.
-- Where: PR #164
+- Where: main (#164, merged 2026-10-28)
 - Verified: on this container, 2026-10-28.
   - tests/test_assumption_filler.py: 21 new `stated_sender` cases (11 that read the writer,
     10 that must not), the phone's own accounts, counts in words and "a" never a count, and
@@ -43,6 +43,4 @@
   directions and most counts in words are of calls or of one side's messages.
 - Affects: capabilities (more quoted messages get their stated writer checked); no privacy
   or customer-facing claim change
-- Status doc: pending: in "2. Pipeline (main)", row "5. Assumptions", append to the description:
-  "stated_sender reads more wordings of a message's writer; a phone written as an account is
-  its own accounts on the named app; counts may be written in words"
+- Status doc: applied 2026-11-08

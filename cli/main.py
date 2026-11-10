@@ -33,13 +33,13 @@
     python -m cli verify-bundle bundle.zip [--inputs <folder of original files>]
     python -m cli redecide  --db case.db --by expert:<name>
     python -m cli serve     [--cases <folder> | --db case.db] [--port 8765] [--expert "<name>"]
-                            [--open]
+                            [--open | --window]
     python -m cli model-check
     python -m cli encrypt   --db case.db --by expert:<name>
     python -m cli passphrase --db case.db --by expert:<name>
     python -m cli recovery-key --db case.db --by expert:<name>
     python -m cli backup    --db case.db --by expert:<name> [--to <folder>]
-    python -m cli demo      [--port 8766] [--expert "<name>"] [--no-open] [--build-only]
+    python -m cli demo      [--port 8766] [--expert "<name>"] [--no-open] [--window] [--build-only]
                             [--from-case <case folder> | --scripted | --paired]
 
 `redecide` re-runs the verdict rules on the last audit's stored evidence after expert review;
@@ -99,6 +99,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core import paths, pipeline
 from core.audit._llm_json import CloudPaused, ModelUnavailable
@@ -108,6 +109,11 @@ from core.contracts import ClaimStatus, ClaimType, EvidenceStatus, Verdict, Verd
 from core.db import CaseLocked, apply_schema, connect
 from core.report.html import write_report
 from core.review import actions, audit_log
+
+if TYPE_CHECKING:
+    from http.server import HTTPServer
+
+    from ui.screen_key import ScreenKey
 
 
 def _ask(prompt: str) -> str:
@@ -308,7 +314,22 @@ def cmd_name_account(a: argparse.Namespace) -> int:
     return 0
 
 
+def _license_allows_audit() -> bool:
+    """With sign-in on, a new audit from the command line needs a license, as on the screen.
+    While it is off (account.SIGNIN_ON) this never connects and always allows."""
+    import account
+
+    if not account.SIGNIN_ON:
+        return True
+    allowed, why = _signin_for(0).may_start_audit()  # type: ignore[attr-defined]
+    if not allowed:
+        print(f"audit: not started. {why}", file=sys.stderr)
+    return bool(allowed)
+
+
 def cmd_audit(a: argparse.Namespace) -> int:
+    if not _license_allows_audit():
+        return 2
     conn = _open(a.db)
     if a.fake:
         from eval.pipeline_fakes import fake_components
@@ -637,6 +658,50 @@ def _open_in_browser(link: str) -> None:
     webbrowser.open(link)
 
 
+def _open_url(url: str) -> bool:
+    """The system browser, for the sign-in page: never Mabillon's own window, which keeps no
+    cookies or sign-ins between launches."""
+    import webbrowser
+
+    return webbrowser.open(url)
+
+
+def _signin_for(port: int) -> object:
+    """Sign-in for the screen on this port, with the one license client (account/client.py)."""
+    from account.client import Client
+    from account.session import SignIn
+    from core import build
+
+    version = build.release()
+    return SignIn(port, version, Client(version), _open_url)
+
+
+def cmd_license(a: argparse.Namespace) -> int:
+    """`mabillon license status | import FILE | sign-out`: the license on this computer."""
+    import account
+    from account import license as lic
+
+    if not account.SIGNIN_ON:
+        print("Sign-in is not turned on in this Mabillon, so nothing needs a license.")
+        return 0
+    if a.action == "import":
+        if a.file is None:
+            raise SystemExit("name the license file: mabillon license import <file>")
+        try:
+            stored = lic.read_license_file(a.file.read_bytes())
+        except OSError as e:
+            raise SystemExit(f"cannot read {a.file}: {e}") from e
+        except lic.BadLicense as e:
+            raise SystemExit(f"not used: {e}") from e
+        lic.save(stored)
+    elif a.action == "sign-out":
+        signin = _signin_for(0)
+        print(signin.sign_out())  # type: ignore[attr-defined]
+        return 0
+    print(lic.status(lic.load()).message)
+    return 0
+
+
 def _stop(signum: int, frame: object) -> None:
     raise KeyboardInterrupt
 
@@ -668,8 +733,14 @@ def cmd_serve(a: argparse.Namespace) -> int:
         home = a.cases or cases_home()
         home.mkdir(parents=True, exist_ok=True)
     remembered = paths.settings_file("reviewer.json")  # the examiner's name, between launches
+    import account
+
+    signin_for = _signin_for if account.SIGNIN_ON else None  # off: no sign-in, as before
     server, note = _bind(
-        a.port, lambda port: make_server(a.db, port, a.expert, home=home, name_file=remembered)
+        a.port,
+        lambda port: make_server(
+            a.db, port, a.expert, home=home, name_file=remembered, signin_for=signin_for
+        ),
     )
     if note:
         print(note)
@@ -679,12 +750,24 @@ def cmd_serve(a: argparse.Namespace) -> int:
     except OSError as e:  # the screen still works from the printed link
         print(f"(could not save the screen key in {screen_key.key_dir()}: {e})", file=sys.stderr)
     where = f"case {a.db}" if a.db is not None else f"cases in {home}"
+    if getattr(a, "window", False):
+        return _serve_in_window(server, key, where)
     print(f"Mabillon: {launch_url(server)}")
     print(f"  ({where}; this computer only; Ctrl+C stops it)")
     print("This link opens the screen; it changes each time Mabillon starts. Keep it private.")
     print("A running audit stops when this does; its finished claims are kept and resume later.")
     if a.open:
         _open_in_browser(launch_url(server))
+    _serve_until_stopped(server, key)
+    return 0
+
+
+def _serve_until_stopped(server: HTTPServer, key: ScreenKey) -> None:
+    """Serve until Ctrl+C, SIGTERM or SIGHUP, then close and remove the screen key file."""
+    import signal
+
+    from ui import screen_key
+
     replaced = _stop_on_signals()
     try:
         server.serve_forever()
@@ -693,10 +776,50 @@ def cmd_serve(a: argparse.Namespace) -> int:
     finally:
         server.server_close()
         screen_key.remove_key(key)
-        import signal
-
         for sig, handler in replaced.items():
             signal.signal(sig, handler)  # type: ignore[arg-type]
+
+
+def _serve_in_window(server: HTTPServer, key: ScreenKey, where: str) -> int:
+    """Serve on a background thread and show the screen in Mabillon's own window (ui/window.py)
+    until the expert closes it; then stop. With no window possible, the browser instead."""
+    import threading
+
+    from ui import downloads, screen_key, window
+    from ui.server import launch_url
+
+    app = server.app  # type: ignore[attr-defined]
+    handler = server.RequestHandlerClass
+    handler.download_folder = downloads.downloads_folder()  # type: ignore[attr-defined]
+    threading.Thread(target=server.serve_forever, name="mabillon-screen", daemon=True).start()
+
+    def audit_running() -> bool:
+        job = app.jobs.current
+        return job is not None and job.running
+
+    print(f"Mabillon: opening its own window ({where}). Closing the window stops it.")
+    shown = window.show(launch_url(server), audit_running)
+    server.shutdown()  # waits for the background thread's loop to end
+    if shown:
+        server.server_close()
+        screen_key.remove_key(key)
+        return 0
+    # No window here: the browser, as `serve --open`, with downloads left to the browser.
+    handler.download_folder = None  # type: ignore[attr-defined]
+    if _no_console_on_windows():
+        # A Start-menu shortcut (pythonw) has no console to stop a browser screen from, so start
+        # again in a console window of its own: closing it, or Ctrl+C, stops Mabillon, as before.
+        server.server_close()
+        screen_key.remove_key(key)
+        if _restart_in_console():
+            print("No window here: Mabillon started again in a console window, in the browser.")
+            return 0
+        print("No window here, and no console could be opened to run it in the browser.")
+        return 1
+    print(f"Opening it in your browser instead: {launch_url(server)}")
+    print("Ctrl+C stops it.")
+    _open_in_browser(launch_url(server))
+    _serve_until_stopped(server, key)
     return 0
 
 
@@ -844,7 +967,12 @@ def cmd_demo(a: argparse.Namespace) -> int:
         return 0
     return cmd_serve(
         argparse.Namespace(
-            db=None, cases=demo.cases_dir(root), port=a.port, expert=a.expert, open=not a.no_open
+            db=None,
+            cases=demo.cases_dir(root),
+            port=a.port,
+            expert=a.expert,
+            open=not a.no_open,
+            window=a.window,
         )
     )
 
@@ -1039,6 +1167,13 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8765)
     sp.add_argument("--expert", help="your name, recorded with every decision")
     sp.add_argument("--open", action="store_true", help="open it in the default browser")
+    sp.add_argument(
+        "--window", action="store_true", help="open it in Mabillon's own window (the app)"
+    )
+    sp = sub.add_parser("license", help="the Mabillon license on this computer")
+    sp.set_defaults(fn=cmd_license)
+    sp.add_argument("action", choices=["status", "import", "sign-out"])
+    sp.add_argument("file", type=Path, nargs="?", help="the license file, for import")
     sp = sub.add_parser("model-check", help="check the local model before a first audit")
     sp.set_defaults(fn=cmd_model_check)
     sp = sub.add_parser("bug-report", help="write a bug report that holds no case data")
@@ -1050,6 +1185,9 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8766, help="default 8766, beside a real `serve`")
     sp.add_argument("--expert", help="the name recorded with decisions made during the demo")
     sp.add_argument("--no-open", action="store_true", help="do not open the browser")
+    sp.add_argument(
+        "--window", action="store_true", help="open it in Mabillon's own window (the app)"
+    )
     sp.add_argument("--build-only", action="store_true", help="reset the case, do not serve it")
     g = sp.add_mutually_exclusive_group()
     g.add_argument(
@@ -1064,7 +1202,59 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+_NO_CONSOLE = False  # set when started with no console (pythonw: the Windows shortcuts)
+
+
+def _no_console_on_windows() -> bool:
+    return _NO_CONSOLE and sys.platform == "win32"
+
+
+def _restart_in_console() -> bool:
+    """Start this same command again, without --window, under python.exe in a new console window
+    (serve also opens the browser). False when that cannot be done."""
+    import subprocess
+
+    exe = Path(sys.executable).with_name("python.exe")
+    if not exe.exists():
+        return False
+    args = [arg for arg in sys.argv[1:] if arg != "--window"]
+    if args[:1] == ["serve"] and "--open" not in args:
+        args.append("--open")
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
+    try:
+        # this same command, from its own arguments
+        subprocess.Popen([str(exe), "-X", "utf8", "-m", "cli", *args], creationflags=flags)  # noqa: S603
+    except OSError:
+        return False
+    return True
+
+
+def _log_when_no_console() -> None:
+    """pythonw (the Windows Start-menu shortcuts) runs Mabillon with no console, so sys.stdout and
+    sys.stderr are None and anything that writes to them, such as the screen's request log, would
+    fail. Write them to this account's own log file instead."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    import os
+
+    global _NO_CONSOLE
+    _NO_CONSOLE = True
+
+    base = os.environ.get("LOCALAPPDATA")
+    folder = Path(base) / "Mabillon" if base else Path.home() / ".mabillon"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        log = open(folder / "Mabillon.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    except OSError:
+        log = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stdout is None:
+        sys.stdout = log
+    if sys.stderr is None:
+        sys.stderr = log
+
+
 def main(argv: list[str] | None = None) -> int:
+    _log_when_no_console()
     a = parser().parse_args(argv)
     try:
         return a.fn(a)

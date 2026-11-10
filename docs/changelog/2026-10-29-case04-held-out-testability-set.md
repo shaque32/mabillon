@@ -29,7 +29,7 @@
   go/no-go reads. It is not wired into `make eval` or any merge gate. The step runs only on a
   signed sheet; with the signed copies it can run on case04, and the go/no-go scores false
   supported against the signed key.
-- Where: PR #170 (branch `claude/project-thread-6i2msb-case04`)
+- Where: main (#170, merged 2026-10-29)
 - Verified: `tests/test_synthetic_case04.py` (synthetic only, 28 tests):
   - the generator gives the same bytes twice, reports included, and the committed drafts match
     a fresh build, with case.json's SHA-256 pins;

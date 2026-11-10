@@ -23,7 +23,7 @@
   - Run: readiness shows as a checklist; the three extra options fold under "More options";
     Start the audit stays the one primary button. Encryption: the status line shows, the
     explanation and passphrase form fold under "Encrypt this case".
-- Where: PR #193
+- Where: main (#193, merged 2026-11-01)
 - Verified: scripted demo case in headless Chromium at 1512, 1440, 1280 and 1100 px, folds
   closed and open; Impeccable detector found nothing on ui/pages.py and ui/theme.py; tests in
   tests/test_start_case.py check the claims table's action row and the Put back buttons; make

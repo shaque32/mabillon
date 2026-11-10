@@ -33,7 +33,7 @@
     (`peak_rss_gb`), and `time_case` each call's seconds (`call_seconds`) and each pass's call
     outcomes (`outcomes`, from `model_calls`; the scorer reads an older folder's from its
     database); the probe runs get the same `--n-ctx` as the timed audits.
-- Where: PR #182
+- Where: main (#182, merged 2026-10-31)
 - Verified: tests/test_run_profile.py, tests/test_stance_v14_order.py and the call-outcome test
   in tests/test_speed_eval.py (synthetic rows and stand-in models). The profiler on the case04 database from Arsh's Mac go/no-go run (main
   67dabdb, MacBook Air M4 24 GB, Qwen3-14B Q4_K_M, flash runtime, 2026-10-29, reported): about
@@ -51,9 +51,4 @@
   needs Arsh's signature, a new 14B repeat check and a check on fresh items before pilots use
   it. Peak memory is ru_maxrss, not a separate GPU figure.
 - Affects: performance (measurement only)
-- Status doc: pending: in section 7's "Local 14B speed" list, add "Estimated 2026-10-29 (reported,
-  case04 go/no-go Mac run at 67dabdb, MacBook Air M4 24 GB, flash): about 4.9 h of model time
-  for a 48-claim synthetic case, 74% of it stance labelling (283 calls, mean 46 s); 59% of
-  stance answers were irrelevant. From `python -m eval.run_profile`, which estimates call times
-  from call timestamps." Under the signed prompts line, note "stance v1.4 draft
-  (eval/probe/stance_v1_4_draft.md): v1.1 reordered for speed, not signed, Mac test not run."
+- Status doc: applied 2026-11-08

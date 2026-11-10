@@ -21,7 +21,7 @@
     are printed.
   - The record names the hardware, the Python version and the wall-clock date of the run.
   - The run's measures print as before; the old "none given" line moved into the go/no-go.
-- Where: PR #168 (branch `claude/project-thread-6i2msb-go-no-go`, stacked on #166)
+- Where: main (#168, merged 2026-10-29)
 - Verified: `tests/test_testability_go_no_go.py` (18 tests): every bar held is a GO; each bar
   missed alone is a NO-GO naming it; conversion exactly at X passes; a repeat whose filler and
   step answers differ by one byte is a NO-GO that says the model calls differ; too few testable
@@ -38,8 +38,4 @@
   second and peak GPU memory are not recorded.
 - Affects: performance (how the testability step's go/no-go is measured before pilots). No
   capability, privacy, network, model or verdict change.
-- Status doc: pending: section 8 item 2 ("Audit"), after #159's pending line on the testability
-  step: "Its go/no-go before pilots (plans/agentic.md) is read by code from one eval run with
-  the rubber-stamp expert and a repeat, against Arsh's values (a cap of 2 tries per claim, at
-  least 40% of at least 15 sheet-testable refusals converted, and at most 2 calls and 120 s per
-  claim on the M4 Air); none has been run yet".
+- Status doc: applied 2026-11-08

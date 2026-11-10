@@ -11,7 +11,7 @@
   waits for them. Signed files still need Arsh's approval. Arsh chose this on 2026-11-06 in
   the project thread. Why: to spend fewer Codex credits on routine review. No product code
   changes.
-- Where: PR #227
+- Where: main (#227, merged 2026-11-06)
 - Verified: both JSON files parse; `make check` on this branch; one live Greptile review
   (see Open). Whether every config field took effect is not checked one by one.
 - Open: Arsh installed the app 2026-11-06. The first live review ran on this PR the same day

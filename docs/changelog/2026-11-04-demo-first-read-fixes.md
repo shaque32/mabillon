@@ -30,7 +30,7 @@
   open with what the five tiers mean (the same words as Help) and define only the verdict labels the
   report uses, while the sentence that AI review alone never makes a claim supported always stays.
   The screen's banner lookup no longer stops a request when the case's run cannot be read.
-- Where: branch claude/project-thread-rjmej3 (PR #216)
+- Where: main (#216, merged 2026-11-06)
 - Verified: tests/test_first_read_fixes.py (14 tests) and updated test_demo, test_tested_formats,
   test_ufdr, test_report_consistency (it reads a claim's appendix entry with its block); full `make
   check` on a cloud Linux box (numbers in the PR).

@@ -28,7 +28,7 @@
   - Schema and contracts 0.7.0, signed by Arsh 2026-11-01 18:47Z.
   - Why: in the case04 alias replay, 8 of the 11 remaining window or quote refusals were dated
     only by an event or by the sentence before.
-- Where: PR #201 (branch claude/project-thread-ds0ify)
+- Where: main (#201, merged 2026-11-04)
 - Verified: 74 new tests in `tests/test_case_events.py`. They fail on main, which has no table, actions
     or reader. The near-miss tests are guards that pass both before and after.
   - Replay of Arsh's recorded case04 filler answers (development data, filler only, no model)
@@ -52,10 +52,4 @@
     before X) and the sentence-before relation ("The next day") are not read.
 - Affects: capabilities (a new expert input; more claims can get a code-set window); customer-facing
   claims (the report lists events as expert statements). No privacy or network change.
-- Status doc: pending: section 2 "Pipeline (main)", row "5. Assumptions": add "reads a whole day
-  tied to an event the expert entered (the day of, the day before or after, N days before or
-  after; one-day events only; schema 0.7.0)". Section 8 item 5 ("Case safety and delivery"),
-  after the person-aliases sentence: add "The expert can also enter the events the document
-  defines (the SEARCH) with their days and defining words, checked verbatim against the
-  paragraph, on the Set up page; every report lists them as the expert's statement (schema
-  0.7.0)."
+- Status doc: applied 2026-11-08

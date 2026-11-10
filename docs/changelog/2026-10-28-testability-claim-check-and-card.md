@@ -57,7 +57,7 @@
       is not evidence of how often the agent is right.
   - Merges #162 into this branch (challenge step on by default), so it merges after #159 and
     #162 (#149 is on main). Report 0.23.0 follows #162's 0.22.0.
-- Where: branch `claude/project-thread-6i2msb-testability-accept` (PR #163)
+- Where: main (#163, merged 2026-10-29)
 - Verified: `make check` passes; its eval numbers are in the PR. New tests:
   - `tests/test_testability.py`:
     - the claim-only check counts what the claim's own words name (a person only the paragraph
@@ -102,10 +102,4 @@
   expert confirms it.
 - Affects: capabilities (the testability agent's claim-only check and the examiner's card; still
   off by default), customer-facing demo (D02 and D03)
-- Status doc: pending: section 8 item 2 ("Audit"): after #159's pending line on the testability
-  step, add "With no signed sheet the step checks each try against the claim's own words (every
-  person, phone and account one the claim's text names), and the claim page shows the try as
-  "Proposed by agent" for the examiner to accept or reject; only an acceptance is used, from
-  the next audit on. Off by default; only the eval and the scripted demo turn it on (#163)".
-  Section 7 (demo), if it lists the demo's claims: add D02 and D03 as the agent's demo claims,
-  with scripted answers.
+- Status doc: applied 2026-11-08

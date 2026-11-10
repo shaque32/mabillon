@@ -20,7 +20,7 @@
   Kept on purpose: the demo banner, "not tested" notices, verdict and review-state names, every
   provenance tier and source line, the picked-message ring on Selection and the "This record"
   outline on the claim page.
-- Where: PR #222
+- Where: main (#222, merged 2026-11-06)
 - Verified: ruff; `make check` (numbers in the PR); the demo at 1280 px before and after, and a
   computed-style count over 16 app pages: round pills and chips outside the Set up step strip
   34 to 0, titles ending in a period 11 to 1 (a two-sentence notice on Case), text with negative
@@ -29,6 +29,4 @@
 - Open: raw ids in plain words (audit PR C), a record shown once when two assumptions share it
   (D) and the report's look (E) are not in this PR. Windows browsers and dark mode not looked at.
 - Affects: none (look and wording of the local screen; no verdict, rule, label or report change)
-- Status doc: pending: section on the review screen (the `/claims` paragraph): where the
-  2026-11-02 simplify entry's edit says "with each unproven claim's gap topics as tags", write
-  "with each unproven claim's gap topics on one plain line".
+- Status doc: applied 2026-11-08

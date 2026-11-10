@@ -11,7 +11,7 @@
   A message of unknown direction (drawn on the left) always keeps its sender line and says
   "direction unknown". The account itself is never dropped. The exported report is unchanged (core/report/selection.py
   `sender_words` and the side rule run only when `Links.plain` is on).
-- Where: PR #226 (after #222 and #216)
+- Where: main (#226, merged 2026-11-06)
 - Verified: ruff; `make check` (numbers in the PR); tests/test_demo.py checks Selection names
   5551234 and this phone once each in the first conversation, a repeat from the same account is
   unnamed, the claim page names the record's sender with no "to" in a one-to-one thread, and
