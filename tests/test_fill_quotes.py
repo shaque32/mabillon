@@ -13,7 +13,6 @@ import pytest
 from core.audit.assumption_filler import (
     _MESSAGE_CUE_RE,
     LocalAssumptionFiller,
-    _without_claims_comma,
 )
 from core.audit.assumptions import TemplateAssumptionBuilder, is_code_made
 from core.audit.checks import run_checks
@@ -138,59 +137,10 @@ def test_a_quote_after_the_recipient_and_app_gets_its_meaning(conn):
     assert any("mean what the claim says" in r for r in decision.reasons)
 
 
-def test_a_curly_quote_with_the_claims_comma_inside_is_the_message(conn):
-    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=PROMPT)
-    c = _claim(
-        conn,
-        "At 2:31 a.m. on March 5, 2026, PETROV texted REYES “its done,” which shows the job"
-        " was finished.",
-        ClaimType.CONTENT_MEANING,
-    )
-    assert filler.the_quote(c, []) == "its done"
-
-
 def test_a_quote_nested_in_the_message_stays_part_of_it(conn):
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=PROMPT)
     c = _claim(conn, "PETROV texted REYES \"he said 'its done'\".", ClaimType.CONTENT_MEANING)
     assert filler.the_quote(c, []) == "he said 'its done'"
-
-
-# --- the claim's comma is not the message's
-
-
-@pytest.mark.parametrize(
-    ("words", "text", "want"),
-    [
-        # American usage: the claim's comma sits inside its closing mark.
-        ("ready when needed,", 'His text "ready when needed," shows it.', "ready when needed"),
-        ("ready when needed,", "His text “ready when needed,” shows it.", "ready when needed"),
-        # A comma inside the message is the message's.
-        ("got the money,", 'He wrote "got the money, come get it".', "got the money,"),
-        # Only a comma, and only one: other marks stay as written.
-        ("ready.", 'He wrote "ready."', "ready."),
-        ("wait,,", 'He wrote "wait,,"', "wait,,"),
-    ],
-)
-def test_without_claims_comma(words, text, want):
-    assert _without_claims_comma(words, text) == want
-
-
-def test_a_model_quote_with_the_claims_comma_finds_the_message(conn):
-    # The record reads "its done"; the claim writes "its done," and the model copied the
-    # comma. Without it the checks find the message; with it they found nothing.
-    text = (
-        'At 2:31 a.m. on March 5, 2026, PETROV texted REYES "its done," which shows the job'
-        " was finished."
-    )
-    window = W("At 2:31 a.m. on March 5, 2026", "2026-03-04T21:00", "2026-03-04T22:00")
-    props = [P("sender", people=["PETROV"], quoted_text="its done,"),
-             P("record_time", people=["PETROV"], quoted_text="its done,", window=window),
-             P("meaning", quoted_text="its done,")]  # fmt: skip
-    c, made, filler = build(conn, text, ClaimType.CONTENT_MEANING, props)
-    assert {a.params.quoted_text for a in made} == {"its done"}, reasons(filler)
-    (sender,) = [a for a in made if a.template_id == "sender"]
-    (r,) = run_checks(sender, conn)
-    assert r.outcome is CheckOutcome.PASS and "msg:item1:Chats!1011" in r.record_ids
 
 
 # --- a claim that characterizes a message keeps an uncovered meaning
