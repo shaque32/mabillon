@@ -13,7 +13,8 @@
   marked case and the "Saved" message use the same phrase. The stored audit-log field keeps its
   name, `csam`, so a case marked under the earlier box still stays local; each new entry records
   the wider words in `csam_note`. `docs/SECURITY_PRIVACY.md` (intro and section 5, items 1 and
-  2) and `docs/ARCHITECTURE.md` match. The CLAUDE.md line is proposed in `PROPOSED_CHANGES.md`.
+  2) and `docs/ARCHITECTURE.md` match, and so does CLAUDE.md's stay-local line, applied at
+  Arsh's request ("go", 19:19Z; `PROPOSED_CHANGES.md` records it).
   Also, the Fast explanation at setup (FAST_EXPLAINED) now opens with what each step sends:
   each paragraph of the government's document to propose claims, and, to test a claim, the
   claim and its paragraph, the assumption, one record and the messages around it, the case's
@@ -30,12 +31,11 @@
   and saves a local choice with the new message; the report shows the new sentence; the Fast
   explanation names what each signed prompt carries, and a prompt that gains a field fails the
   test. No API calls.
-- Open: the CLAUDE.md line is signed but not applied yet (`PROPOSED_CHANGES.md`). Mabillon
-  does not scan for such content; the box and the attestation are the examiner's own
-  statements. `docs/ONE_PAGER.md`, `docs/PILOT_ONBOARDING.md`, the `.greptile` privacy rule and
-  site/ (Arsh's) still say "possibly containing CSAM" and need a separate refresh. Whether an
-  excerpt sent from such a case would in fact trigger a report is a question for a lawyer; this
-  is not legal advice.
+- Open: Mabillon does not scan for such content; the box and the attestation are the
+  examiner's own statements. `docs/ONE_PAGER.md`, `docs/PILOT_ONBOARDING.md`, the `.greptile`
+  privacy rule and site/ (Arsh's) still say "possibly containing CSAM" and need a separate
+  refresh. Whether an excerpt sent from such a case would in fact trigger a report is a
+  question for a lawyer; this is not legal advice.
 - Affects: privacy (fewer cases may use Fast), customer-facing claims (setup box, attestation,
   the security and privacy doc)
 - Status doc: pending: in section 4, "When Opus is used", replace "the case is not marked as

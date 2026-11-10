@@ -72,8 +72,9 @@ with the reason and the exact diff you want, then finish the rest of your task w
   Local models load from local paths.
 - Files never leave the examiner's machine. A case uses cloud AI only when the expert opts in at
   case setup, attesting that the case's protective order allows it, and a key is set up. For an
-  ordinary case cloud AI is the default choice at setup. A case marked as possibly containing
-  CSAM, or whose order does not allow it, stays local. Never describe Mabillon as "offline".
+  ordinary case cloud AI is the default choice at setup. A case marked as concerning sexual
+  material or conduct involving a minor or someone presented as one (CSAM included), or whose
+  order does not allow it, stays local. Never describe Mabillon as "offline".
 - Each model job uses one model for the whole case; a case's stance labels never mix models. If
   the cloud model fails mid-run, the audit pauses and the expert chooses to retry the cloud model
   or run the whole case again locally.

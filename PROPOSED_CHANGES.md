@@ -1827,10 +1827,10 @@ Diff (Data safety, after the line "- No network calls in `core/` except ..."):
 +  license never blocks opening, reviewing or exporting a case.
 
 ## 2026-11-10 claude/project-thread-kqb5ex: CLAUDE.md stay-local line covers any sexual case involving a minor
-SIGNED by Arsh on 2026-11-10 19:12Z ("i approve the rest" in the thread "Evaluate Fast mode
-legality and court use"), on this exact wording (plans/minor-sexual-stay-local.md, item 5)
-with the other texts in the same plan, which PR #256 carries. To apply on main by a human;
-CLAUDE.md stays human-edited.
+APPLIED on branch claude/project-thread-kqb5ex (PR #256) on 2026-11-10 at Arsh's request
+("go", 19:19Z). SIGNED by Arsh on 2026-11-10 19:12Z ("i approve the rest" in the thread
+"Evaluate Fast mode legality and court use"), on this exact wording
+(plans/minor-sexual-stay-local.md, item 5) with the other texts in the same plan.
 File: CLAUDE.md
 Why: Arsh asked to widen the stay-local rule ("widen it", 2026-11-10). The setup box named only
 child sexual abuse material, but enticement, sextortion and trafficking cases are mostly chat
