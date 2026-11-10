@@ -1,4 +1,4 @@
-## 2026-11-10: Every model job runs on the case's model (#PRNUM)
+## 2026-11-10: Every model job runs on the case's model (#254)
 - Changed: Arsh asked on 2026-11-10 to send every job to Opus by default ("yeah send to opus by
   defult", approved with no API spend). Following the CLAUDE.md rule signed 2026-11-09 (#250),
   a case that opted in to cloud AI now runs every model job on the cloud model: stance labels,
@@ -15,7 +15,7 @@
   (`ComponentsMissing`) rather than putting part of the case on the local model. The report's
   versions row reads "Case's model". Cloud stays opt-in per case; making it the default choice
   at setup, with the attestation and setup text Arsh approved on 2026-11-10, is the next PR.
-- Where: branch claude/project-thread-fujfti
+- Where: PR #254
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`, on stand-in models with
   no network: every job opens its run on the cloud model; the AI reviewer and the assumption
   filler log each request before sending and pause on a sticky failure; `real_components` puts
@@ -33,8 +33,8 @@
 - Status doc: pending: in the models table, change the Claude Opus 5.5 row's job to "Every model
   job (claim proposal, assumption filling, stance labels with the cloud prompt v1.2, AI review,
   testability step) for cases the expert opted in; stance gated by `PROBE_PASSED`" and add
-  "(#PRNUM)" to its Where; in the Qwen3-14B row change "(every case not opted in to cloud)" to
+  "(#254)" to its Where; in the Qwen3-14B row change "(every case not opted in to cloud)" to
   apply to every job, not only stance labels. In "What Opus does", replace "It is the stance
-  labeler" with "It runs every model job of an opted-in case (#PRNUM)", and say each job sends
+  labeler" with "It runs every model job of an opted-in case (#254)", and say each job sends
   only the text its signed prompt names. In "Failure handling", say the pause and the
   `cloud.sent` log cover every job, and that a cloud case needs no local model.
