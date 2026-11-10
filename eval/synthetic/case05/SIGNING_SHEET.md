@@ -52,6 +52,24 @@ the wording changed), or kept and why. Verdicts changed: C04 (supported to unpro
 | R12 | C04, C06, C16, C22, C24, C28, C34, C36, C40, C41, C46, C47, C48 | cosmetic | kept | 'the COURIER' kept as the alias, the form every one of these claims uses; paragraph 2 prints the definition as (the "COURIER"). |
 | R13 | C01, C23 | weak | fixed | The storage site and the bike shop now carry clearly invented names (Quillbarrow Self Storage, Pindlewick Cycles), in the quotes too; the four Instagram handles end in '_fict'. Hazards unchanged. The signing sheet says every name, handle and id is invented. |
 
+## Check change (2026-11-10)
+
+After this sheet was signed, two check changes moved the rows below. Sender 1.1.0
+counts a copy as someone else's only when a record or a confirmed fact says so: a
+number that no confirmed link ties to anyone may be the expected person's. Sender
+1.2.0 and time 1.1.0 never judge words that are only part of a sentence of a message.
+Re-sign these rows and verdicts.
+
+Verdicts changed: C03 (contradicted to unproven), C12 (contradicted to unproven).
+
+| Claim | Row | Was | Now |
+|---|---|---|---|
+| C03 | sender | fail | inconclusive |
+| C12 | sender | fail | inconclusive |
+| C20 | sender | pass | inconclusive |
+| C46 | sender | pass | inconclusive |
+| C46 | record_time | pass | inconclusive |
+
 ## Aliases inside quotes
 
 An alias (case.json `aliases`) is matched whole and in any case, so it also matches
@@ -70,15 +88,15 @@ Check where each one points.
 
 | Type | supported | contradicted | unproven | Total |
 |---|---|---|---|---|
-| communication | 3 | 1 | 2 | 6 |
-| identity | 3 | 2 | 1 | 6 |
+| communication | 3 | 0 | 3 | 6 |
+| identity | 3 | 1 | 2 | 6 |
 | timing | 4 | 1 | 1 | 6 |
 | content_meaning | 3 | 1 | 2 | 6 |
 | count | 4 | 1 | 1 | 6 |
 | absence | 0 | 3 | 3 | 6 |
 | role | 2 | 2 | 2 | 6 |
 | event | 4 | 1 | 1 | 6 |
-| **all** | **23** | **12** | **13** | **48** |
+| **all** | **23** | **10** | **15** | **48** |
 
 ### Claim type x wording
 
@@ -98,18 +116,18 @@ Check where each one points.
 
 | Wording | supported | contradicted | unproven |
 |---|---|---|---|
-| plain | 11 | 8 | 5 |
-| affidavit | 12 | 4 | 8 |
+| plain | 11 | 7 | 6 |
+| affidavit | 12 | 3 | 9 |
 
 ### Hazards by kind
 
 | Hazard | What the wrong reading is | Claims | supported | contradicted | unproven |
 |---|---|---|---|---|---|
-| same_name | a second person with the same first name or nickname | 6 | 1 | 2 | 3 |
+| same_name | a second person with the same first name or nickname | 6 | 1 | 1 | 4 |
 | second_number | a second number or account for the same person | 8 | 4 | 2 | 2 |
 | second_phone | a second phone that could be meant | 7 | 4 | 1 | 2 |
 | near_window | a near-miss window: UTC against local time across midnight, the hour that came twice when the clocks went back, an adjacent day, or Item 3's fixed UTC-7 print | 11 | 6 | 4 | 1 |
-| contact_name | one contact name saved on two phones for two people | 5 | 2 | 1 | 2 |
+| contact_name | one contact name saved on two phones for two people | 5 | 2 | 0 | 3 |
 | similar_quote | similar words in another thread | 9 | 5 | 2 | 2 |
 | none | no wrong reading planted | 2 | 1 | 0 | 1 |
 
@@ -133,7 +151,7 @@ covers them:
 |---|---|---|---|---|---|---|
 | C01 | communication | plain | near_window | **supported** | Sent 7:25 p.m. MDT Oct 9; Item 2 prints Oct 10 (UTC+0). | [ ] |
 | C02 | communication | plain | none | **supported** | Observed on Items 2 and 3, Oct 21. | [ ] |
-| C03 | communication | plain | same_name | **contradicted** | Sent by Item 2's 'Cal' (WhatsApp 13035550161), not ODUM's 17205550168. | [ ] |
+| C03 | communication | plain | same_name | **unproven** | Sent by Item 2's 'Cal' (WhatsApp 13035550161), not ODUM's 17205550168. | [ ] |
 | C04 | communication | affidavit | second_number | **unproven** | The BURNER's text on Item 3, 6:50 p.m. Oct 30; MERROW as its user rests on the number's self-identification only. | [ ] |
 | C05 | communication | affidavit | second_phone | **supported** | Item 3 (the ONEPLUS) received it at 3:40 a.m. MST Nov 2; Item 2 lacks it. | [ ] |
 | C06 | communication | affidavit | similar_quote | **unproven** | No such text anywhere; 'Arlo' got 'nobody rides the quad till december'. | [ ] |
@@ -142,7 +160,7 @@ covers them:
 | C09 | identity | plain | second_number | **contradicted** | Two Telegram ids: 'Toby M' 6630401, 'T.M.' 6630488. | [ ] |
 | C10 | identity | affidavit | second_number | **supported** | One Telegram id, 6630402 (Item 2's own); Item 3 shows 'Ines V' to Nov 8, 'vee.rides' from Nov 10. | [ ] |
 | C11 | identity | affidavit | contact_name | **supported** | Item 2's 'T2' holds +17205550186; she wrote 'saved as T2'. | [ ] |
-| C12 | identity | affidavit | contact_name | **contradicted** | Item 2's 'Toby' (+13035550139) sent it, not MERROW's +17205550134. | [ ] |
+| C12 | identity | affidavit | contact_name | **unproven** | Item 2's 'Toby' (+13035550139) sent it, not MERROW's +17205550134. | [ ] |
 | C13 | timing | plain | near_window | **supported** | 9:31 p.m. MDT, 288 s; Item 3 prints 8:31 PM(UTC-7), and 9:30 PM for a 41 s call. | [ ] |
 | C14 | timing | plain | near_window | **supported** | 11:52 p.m. MST, 128 s; Item 2 prints 11:50 PM for a 4:50 p.m. call of 305 s. | [ ] |
 | C15 | timing | plain | near_window | **contradicted** | Sent 7:45 p.m. MDT Oct 24; 6:45 PM is Item 3's UTC-7 print. | [ ] |
@@ -191,7 +209,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 |  | `record_time` | yes | quoted_text: back row at quillbarrow has no cameras<br>person_ids: person:merrow, person:varga<br>channels: SMS<br>window: "On October 9, 2025" (America/Denver, local wall clock) | pass | 7:25 p.m. MDT Oct 9; Item 2 prints 10/10 1:25:10 AM(UTC+0). |  |
 | C02 | `sender` | yes | quoted_text: unit 41, code is 7719<br>person_ids: person:varga<br>channels: WhatsApp | pass | Outgoing on Item 2. | [ ] |
 |  | `record_time` | yes | quoted_text: unit 41, code is 7719<br>person_ids: person:varga, person:odum<br>channels: WhatsApp<br>window: "On October 21, 2025" (America/Denver, local wall clock) | pass | 2:05 p.m. MDT Oct 21. |  |
-| C03 | `sender` | yes | quoted_text: the blue ones fit in my hatchback<br>person_ids: person:odum<br>channels: WhatsApp | fail | The one copy came from WhatsApp 13035550161, Item 2's 'Cal', not from ODUM's 17205550168. | [ ] |
+| C03 | `sender` | yes | quoted_text: the blue ones fit in my hatchback<br>person_ids: person:odum<br>channels: WhatsApp | inconclusive | The one copy came from WhatsApp 13035550161, Item 2's 'Cal', not from ODUM's 17205550168. No record or confirmed fact says whose that number is, so the check is inconclusive (sender 1.1.0). | [ ] |
 |  | `record_time` | yes | quoted_text: the blue ones fit in my hatchback<br>channels: WhatsApp<br>device_ids: dev:item2<br>window: "On November 6, 2025" (America/Denver, local wall clock) | pass | 10:15 a.m. MST Nov 6, on Item 2. |  |
 | C04 | `sender` | yes | quoted_text: gate code is 2291, use the side lane<br>account_ids: acct:item3:SMS:+17205550186<br>channels: SMS | pass | Incoming on Item 3 from the BURNER (paragraph 3). | [ ] |
 |  | `record_time` | yes | quoted_text: gate code is 2291, use the side lane<br>person_ids: person:odum<br>account_ids: acct:item3:SMS:+17205550186<br>channels: SMS<br>window: "Two days before the LOCKER BURGLARY (Thursday, October 30, 2025)" (America/Denver, local wall clock) | pass | 6:50 p.m. MDT Oct 30 (printed 5:50:40 PM(UTC-7)). |  |
@@ -206,7 +224,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 | C10 | `same_account` | yes | channels: Telegram<br>handles: Ines V, vee.rides<br>device_ids: dev:item3 | pass | Both names resolve to Telegram user id 6630402 (Item 2's own account). The check resolves names on every phone, not only Item 3; on Telegram only Item 3 shows her account. | [ ] |
 |  | `person_identity` | yes | person_ids: person:varga<br>account_ids: acct:item2:Telegram:6630402, acct:item3:Telegram:6630402<br>channels: Telegram | - | That user id 6630402 is SUBJECT-2's: it is Item 2's own Telegram account (its User Accounts sheet, and the outgoing copies on Item 2), and Item 2 is VARGA's phone (the shared device attribution). Core: the expert decides it. |  |
 | C11 | `contact_entry` | yes | device_ids: dev:item2<br>quoted_text: T2<br>account_ids: acct:item2:SMS:+17205550186 | pass | The iPHONE is Item 2. | [ ] |
-| C12 | `sender` | yes | quoted_text: left the key under the blue pot<br>person_ids: person:merrow<br>channels: SMS | fail | The one copy came from +13035550139, Item 2's 'Toby', not from MERROW. | [ ] |
+| C12 | `sender` | yes | quoted_text: left the key under the blue pot<br>person_ids: person:merrow<br>channels: SMS | inconclusive | The one copy came from +13035550139, Item 2's 'Toby', not from MERROW. No record or confirmed fact says whose that number is, so the check is inconclusive (sender 1.1.0). | [ ] |
 |  | `record_time` | yes | quoted_text: left the key under the blue pot<br>channels: SMS<br>device_ids: dev:item2<br>window: "on November 11, 2025" (America/Denver, local wall clock) | pass | 9:40 a.m. MST Nov 11, on Item 2. |  |
 | C13 | `record_time` | yes | person_ids: person:merrow, person:odum<br>channels: call<br>duration_s: 240, 360<br>window: "At about 9:30 p.m. on October 17, 2025" (America/Denver, local wall clock) | pass | 9:31:05 p.m. MDT, 288 s. Item 3 prints 8:31:05 PM(UTC-7). | [ ] |
 | C14 | `record_time` | yes | person_ids: person:varga, person:odum<br>channels: call<br>duration_s: 90, 150<br>window: "At about 11:50 p.m. on November 14, 2025" (America/Denver, local wall clock) | pass | 11:52:10 p.m. MST, 128 s. The 4:50 p.m. call (305 s) is outside. | [ ] |
@@ -219,7 +237,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 | C19 | `sender` | yes | quoted_text: found 6 tall ones in the back row<br>person_ids: person:merrow<br>channels: SMS | pass | Outgoing on Item 1. | [ ] |
 |  | `record_time` | yes | quoted_text: found 6 tall ones in the back row<br>person_ids: person:merrow, person:varga<br>channels: SMS<br>window: "On October 14, 2025" (America/Denver, local wall clock) | pass | 12:40 p.m. MDT Oct 14. |  |
 |  | `meaning` | yes | quoted_text: found 6 tall ones in the back row<br>person_ids: person:merrow, person:varga<br>channels: SMS<br>window: "On October 14, 2025" (America/Denver, local wall clock) | - | 'the emtbs?' / 'ya electric mountain bikes, all 6' in the same exchange. |  |
-| C20 | `sender` | yes | quoted_text: the cold ones are in the garage<br>person_ids: person:merrow<br>channels: SMS | pass | Both copies of the words (to VARGA and to 'Arlo') came from MERROW. | [ ] |
+| C20 | `sender` | yes | quoted_text: the cold ones are in the garage<br>person_ids: person:merrow<br>channels: SMS | inconclusive | Both copies of the words (to VARGA and to 'Arlo') came from MERROW. The copy to 'Arlo' is only part of a sentence, so the check does not judge it (sender 1.2.0). | [ ] |
 |  | `record_time` | yes | quoted_text: the cold ones are in the garage<br>person_ids: person:merrow, person:varga<br>channels: SMS<br>window: "On November 3, 2025" (America/Denver, local wall clock) | pass | 8:30 p.m. MST Nov 3; Item 2 prints 11/4 3:30:25 AM(UTC+0). |  |
 |  | `meaning` | yes | quoted_text: the cold ones are in the garage<br>person_ids: person:merrow, person:varga<br>channels: SMS<br>window: "On November 3, 2025" (America/Denver, local wall clock) | - | Whether 'the cold ones' are e-bikes without batteries; nothing fixes it. |  |
 | C21 | `sender` | yes | quoted_text: the shop on larch closes at 9 on fridays<br>person_ids: person:odum<br>channels: SMS | fail | VARGA sent it to ODUM. | [ ] |
@@ -267,8 +285,8 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 |  | `sender` | yes | quoted_text: ok ill move them tonight<br>person_ids: person:merrow<br>channels: SMS | pass | MERROW's answer, outgoing on Item 1. |  |
 |  | `record_time` | yes | quoted_text: need the road bikes out of unit 41 by thurs<br>person_ids: person:varga, person:merrow<br>channels: SMS<br>window: "On November 18, 2025" (America/Denver, local wall clock) | pass | 10:30 a.m. MST Nov 18. |  |
 | C45 | `record_time` | yes | person_ids: person:varga, person:odum<br>channels: call<br>duration_s: 420, 540<br>window: "On November 4, 2025" (America/Denver, local wall clock) | inconclusive | Their only call that day lasted 50 s; the 482 s call is with Item 2's 'Cal'. | [ ] |
-| C46 | `sender` | yes | quoted_text: back at the yard<br>person_ids: person:odum<br>channels: WhatsApp | pass | The COURIER's WhatsApp, outgoing on Item 3. No phone named. | [ ] |
-|  | `record_time` | yes | quoted_text: back at the yard<br>person_ids: person:odum, person:varga<br>channels: WhatsApp<br>window: "Shortly before 6 a.m. that morning (November 2, 2025, 5:30 to 6 a.m.)" (America/Denver, local wall clock) | pass | 5:48:20 a.m. MST; 'that morning' follows C05's November 2. |  |
+| C46 | `sender` | yes | quoted_text: back at the yard<br>person_ids: person:odum<br>channels: WhatsApp | inconclusive | The COURIER's WhatsApp, outgoing on Item 3. No phone named. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). | [ ] |
+|  | `record_time` | yes | quoted_text: back at the yard<br>person_ids: person:odum, person:varga<br>channels: WhatsApp<br>window: "Shortly before 6 a.m. that morning (November 2, 2025, 5:30 to 6 a.m.)" (America/Denver, local wall clock) | inconclusive | 5:48:20 a.m. MST; 'that morning' follows C05's November 2. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). |  |
 | C47 | `sender` | yes | quoted_text: sent u 400 for friday, check ur bank<br>person_ids: person:merrow<br>channels: Telegram | pass | Outgoing on Item 1. | [ ] |
 |  | `record_time` | yes | quoted_text: sent u 400 for friday, check ur bank<br>person_ids: person:merrow, person:odum<br>channels: Telegram<br>window: "Two days after the SHOP BURGLARY (November 16, 2025)" (America/Denver, local wall clock) | pass | 2:20 p.m. MST Nov 16. |  |
 |  | `event` | yes | person_ids: person:merrow, person:odum<br>channels: Telegram<br>window: "Two days after the SHOP BURGLARY (November 16, 2025)" (America/Denver, local wall clock) | - | That he was paid: reading 'sent u 400 for friday' as money sent to him and 'got the 400, thx' as receipt. |  |

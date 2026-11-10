@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from core.audit.quotes import find_quote
+from core.audit.quotes import find_quote, find_quotes
 from core.contracts import (
     AssumptionParams,
     CheckOutcome,
@@ -349,6 +349,7 @@ class Row:
     text: str | None
     duration_s: int | None = None
     deleted: bool | None = None
+    direction: str | None = None  # messages: as the phone recorded it, else None
 
     @property
     def accounts(self) -> set[str]:
@@ -370,13 +371,13 @@ NOT_COPY = f"m.locator NOT LIKE '{forwarded_records.COPY_LIKE}'"
 _MSG_SQL = (
     "SELECT m.id, m.source_id, t.app, m.sender_account_id, m.ts_utc, m.ts_raw, m.body,"
     " m.deleted_flag, (SELECT json_group_array(r.account_id) FROM message_recipients r"
-    " WHERE r.message_id = m.id)"
+    " WHERE r.message_id = m.id), m.direction"
     " FROM messages m JOIN threads t ON t.id = m.thread_id"
 )
 
 
 def _message_row(r: tuple) -> Row:
-    mid, sid, app, sender, ts, raw, body, deleted, recips = r
+    mid, sid, app, sender, ts, raw, body, deleted, recips, direction = r
     return Row(
         id=mid,
         kind="message",
@@ -388,6 +389,7 @@ def _message_row(r: tuple) -> Row:
         ts_raw=raw,
         text=body,
         deleted=None if deleted is None else bool(deleted),
+        direction=direction,
     )
 
 
@@ -420,6 +422,89 @@ TEXT_MATCH = "verbatim, with curly quotes read as straight and runs of spaces as
 def fold_text(text: str) -> str:
     """The text as the checks match it: curly quotes straight, each run of spaces one space."""
     return _SPACES.sub(" ", text.translate(_TYPOGRAPHIC))
+
+
+# Where a quote may begin and end inside a longer message: at the end of a sentence or a clause
+# (". ", "! ", "? ", an ellipsis, a comma, a semicolon, a colon, a dash), a line break, or an
+# emoji. Anywhere else, inside a clause, the words left out may change what the quoted ones say
+# ("dont text me about it" quoted as "text me about it"), so a check never passes or fails on
+# such a match. A clause cut at a comma is taken: affidavits quote them ('he was "driving
+# tonight"' from "driving tonight, back late"), and a negation sits inside its clause.
+_SENTENCE_ENDS = ".!?\u2026,;:\u2013\u2014"  # and a hyphen with a space after it, as a dash
+_FULL_STOPS = ".!?\u2026"
+_MARKS = "\"'()[]{}\u00ab\u00bb"
+_JOINERS = "\ufe0f\u200d"
+# A clause mark starts a quote only when the clause before it does not govern what follows: a
+# denial or a report ("never say: bring the cash", "I didnt tell him, bring the cash", "he said,
+# bring the cash") puts the quoted words in another mouth or denies them (Greptile on #257). The
+# cue is read in the last three words before the mark, apostrophes optional, so a whole clause
+# that only holds a denial ("dont text me about it, use telegram") still starts one.
+_GOVERNING_RE = re.compile(
+    r"\b(?:not|never|no|nobody|nothing|neither|nor|without|stop|quit|deny|denied|denies"
+    r"|(?:do|does|did|is|was|are|were|wo|ca|could|should|would|must|have|has|had)n'?t|cannot"
+    r"|dont|wont|cant|say|says|said|saying|tell|tells|told|telling|ask|asks|asked|asking"
+    r"|write|writes|wrote|writing|text|texts|texted|texting|quote|quotes|quoted|like|goes"
+    r"|went|reply|replied|replies|answer|answered|claim|claimed|claims|supposedly|allegedly)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_emoji(ch: str) -> bool:
+    return unicodedata.category(ch) in {"So", "Sk"} or ord(ch) >= 0x1F000
+
+
+def _starts_sentence(head: str) -> bool:
+    """True when the folded text before a quote ends where a sentence or clause may begin."""
+    stripped = head.rstrip()
+    if "\n" in head[len(stripped) :] or "\r" in head[len(stripped) :]:
+        return True
+    core = stripped.rstrip(_MARKS + _JOINERS)
+    if not core:
+        return True  # the message's start, or only opening marks before the quote
+    if core[-1] in _FULL_STOPS or _is_emoji(core[-1]):
+        return True
+    dash = core == "-" or core.endswith((" -", " --"))  # a dash, not the hyphen of "re-send"
+    if not dash and core[-1] not in _SENTENCE_ENDS:
+        return False
+    clause = re.split(r"[.!?\u2026\n\r]", core)[-1].rstrip(_SENTENCE_ENDS + "- " + _MARKS)
+    return not _GOVERNING_RE.search(" ".join(clause.split()[-3:]))
+
+
+def _ends_sentence(quote: str, tail: str) -> bool:
+    """True when the folded quote, followed by this folded text, ends where a sentence or clause
+    may."""
+    last = quote.rstrip(_MARKS + _JOINERS)[-1:]
+    if last and (last in _SENTENCE_ENDS or _is_emoji(last)):
+        return True
+    stripped = tail.lstrip()
+    if "\n" in tail[: len(tail) - len(stripped)] or "\r" in tail[: len(tail) - len(stripped)]:
+        return True
+    rest = stripped.lstrip(_MARKS)
+    if rest == "-" or rest.startswith(("- ", "-- ")):
+        return True  # a dash
+    first = rest[:1]
+    return not first or first in _SENTENCE_ENDS or _is_emoji(first)
+
+
+def sentence_aligned(quote: str, body: str) -> bool:
+    """True when some place the quote sits in the body (folded, word-aligned) begins and ends
+    where a sentence or clause may: the whole message always does ("ok see you at 5"), as do
+    "Let's make this quick" in "I am. Let's make this quick. I'll send you a picture." and
+    "got the money" in "got the money, come get it". A quote that stops before more words with
+    no mark between ("ok see you at 5" in "ok see you at 5 bring the stuff"), or starts inside
+    a clause ("text me about it" in "dont text me about it"), does not: code cannot tell whether
+    the words left out change what the quoted ones say."""
+    want, text = fold_text(quote).strip(), fold_text(body)
+    # The same fold with each run of spaces that holds a line break kept as one line break: one
+    # character for each run either way, so a match in one sits at the same place in the other.
+    breaks = _SPACES.sub(
+        lambda m: "\n" if "\n" in m.group(0) or "\r" in m.group(0) else " ",
+        body.translate(_TYPOGRAPHIC),
+    )
+    return any(
+        _starts_sentence(breaks[:start]) and _ends_sentence(want, breaks[end:])
+        for start, end in find_quotes(want, text)
+    )
 
 
 def messages_with_text(data: CaseData, text: str) -> list[Row]:

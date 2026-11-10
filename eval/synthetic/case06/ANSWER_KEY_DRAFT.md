@@ -10,7 +10,7 @@ case05's design so the runs compare. It was written without reading the testabil
 step's code, prompt, tests or demo, or any run result. Its builder wired it into no
 gate.
 
-Draft split: 24 supported, 12 contradicted, 12 unproven; 3 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-11-03) changed no verdict; see `SIGNING_SHEET.md`.
+Draft split: 24 supported, 11 contradicted, 13 unproven; 3 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-11-03) changed no verdict; see `SIGNING_SHEET.md`.
 
 Shared assumption: Item 1 is used by VARLOW, Item 2 by COYLE and Item 3 by PELLOQUIN, so each phone's own accounts speak for its owner. The key treats this as given, as the affidavit does; it is not proven by the data. Paragraph 3 says the SPARE LINE is VARLOW's second number, and a record from his own phone ties him to it: on February 20 VARLOW's own number texts the HAULER 'new number for boat stuff is 360 555 0163. this one stays personal' (on Items 1 and 3), and twenty minutes later the SPARE LINE writes 'this is the other number' to the HAULER (Item 3). C05 rests on that tie, in an authorship row the expert decides. The SPARE LINE also writes 'its skip. new number for boat stuff' to COYLE, who saves it as 'Captain', but Item 3 saves another number as 'Skip', so the key does not rest on that nickname. Paragraph 3 says the WORK NUMBER is PELLOQUIN's; it writes 'on shift till 11, this is the work line' to VARLOW, and Item 1 saves it as 'Duke work'. C16 and C08 are about the number, not about who held it.
 
@@ -66,7 +66,7 @@ behind the phone.
 | C09 | p2 ¶11 | identity | plain | **contradicted** | same_name | [ ] |
 | C10 | p2 ¶11 | identity | affidavit | **supported** | contact_name | [ ] |
 | C11 | p3 ¶15 | identity | affidavit | **supported** | second_number | [ ] |
-| C12 | p2 ¶11 | identity | affidavit | **contradicted** | contact_name | [ ] |
+| C12 | p2 ¶11 | identity | affidavit | **unproven** | contact_name | [ ] |
 | C13 | p2 ¶10 | timing | plain | **supported** | near_window | [ ] |
 | C14 | p3 ¶14 | timing | plain | **supported** | near_window | [ ] |
 | C15 | p3 ¶15 | timing | plain | **contradicted** | near_window | [ ] |
@@ -313,13 +313,13 @@ Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
 Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
-## C12: draft **contradicted** (identity, affidavit wording)
+## C12: draft **unproven** (identity, affidavit wording)
 
 > The text message "the lower unit is shot" that CC-2 received from "Duke" on March 11, 2025 was sent by the HAULER.
 
 - Type: identity. Page 2, paragraph 11. Wording: affidavit (a designation (CC-2), a role (the HAULER), a contact name in quotes).
 - Core assumptions: PELLOQUIN's SMS account sent the message Item 2 received on Mar 11
-- Why: The only copy is on Item 2, from +12535550151, the number Item 2 saves as 'Duke'. On Feb 12 that number wrote to her 'this is duke at marchetti marine. ur skiff is in bay 2, pick up anytime', and its other messages are about her skiff, boat repairs and a boat show booth; Item 2 saves PELLOQUIN separately, as 'Duncan P' (+13605550138), which did not send it.
+- Why: The only copy is on Item 2, from +12535550151, the number Item 2 saves as 'Duke'. On Feb 12 that number wrote to her 'this is duke at marchetti marine. ur skiff is in bay 2, pick up anytime', and its other messages are about her skiff, boat repairs and a boat show booth; Item 2 saves PELLOQUIN separately, as 'Duncan P' (+13605550138), which did not send it. No record or confirmed fact says whose +12535550151 is, so the records do not rule PELLOQUIN out: unproven.
 - Hazard: `contact_name`. DUKE is PELLOQUIN's nickname (paragraph 2), and Item 1 saves PELLOQUIN as 'Duke'; Item 2's 'Duke' is another person. A reading that takes Item 2's 'Duke' for the HAULER passes the sender. The sheet names PELLOQUIN.
 - Alias inside a quote: DUKE matches the quoted sender name "Duke" and points to PELLOQUIN. Wrong: on Item 2, 'Duke' is +12535550151, a mechanic by his own texts. The claim's own 'the HAULER' is PELLOQUIN, rightly.
 - Key evidence (and the wrong reading's records, which are not key evidence unless

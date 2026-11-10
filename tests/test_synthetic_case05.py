@@ -259,8 +259,14 @@ def test_the_design_counts(gold):
         assert wordings == {"plain": 3, "affidavit": 3}, t
     verdicts = Counter(g.gold_verdict.value for g in gold)
     # 24/12/12 as first drafted; the second read moved C04 to unproven
-    assert verdicts == {"supported": 23, "contradicted": 12, "unproven": 13}
-    first = Counter(key.FIRST_DRAFT_VERDICT.get(c.claim_id, c.verdict) for c in key.CLAIMS)
+    # the check change of 2026-11-10 moved some contradicted claims to unproven
+    assert verdicts == {"supported": 23, "contradicted": 10, "unproven": 15}
+    signed = Counter(key.CHECK_CHANGE_VERDICT.get(c.claim_id, c.verdict) for c in key.CLAIMS)
+    assert signed == {"supported": 23, "contradicted": 12, "unproven": 13}
+    first = Counter(
+        key.FIRST_DRAFT_VERDICT.get(c.claim_id, key.CHECK_CHANGE_VERDICT.get(c.claim_id, c.verdict))
+        for c in key.CLAIMS
+    )
     assert first == {"supported": 24, "contradicted": 12, "unproven": 12}
     assert sum(c.hazard != "none" for c in key.CLAIMS) >= 24
     used = {c.hazard for c in key.CLAIMS} - {"none"}

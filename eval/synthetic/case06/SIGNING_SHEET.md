@@ -109,6 +109,22 @@ the wording changed) or kept and why. Verdicts changed: none.
 | R9 | C23 | question | weak | fixed | Agreed: the exchange now reads 'ya both 150 outboards, locked up', and the key and the meaning row cite the Feb 24 'ya 4 outboards, two are 150s' for the horsepower. |
 | R10 | C34 | question | weak | kept | Kept: paragraph 5 itself puts the clock change in the TRANSFER ('the night the clocks went forward, at 2 a.m.'), signed case05 C34 has the same construction, and the sheet lists the window. A clock-time wording would have to end on 2 a.m., a minute that never existed that night, which is a worse trap than the one it removes. |
 
+## Check change (2026-11-10)
+
+After this sheet was signed, two check changes moved the rows below. Sender 1.1.0
+counts a copy as someone else's only when a record or a confirmed fact says so: a
+number that no confirmed link ties to anyone may be the expected person's. Sender
+1.2.0 and time 1.1.0 never judge words that are only part of a sentence of a message.
+Re-sign these rows and verdicts.
+
+Verdicts changed: C12 (contradicted to unproven).
+
+| Claim | Row | Was | Now |
+|---|---|---|---|
+| C12 | sender | fail | inconclusive |
+| C46 | sender | pass | inconclusive |
+| C46 | record_time | pass | inconclusive |
+
 ## Aliases inside quotes
 
 An alias (case.json `aliases`) is matched whole and in any case, so it also matches
@@ -127,14 +143,14 @@ Check where each one points.
 | Type | supported | contradicted | unproven | Total |
 |---|---|---|---|---|
 | communication | 4 | 1 | 1 | 6 |
-| identity | 3 | 2 | 1 | 6 |
+| identity | 3 | 1 | 2 | 6 |
 | timing | 3 | 2 | 1 | 6 |
 | content_meaning | 3 | 1 | 2 | 6 |
 | count | 4 | 1 | 1 | 6 |
 | absence | 0 | 3 | 3 | 6 |
 | role | 3 | 1 | 2 | 6 |
 | event | 4 | 1 | 1 | 6 |
-| **all** | **24** | **12** | **12** | **48** |
+| **all** | **24** | **11** | **13** | **48** |
 
 ### Claim type x wording
 
@@ -155,7 +171,7 @@ Check where each one points.
 | Wording | supported | contradicted | unproven |
 |---|---|---|---|
 | plain | 11 | 8 | 5 |
-| affidavit | 13 | 4 | 7 |
+| affidavit | 13 | 3 | 8 |
 
 ### Hazards by kind
 
@@ -165,7 +181,7 @@ Check where each one points.
 | second_number | a second number or account for the same person | 8 | 6 | 1 | 1 |
 | second_phone | a second phone that could be meant | 8 | 4 | 1 | 3 |
 | near_window | a near-miss window: UTC against local time across midnight, the hour that never came when the clocks went forward, an adjacent day, or Item 3's fixed UTC-8 print | 12 | 5 | 6 | 1 |
-| contact_name | one contact name saved on two phones for two people | 5 | 2 | 1 | 2 |
+| contact_name | one contact name saved on two phones for two people | 5 | 2 | 0 | 3 |
 | similar_quote | similar words in another thread | 8 | 5 | 1 | 2 |
 | none | no wrong reading planted | 1 | 1 | 0 | 0 |
 
@@ -197,7 +213,7 @@ covers them:
 | C09 | identity | plain | same_name | **contradicted** | Two Telegram ids: 'Skip' 8820484 (another man), 'Em V' 8820411. | [ ] |
 | C10 | identity | affidavit | contact_name | **supported** | Item 2's 'Captain' holds +13605550163; she wrote 'saved u as captain lol'. | [ ] |
 | C11 | identity | affidavit | second_number | **supported** | One Telegram id, 8820422 (Item 2's own); Item 3 shows 'Ren C' to Mar 11, 'harborlights' from Mar 12. | [ ] |
-| C12 | identity | affidavit | contact_name | **contradicted** | Item 2's 'Duke' (+12535550151) sent it, not PELLOQUIN's +13605550138. | [ ] |
+| C12 | identity | affidavit | contact_name | **unproven** | Item 2's 'Duke' (+12535550151) sent it, not PELLOQUIN's +13605550138. | [ ] |
 | C13 | timing | plain | near_window | **supported** | 9:12 p.m. PST, 236 s; Item 1 prints 9:09 PM(UTC+0) for a 1:09 p.m. call of 38 s. | [ ] |
 | C14 | timing | plain | near_window | **supported** | 3:14 a.m. PDT, 118 s; Item 3 prints 2:14 AM(UTC-8), and 3:12 AM for a 31 s call. | [ ] |
 | C15 | timing | plain | near_window | **contradicted** | Sent 9:40 p.m. PDT Mar 12; 8:40 PM is Item 3's UTC-8 print. | [ ] |
@@ -261,7 +277,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 | C10 | `contact_entry` | yes | device_ids: dev:item2<br>quoted_text: Captain<br>account_ids: acct:item2:SMS:+13605550163 | pass | 'Her phone' is Item 2 (CC-2 is COYLE). | [ ] |
 | C11 | `same_account` | yes | channels: Telegram<br>handles: Ren C, harborlights<br>device_ids: dev:item3 | pass | Both names resolve to Telegram user id 8820422 (Item 2's own account). The check resolves names on every phone, not only Item 3; on Telegram only Item 3 shows her account to someone else. | [ ] |
 |  | `person_identity` | yes | person_ids: person:coyle<br>account_ids: acct:item2:Telegram:8820422, acct:item3:Telegram:8820422<br>channels: Telegram | - | That user id 8820422 is CC-2's: it is Item 2's own Telegram account (its User Accounts sheet, and the outgoing copies on Item 2), and Item 2 is COYLE's phone (the shared device attribution). Core: the expert decides it. |  |
-| C12 | `sender` | yes | quoted_text: the lower unit is shot<br>person_ids: person:pelloquin<br>channels: SMS | fail | The one copy came from +12535550151, Item 2's 'Duke', not from PELLOQUIN. | [ ] |
+| C12 | `sender` | yes | quoted_text: the lower unit is shot<br>person_ids: person:pelloquin<br>channels: SMS | inconclusive | The one copy came from +12535550151, Item 2's 'Duke', not from PELLOQUIN. No record or confirmed fact says whose that number is, so the check is inconclusive (sender 1.1.0). | [ ] |
 |  | `record_time` | yes | quoted_text: the lower unit is shot<br>channels: SMS<br>device_ids: dev:item2<br>window: "on March 11, 2025" (America/Los_Angeles, local wall clock) | pass | 9:40 a.m. PDT Mar 11, on Item 2. |  |
 | C13 | `record_time` | yes | person_ids: person:varlow, person:pelloquin<br>channels: call<br>duration_s: 180, 300<br>window: "At about 9:10 p.m. on February 21, 2025" (America/Los_Angeles, local wall clock) | pass | 9:12:40 p.m. PST, 236 s. 'About four minutes' is 180 to 300 s. | [ ] |
 | C14 | `record_time` | yes | person_ids: person:varlow, person:pelloquin<br>channels: call<br>duration_s: 90, 150<br>window: "At about 3:15 a.m. on March 9, 2025" (America/Los_Angeles, local wall clock) | pass | 3:14:20 a.m. PDT, 118 s. 3:07 to 3:23 a.m. is after the jump, all PDT. | [ ] |
@@ -324,8 +340,8 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 |  | `record_time` | yes | quoted_text: need the motors out of the boathouse by sat<br>person_ids: person:coyle, person:varlow<br>channels: SMS<br>window: "On March 4, 2025" (America/Los_Angeles, local wall clock) | pass | 9:30 a.m. PST Mar 4. |  |
 |  | `event` | yes | person_ids: person:coyle, person:varlow<br>channels: SMS<br>window: "On March 4, 2025" (America/Los_Angeles, local wall clock) | - | That the request and the agreement are what the claim states. |  |
 | C45 | `record_time` | yes | person_ids: person:coyle, person:pelloquin<br>channels: call<br>duration_s: 540, 660<br>window: "On March 16, 2025" (America/Los_Angeles, local wall clock) | inconclusive | Their only call that day is 45 s; 'about ten minutes' is 540 to 660 s. | [ ] |
-| C46 | `sender` | yes | quoted_text: back in the barn<br>person_ids: person:pelloquin<br>channels: Telegram | pass | The HAULER is PELLOQUIN; outgoing on Item 3. | [ ] |
-|  | `record_time` | yes | quoted_text: back in the barn<br>person_ids: person:pelloquin, person:varlow<br>channels: Telegram<br>window: "At about 4:50 a.m. that morning (March 9, 2025)" (America/Los_Angeles, local wall clock) | pass | 'That morning' is March 9 (the sentence before, C06). 4:47 a.m. PDT (Item 3 prints 3:47:10 AM(UTC-8)). |  |
+| C46 | `sender` | yes | quoted_text: back in the barn<br>person_ids: person:pelloquin<br>channels: Telegram | inconclusive | The HAULER is PELLOQUIN; outgoing on Item 3. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). | [ ] |
+|  | `record_time` | yes | quoted_text: back in the barn<br>person_ids: person:pelloquin, person:varlow<br>channels: Telegram<br>window: "At about 4:50 a.m. that morning (March 9, 2025)" (America/Los_Angeles, local wall clock) | inconclusive | 'That morning' is March 9 (the sentence before, C06). 4:47 a.m. PDT (Item 3 prints 3:47:10 AM(UTC-8)). The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). |  |
 |  | `event` | yes | person_ids: person:pelloquin, person:varlow<br>channels: Telegram<br>window: "At about 4:50 a.m. that morning (March 9, 2025)" (America/Los_Angeles, local wall clock) | - | That the trailer was back: 'all unloaded. trailer is back in the barn'. |  |
 | C47 | `sender` | yes | quoted_text: deal, 3k for both, cash<br>account_ids: acct:item2:Telegram:8820450<br>channels: Telegram | pass | Incoming on Item 2 from the KELPWISE ACCOUNT (paragraph 3). | [ ] |
 |  | `record_time` | yes | quoted_text: deal, 3k for both, cash<br>person_ids: person:coyle<br>account_ids: acct:item2:Telegram:8820450<br>channels: Telegram<br>window: "On the Monday after the HARBOR THEFT (March 3, 2025)" (America/Los_Angeles, local wall clock) | pass | The HARBOR THEFT ended Saturday, March 1. 10:40 a.m. PST Mar 3. |  |

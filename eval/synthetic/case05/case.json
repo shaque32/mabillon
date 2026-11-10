@@ -114,7 +114,7 @@
     "C03": {
       "claim_type": "communication",
       "wording": "plain",
-      "verdict": "contradicted",
+      "verdict": "unproven",
       "hazard": "same_name",
       "wrong_records": [
         "contact:item2:Contacts!6#1"
@@ -195,7 +195,7 @@
     "C12": {
       "claim_type": "identity",
       "wording": "affidavit",
-      "verdict": "contradicted",
+      "verdict": "unproven",
       "hazard": "contact_name",
       "wrong_records": [
         "contact:item3:Contacts!3#1"

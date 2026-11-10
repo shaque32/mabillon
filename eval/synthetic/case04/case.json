@@ -111,7 +111,7 @@
     "C03": {
       "claim_type": "communication",
       "wording": "plain",
-      "verdict": "contradicted",
+      "verdict": "unproven",
       "hazard": "same_name",
       "wrong_records": [
         "contact:item1:Contacts!4#1"
@@ -463,7 +463,7 @@
     "C41": {
       "claim_type": "role",
       "wording": "affidavit",
-      "verdict": "contradicted",
+      "verdict": "unproven",
       "hazard": "similar_quote",
       "wrong_records": [
         "msg:item2:Chats!199"

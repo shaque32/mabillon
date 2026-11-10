@@ -9,7 +9,7 @@ case04 is the held-out set for the testability step's go/no-go. It was written w
 reading the testability step's code, prompt or tests. It is the case the go/no-go
 reads, and is not part of `make eval` or any merge gate.
 
-Draft split: 22 supported, 12 contradicted, 14 unproven; 2 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-10-29) changed C37 (supported to unproven), C40 (supported to unproven); see `SIGNING_SHEET.md`.
+Draft split: 22 supported, 10 contradicted, 16 unproven; 2 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-10-29) changed C37 (supported to unproven), C40 (supported to unproven); see `SIGNING_SHEET.md`.
 
 Shared assumption: Item 1 is used by HALLORAN, Item 2 by FERRO and Item 3 by OKAFOR, so each phone's own accounts speak for its owner. The key treats this as given, as the affidavit does; it is not proven by the data. The PREPAID is HALLORAN's because paragraph 3 says so, and the number writes 'new number, its hal' (Item 2 saves it as 'Hal 2', Item 3 as 'H'). No record from his own phone shows it, so C04's core authorship row puts it to the expert, and C32 rests on it.
 
@@ -52,7 +52,7 @@ CDT from 2 a.m. on 2026-03-08).
 |---|---|---|---|---|---|---|
 | C01 | p2 ¶8 | communication | plain | **supported** | near_window | [ ] |
 | C02 | p2 ¶10 | communication | plain | **supported** | none | [ ] |
-| C03 | p3 ¶12 | communication | plain | **contradicted** | same_name | [ ] |
+| C03 | p3 ¶12 | communication | plain | **unproven** | same_name | [ ] |
 | C04 | p2 ¶10 | communication | affidavit | **supported** | second_number | [ ] |
 | C05 | p2 ¶11 | communication | affidavit | **supported** | second_phone | [ ] |
 | C06 | p3 ¶13 | communication | affidavit | **unproven** | similar_quote | [ ] |
@@ -90,7 +90,7 @@ CDT from 2 a.m. on 2026-03-08).
 | C38 | p3 ¶15 | role | plain | **contradicted** | same_name | [ ] |
 | C39 | p2 ¶8 | role | plain | **unproven** | none | [ ] |
 | C40 | p3 ¶15 | role | affidavit | **unproven** | same_name | [ ] |
-| C41 | p2 ¶11 | role | affidavit | **contradicted** | similar_quote | [ ] |
+| C41 | p2 ¶11 | role | affidavit | **unproven** | similar_quote | [ ] |
 | C42 | p2 ¶11 | role | affidavit | **unproven** | similar_quote | [ ] |
 | C43 | p2 ¶10 | event | plain | **supported** | similar_quote | [ ] |
 | C44 | p4 ¶16 | event | plain | **supported** | same_name | [ ] |
@@ -136,13 +136,13 @@ Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
 Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
-## C03: draft **contradicted** (communication, plain wording)
+## C03: draft **unproven** (communication, plain wording)
 
 > On March 10, 2026, OKAFOR texted FERRO "the yellow ones are in my garage".
 
 - Type: communication. Page 3, paragraph 12. Wording: plain.
 - Core assumptions: OKAFOR's SMS account sent the message to FERRO on Mar 10
-- Why: The only copy is on Item 2, sent by +17735550164, which Item 2 saves as 'Dez'; that number's next message is 'come grab the boots whenever'. OKAFOR (+17735550176, saved on Item 2 as 'Desmond O') did not send it. Observed data rules out the stated sender.
+- Why: The only copy is on Item 2, sent by +17735550164, which Item 2 saves as 'Dez'; that number's next message is 'come grab the boots whenever'. OKAFOR (+17735550176, saved on Item 2 as 'Desmond O') did not send it. No record or confirmed fact says whose +17735550164 is, so the records do not rule OKAFOR out: unproven.
 - Hazard: `same_name`. DEZ is OKAFOR's nickname (paragraph 2) and Item 1 saves OKAFOR as 'Dez', but on Item 2 'Dez' is another person. A reading that takes Item 2's 'Dez' for OKAFOR passes the sender; the sheet names OKAFOR.
 - Key evidence (and the wrong reading's records, which are not key evidence unless
   marked so):
@@ -895,13 +895,13 @@ Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
 Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
-## C41: draft **contradicted** (role, affidavit wording)
+## C41: draft **unproven** (role, affidavit wording)
 
 > SUBJECT-2 decided where the spools would be kept that night, sending HAL to "the unit on pulaski".
 
 - Type: role. Page 2, paragraph 11. Wording: affidavit (defined terms (SUBJECT-2), alias (HAL), 'that night' referring back, paraphrase).
 - Core assumptions: FERRO sent HALLORAN the words 'the unit on pulaski'; FERRO chose where the spools were kept
-- Why: HALLORAN wrote 'taking them to the unit on pulaski after' to FERRO, who answered 'ok'. No copy came from FERRO. Observed data rules out the stated sender.
+- Why: HALLORAN wrote 'taking them to the unit on pulaski after' to FERRO, who answered 'ok'. No copy came from FERRO, but the claim's words are only part of HALLORAN's sentence, so no record is the message the claim quotes: unproven.
 - Hazard: `similar_quote`. FERRO wrote to Item 2's 'Mari' 'moms boxes are at the pulaski unit' (other words, another thread); the sheet quotes the claim's words.
 - Key evidence (and the wrong reading's records, which are not key evidence unless
   marked so):

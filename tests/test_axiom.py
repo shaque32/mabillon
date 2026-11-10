@@ -688,9 +688,9 @@ def test_checks_resting_on_an_axiom_forward_fail_closed_and_never_credit_the_for
     from core.contracts import CheckOutcome
 
     plain, _s = _fwd_case(tmp_path / "p", "xml")
-    assert _sender(plain, "see you at noon").outcome is CheckOutcome.PASS
+    assert _sender(plain, "SYNTHETIC see you at noon").outcome is CheckOutcome.PASS
     conn, _s = _fwd_case(tmp_path / "f", "xml", Forwarded="Yes")
-    r = _sender(conn, "see you at noon")
+    r = _sender(conn, "SYNTHETIC see you at noon")
     assert r.outcome is CheckOutcome.INCONCLUSIVE
     assert "marked as forwarded" in r.detail and "was sent by" not in r.detail
 

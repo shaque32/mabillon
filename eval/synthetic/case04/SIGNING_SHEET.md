@@ -45,21 +45,38 @@ the wording changed), or kept and why. Verdicts changed: C37 (supported to unpro
 | R12 | C41 | cosmetic | fixed | The sender row names no channel, as the claim names none; the check still fails. |
 | R13 | C43 | cosmetic | fixed | The gap now says the place is tested as words inside the quote, not as a place. |
 
+## Check change (2026-11-10)
+
+After this sheet was signed, two check changes moved the rows below. Sender 1.1.0
+counts a copy as someone else's only when a record or a confirmed fact says so: a
+number that no confirmed link ties to anyone may be the expected person's. Sender
+1.2.0 and time 1.1.0 never judge words that are only part of a sentence of a message.
+Re-sign these rows and verdicts.
+
+Verdicts changed: C03 (contradicted to unproven), C41 (contradicted to unproven).
+
+| Claim | Row | Was | Now |
+|---|---|---|---|
+| C03 | sender | fail | inconclusive |
+| C41 | sender | fail | inconclusive |
+| C46 | sender | pass | inconclusive |
+| C46 | record_time | pass | inconclusive |
+
 ## Counts
 
 ### Claim type x draft verdict
 
 | Type | supported | contradicted | unproven | Total |
 |---|---|---|---|---|
-| communication | 4 | 1 | 1 | 6 |
+| communication | 4 | 0 | 2 | 6 |
 | identity | 4 | 1 | 1 | 6 |
 | timing | 4 | 1 | 1 | 6 |
 | content_meaning | 3 | 1 | 2 | 6 |
 | count | 3 | 2 | 1 | 6 |
 | absence | 0 | 3 | 3 | 6 |
-| role | 0 | 2 | 4 | 6 |
+| role | 0 | 1 | 5 | 6 |
 | event | 4 | 1 | 1 | 6 |
-| **all** | **22** | **12** | **14** | **48** |
+| **all** | **22** | **10** | **16** | **48** |
 
 ### Claim type x wording
 
@@ -79,19 +96,19 @@ the wording changed), or kept and why. Verdicts changed: C37 (supported to unpro
 
 | Wording | supported | contradicted | unproven |
 |---|---|---|---|
-| plain | 11 | 7 | 6 |
-| affidavit | 11 | 5 | 8 |
+| plain | 11 | 6 | 7 |
+| affidavit | 11 | 4 | 9 |
 
 ### Hazards by kind
 
 | Hazard | What the wrong reading is | Claims | supported | contradicted | unproven |
 |---|---|---|---|---|---|
-| same_name | a second person with the same first name or nickname | 9 | 2 | 3 | 4 |
+| same_name | a second person with the same first name or nickname | 9 | 2 | 2 | 5 |
 | second_number | a second number or account for the same person | 9 | 5 | 2 | 2 |
 | second_phone | a second phone that could be meant | 6 | 3 | 2 | 1 |
 | near_window | a near-miss window: UTC against local time across midnight, the DST change, an adjacent day, or Item 3's fixed UTC-6 print | 11 | 6 | 3 | 2 |
 | contact_name | one contact name saved on two phones for two people | 3 | 1 | 0 | 2 |
-| similar_quote | similar words in another thread | 8 | 4 | 2 | 2 |
+| similar_quote | similar words in another thread | 8 | 4 | 1 | 3 |
 | none | no wrong reading planted | 2 | 1 | 0 | 1 |
 
 Claims with a planted wrong reading: 46 of 48.
@@ -114,7 +131,7 @@ covers them:
 |---|---|---|---|---|---|---|
 | C01 | communication | plain | near_window | **supported** | Sent 8:12 p.m. CST Feb 18; Item 1 prints Feb 19 (UTC+0). | [ ] |
 | C02 | communication | plain | none | **supported** | Observed on Items 2 and 3, Mar 4. | [ ] |
-| C03 | communication | plain | same_name | **contradicted** | Sent by Item 2's 'Dez' (+17735550164), not OKAFOR's +17735550176. | [ ] |
+| C03 | communication | plain | same_name | **unproven** | Sent by Item 2's 'Dez' (+17735550164), not OKAFOR's +17735550176. | [ ] |
 | C04 | communication | affidavit | second_number | **supported** | The PREPAID's text on Item 3, 7:15 p.m. Mar 6; HALLORAN as its user is a core expert row. | [ ] |
 | C05 | communication | affidavit | second_phone | **supported** | Item 2 (the TARGET PHONE) received it at 1:47 a.m. CST Mar 8. | [ ] |
 | C06 | communication | affidavit | similar_quote | **unproven** | No such text anywhere; 'Benny NGE' got 'stay off the roof till tuesday'. | [ ] |
@@ -152,7 +169,7 @@ covers them:
 | C38 | role | plain | same_name | **contradicted** | FERRO sent 'pickup 10:15, not before'. | [ ] |
 | C39 | role | plain | none | **unproven** | OKAFOR offered himself; recruitment is interpretation. | [ ] |
 | C40 | role | affidavit | same_name | **unproven** | His text to 'Tash' states a plan; no record shows he drove. | [ ] |
-| C41 | role | affidavit | similar_quote | **contradicted** | HALLORAN wrote 'the unit on pulaski', not FERRO. | [ ] |
+| C41 | role | affidavit | similar_quote | **unproven** | HALLORAN wrote 'the unit on pulaski', not FERRO. | [ ] |
 | C42 | role | affidavit | similar_quote | **unproven** | 'site is clear' went to 'Benny NGE'; no lookout shown. | [ ] |
 | C43 | event | plain | similar_quote | **supported** | Proposal and 'ok' on Mar 3; Thursday is Mar 5. | [ ] |
 | C44 | event | plain | same_name | **supported** | Request and 'ok ill grab it tonight' on Mar 23. | [ ] |
@@ -172,7 +189,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 |  | `record_time` | yes | quoted_text: need the big van sat, 6am<br>person_ids: person:halloran, person:ferro<br>channels: SMS<br>window: "On February 18, 2026" (America/Chicago, local wall clock) | pass | 8:12 p.m. CST Feb 18; Item 1 prints 2/19 2:12:40 AM(UTC+0). |  |
 | C02 | `sender` | yes | quoted_text: address is 2210 n kildare, side gate<br>person_ids: person:ferro<br>channels: WhatsApp | pass | Outgoing on Item 2. | [ ] |
 |  | `record_time` | yes | quoted_text: address is 2210 n kildare, side gate<br>person_ids: person:ferro, person:okafor<br>channels: WhatsApp<br>window: "On March 4, 2026" (America/Chicago, local wall clock) | pass | 2:40 p.m. CST Mar 4. |  |
-| C03 | `sender` | yes | quoted_text: the yellow ones are in my garage<br>person_ids: person:okafor<br>channels: SMS | fail | The one copy came from +17735550164, Item 2's 'Dez', not from OKAFOR's +17735550176. | [ ] |
+| C03 | `sender` | yes | quoted_text: the yellow ones are in my garage<br>person_ids: person:okafor<br>channels: SMS | inconclusive | The one copy came from +17735550164, Item 2's 'Dez', not from OKAFOR's +17735550176. No record or confirmed fact says whose that number is, so the check is inconclusive (sender 1.1.0). | [ ] |
 |  | `record_time` | yes | quoted_text: the yellow ones are in my garage<br>channels: SMS<br>device_ids: dev:item2<br>window: "On March 10, 2026" (America/Chicago, local wall clock) | pass | 11:05 a.m. CDT Mar 10, on Item 2. |  |
 | C04 | `sender` | yes | quoted_text: bring the long ladder and both dollies<br>account_ids: acct:item3:SMS:+13125550199<br>channels: SMS | pass | Incoming on Item 3 from the PREPAID (paragraph 3). | [ ] |
 |  | `record_time` | yes | quoted_text: bring the long ladder and both dollies<br>person_ids: person:okafor<br>account_ids: acct:item3:SMS:+13125550199<br>channels: SMS<br>window: "On the evening before the BELMONT SITE theft (March 6, 2026, 5 p.m. to midnight)" (America/Chicago, local wall clock) | pass | 7:15 p.m. CST Mar 6 (printed 7:15:22 PM(UTC-6)). |  |
@@ -236,7 +253,7 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 | C40 | `sender` | yes | quoted_text: driving for nadia tonight<br>person_ids: person:okafor<br>channels: SMS | pass | DEZ is OKAFOR; outgoing on Item 3. | [ ] |
 |  | `record_time` | yes | quoted_text: driving for nadia tonight<br>person_ids: person:okafor<br>channels: SMS<br>window: "that evening (March 21, 2026, 5 p.m. to midnight)" (America/Chicago, local wall clock) | pass | 7:40 p.m. CDT Mar 21 (to Item 3's 'Tash'). |  |
 |  | `role` | yes | person_ids: person:okafor<br>quoted_text: driving for nadia tonight<br>window: "On the night of the KEDZIE YARD theft" (America/Chicago, local wall clock) | - | That OKAFOR drove that night; his text states a plan, and no record shows the drive. |  |
-| C41 | `sender` | yes | quoted_text: the unit on pulaski<br>person_ids: person:ferro | fail | HALLORAN wrote it, to FERRO. No channel: the claim names none. | [ ] |
+| C41 | `sender` | yes | quoted_text: the unit on pulaski<br>person_ids: person:ferro | inconclusive | HALLORAN wrote it, to FERRO, inside 'taking them to the unit on pulaski after'. No channel: the claim names none. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). | [ ] |
 |  | `role` | yes | person_ids: person:ferro | - | That FERRO chose where the spools went. |  |
 | C42 | `role` | yes | person_ids: person:halloran<br>window: "In the hours before the BELMONT SITE theft (March 7, 2026, 6 to 11 p.m.)" (America/Chicago, local wall clock) | - | That HALLORAN acted as a lookout; the only 'site is clear' text went to 'Benny NGE'. | [ ] |
 | C43 | `sender` | yes | quoted_text: meet behind the laundromat on fullerton thursday 8pm<br>person_ids: person:halloran<br>channels: SMS | pass | Outgoing on Item 1. | [ ] |
@@ -247,8 +264,8 @@ One table for the whole sheet; the claim texts are in `affidavit_draft.md` and
 |  | `sender` | yes | quoted_text: ok ill grab it tonight<br>person_ids: person:halloran<br>channels: SMS | pass | HALLORAN's answer, outgoing on Item 1. |  |
 |  | `record_time` | yes | quoted_text: need the welder out of my garage by tmrw<br>person_ids: person:ferro, person:halloran<br>channels: SMS<br>window: "On March 23, 2026" (America/Chicago, local wall clock) | pass | 11:00 a.m. CDT Mar 23. |  |
 | C45 | `record_time` | yes | person_ids: person:ferro, person:okafor<br>channels: call<br>duration_s: 540, 660<br>window: "On March 12, 2026" (America/Chicago, local wall clock) | inconclusive | Their only call that day lasted 45 s; the 612 s call is with Item 2's 'Dez'. | [ ] |
-| C46 | `sender` | yes | quoted_text: back at gus<br>person_ids: person:okafor<br>channels: Telegram | pass | The DRIVER's Telegram, outgoing on Item 3. | [ ] |
-|  | `record_time` | yes | quoted_text: back at gus<br>person_ids: person:okafor, person:ferro<br>channels: Telegram<br>window: "Shortly before 5 a.m. the morning after the theft (March 8, 2026, 4:30 to 5 a.m.)" (America/Chicago, local wall clock) | pass | 4:48:26 a.m. CDT; Item 3 prints 3:48:26 AM(UTC-6). |  |
+| C46 | `sender` | yes | quoted_text: back at gus<br>person_ids: person:okafor<br>channels: Telegram | inconclusive | The DRIVER's Telegram, outgoing on Item 3. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). | [ ] |
+|  | `record_time` | yes | quoted_text: back at gus<br>person_ids: person:okafor, person:ferro<br>channels: Telegram<br>window: "Shortly before 5 a.m. the morning after the theft (March 8, 2026, 4:30 to 5 a.m.)" (America/Chicago, local wall clock) | inconclusive | 4:48:26 a.m. CDT; Item 3 prints 3:48:26 AM(UTC-6). The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). |  |
 | C47 | `sender` | yes | quoted_text: ur 600 is in the envelope under the mat<br>person_ids: person:ferro<br>channels: WhatsApp | pass | Outgoing on Item 2. | [ ] |
 |  | `record_time` | yes | quoted_text: ur 600 is in the envelope under the mat<br>person_ids: person:ferro, person:okafor<br>channels: WhatsApp<br>window: "Two days after the KEDZIE YARD theft (March 23, 2026)" (America/Chicago, local wall clock) | pass | 8:30 p.m. CDT Mar 23. |  |
 |  | `event` | yes | person_ids: person:ferro, person:okafor<br>channels: WhatsApp<br>window: "Two days after the KEDZIE YARD theft (March 23, 2026)" (America/Chicago, local wall clock) | - | That he was paid: reading 'ur 600' as money for him and 'got it, thx' as receipt. |  |

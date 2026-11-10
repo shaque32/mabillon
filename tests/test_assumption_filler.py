@@ -24,11 +24,12 @@ from core.audit.assumption_filler import (
     _ProposalOut,
     check_window,
     count_op,
+    coverage_gap,
     date_mentions,
     only_addressed,
     stated_part_day,
 )
-from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder
+from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder
 from core.audit.checks import CHECKS
 from core.contracts import CheckOutcome, Claim, ClaimStatus, ClaimType, ModelCallOutcome
 from eval.synthetic.generate import generate
@@ -1971,12 +1972,23 @@ def test_code_made_assumptions_say_so_and_model_ones_do_not(conn):
     made = {a.template_id: a for a in assumptions}
     assert is_code_made(made["sender"].text) and is_code_made(made["record_time"].text)
     assert made["sender"].text.endswith("Filled from the claim's wording.")
+    # C05's and C16's time ranges name the writer alone; code adds the one each went to
+    # (@northstar, REYES), so the time check tests both sides (_add_recipient), and the row
+    # says code filled it.
+    recipient = {"C05": "record_time", "C16": "record_time"}
     for cid in sorted(GOOD):
         model_made, *_ = build(conn, cid)
         whole = [
-            a for a in model_made if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
+            a
+            for a in model_made
+            if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
+            and a.template_id != recipient.get(cid)
         ]
         assert not any(is_code_made(a.text) for a in whole if a.template_id != "meaning"), cid
+    (timed,) = [a for a in build(conn, "C05")[0] if a.template_id == "record_time"]
+    assert is_code_made(timed.text) and timed.params.handles == ("@northstar",)
+    (timed,) = [a for a in build(conn, "C16")[0] if a.template_id == "record_time"]
+    assert is_code_made(timed.text) and timed.params.person_ids == (REYES,)
 
 
 def test_a_count_of_calls_is_read_and_made_from_a_calls_time(call_log):
@@ -3107,3 +3119,184 @@ def test_a_whole_alias_stands_in_whatever_names_the_case_holds(aliased):
         assert filler.stated_sender(c, "ok") == REYES
     finally:
         aliased.execute("DELETE FROM persons WHERE id = 'person:bsmith'")
+
+
+# case05 C04 (a false SUPPORTED, agents bench 2026-11-10): "SUBJECT-1 texted the COURIER from
+# the BURNER: ..." kept on one sender row naming only the BURNER's account, so the checks passed
+# on who sent the words and never on SUBJECT-1 using the BURNER, or on the day.
+ALEX = {"as_written": "@alex92", "app": "Telegram"}
+BURNER_TEXT = 'PETROV texted REYES from @alex92 on Telegram: "need 2 more by friday".'
+
+
+def test_a_named_writer_no_assumption_ties_to_the_account_leaves_the_claim_unproven(conn):
+    answer = [P("sender", accounts=[ALEX], quoted_text="need 2 more by friday")]
+    assumptions, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    (drop,) = [d.reason for d in filler.drops if "ties them" in d.reason]
+    # PETROV wrote it and REYES got it: a sender row tests neither here, and no time row names
+    # REYES (Arsh, 2026-11-10: a checked SUPPORTED proves who received the message).
+    assert "Daniel Petrov" in drop and "Marcus Reyes" in drop
+
+
+def test_a_writer_the_assumption_names_is_bound(conn):
+    answer = [P("sender", people=["PETROV"], accounts=[ALEX], quoted_text="need 2 more by friday")]
+    _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+    assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
+
+
+def test_a_confirmed_link_or_an_owned_phone_binds_the_writer(conn):
+    answer = [P("sender", accounts=[ALEX], quoted_text="need 2 more by friday")]
+    conn.execute(
+        "INSERT INTO identity_links (id, account_id, person_id, status, tier, basis, decided_by,"
+        " decided_at_utc) VALUES ('link:test:alex', 'acct:item1:Telegram:5551234', ?,"
+        " 'confirmed', 'confirmed', 'test', 'expert:test', '2026-11-10T00:00:00Z')",
+        (PETROV,),
+    )
+    try:
+        _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+        assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
+    finally:
+        conn.execute("DELETE FROM identity_links WHERE id = 'link:test:alex'")
+    # dp_garage is PETROV's own Instagram account on Item 1, whose owner the expert confirmed.
+    text = 'PETROV, using the Instagram account dp_garage, told REYES "got the money, come get it".'
+    answer = [P("sender", accounts=[DP_GARAGE], quoted_text="got the money, come get it")]
+    _, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert not [d for d in filler.drops if "Daniel Petrov" in d.reason], filler.drops
+
+
+def test_the_one_a_message_went_to_is_tested_on_its_time_row(conn):
+    # Arsh, 2026-11-10: a checked SUPPORTED proves who received the message. With a date, code
+    # adds REYES to the time row it makes, so the time check asks for both sides.
+    text = 'On March 12, 2026, PETROV texted REYES: "need 2 more by friday".'
+    answer = [P("sender", people=["PETROV"], quoted_text="need 2 more by friday")]
+    assumptions, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert not filler.drops, filler.drops
+    (timed,) = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert timed.person_ids == (PETROV, REYES)
+    # Undated, nothing can test REYES: the claim stays unproven.
+    undated = 'PETROV texted REYES: "need 2 more by friday".'
+    assumptions, filler = build_text(conn, undated, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    assert any("Marcus Reyes" in d.reason for d in filler.drops), filler.drops
+    # A handle written as the one it went to needs a time or count row naming both sides.
+    to_handle = 'PETROV wrote to @northstar: "need 2 more by friday".'
+    assumptions, filler = build_text(conn, to_handle, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    assert any("as whom the message went to" in d.reason for d in filler.drops), filler.drops
+
+
+def test_a_time_row_with_another_recipient_does_not_test_the_one_written(conn):
+    # Greptile on #257: a row timing PETROV's words to @northstar does not test "PETROV wrote
+    # to @alex92"; only a row naming @alex92 does.
+    text = 'On March 12, 2026, PETROV wrote to @alex92: "need 2 more by friday".'
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    sender = Proposal("sender", {"quoted_text": "need 2 more by friday", "person_ids": [PETROV]})
+
+    def timed(**side) -> Proposal:
+        return Proposal(
+            "record_time",
+            {"quoted_text": "need 2 more by friday", "person_ids": [PETROV], **side},
+        )
+
+    other = filler.unbound_person(c, [sender, timed(handles=["@northstar"])])
+    assert other is not None and "'@alex92'" in other
+    assert filler.unbound_person(c, [sender, timed(handles=["@alex92"])]) is None
+    by_account = timed(account_ids=["acct:item1:Telegram:5551234"])  # display name @alex92
+    assert filler.unbound_person(c, [sender, by_account]) is None
+
+
+def test_a_recipient_written_as_a_number_matches_its_whatsapp_account(conn):
+    # Greptile on #257: "(212) 555-0122" is the WhatsApp id 12125550122@s.whatsapp.net.
+    text = 'On March 12, 2026, PETROV wrote to (212) 555-0122 on WhatsApp: "hello".'
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    sender = Proposal("sender", {"quoted_text": "hello", "person_ids": [PETROV]})
+
+    def timed(account: str) -> Proposal:
+        return Proposal(
+            "record_time",
+            {"quoted_text": "hello", "person_ids": [PETROV], "account_ids": [account]},
+        )
+
+    jid = "acct:item1:WhatsApp:12125550122@s.whatsapp.net"
+    assert filler.unbound_person(c, [sender, timed(jid)]) is None
+    other = filler.unbound_person(
+        c, [sender, timed("acct:item1:WhatsApp:12125550155@s.whatsapp.net")]
+    )
+    assert other is not None and "(212) 555-0122" in other
+
+
+QUOTE16 = "got the money, come get it"
+
+
+def test_an_owner_confirmed_on_another_copy_of_the_account_binds_the_writer(conn):
+    # Greptile on #257: scoped to Item 2, the sender row keeps only Item 2's copy of dp_garage;
+    # Item 1 holds it as PETROV's own account, and the checks read both by the same key.
+    text = 'PETROV wrote from the Instagram account dp_garage: "got the money, come get it".'
+    p = Proposal(
+        "sender",
+        {"quoted_text": QUOTE16, "account_ids": ["acct:item2:Instagram:dp_garage"]},
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    assert filler.unbound_person(c, [p]) is None
+    other = Proposal(
+        "sender",
+        {"quoted_text": QUOTE16, "account_ids": ["acct:item2:Telegram:7001077"]},
+    )
+    assert "Daniel Petrov" in (filler.unbound_person(c, [other]) or "")
+
+
+@pytest.mark.parametrize(
+    "lead",
+    [
+        "Two days before the LOCKER BURGLARY,",
+        "The day after the meeting,",
+        "The next morning,",
+        "Later that night,",
+        "3 hours after the call,",
+    ],
+)
+def test_a_day_dated_from_another_needs_a_time_range(lead):
+    c = Claim(
+        id="X9",
+        paragraph_id="p",
+        text=f'{lead} PETROV wrote to @northstar: "need 2 more by friday".',
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    sender = Proposal("sender", {"quoted_text": "need 2 more by friday"})
+    assert coverage_gap(c, [sender]) == (
+        "the claim dates itself from another day but no assumption tests a time range"
+    )
+
+
+def test_relative_words_inside_the_quote_date_nothing():
+    c = Claim(
+        id="X9",
+        paragraph_id="p",
+        text='PETROV wrote to @northstar: "two days before the drop, call me".',
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    sender = Proposal("sender", {"quoted_text": "two days before the drop, call me"})
+    assert coverage_gap(c, [sender]) is None

@@ -9,7 +9,7 @@ case05 is a second held-out set for the testability step, built blind to case04'
 design so the two are comparable. It was written without reading the testability
 step's code, prompt, tests or demo. Its builder wired it into no gate.
 
-Draft split: 23 supported, 12 contradicted, 13 unproven; 2 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-10-31) changed C04 (supported to unproven); see `SIGNING_SHEET.md`.
+Draft split: 23 supported, 10 contradicted, 15 unproven; 2 claims need more than one phone. Every intended verdict was recorded before the story was written, and none changed while building. The second read (2026-10-31) changed C04 (supported to unproven); see `SIGNING_SHEET.md`.
 
 Shared assumption: Item 1 is used by MERROW, Item 2 by VARGA and Item 3 by ODUM, so each phone's own accounts speak for its owner. The key treats this as given, as the affidavit does; it is not proven by the data. Paragraph 3 says the BURNER is MERROW's, and the number writes 'its toby. new number, use this one for work stuff' to ODUM and 'its toby, new number. save it' to VARGA (Item 2 saves it as 'T2', Item 3 as 'Toby work'). No record from his own phone shows it, and the key does not take a number's self-identification as a tie: the Telegram account shown as 'T.M.' also writes 'its toby', and the data holds a second Toby (Toby Rusk, +13035550139). So C04, the one claim that rests on the BURNER being his, is unproven. C09 is about accounts, not people.
 
@@ -54,7 +54,7 @@ America/Denver (MDT, then MST from 2 a.m. on 2025-11-02, when the clocks went ba
 |---|---|---|---|---|---|---|
 | C01 | p2 ¶8 | communication | plain | **supported** | near_window | [ ] |
 | C02 | p2 ¶9 | communication | plain | **supported** | none | [ ] |
-| C03 | p3 ¶15 | communication | plain | **contradicted** | same_name | [ ] |
+| C03 | p3 ¶15 | communication | plain | **unproven** | same_name | [ ] |
 | C04 | p2 ¶11 | communication | affidavit | **unproven** | second_number | [ ] |
 | C05 | p3 ¶13 | communication | affidavit | **supported** | second_phone | [ ] |
 | C06 | p3 ¶14 | communication | affidavit | **unproven** | similar_quote | [ ] |
@@ -63,7 +63,7 @@ America/Denver (MDT, then MST from 2 a.m. on 2025-11-02, when the clocks went ba
 | C09 | p4 ¶18 | identity | plain | **contradicted** | second_number | [ ] |
 | C10 | p3 ¶15 | identity | affidavit | **supported** | second_number | [ ] |
 | C11 | p2 ¶10 | identity | affidavit | **supported** | contact_name | [ ] |
-| C12 | p2 ¶10 | identity | affidavit | **contradicted** | contact_name | [ ] |
+| C12 | p2 ¶10 | identity | affidavit | **unproven** | contact_name | [ ] |
 | C13 | p2 ¶9 | timing | plain | **supported** | near_window | [ ] |
 | C14 | p4 ¶17 | timing | plain | **supported** | near_window | [ ] |
 | C15 | p2 ¶9 | timing | plain | **contradicted** | near_window | [ ] |
@@ -137,13 +137,13 @@ Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
 Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
-## C03: draft **contradicted** (communication, plain wording)
+## C03: draft **unproven** (communication, plain wording)
 
 > On November 6, 2025, ODUM sent VARGA a WhatsApp message reading "the blue ones fit in my hatchback".
 
 - Type: communication. Page 3, paragraph 15. Wording: plain.
 - Core assumptions: ODUM's WhatsApp account sent the message to VARGA on Nov 6
-- Why: The only copy is on Item 2, sent by WhatsApp 13035550161, the number Item 2 saves as 'Cal'; that number's next message is 'both paddles, no problem'. ODUM's WhatsApp (17205550168, saved on Item 2 as 'Calvin O') did not send it. Observed data rules out the stated sender.
+- Why: The only copy is on Item 2, sent by WhatsApp 13035550161, the number Item 2 saves as 'Cal'; that number's next message is 'both paddles, no problem'. ODUM's WhatsApp (17205550168, saved on Item 2 as 'Calvin O') did not send it. No record or confirmed fact says whose 13035550161 is, so the records do not rule ODUM out: unproven.
 - Hazard: `same_name`. CAL is ODUM's nickname (paragraph 2), but Item 2's 'Cal' is another person. A reading that takes Item 2's 'Cal' for ODUM passes the sender; the sheet names ODUM.
 - Key evidence (and the wrong reading's records, which are not key evidence unless
   marked so):
@@ -311,13 +311,13 @@ Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
 Arsh's decision: [ ] agree  [ ] change to ______  Note:
 
-## C12: draft **contradicted** (identity, affidavit wording)
+## C12: draft **unproven** (identity, affidavit wording)
 
 > The text message "left the key under the blue pot" that SUBJECT-2 received from "Toby" on November 11, 2025 was sent by TOBY.
 
 - Type: identity. Page 2, paragraph 10. Wording: affidavit (alias (TOBY), a defined term (SUBJECT-2), a saved name in the claim ('from "Toby"')).
 - Core assumptions: MERROW's SMS account sent 'left the key under the blue pot'
-- Why: The only copy is on Item 2, from +13035550139, which Item 2 saves as 'Toby'; the message goes on 'plumber comes at 2'. MERROW's number is +17205550134 (saved on Item 2 as 'Tobias'). Observed data rules out the stated sender.
+- Why: The only copy is on Item 2, from +13035550139, which Item 2 saves as 'Toby'; the message goes on 'plumber comes at 2'. MERROW's number is +17205550134 (saved on Item 2 as 'Tobias'). No record or confirmed fact says whose +13035550139 is, so the records do not rule MERROW out: unproven.
 - Hazard: `contact_name`. TOBY is MERROW (paragraph 2), and Item 3 saves MERROW's number as 'Toby'; on Item 2 'Toby' is someone else. A reading that takes Item 2's 'Toby' for TOBY passes; the sheet names MERROW.
 - Alias inside a quote: TOBY matches the quoted sender name "Toby" and points to MERROW. Wrong: on Item 2, 'Toby' is Toby Rusk, +13035550139. The claim's own TOBY is MERROW, rightly.
 - Key evidence (and the wrong reading's records, which are not key evidence unless

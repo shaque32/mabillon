@@ -485,7 +485,10 @@ def test_a_claim_dated_by_an_event_is_not_tested_on_its_sender_alone(events):
     assert coverage_gap(c, [sender], events=readable) == (
         "the claim is dated by a defined event but no assumption tests a time range"
     )
-    assert coverage_gap(c, [sender]) is None  # with no events entered, as on main
+    # With no events entered, "The day after" still dates it (case05 C04, a false SUPPORTED).
+    assert coverage_gap(c, [sender]) == (
+        "the claim dates itself from another day but no assumption tests a time range"
+    )
     (w,) = event_windows(c.text, list(readable))
     timed = Proposal("record_time", {"quoted_text": "need 2 more by friday", "window": w})
     assert coverage_gap(c, [sender, timed], events=readable) is None

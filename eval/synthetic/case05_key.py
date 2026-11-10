@@ -59,6 +59,16 @@ CLAIM_TYPES = (
     "event",
 )
 
+# Sheet notes for the check changes of 2026-11-10 (sender 1.1.0 and 1.2.0, time 1.1.0).
+SENDER_UNKNOWN = (
+    "No record or confirmed fact says whose that number is, so the check is inconclusive "
+    "(sender 1.1.0)."
+)
+PART_QUOTE = (
+    "The claim's words are only part of a sentence of the message, so the check does not judge "
+    "it (sender 1.2.0, time 1.1.0)."
+)
+
 HAZARDS = {
     "same_name": "a second person with the same first name or nickname",
     "second_number": "a second number or account for the same person",
@@ -175,7 +185,7 @@ CLAIMS: tuple[DraftClaim, ...] = (
         "C03",
         "communication",
         "plain",
-        "contradicted",
+        "unproven",
         "same_name",
         'On November 6, 2025, ODUM sent VARGA a WhatsApp message reading "the blue ones fit in '
         'my hatchback".',
@@ -183,8 +193,8 @@ CLAIMS: tuple[DraftClaim, ...] = (
         (("item2", "ca_blue"), ("item2", "contact:Cal"), ("item2", "ca_blue2")),
         "The only copy is on Item 2, sent by WhatsApp 13035550161, the number Item 2 saves as "
         "'Cal'; that number's next message is 'both paddles, no problem'. ODUM's WhatsApp "
-        "(17205550168, saved on Item 2 as 'Calvin O') did not send it. Observed data rules out "
-        "the stated sender.",
+        "(17205550168, saved on Item 2 as 'Calvin O') did not send it. No record or confirmed "
+        "fact says whose 13035550161 is, so the records do not rule ODUM out: unproven.",
         "CAL is ODUM's nickname (paragraph 2), but Item 2's 'Cal' is another person. A reading "
         "that takes Item 2's 'Cal' for ODUM passes the sender; the sheet names ODUM.",
         (("item2", "contact:Cal"),),
@@ -345,7 +355,7 @@ CLAIMS: tuple[DraftClaim, ...] = (
         "C12",
         "identity",
         "affidavit",
-        "contradicted",
+        "unproven",
         "contact_name",
         'The text message "left the key under the blue pot" that SUBJECT-2 received from "Toby" '
         "on November 11, 2025 was sent by TOBY.",
@@ -353,7 +363,8 @@ CLAIMS: tuple[DraftClaim, ...] = (
         (("item2", "ru_key"), ("item2", "contact:Toby")),
         "The only copy is on Item 2, from +13035550139, which Item 2 saves as 'Toby'; the "
         "message goes on 'plumber comes at 2'. MERROW's number is +17205550134 (saved on Item 2 "
-        "as 'Tobias'). Observed data rules out the stated sender.",
+        "as 'Tobias'). No record or confirmed fact says whose +13035550139 is, so the records "
+        "do not rule MERROW out: unproven.",
         "TOBY is MERROW (paragraph 2), and Item 3 saves MERROW's number as 'Toby'; on Item 2 "
         "'Toby' is someone else. A reading that takes Item 2's 'Toby' for TOBY passes; the sheet "
         "names MERROW.",
@@ -1315,9 +1326,9 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q03, person_ids=[ODU], channels=["WhatsApp"]),
-                "fail",
+                "inconclusive",
                 "The one copy came from WhatsApp 13035550161, Item 2's 'Cal', not from ODUM's "
-                "17205550168.",
+                "17205550168. " + SENDER_UNKNOWN,
             ),
             A(
                 "record_time",
@@ -1505,8 +1516,9 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q12, person_ids=[MER], channels=["SMS"]),
-                "fail",
-                "The one copy came from +13035550139, Item 2's 'Toby', not from MERROW.",
+                "inconclusive",
+                "The one copy came from +13035550139, Item 2's 'Toby', not from MERROW. "
+                + SENDER_UNKNOWN,
             ),
             A(
                 "record_time",
@@ -1713,8 +1725,9 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q20, person_ids=[MER], channels=["SMS"]),
-                "pass",
-                "Both copies of the words (to VARGA and to 'Arlo') came from MERROW.",
+                "inconclusive",
+                "Both copies of the words (to VARGA and to 'Arlo') came from MERROW. The copy to "
+                "'Arlo' is only part of a sentence, so the check does not judge it (sender 1.2.0).",
             ),
             A(
                 "record_time",
@@ -2319,8 +2332,8 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q46, person_ids=[ODU], channels=["WhatsApp"]),
-                "pass",
-                "The COURIER's WhatsApp, outgoing on Item 3. No phone named.",
+                "inconclusive",
+                "The COURIER's WhatsApp, outgoing on Item 3. No phone named. " + PART_QUOTE,
             ),
             A(
                 "record_time",
@@ -2334,8 +2347,8 @@ SHEET: tuple[ClaimSpec, ...] = (
                         "Shortly before 6 a.m. that morning (November 2, 2025, 5:30 to 6 a.m.)",
                     ),
                 ),
-                "pass",
-                "5:48:20 a.m. MST; 'that morning' follows C05's November 2.",
+                "inconclusive",
+                "5:48:20 a.m. MST; 'that morning' follows C05's November 2. " + PART_QUOTE,
             ),
         ),
         (
@@ -2436,6 +2449,20 @@ ALIAS_IN_QUOTES: dict[str, str] = {
 FIRST_DRAFT_VERDICT: dict[str, str] = {"C04": "supported"}
 
 SECOND_READ_DATE = "2026-10-31"
+
+# The check change of 2026-11-10, after the sheet was signed: sender 1.1.0 counts a copy as
+# someone else's only on a record or a confirmed fact, and sender 1.2.0 and time 1.1.0 never
+# judge words that are only part of a sentence of a message. Verdicts it moved: claim id -> the
+# verdict signed before it. Rows it moved: (claim, template, the outcome signed before it).
+CHECK_CHANGE_DATE = "2026-11-10"
+CHECK_CHANGE_VERDICT: dict[str, str] = {"C03": "contradicted", "C12": "contradicted"}
+CHECK_CHANGE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("C03", "sender", "fail"),
+    ("C12", "sender", "fail"),
+    ("C20", "sender", "pass"),
+    ("C46", "sender", "pass"),
+    ("C46", "record_time", "pass"),
+)
 
 
 @dataclass(frozen=True)
