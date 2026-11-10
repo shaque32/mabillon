@@ -2356,7 +2356,7 @@ _CLAUSE_JOINER_RE = re.compile(
 # What may be a call's party whatever the case knows: a handle, an address, or a run of five
 # or more digits.
 _UNREAD_PARTY_RE = re.compile(r"@[\w.-]*\w|\S+@\S*\w|(?<![\w-])\+?\d[\d\s().-]{3,}\d(?![\w-])")
-# An address a no-contact claim may write as its other party: "thisisdfirtwo@gmail.com".
+# An address a no-contact claim may write as its other party: "kay@example.org".
 _ADDRESS_PARTY_RE = re.compile(r"(?<![\w.+@-])[\w.+-]*\w@\w[\w-]*(?:\.[\w-]*\w)+(?![\w@])")
 # Words that hand on what another wrote: 'REYES forwarded what PETROV posted: "ok"'.
 _PASSED_ON_RE = re.compile(
@@ -2801,7 +2801,7 @@ class LocalAssumptionFiller:
             and len(params.get("person_ids", [])) + bool(account_ids) == 1
             and self._written_phones(_unquoted(_nfc(claim.text)))
         ):
-            # "... between the TARGET PHONE and (919) 888-7386": the model named the phone and
+            # "... between the TARGET PHONE and (212) 555-0144": the model named the phone and
             # one other party; the phone is the other side, as its own accounts.
             device_ids = self._phone_as_party(claim, params, device_ids, para)
             code_made = True
@@ -4053,7 +4053,7 @@ class LocalAssumptionFiller:
             if pid != owner and found:
                 people.add(pid)
                 spans += found
-        # An address ("thisisdfirtwo@gmail.com") is read whole, before any number in it.
+        # An address ("kay@example.org") is read whole, before any number in it.
         addresses: set[str] = set()
         for m in _ADDRESS_PARTY_RE.finditer(bare):
             addresses.add(m.group(0).casefold())
@@ -4206,7 +4206,7 @@ class LocalAssumptionFiller:
         self, claim: Claim, params: dict[str, Any], device_ids: list[str], para: str
     ) -> list[str]:
         """No contact with the phone as a side ("There was no contact between the TARGET PHONE
-        and (919) 555-0142"): the model named the phone and one other party. The phone the
+        and (212) 555-0144"): the model named the phone and one other party. The phone the
         claim writes as a side stands for that phone's own accounts on it, never for whoever
         held it: its exact owner by confirmed stipulation, a person whose accounts are exactly
         the phone's own (`_exact_owner`), so the check searches those accounts and no other.

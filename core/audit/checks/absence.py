@@ -120,8 +120,8 @@ def _party_gaps(
 ) -> list[str]:
     """Plain statements of each app the claim names on which a party holds no account in the
     searched sources: no record there could tie that party to contact, so finding none there
-    shows nothing ("never communicated with SUBJECT-2 over Snapchat", where no Snapchat
-    account is known to be SUBJECT-2's)."""
+    shows nothing ("never communicated with SMITH over Instagram", where no Instagram account
+    is known to be SMITH's)."""
     gaps: list[str] = []
     searched = set(sources)
     for app in channels:
