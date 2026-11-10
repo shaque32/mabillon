@@ -409,13 +409,12 @@ def test_the_report_shows_who_attested_and_the_words_they_agreed_to(tmp_path):
     assert "informed consent" in page
 
 
-def test_a_cloud_estimate_keeps_assumption_filling_at_the_local_speed():
+def test_a_cloud_estimate_runs_every_call_at_the_cloud_speed():
     from core.casework import jobs
 
     local_only = jobs.estimate_seconds(20, 40.0)
-    mixed = jobs.estimate_seconds(20, 40.0, jobs.CLOUD_SECONDS_PER_CALL)
-    stance_calls = jobs.CALLS_PER_CLAIM - jobs.LOCAL_CALLS_PER_CLAIM
-    assert mixed == 20 * (40.0 + stance_calls * jobs.CLOUD_SECONDS_PER_CALL) < local_only
+    on_cloud = jobs.estimate_seconds(20, 40.0, jobs.CLOUD_SECONDS_PER_CALL)
+    assert on_cloud == 20 * jobs.CALLS_PER_CLAIM * jobs.CLOUD_SECONDS_PER_CALL < local_only
 
 
 def test_a_stalled_cloud_request_gives_up_in_minutes():
@@ -868,3 +867,116 @@ def test_the_pill_stays_on_while_a_cloud_audit_runs_after_the_key_goes(tmp_path,
     assert "Cloud labels on" in get("/setup").text
     job.end("done", "finished")
     assert "Offline" in get("/setup").text
+
+
+# ---------------------------------------------------------------- every job on the case's model
+
+
+ACCEPT = '{"decision": "accept", "reason": "Plainly says so."}'
+
+
+def _review_item(n: int, assumption_id: str) -> object:
+    from core.contracts import EvidenceItem, EvidenceStatus, Stance
+
+    return EvidenceItem(
+        id=f"ev:{n}",
+        assumption_id=assumption_id,
+        record_id=f"msg:{n}",
+        ref=SourceRef(source_id="s", locator="l"),
+        stance=Stance.SUPPORTS,
+        quote="meet me at the garage",
+        quote_verified=True,
+        rationale="",
+        tier=ProvenanceTier.OBSERVED,
+        status=EvidenceStatus.OPEN,
+        model_run_id="r",
+    )
+
+
+def test_every_model_job_opens_its_run_on_the_cloud_model(case_db, fake_context):
+    """CLAUDE.md: every model job runs on the case's model. No local model is handed in, so a
+    job that fell back to it would fail to load one."""
+    from core.audit import assumption_filler, review, testability
+    from core.claims import extract
+
+    filler = assumption_filler.create(case_db, cloud_model=FakeCloud([]))
+    jobs_on_cloud = [
+        stance_mod.create(case_db, cloud_model=FakeCloud([])),
+        review.create(case_db, cloud_model=FakeCloud([])),
+        filler,
+        extract.create(case_db, cloud_model=FakeCloud([])),
+        testability.create(case_db, filler, None, 3, cloud_model=FakeCloud([])),
+    ]
+    runs = [r for job in jobs_on_cloud for r in job.model_runs]
+    assert {r.purpose for r in runs} == {"stance", "review", "assumptions", "claims", "testability"}
+    assert {(r.model_name, r.model_sha256) for r in runs} == {
+        ("claude-opus-5-5", "api:claude-opus-5-5")
+    }
+
+
+def test_the_ai_reviewer_on_the_cloud_logs_each_request_and_pauses_when_it_stops(case_db):
+    from core.audit import review
+    from core.audit._local_model import SENT_ACTION
+    from core.contracts import EvidenceStatus
+
+    case_db.execute("PRAGMA foreign_keys = OFF")
+    up = FakeCloud([ACCEPT, cloud.CloudError("ConnectionError: down", sticky=True)])
+    rev = review.create(case_db, cloud_model=up)
+    assert rev.reviewer == "ai:claude-opus-5-5"
+    a = make_assumption("The sender asked to meet at the garage.")
+    assert rev.review(a, _review_item(1, a.id), ">> line").status is EvidenceStatus.AI_ACCEPTED
+    with pytest.raises(CloudPaused):
+        rev.review(a, _review_item(2, a.id), ">> line")
+    sent = case_db.execute("SELECT COUNT(*) FROM audit_log WHERE action = ?", (SENT_ACTION,))
+    assert sent.fetchone()[0] == len(up.prompts) == 2
+
+
+def test_a_sticky_cloud_failure_pauses_assumption_filling(tmp_path):
+    from core.audit import assumption_filler
+    from core.audit._local_model import SENT_ACTION
+    from core.audit.assumptions import TEMPLATES
+    from core.contracts import Claim, ClaimStatus, ClaimType
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    claim = Claim(
+        id="X",
+        paragraph_id="para:1",
+        text="PETROV texted REYES on March 3 to meet at the garage.",
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    up = FakeCloud([cloud.CloudError("ConnectionError: down", sticky=True)])
+    filler = assumption_filler.create(conn, cloud_model=up)
+    with pytest.raises(CloudPaused):
+        filler(claim, list(TEMPLATES.values()))
+    sent = conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = ?", (SENT_ACTION,))
+    assert sent.fetchone()[0] == len(up.prompts) == 1
+
+
+def test_a_cloud_case_builds_every_model_part_on_the_cloud_model(tmp_path, monkeypatch):
+    from core import pipeline
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    monkeypatch.setattr(cloud, "ClaudeModel", lambda cfg: FakeCloud([]))
+    choice = cloud_policy.CloudChoice(True, "allowed", cloud.CloudConfig(api_key=KEY))
+    comps = pipeline.real_components(conn, ai_review=True, cloud=choice)
+    by_job = {r.purpose: r.model_sha256 for r in comps.model_runs}
+    assert {"stance", "assumptions", "review"} <= set(by_job)
+    assert set(by_job.values()) == {"api:claude-opus-5-5"}
+
+
+def test_a_cloud_choice_without_its_settings_never_falls_back_to_the_local_model(tmp_path):
+    from core import pipeline
+    from eval import run_pipeline as rp
+
+    conn = rp.build_case("case01", tmp_path / "case01.db")
+    choice = cloud_policy.CloudChoice(True, "allowed", None)
+    with pytest.raises(pipeline.ComponentsMissing):
+        pipeline.real_components(conn, ai_review=True, cloud=choice)
+
+
+def test_the_cli_proposes_claims_on_the_case_model():
+    src = (Path(__file__).resolve().parents[1] / "cli" / "main.py").read_text(encoding="utf-8")
+    assert "extract.create(conn, cloud=choice.config)" in src

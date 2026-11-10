@@ -1,7 +1,8 @@
-"""Whether a case's stance labels may come from the cloud model, decided per case.
+"""Whether a case's model steps run on the cloud model, decided per case.
 
-Local by default; cloud only by opt-in. A case uses the cloud stance labeler (core/llm/cloud.py)
-only when all of these hold, and otherwise the local model labels it, exactly as before:
+Cloud only by opt-in. A case runs every model step (stance labels, assumption filling, claim
+proposal, the AI reviewer and the testability step) on the cloud model (core/llm/cloud.py) only
+when all of these hold, and otherwise on the local model, exactly as before:
 1. The expert attested, for this case, that its protective order allows cloud AI.
 2. The expert did not mark the case as possibly containing CSAM. Such material stays in the
    government's control (18 U.S.C. 3509(m)), so a marked case never uses cloud, whatever (1) says.
@@ -10,7 +11,8 @@ only when all of these hold, and otherwise the local model labels it, exactly as
    cloud stance prompt it would read (core/audit/prompts/stance_cloud.md; core/llm/cloud.py,
    PROBE_PASSED). Opus 5.5 at medium effort is listed (signed by Arsh 2026-10-20).
 
-Then every stance label in the case comes from the cloud model; labels never mix models. If
+Then every answer of every model step in the case comes from the cloud model; a step's answers
+never mix models. If
 the cloud model stops answering, the audit pauses (core/audit/_local_model.py, CloudPort) and
 the expert resumes to retry it, or turns cloud AI off here and runs the case again locally.
 Every request is logged in the case's audit log before it is sent (SentLog).
@@ -115,8 +117,9 @@ def choose(
     when = str(c["attested_at"])[:10]
     return CloudChoice(
         True,
-        f"Cloud model {cfg.model} ({cfg.effort} effort), attested by {who} on {when}; if it "
-        "stops answering, the audit pauses rather than mix in local labels.",
+        f"Cloud model {cfg.model} ({cfg.effort} effort) for every model step, attested by "
+        f"{who} on {when}; if it stops answering, the audit pauses rather than mix in local "
+        "answers.",
         cfg,
     )
 

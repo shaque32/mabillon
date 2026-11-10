@@ -186,9 +186,15 @@ def _real_components(
     return pipeline.real_components(conn, ai_review=ai_review, cloud=cloud)
 
 
-def _real_extractor(conn: sqlite3.Connection) -> object:
+def _real_extractor(
+    conn: sqlite3.Connection, cloud: cloud_policy.CloudChoice | None = None
+) -> object:
+    """The claim extractor on the case's model: the cloud model when the case's cloud choice
+    allows it (CLAUDE.md: every model job runs on the case's model), else the local model."""
     from core.claims import extract
 
+    if cloud is not None and cloud.use:
+        return extract.create(conn, cloud=cloud.config)
     return extract.create(conn)
 
 
@@ -270,7 +276,7 @@ class App:
         self._reported: jobs.Job | None = None  # the finished job whose result Set up showed
         self._claim_draft: dict[str, str] | None = None  # a refused Add a claim, to refill
         self.components_for = components_for or _real_components
-        self.extractor_for = extractor_for or _real_extractor
+        self.extractor_for = extractor_for or self._case_extractor
         self.model_check = model_check
         self.last_check: ModelCheck | None = None
         self.session = secrets.token_hex(8)  # names this screen's page views in the trail
@@ -1347,8 +1353,8 @@ class App:
             calls = f"about {jobs.CALLS_PER_CLAIM} model calls per claim at {spc:.0f} s per call"
         else:
             calls = (
-                f"per claim, about {jobs.CALLS_PER_CLAIM - jobs.LOCAL_CALLS_PER_CLAIM} cloud calls"
-                f" at {cloud_spc:.0f} s and {jobs.LOCAL_CALLS_PER_CLAIM} local call at {spc:.0f} s"
+                f"about {jobs.CALLS_PER_CLAIM} cloud model calls per claim"
+                f" at {cloud_spc:.0f} s per call"
             )
         estimate = (
             f"Rough estimate for {n} claims: "
@@ -1407,13 +1413,27 @@ class App:
         cid = f.get("claim", "")
         return f"{_named(conn, cid)} now runs at position {order.index(cid) + 1}."
 
+    def _case_extractor(self, conn: sqlite3.Connection) -> object:
+        return _real_extractor(conn, self._cloud_choice(conn))
+
     def _propose(self) -> str:
         _ = self.actor  # a named expert starts model work on the case
+        case = self._open()
+        try:
+            conn = connect(case.db)
+        except (*db.Error, CaseLocked, EncryptionError):
+            on_cloud = False
+        else:
+            try:
+                on_cloud = self._cloud_choice(conn).use
+            finally:
+                conn.close()
         self.jobs.start(
-            jobs.Job("propose", self._open().db),
+            jobs.Job("propose", case.db),
             jobs.propose_job(extractor_for=self.extractor_for),
         )
-        return "The local model is proposing claims in the background. " + UPDATES
+        who = "The cloud model" if on_cloud else "The local model"
+        return f"{who} is proposing claims in the background. " + UPDATES
 
     def _check_model(self) -> str:
         if self.model_check is None:
@@ -1558,7 +1578,8 @@ class App:
                 actor=actor,
                 order=order,
                 components_for=components_for,
-                model_check=model_check_once if check is not None else None,
+                # A case on the cloud model loads no local model, so it needs no local check.
+                model_check=model_check_once if check is not None and not choice.use else None,
                 cloud_opt_in=choice.use,
                 ai_review=f.get("ai_review") == "1",
                 label_all=f.get("label_all") == "1",
@@ -1566,8 +1587,8 @@ class App:
             ),
         )
         where = (
-            f" Stance labels come from the cloud model ({choice.config.model}); if it stops "
-            "answering, the audit pauses. The local model does the other steps."
+            f" Every model step runs on the cloud model ({choice.config.model}); if it stops "
+            "answering, the audit pauses."
             if choice.use and choice.config is not None
             else ""
         )
@@ -1581,7 +1602,7 @@ class App:
             what = f"the {left} claims left ({reused} already finished are reused)"
         first = (
             f"Checking the model first; if it passes, the audit runs on {what}"
-            if check is not None
+            if check is not None and not choice.use
             else f"The audit started on {what}"
         )
         return (

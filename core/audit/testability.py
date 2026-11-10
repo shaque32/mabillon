@@ -84,7 +84,7 @@ from core.audit._llm_json import (
     required_placeholders,
     run_json_call,
 )
-from core.audit._local_model import LocalModel, open_run
+from core.audit._local_model import LocalModel, open_job_run
 from core.audit.assumption_filler import (
     _PHONE_RE,
     TEMPLATE_HELP,
@@ -985,13 +985,23 @@ def create(
     model: LocalModel | None = None,
     template: str | None = None,
     examiner: Examiner | None = None,
+    cloud: Any = None,
+    cloud_model: Any = None,
 ) -> Testability:
-    """The step on the local model (never a cloud one: it fills assumptions), with its own
-    model run. The signed prompt (core/audit/prompts/agent_testability.md) unless the eval
-    passes a template."""
+    """The step on the case's model, with its own model run: the local model, or with `cloud`
+    (or a stand-in `cloud_model`) the cloud model of a case that opted in. The signed prompt
+    (core/audit/prompts/agent_testability.md) unless the eval passes a template."""
     text = template if template is not None else load_prompt(PROMPT_FILE)
     # The per-call schema is the filler's, so the empty one records its shape (as the filler).
-    opened = open_run(conn, "testability", text, model=model, schema=fill_schema((), ()))
+    opened = open_job_run(
+        conn,
+        "testability",
+        text,
+        model=model,
+        cloud=cloud,
+        cloud_model=cloud_model,
+        schema=fill_schema((), ()),
+    )
     step = Testability(
         opened.port, filler, sheet, cap, template=text, examiner=examiner, recorder=opened.recorder
     )
