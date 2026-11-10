@@ -18,13 +18,19 @@
   resumed cloud case reuses a stored cloud answer that quoted nothing (an irrelevant label),
   where before every such answer was sent again: on the iOS 15 rerun (2026-11-10) about 74% of
   stance calls were such answers, and the first resume re-sent them at about $3.40.
+  The filler also reads a phone number the model writes on the call channel ("call") as if it
+  were an app as a number in the phone's call log, on ruling R1's terms (the claim names no app,
+  the case has a call log, the words are a number). Opus did this on 6 iOS 15 claims, which
+  then went untested; replaying the stored Opus answers on this code fills B01, B04, B05, C24
+  and C25 (not re-scored).
 - Where: PR #253
 - Verified: new tests in `tests/test_affidavit_wording.py` (thirteen part-of-day phrasings
   return no window, including one where a plain date elsewhere in the claim would otherwise
   read; a minute time and a quoted "early" still read) and `tests/test_validation_run.py`
   (spend cap, out-of-credit pause, unpriced model refused), `tests/test_assumption_filler.py`
   (a bare-date whole-day window on "On the morning of" is dropped) and `tests/test_speed.py` (a
-  cloud misquote is asked again, an empty-quote answer is reused); `make check` on 2026-11-10,
+  cloud misquote is asked again, an empty-quote answer is reused), and call-channel tests in
+  `tests/test_assumption_filler.py`; `make check` on 2026-11-10,
   cloud container.
 - Open: the word list is a fixed set; a part of the day written another way ("around
   closing time on January 9, 2026") still reads as the whole day unless another guard catches

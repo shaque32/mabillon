@@ -1868,6 +1868,33 @@ def test_a_call_on_no_app_to_a_number_is_searched_in_the_call_log(call_log):
     assert t.channels == ("call", "unknown") and t.device_ids == ("dev:item1",)
 
 
+@pytest.mark.parametrize("app", ["call", "Call", "calls"])
+def test_a_number_the_model_puts_on_the_call_channel_is_read_in_the_call_log(call_log, app):
+    # A model that writes the channel ("call") as the account's app means the call log, when
+    # the claim names no app (R1): seen on the iOS 15 rerun, 2026-11-10.
+    text = (
+        "On March 12, 2026, at approximately 9:00 p.m., dev:item1 placed an outgoing telephone"
+        " call to (212) 555-0199."
+    )
+    prop = {"template_id": "record_time", "channels": ["call"],
+            "accounts": [{"as_written": "(212) 555-0199", "app": app}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.COMMUNICATION, [prop])
+    (t,) = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert t.account_ids == ("acct:t:log1", "acct:t:log2"), filler.drops
+
+
+def test_the_call_channel_as_an_app_is_not_the_call_log_when_the_claim_names_an_app(call_log):
+    text = (
+        "On March 12, 2026, at approximately 9:00 p.m., dev:item1 had a Telegram call with"
+        " (212) 555-0199."
+    )
+    prop = {"template_id": "record_time", "channels": ["call"],
+            "accounts": [{"as_written": "(212) 555-0199", "app": "call"}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.COMMUNICATION, [prop])
+    made = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert not any(set(p.account_ids) & {"acct:t:log1", "acct:t:log2"} for p in made), made
+
+
 @pytest.mark.parametrize(
     "text",
     [

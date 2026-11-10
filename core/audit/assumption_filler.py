@@ -166,7 +166,9 @@ MAX_PROPOSALS = 8
 #      one plain range takes code's reading of them; "texting" names SMS and "spoke by phone"
 #      a call.
 #   6: a whole-day date written with a part of the day ("in the early hours of", "on the
-#      evening of", "late on") is not read, instead of being widened to the whole day.
+#      evening of", "late on") is not read, instead of being widened to the whole day; a
+#      number the model writes on the call channel ("call") as its app is read in the call log
+#      on ruling R1's terms.
 FILLER_VERSION = "6"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
@@ -254,6 +256,8 @@ WHOLE_APP_TEMPLATES = frozenset({"message_count", "no_contact"})
 # claim that names no app and writes the other party as a phone number is searched there
 # (validation ruling R1).
 NATIVE_CALL_APP = "unknown"
+# The call channel's own words, which a model may write as an account's app.
+_CALL_CHANNEL_WORDS = frozenset({"call", "calls"})
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -3767,6 +3771,23 @@ class LocalAssumptionFiller:
                 " absence is read on it"
             )
 
+    def _call_log_account(self, acc: _Account, claim_text: str) -> _Account:
+        """A number the model wrote on the call channel ("call") as if it were an app is a
+        number in the phone's call log, on the terms ruling R1 reads a call there: the claim
+        names no app, the case has a call log, and the words are a phone number. Otherwise
+        the account is left as written, and an app no account is on still matches nothing."""
+        app = acc.app.strip().casefold()
+        if (
+            app in _CALL_CHANNEL_WORDS
+            and not any(a.app.casefold() == app for a in self.data.accounts.values())
+            and NATIVE_CALL_APP in self.channels()
+            and phone_digits(acc.as_written) is not None
+            and not self._named_apps(claim_text)
+            and not _names_an_app_off_the_case(_unquoted(_nfc(claim_text)))
+        ):
+            return _Account(as_written=acc.as_written, app=NATIVE_CALL_APP)
+        return acc
+
     def _accounts(
         self, acc: _Account, device_ids: list[str], claim_text: str = "", one_number: bool = True
     ) -> set[str]:
@@ -3777,6 +3798,7 @@ class LocalAssumptionFiller:
         party: the same digits, only the formatting differs (ruling R6). Not for a contact
         entry (`one_number` False), which names the one account written exactly so, or else the
         only one that holds the number."""
+        acc = self._call_log_account(acc, claim_text)
         app = acc.app.strip().casefold()
         ident = re.sub(r"(?i)^(user\s*id|id|number|no\.)\s*", "", acc.as_written.strip())
         # A name the expert gave a number or id ("the BURNER") is that identifier, and the
