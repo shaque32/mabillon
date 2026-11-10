@@ -107,3 +107,105 @@ def test_the_first_arm_keeps_open_bench_s_cap(dry_case05) -> None:
     res, sent, _ = dry_case05
     assert res["max_tokens"] == 8000
     assert {b["max_tokens"] for b in sent} == {8000}
+
+
+# ------------------------------------------------------------------ the Claude arm (2026-11-10)
+
+
+def test_the_claude_arm_refuses_a_held_out_case_before_any_model_is_made(monkeypatch, tmp_path):
+    made = []
+    monkeypatch.setattr(agent_bench, "ClaudeArm", lambda *a, **k: made.append(a))
+    with pytest.raises(DataSafetyError):
+        agent_bench.main(
+            [
+                "--claude",
+                "claude-opus-5-5",
+                "--cases",
+                "case06",
+                "--dry-run",
+                "--out",
+                str(tmp_path),
+            ]
+        )
+    assert made == []
+
+
+def test_the_claude_arm_needs_a_key_outside_a_dry_run(monkeypatch):
+    monkeypatch.delenv("BAKER_ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(SystemExit, match="BAKER_ANTHROPIC_API_KEY"):
+        agent_bench.ClaudeArm("claude-opus-5-5")
+
+
+def test_the_claude_arm_runs_both_jobs_at_the_product_s_settings(tmp_path):
+    from core.llm import cloud
+
+    out = tmp_path / "opus"
+    assert agent_bench.main(["--claude", "claude-opus-5-5", "--dry-run", "--out", str(out)]) == 0
+    res = json.loads((out / "claude-opus-5-5" / "case05" / "bench.json").read_text("utf-8"))
+    assert res["model"] == "claude-opus-5-5" and res["reasoning"] == cloud.DEFAULT_EFFORT
+    assert res["max_tokens"] == cloud.CloudParams("m", "e").max_tokens  # the product's own cap
+    assert res["calls"] == res["first_pass"]["claims"] + res["step"]["tries"]
+    assert res["step"]["stance"] == "skipped" and res["step"]["cap"] == 2
+    assert res["failed_calls"] == 0 and res["providers"] == {"anthropic": res["calls"]}
+    assert "claude-opus-5-5" in (out / "SUMMARY.md").read_text("utf-8")
+
+
+def _answer(stop: str = "end_turn", model: str = "claude-opus-5-5"):  # noqa: ANN202
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id="m", _request_id="r", model=model, stop_reason=stop,
+        content=[SimpleNamespace(type="text", text='{"assumptions": []}')],
+        usage=SimpleNamespace(input_tokens=1000, output_tokens=500),
+    )  # fmt: skip
+
+
+def _client(answers: list):  # noqa: ANN202
+    from types import SimpleNamespace
+
+    def create(**body):  # noqa: ANN003, ANN202
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+SCHEMA = {"type": "object", "properties": {"assumptions": {"type": "array"}}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        (_answer(stop="max_tokens"), "max_tokens"),
+        (_answer(stop="refusal"), "the cloud model declined to answer"),
+        (_answer(model="claude-sonnet-5-5"), "the API answered as"),
+    ],
+)
+def test_a_refused_or_cut_off_claude_answer_is_invalid_not_raised(answer, error) -> None:
+    arm = agent_bench.ClaudeArm("claude-opus-5-5", client=_client([answer]), sleep=lambda s: None)
+    out = arm.generate_json("p", SCHEMA)
+    assert out.parsed is None and out.error.startswith(error)
+    assert arm.usage.failed == 1 and arm.served[0]["error"] == out.error
+    assert arm.usage.cost_usd == pytest.approx((1000 * 4.0 + 500 * 20.0) / 1e6)  # still billed
+
+
+def test_a_retryable_claude_failure_is_retried_then_answered() -> None:
+    class Overloaded(Exception):
+        status_code = 529
+
+    arm = agent_bench.ClaudeArm(
+        "claude-opus-5-5", client=_client([Overloaded("busy"), _answer()]), sleep=lambda s: None
+    )
+    out = arm.generate_json("p", SCHEMA)
+    assert out.parsed == {"assumptions": []} and arm.usage.failed == 0
+    assert arm.usage.calls == 1 and len(arm.served) == 1
+
+
+def test_a_claude_request_that_never_answers_is_invalid() -> None:
+    arm = agent_bench.ClaudeArm(
+        "claude-opus-5-5", client=_client([ValueError("bad key")]), sleep=lambda s: None
+    )
+    out = arm.generate_json("p", SCHEMA)
+    assert out.parsed is None and out.raw_text == "" and arm.usage.failed == 1

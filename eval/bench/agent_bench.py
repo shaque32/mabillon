@@ -30,10 +30,21 @@ Added after the first DeepSeek run (2026-11-07): 36 of its 95 calls stopped at o
 one counted as an invalid answer. `--max-tokens` sets a larger cap as a second arm, reported
 beside the first one, which stays the run as fixed beforehand.
 
+Added 2026-11-10, Opus arm: Arsh stopped the plan C server on 2026-11-09 and moved every model
+job to Claude Opus through the Anthropic API (CLAUDE.md, PR #250), so the agents would run on
+Opus too. He chose "Opus check on case05 first" (decision card, 2026-11-10 01:13Z): `--claude
+MODEL` runs the same bench with core.llm.cloud.ClaudeModel as both the filler and the step, at
+the product's own settings (its effort and max_tokens unless given), on BAKER_ANTHROPIC_API_KEY.
+Like the hosted arm it never raises: a refused, cut-off or failed call comes back as an invalid
+answer. Opus at medium effort is not deterministic either, so this is development data too.
+
 Usage:
+  env -u ANTHROPIC_BASE_URL BAKER_ANTHROPIC_API_KEY="$BAKER_BENCH_API_KEY" \\
+      python -m eval.bench.agent_bench --claude claude-opus-5-5 [--effort medium] [--cases case05]
   OPENROUTER_API_KEY=... python -m eval.bench.agent_bench [--models NAME,...]
       [--cases case05] [--out eval/out/agent_bench] [--reasoning medium] [--max-tokens N]
   python -m eval.bench.agent_bench --dry-run     no network: every answer is an empty list
+                                                 (with --claude: the Claude arm, no network)
   python -m eval.bench.agent_bench --estimate    the dry run's prompt tokens, priced per model
   python -m eval.bench.agent_bench --first-pass DB --cases case05
                                                  the first-pass measures of a recorded run
@@ -44,15 +55,19 @@ Writes <out>/<model>/<case>/ (the pipeline's own outputs, served.jsonl, bench.js
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import hashlib
 import json
+import os
 import sqlite3
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-from eval.bench.claude_bench import DataSafetyError
-from eval.bench.open_bench import MAX_TOKENS, HostedModel, OpenModel, OpenParams, model
+from eval.bench.claude_bench import PRICES_PER_MTOK, DataSafetyError
+from eval.bench.open_bench import MAX_TOKENS, HostedModel, OpenModel, OpenParams, Usage, model
 
 # The testability sets already spent by a go/no-go run of record. case06 is the held-out set
 # for the plan C stack and case02 is the hidden case: neither may reach a hosted model.
@@ -111,6 +126,111 @@ def dry_post(body: dict[str, Any], key: str | None, timeout: float) -> dict[str,
     }
 
 
+def dry_claude_client() -> Any:
+    """No network: an Anthropic client stand-in whose every answer is an empty list, served as
+    the model asked for, with the prompt's characters / 4 as its input tokens."""
+
+    def create(**body: Any) -> Any:
+        return SimpleNamespace(
+            id="dry-run",
+            _request_id="dry-run",
+            model=body["model"],
+            stop_reason="end_turn",
+            content=[SimpleNamespace(type="text", text=json.dumps({"assumptions": []}))],
+            usage=SimpleNamespace(
+                input_tokens=len(body["messages"][0]["content"]) // 4, output_tokens=20
+            ),
+        )
+
+    return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+class ClaudeArm:
+    """core.llm.cloud.ClaudeModel with HostedModel's bench surface (usage, served), priced at
+    claude_bench's list prices on the tokens the API reports. Like HostedModel it never raises:
+    a retryable failure is retried, and a refusal, a cut-off answer, an answer from another
+    model or a failed request comes back as an invalid answer (fail closed)."""
+
+    where = "cloud"
+
+    def __init__(
+        self,
+        name: str,
+        effort: str | None = None,
+        *,
+        client: Any = None,
+        key: str | None = None,
+        max_tokens: int | None = None,
+        retries: int = 4,
+        sleep: Any = time.sleep,
+    ) -> None:
+        from core.llm import cloud
+
+        key = key or os.environ.get("BAKER_ANTHROPIC_API_KEY")
+        if client is None and not key:
+            raise SystemExit("set BAKER_ANTHROPIC_API_KEY (or use --dry-run)")
+        cfg = cloud.CloudConfig(
+            api_key=key or "dry-run", model=name, effort=effort or cloud.DEFAULT_EFFORT
+        )
+        self._m = cloud.ClaudeModel(cfg, client=client)
+        if max_tokens is not None:
+            self._m.params = dataclasses.replace(self._m.params, max_tokens=max_tokens)
+        self.name, self.sha256, self.params = name, self._m.sha256, self._m.params
+        self.reasoning = cfg.effort
+        self.spec = SimpleNamespace(weights="Anthropic API", revision=name)
+        self.usage = Usage()
+        self.served: list[dict[str, Any]] = []
+        self._retries, self._sleep = retries, sleep
+
+    def generate_json(self, prompt: str, schema: dict[str, Any], params: Any = None) -> Any:
+        from core.llm import cloud
+        from core.llm.runtime import ModelOutput
+
+        start = time.perf_counter()
+        out, error = None, None
+        for attempt in range(self._retries + 1):
+            try:
+                out, error = self._m.generate_json(prompt, schema, params), None
+                break
+            except cloud.CloudError as e:
+                out, error = getattr(e, "response", None), e.reason
+                if not getattr(e, "retryable", False) or attempt == self._retries:
+                    break
+                self._sleep(min(2.0 ** (attempt + 1), 30.0))
+        elapsed = time.perf_counter() - start
+        self.usage.calls += 1
+        self.usage.seconds += elapsed
+        if out is not None:
+            self.usage.input_tokens += out.prompt_tokens
+            self.usage.output_tokens += out.completion_tokens
+            inp, outp = PRICES_PER_MTOK.get(self.name, (0.0, 0.0))
+            self.usage.cost_usd += (
+                out.prompt_tokens * inp + out.completion_tokens * outp
+            ) / 1_000_000
+            self.usage.providers["anthropic"] = self.usage.providers.get("anthropic", 0) + 1
+        stop = getattr(out, "stop_reason", None)
+        if error is not None:
+            self.usage.failed += 1
+            reason = "max_tokens" if stop == "max_tokens" else error
+            out = (
+                dataclasses.replace(out, parsed=None, error=reason)
+                if out is not None
+                else ModelOutput("", None, reason, seconds=elapsed)
+            )
+        self.served.append(
+            {
+                "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "provider": "anthropic",
+                "served_model": getattr(out, "served_model", None),
+                "request_id": getattr(out, "request_id", None),
+                "finish_reason": stop,
+                "raw_sha256": hashlib.sha256((out.raw_text or "").encode("utf-8")).hexdigest(),
+                "error": out.error,
+            }
+        )
+        return out
+
+
 def first_pass(db: Path, case: str) -> dict[str, Any]:
     """What the assumption filler's first pass kept, read from a finished run's database: the
     claims with core assumptions that the testability step never tried, checked against the
@@ -165,9 +285,9 @@ def first_pass(db: Path, case: str) -> dict[str, Any]:
     }
 
 
-def run_bench(hosted: HostedModel, case: str, out: Path) -> dict[str, Any]:
-    """One case through the real pipeline with the hosted model as both the filler and the
-    step, at the dev check's settings."""
+def run_bench(hosted: HostedModel | ClaudeArm, case: str, out: Path) -> dict[str, Any]:
+    """One case through the real pipeline with the hosted model (or the Claude arm) as both the
+    filler and the step, at the dev check's settings."""
     from eval import run_pipeline as rp
 
     case = check_agent_case(case)
@@ -208,6 +328,16 @@ def run_bench(hosted: HostedModel, case: str, out: Path) -> dict[str, Any]:
         "with_assumptions_after_both": fp["kept_core_assumptions"] + t["converted_and_accepted"],
         "step_scorable": testable >= rp.TESTABILITY_MIN_TESTABLE,
     }
+    if "sheet_testable_claims" in t:
+        # The go/no-go's coverage once it scores both passes together (Arsh, 2026-11-08, #246).
+        res["both_passes"] = {
+            k: t[k]
+            for k in (
+                "sheet_testable_claims",
+                "ending_with_sheet_matching_assumptions",
+                "coverage_rate",
+            )
+        }
     with (out / "served.jsonl").open("w", encoding="utf-8") as f:
         for row in hosted.served[calls_before:]:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -274,6 +404,19 @@ def estimate(results: list[dict[str, Any]], specs: list[OpenModel]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def estimate_claude(results: list[dict[str, Any]], name: str) -> str:
+    """The Claude arm's dry run priced as `estimate` prices a hosted model's."""
+    calls = sum(r["calls"] for r in results)
+    tokens = sum(r["input_tokens"] for r in results)
+    inp, outp = PRICES_PER_MTOK.get(name, (0.0, 0.0))
+    usd = (tokens * inp + calls * OUTPUT_TOKENS_PER_CALL * outp) / 1_000_000
+    return (
+        f"dry run: {calls} calls, about {tokens} prompt tokens (characters / 4)\n"
+        f"- {name}: about ${usd:.2f} at most (list price ${inp}/${outp} per M, an assumed"
+        f" {OUTPUT_TOKENS_PER_CALL} output tokens a call)\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--models", default=",".join(DEFAULT_MODELS))
@@ -286,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--estimate", action="store_true", help="dry run, then priced per model")
     ap.add_argument("--first-pass", type=Path, default=None, metavar="DB",
                     help="print the first-pass measures of a recorded run's database")  # fmt: skip
+    ap.add_argument("--claude", default=None, metavar="MODEL",
+                    help="the Claude arm (Anthropic API) instead of --models")  # fmt: skip
+    ap.add_argument("--effort", default=None,
+                    help="the Claude arm's effort (default: core.llm.cloud's)")  # fmt: skip
     args = ap.parse_args(argv)
 
     cases = [check_agent_case(c.strip()) for c in args.cases.split(",") if c.strip()]
@@ -296,6 +443,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     dry = args.dry_run or args.estimate
     results = []
+    if args.claude:
+        arm = ClaudeArm(
+            args.claude,
+            args.effort,
+            client=dry_claude_client() if dry else None,
+            max_tokens=None if args.max_tokens == MAX_TOKENS else args.max_tokens,
+        )
+        for case in cases:
+            print(f"{arm.name} {case}", file=sys.stderr, flush=True)
+            results.append(run_bench(arm, case, args.out / arm.name / case))
+        print(f"{arm.name}: ${arm.usage.cost_usd:.2f}", file=sys.stderr, flush=True)
+        if args.estimate:
+            print(estimate_claude(results, arm.name))
+            return 0
+        specs = []
     for spec in specs[:1] if args.estimate else specs:
         hosted = HostedModel(spec, args.reasoning, post=dry_post if dry else None)
         if args.max_tokens != MAX_TOKENS:
