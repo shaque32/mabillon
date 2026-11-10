@@ -8,7 +8,7 @@
   moves to 10 November 2026. `demo.js?v=` moves on every page. The demo form still posts to the
   Worker at forms.getmabillon.com/demo; only its `NOTIFY_TO` secret (set in the Cloudflare
   dashboard, not in this repo) needs to become team@getmabillon.com. The README step says so.
-- Where: PR (this branch, claude/project-thread-gtr06l)
+- Where: PR #251 (branch claude/project-thread-gtr06l)
 - Verified: `tests/test_site_assets.py` passes. No search hit for support@ remains under `site/`.
   Delivery to team@ and the Worker's send after the MX change are untested.
 - Open: The app's Help tab (`core/support/contact.py`), docs and the license Worker still name
