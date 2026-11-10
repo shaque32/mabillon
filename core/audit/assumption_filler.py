@@ -258,6 +258,11 @@ WHOLE_APP_TEMPLATES = frozenset({"message_count", "no_contact"})
 NATIVE_CALL_APP = "unknown"
 # The call channel's own words, which a model may write as an account's app.
 _CALL_CHANNEL_WORDS = frozenset({"call", "calls"})
+# Words that make a claim about a phone's own text message ("sent ... a text message", "texted"),
+# for reading a number written on no app. "text" alone is left out: "the text of the message".
+_TEXT_MESSAGE_RE = re.compile(r"\b(?:sms|mms|text[\s-]?messages?|texted|texting)\b", re.I)
+# The words a model may write as an account's app for a phone's text messages.
+_TEXT_CHANNEL_WORDS = frozenset({NATIVE_CALL_APP, *CHANNEL_WORDS["sms"], "text messages"})
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -2614,8 +2619,13 @@ class LocalAssumptionFiller:
         named: set[str] = set()  # people the model wrote as accounts
         named_on: set[str] = set()  # the apps it wrote them on
         own_ids: set[str] = set()  # a phone's own accounts, the phone written as an account
+        text_apps: set[str] = set()  # the phone's messaging app a text's number was read on
         for acc in p.accounts:
             acc = self._call_log_account(acc, claim.text, tpl.id)
+            read_as = self._text_message_account(acc, claim.text, tpl.id, channels)
+            if read_as is not acc:
+                text_apps.add(read_as.app)
+                acc = read_as
             try:
                 account_ids |= self._accounts(
                     acc, device_ids, claim.text, one_number=tpl.id != "contact_entry"
@@ -2687,6 +2697,10 @@ class LocalAssumptionFiller:
             params["person_ids"] = sorted(set(params.get("person_ids", [])) | named)
             if not channels:
                 params["channels"] = sorted(named_on, key=str.lower)
+        if text_apps and not params.get("channels"):
+            # The search stays on the app the number was read on: a quoted text found on
+            # another app has a sender on that app, which would read as someone else.
+            params["channels"] = sorted(text_apps, key=str.lower)
         if handles:
             if "handles" not in tpl.allowed:
                 raise Reject(f"template {tpl.id!r} does not take handles")
@@ -3794,6 +3808,61 @@ class LocalAssumptionFiller:
             return _Account(as_written=acc.as_written, app=NATIVE_CALL_APP)
         return acc
 
+    def _text_message_account(
+        self, acc: _Account, claim_text: str, template_id: str, channels: list[str]
+    ) -> _Account:
+        """A number the model wrote on no app ("unknown", "SMS", "text") in a claim about a
+        text message is a number on the phone's own messaging app, when the case has exactly
+        one app of a phone's own messages that holds messages (Android or iOS "Native
+        Messages", or "SMS"), the claim names no other app, and the check reads one quoted
+        message (sender, record_time, meaning). A count or an absence reads every record on
+        the app it searches, so it is never rewritten; and since "unknown" is the phone's call
+        log, a text message's number is never read there either: for those templates, or when
+        the case has no such app or more than one, or the claim names another app, the number
+        is refused (Greptile on #253: an absence read on one app misses the others). Other
+        templates, and a claim that also names a call (which record the number is on is not
+        known), are left as written."""
+        app = acc.app.strip().casefold()
+        if app not in _TEXT_CHANNEL_WORDS:
+            return acc
+        if app != NATIVE_CALL_APP and any(app == c.casefold() for c in self.channels()):
+            return acc  # the case has an app by that name ("SMS"): the model named it
+        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim_text)))
+        if not _TEXT_MESSAGE_RE.search(bare) or _CALL_WORD_RE.search(bare):
+            return acc
+        written = acc.as_written.strip()
+        named_ident = account_names.designated(self.conn, written)
+        number = phone_digits(written) if named_ident is None else self._named_number(named_ident)
+        if number is None or template_id not in MESSAGE_TEXT_TEMPLATES | WHOLE_APP_TEMPLATES:
+            return acc  # a name or an id, or an identity: `_accounts` reads it as before
+        phone_apps = self._phone_message_apps()
+        why = None
+        if template_id in WHOLE_APP_TEMPLATES:
+            why = "a count or an absence would miss the messages on every other app"
+        elif _names_an_app_off_the_case(bare) or set(self._named_apps(claim_text)) - set(
+            phone_apps
+        ):
+            why = "the claim names another app"
+        elif len(phone_apps) != 1:
+            why = f"the case holds {len(phone_apps)} apps of a phone's own messages, not one"
+        elif any(c.casefold() != phone_apps[0].casefold() for c in channels):
+            why = f"the proposal's channels are not {phone_apps[0]!r}"
+        if why is not None:
+            raise Reject(f"{written!r} is a text message's number on no app, and {why}")
+        return _Account(as_written=acc.as_written, app=phone_apps[0])
+
+    def _phone_message_apps(self) -> list[str]:
+        """The apps of a phone's own messages ("SMS", "MMS", "iMessage", or an export's
+        "Native Messages") that hold any message thread in the case."""
+        with_threads = {r[0] for r in self.conn.execute("SELECT DISTINCT app FROM threads")}
+        return [
+            app
+            for app in self.channels()
+            if app != CALL_CHANNEL
+            and app in with_threads
+            and (namespace(app) == "tel" or app.strip().casefold() in WIDER_APPS)
+        ]
+
     def _accounts(
         self, acc: _Account, device_ids: list[str], claim_text: str = "", one_number: bool = True
     ) -> set[str]:
@@ -3823,6 +3892,15 @@ class LocalAssumptionFiller:
         hits = {a.id for a in mine if a.key == want}
         number = phone_digits(ident) if named_ident is None else self._named_number(ident)
         named = app == NATIVE_CALL_APP or self._app_named(claim_text, acc.app)
+        if number is None and named_ident is None and named:
+            jid = _jid_number(ident, mine)
+            if jid is not None and hits:
+                # "19195794674" is one account's whole id and another's WhatsApp number
+                raise Reject(
+                    f"{acc.as_written!r} on {acc.app} is one account's id and another's number;"
+                    " which one the claim means is not known"
+                )
+            number = jid
         if number is not None and named:
             # One number written two ways on one app ("+19195677484" and "9195677484", from two
             # databases) is one party: the same digits, only the formatting differs (ruling
@@ -4509,6 +4587,19 @@ def phone_digits(words: str) -> str | None:
     if area[0] not in "23456789" or exchange[0] not in "23456789":
         return None
     return "1" + area + exchange + line
+
+
+def _jid_number(ident: str, accounts: list[Account]) -> str | None:
+    """Bare digits ("19195794674") are a phone number when an account on the app the claim
+    names has exactly those digits as its WhatsApp id ("19195794674@s.whatsapp.net"): the id
+    writes the number with its country code and no "+", so the words are that number, as
+    WhatsApp writes it, and every account on the app with the same number is one party (ruling
+    R6). Only the whole digits: "9195794674" is not "19195794674@s.whatsapp.net", and a group
+    ("@g.us") or a linked id ("@lid") is no number."""
+    if not re.fullmatch(r"\d{8,15}", ident):
+        return None
+    jid = f"{ident}@s.whatsapp.net"
+    return ident if any(a.identifier.strip() == jid for a in accounts) else None
 
 
 def _same_number(number: str, acc: Account) -> bool:
