@@ -1,4 +1,4 @@
-## 2026-11-10: Fast recommended at setup, and every case must choose where its AI runs (branch claude/project-thread-fujfti)
+## 2026-11-10: Fast recommended at setup, and every case must choose where its AI runs (#254)
 - Changed: CLAUDE.md (signed 2026-11-09, #250) makes cloud AI the default choice for an
   ordinary case. Step 4 of Set up and run now asks where the case's AI runs: "Fast: Opus
   through Anthropic" (recommended) or "On this computer". Nothing is pre-chosen and the
@@ -15,7 +15,7 @@
   CLAUDE.md forbids. Step 4 shows the choice before the local model, which only a case on this
   computer needs. The command line (`mabillon claims`, `mabillon audit`) still runs a case
   with no choice on the local model, as before.
-- Where: branch claude/project-thread-fujfti
+- Where: PR #254
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`: a new case has nothing
   chosen or ticked; Fast without the attestation, Fast on a CSAM case and a form with no side
   are refused and save nothing; claim proposal and the audit wait for the choice; Fast with no
