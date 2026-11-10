@@ -43,13 +43,22 @@
     - event open ranges kept on one day;
     - the month forms read and refused, and the month coverage gap.
 
-  Three existing expectations changed on purpose: "between approximately 9:10 and 9:40
-  p.m." and "between about 9 and 11 p.m." are now read (the tests keep "roughly" as unread),
-  and a zone after dateless model words is now caught on the claim's own range. Replaying
+  Four existing expectations changed on purpose:
+    - "between approximately 9:10 and 9:40 p.m." and "between about 9 and 11 p.m." are now
+      read (the tests keep "roughly" as unread);
+    - a zone after dateless model words is now caught on the claim's own range;
+    - a model window whose words are cut from the claim's range ("March 9, 2026" of "between
+      March 9, 2026 and March 12, 2026") gives way to code's reading of the claim, which is the
+      same range (`tests/test_account_names.py`). Replaying
   the stored Opus answers of both practice phones (iOS 15, Android 12) changes no check
   outcome. Four windows widen to the approximate reading. The refusals of three proposals go:
   two events and one record_time, on claims that stay untested for other reasons.
-  `make check` on 2026-11-10, cloud container.
+  `make check` passed on 2026-11-10 in the cloud container. Its eval numbers are the same as
+  the base commit's (7f1cc67):
+    - case01 model-free accuracy 1.00 after the simulated expert, 0.70 unreviewed, 0 false
+      supported;
+    - hostile: PASS, 0 of 5 model-only claims supported;
+    - case02 aggregate accuracy 0.90, 0 false supported.
 - Open: unmeasured on a model run; the points below are open.
   - The 8 minutes on each approximate end extend the signed "about" rule. That needs Arsh's
     confirmation (proposed/windows.md W1).
