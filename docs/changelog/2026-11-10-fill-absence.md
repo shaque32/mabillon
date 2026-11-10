@@ -25,20 +25,9 @@
     SMITH's. The check version is not bumped here; the lead bumps once.
   - Code: `_phone_as_party`, `_absence_parties`, `_given_is_read` and `_phone_owner` in
     `core/audit/assumption_filler.py`; `_party_gaps` in `core/audit/checks/absence.py`.
-- Where: branch fix/absence, not yet in a PR
+- Where: PR #PRNUM
 - Verified: `tests/test_fill_absence.py`, 23 tests on synthetic case01, and the existing filler
-  and check tests. I replayed the stored hosted-model answers (no model call) through the
-  branch:
-  - iOS 15 practice phone: three claims refused before are now tested. Two fail on records
-    inside their ranges. One is inconclusive: unknown fidelity, and its party has no account
-    on the named app.
-  - Android 12 practice phone: one claim refused before is now tested, inconclusive (unknown
-    fidelity).
-  - No other claim on either phone changed.
-  - `make check` passed on 2026-11-10, in the agent's cloud container: 4129 tests passed and
-    7 skipped. case01 model-free: accuracy 1.00, false-supported 0. The hostile run passed. The
-    case02 aggregate accuracy was 0.90, false-supported 0. Every eval number matches the base
-    commit 7f1cc67.
+  and check tests. Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. `make check` on the merged branch: see the PR.
 - Open: The phone's side is a person id (the owner), so the text names that person where the
   claim names the phone. What is searched is the same. A contract field for "this phone's own
   accounts" would remove this, and is proposed in the rulings note for this area (project files, validation fix round) with three rulings: an

@@ -44,7 +44,7 @@ def two_phone_apps(conn):  # noqa: F811
 
 @pytest.mark.parametrize("app", ["unknown", "text", "text message", "Unknown"])
 def test_a_text_messages_number_on_no_app_is_read_on_the_phones_messaging_app(conn, app):  # noqa: F811
-    # Seen on the Android 12 practice run: the model wrote a texting number with app "unknown".
+    # Seen on a practice run: the model wrote a texting number with app "unknown".
     assumptions, filler = build_text(conn, TEXTED, ClaimType.COMMUNICATION, [_sender(app=app)])
     (s,) = _made(assumptions, "sender")
     assert s.params.account_ids == ALEX, filler.drops
@@ -179,7 +179,7 @@ def _uses(conn, digits: str, text: str, app: str = "WhatsApp"):  # noqa: F811
 
 
 def test_bare_digits_are_the_whatsapp_account_whose_id_is_that_number(conn):  # noqa: F811
-    # Seen on the Android 12 practice run: "the WhatsApp account <digits>", the id being
+    # Seen on a practice run: "the WhatsApp account <digits>", the id being
     # "<digits>@s.whatsapp.net". The same number on both phones is one party (R6).
     made, filler = _uses(conn, "12125550122", "PETROV used the WhatsApp account 12125550122.")
     (p,) = made

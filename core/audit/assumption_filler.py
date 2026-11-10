@@ -4327,7 +4327,7 @@ class LocalAssumptionFiller:
         if number is None and named_ident is None and named:
             jid = _jid_number(ident, mine)
             if jid is not None and hits:
-                # "19195794674" is one account's whole id and another's WhatsApp number
+                # "12125550199" is one account's whole id and another's WhatsApp number
                 raise Reject(
                     f"{acc.as_written!r} on {acc.app} is one account's id and another's number;"
                     " which one the claim means is not known"
@@ -5431,11 +5431,11 @@ def phone_digits(words: str) -> str | None:
 
 
 def _jid_number(ident: str, accounts: list[Account]) -> str | None:
-    """Bare digits ("19195794674") are a phone number when an account on the app the claim
-    names has exactly those digits as its WhatsApp id ("19195794674@s.whatsapp.net"): the id
+    """Bare digits ("12125550199") are a phone number when an account on the app the claim
+    names has exactly those digits as its WhatsApp id ("12125550199@s.whatsapp.net"): the id
     writes the number with its country code and no "+", so the words are that number, as
     WhatsApp writes it, and every account on the app with the same number is one party (ruling
-    R6). Only the whole digits: "9195794674" is not "19195794674@s.whatsapp.net", and a group
+    R6). Only the whole digits: "2125550199" is not "12125550199@s.whatsapp.net", and a group
     ("@g.us") or a linked id ("@lid") is no number."""
     if not re.fullmatch(r"\d{8,15}", ident):
         return None

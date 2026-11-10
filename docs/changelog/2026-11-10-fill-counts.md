@@ -1,16 +1,16 @@
 ## 2026-11-10: Message counts read the phone as a side, an "exchanged" event as its count, and quoted limits as limits
 - Changed: four changes to the message-count readers of the assumption filler
-  (`core/audit/assumption_filler.py`). Found on the iOS 15 and Android 12 practice replays.
+  (`core/audit/assumption_filler.py`). Found on two practice replays.
   - The phone as a side (`_phone_side`). Sometimes the model names only the other side and the
     phone, and the claim writes the phone as one side of a direction count: "the TARGET PHONE
-    exchanged Signal messages with (919) ...", or "the TARGET PHONE's Kik account sent ten
+    exchanged Signal messages with (212) ...", or "the TARGET PHONE's Kik account sent ten
     messages to <account>". That side is then the phone's owner by confirmed stipulation, and
     only when the owner's accounts are exactly the phone's own, as for a count of calls. It
     applies only in the "sent" and "exchanged" forms, whose every word is already read. In
     "exchanged" the phone must stand as a side: at the clause's start, or after "with" or
     "and". "X exchanged messages on the TARGET PHONE" adds no side.
   - A WhatsApp id is its number (`ident_digits`). Before, the direction readers did not see
-    "(919) 888-7386" as the WhatsApp account `19198887386@s.whatsapp.net` that `_accounts`
+    "(212) 555-0144" as the WhatsApp account `12125550144@s.whatsapp.net` that `_accounts`
     had found by that number (ruling R6), so they refused the exchange as naming a third
     party.
   - Quoted limits (`_quotes_name_sides`). A direction count is now refused when the claim
@@ -28,7 +28,7 @@
     record_time cannot take an unquoted message, so the count is the template.
   Why: practice claims written in these plain forms were left untested only because the model
   picked the event template or named the phone as a place.
-- Where: branch fix/counts, not yet in a PR
+- Where: PR #PRNUM
 - Verified: on this container, 2026-11-10, no model call.
   - New tests in `tests/test_fill_counts.py` (synthetic case01, 34). 11 fail without the
     change. They cover:
@@ -42,21 +42,16 @@
     - quoted limits;
     - the WhatsApp id, and a third number;
     - events that are not exchanges, two events, a role, and an event with a quote.
-  - Replay of the stored practice answers through this code (`replay_filler.py all
-    --checks`). On iOS 15, 3 claims gain a count: B14 and C01 pass, at least two each way;
-    D08 is inconclusive, 7 found of an exact 10, curated report. On Android 12, A01 passes,
-    at least two each way. No other claim's assumptions or check outcomes changed.
-    B14, C01 and A01 are communication claims, so rule 3e still keeps them unproven: no
-    identity assumption. D08 is "exactly 10", which rule 3c' never supports from checks.
-  - `make check`: see the PR.
+  - Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. Communication claims that gain a count stay unproven under rule 3e (no identity
+    assumption), and an exact count is never supported from checks (rule 3c').
+  - `make check` on the merged branch: see the PR.
 - Open: no assumption id changes, since no new parameters. Left as they were:
-  - call counts by direction (D25, D19);
-  - a count whose claim writes no phone (C08);
+  - call counts by direction;
+  - a count whose claim writes no phone;
   - "received" counts.
   The three rulings needed are in the rulings note for this area (project files, validation fix round). A phone's own account written by
-  identifier ("the Wickr account <id> on the TARGET PHONE exchanged ...", iOS 15 B20) is
-  still one party with the other account, so it stays refused, a follow-up. D07 and D19 are
-  refused by the window reader ("between approximately 2:06 and 2:22 p.m."), not by the count.
+  identifier ("the Wickr account <id> on the TARGET PHONE exchanged ...") is still one party
+  with the other account, so it stays refused, a follow-up.
 - Affects: capabilities (more plain message counts are tested; quoted limits now refuse a
   direction count); no privacy change; no customer-facing claim change
 - Status doc: pending: in "2. Pipeline (main)", row "5. Assumptions", after "or "exchanged" messages

@@ -228,8 +228,8 @@ def test_an_account_both_sides_hold_counts_no_direction(conn):
     ],
 )  # fmt: skip
 def test_only_an_exact_or_at_least_bound_is_read(conn, text, value, op):
-    # "more than", "about" and "over" are not one exact comparison: they stay refused (B19's
-    # kind of wording), with the phone as a side or not.
+    # "more than", "about" and "over" are not one exact comparison: they stay refused, with the
+    # phone as a side or not.
     made, filler = build(conn, text, [tg(count={"value": value})], ClaimType.COUNT)
     if op is None:
         assert not counts(made), [a.params for a in made]

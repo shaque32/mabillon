@@ -346,7 +346,7 @@ def test_a_timing_claim_that_states_a_direction_is_not_supported_on_its_time_alo
     assert v.verdict is Verdict.UNPROVEN
 
 
-# ---------------------------------------------------------------- one side of a count (B33-like)
+# ---------------------------------------------------------------- one side of a count
 
 
 def test_a_count_with_the_phone_as_one_side_reads_both_sides(conn):

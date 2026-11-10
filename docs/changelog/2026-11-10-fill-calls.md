@@ -30,27 +30,17 @@
   - A phone written as one side of a plain call clause now counts as a side for a call count
     ("the TARGET PHONE had eight Telegram calls with SUBJECT-2"; `_call_parties`
     `phone_is_side`). "On the TARGET PHONE, PETROV called Jonathan" is still refused.
-- Where: branch fix/calls, not yet in a PR
+- Where: PR #PRNUM
 - Verified: `tests/test_fill_calls.py` (48 tests, synthetic case01 with invented calls).
   `tests/test_call_parties.py`'s helper now drops the caller assumption, because those tests
-  are about the time range. `make check` passed on 2026-11-10 (Linux container). Lint, 4155
-  tests passed and 7 skipped. The eval numbers equal the commit before this change: the eval
-  runs the signed assumption sheet, not the filler. case01 model-free unreviewed accuracy 0.70
-  (report only); after the simulated expert 1.00, false-supported 0; hostile PASS; case02
-  (aggregate) 0.90, false-supported 0.
-  - The practice runs were replayed through the filler with no model, checks only. Android 12:
-    a caller was added to A08, A09, A10, A11 and A13. iOS 15: a caller was added to B01, B04,
-    B06, B07, B25, C07, C24, C25 and D31, and B33's call count is now made.
-  - Checks-only verdicts: A10, a timing claim, goes from supported (checked) to unproven,
-    because its window holds a call each way. B01 and C24 go from unproven to supported
-    (checked): the caller and time checks both pass on outgoing calls of the stated length.
-    C07, the known reversed claim, is not contradicted: its window also holds the 12:01
-    incoming call. It is inconclusive, and the detail shows both directions.
+  are about the time range. The eval runs the signed assumption sheet, not the filler, so its
+  numbers do not move. Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. In that replay a timing claim that had been supported (checked) on
+  its time alone, with a call each way in its window, became unproven, and a claim that
+  reversed a call's direction moved from passing checks to inconclusive. `make check` on the merged branch: see the PR.
 - Open: Two rulings, in the rulings note for this area (project files, validation fix round): reading "answered" or "connected" with a length,
   and whether a caller fail should contradict without an expert step. A comment-only
   contracts diff for `sent_by` is optional. Not fixed (found): the time and count checks miss a
-  two-party call row where the phone's own side is blank. That leaves B06, B07 and B33
-  untested, inconclusive.
+  two-party call row where the phone's own side is blank, so such claims stay inconclusive.
 - Affects: capabilities (a new identity check on calls; a new path to SUPPORTED (checked) and
   to CONTRADICTED for call claims), customer-facing claims
 - Status doc: pending: section 2, step 5: add "Code reads who placed a call from a claim's plain

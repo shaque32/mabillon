@@ -32,7 +32,7 @@
     month between two stated ones (`months_stated`). `coverage_gap` now refuses a claim dated
     only by a month or a year (outside quoted words) that no time range tests. Before, "In
     April 2023, PETROV wrote ..." could be judged on its sender alone.
-- Where: branch fix/windows, not yet in a PR
+- Where: PR #PRNUM
 - Verified: new `tests/test_fill_windows.py` (67 tests, synthetic case01), covering:
     - the bounds of every approximate form, at their boundary instants, for record_time,
       no_contact and message_count;
@@ -49,16 +49,9 @@
     - a zone after dateless model words is now caught on the claim's own range;
     - a model window whose words are cut from the claim's range ("March 9, 2026" of "between
       March 9, 2026 and March 12, 2026") gives way to code's reading of the claim, which is the
-      same range (`tests/test_account_names.py`). Replaying
-  the stored Opus answers of both practice phones (iOS 15, Android 12) changes no check
-  outcome. Four windows widen to the approximate reading. The refusals of three proposals go:
-  two events and one record_time, on claims that stay untested for other reasons.
-  `make check` passed on 2026-11-10 in the cloud container. Its eval numbers are the same as
-  the base commit's (7f1cc67):
-    - case01 model-free accuracy 1.00 after the simulated expert, 0.70 unreviewed, 0 false
-      supported;
-    - hostile: PASS, 0 of 5 model-only claims supported;
-    - case02 aggregate accuracy 0.90, 0 false supported.
+      same range (`tests/test_account_names.py`).
+
+  Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. `make check` on the merged branch: see the PR.
 - Open: unmeasured on a model run; the points below are open.
   - The 8 minutes on each approximate end extend the signed "about" rule. That needs Arsh's
     confirmation (rulings note W1).
@@ -67,8 +60,6 @@
   - Parts of the day are still refused (W3).
   - "on March 20 and March 23" is still read as a span (W4).
   - Time-first "after 10:00 a.m. on May 7" in an absence is still the rest of that day (W5).
-  - No claim newly tested on the practice phones: those that now get a window are held back
-    by their template or party.
 - Affects: verdict path (more ranges read by code; some model windows are refused; a claim
   dated only by a month or a year now needs a time range). Fails closed. No privacy, network
   or customer-facing change.
