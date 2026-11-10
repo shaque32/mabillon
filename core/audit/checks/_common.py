@@ -349,6 +349,7 @@ class Row:
     text: str | None
     duration_s: int | None = None
     deleted: bool | None = None
+    direction: str | None = None  # messages: as the phone recorded it, else None
 
     @property
     def accounts(self) -> set[str]:
@@ -370,13 +371,13 @@ NOT_COPY = f"m.locator NOT LIKE '{forwarded_records.COPY_LIKE}'"
 _MSG_SQL = (
     "SELECT m.id, m.source_id, t.app, m.sender_account_id, m.ts_utc, m.ts_raw, m.body,"
     " m.deleted_flag, (SELECT json_group_array(r.account_id) FROM message_recipients r"
-    " WHERE r.message_id = m.id)"
+    " WHERE r.message_id = m.id), m.direction"
     " FROM messages m JOIN threads t ON t.id = m.thread_id"
 )
 
 
 def _message_row(r: tuple) -> Row:
-    mid, sid, app, sender, ts, raw, body, deleted, recips = r
+    mid, sid, app, sender, ts, raw, body, deleted, recips, direction = r
     return Row(
         id=mid,
         kind="message",
@@ -388,6 +389,7 @@ def _message_row(r: tuple) -> Row:
         ts_raw=raw,
         text=body,
         deleted=None if deleted is None else bool(deleted),
+        direction=direction,
     )
 
 

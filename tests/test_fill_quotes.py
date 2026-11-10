@@ -26,8 +26,9 @@ from core.contracts import (
     ClaimType,
     Verdict,
 )
+from core.db import apply_schema, connect
 from eval.synthetic.generate import generate
-from tests.checks.helpers import stipulate
+from tests.checks.helpers import NY, check, stipulate
 from tests.fake_model import FakeModel
 
 PETROV, REYES = "person:petrov", "person:reyes"
@@ -275,3 +276,113 @@ def test_words_in_messages_from_different_senders_are_not_settled(conn):
     # (Every "ok" of PETROV's on the phone is dated another day, so the time check fails.)
     decision, _ = verdict(conn, c, made)
     assert decision.verdict is not Verdict.SUPPORTED
+
+
+# --- the sender check: someone else's only on a record or a confirmed fact (sender 1.1.0)
+
+OWNER, Q, R, S = "person:owner", "person:q", "person:r", "person:s"
+
+
+def sender_case() -> sqlite3.Connection:
+    """One phone, its owner by confirmed stipulation, and accounts the case ties to people in
+    different ways. Every value is invented."""
+    conn = connect(":memory:")
+    apply_schema(conn)
+    conn.execute(
+        "INSERT INTO sources VALUES ('p1', 'synthetic', 'full_extraction', 'file_system', 'f',"
+        " '0', NULL, NULL, NULL, '2026-05-01T00:00:00Z')"
+    )
+    conn.execute("INSERT INTO devices VALUES ('dev:p1', 'p1', 'x', 'phone', NULL, NULL, ?)", (NY,))
+    accounts = [
+        # id, device (own accounts only), app, identifier
+        ("a:own:sms", "dev:p1", "SMS", "+15550000001"),
+        ("a:own:wa", "dev:p1", "WhatsApp", "15550000001@s.whatsapp.net"),
+        ("a:q:sms", None, "SMS", "+15550000002"),  # Q's only account, by confirmed link
+        ("a:x:wa", None, "WhatsApp", "x@s.whatsapp.net"),  # linked to no one
+        ("a:y:wa", None, "WhatsApp", "y@s.whatsapp.net"),  # linked to no one
+        ("a:unflagged:wa", None, "WhatsApp", "own2@s.whatsapp.net"),  # an own handle, unflagged
+        ("a:r:wa", None, "WhatsApp", "r@s.whatsapp.net"),  # R's, by confirmed link
+        ("a:r:sms", None, "SMS", "+15550000003"),  # R's too, by confirmed link
+        ("a:s:wa", None, "WhatsApp", "s@s.whatsapp.net"),  # S's by a proposed link only
+    ]
+    conn.executemany("INSERT INTO accounts VALUES (?, 'p1', 'x', ?, ?, ?, NULL)", accounts)
+    conn.executemany(
+        "INSERT INTO threads VALUES (?, 'p1', 'x', NULL, ?, NULL)",
+        [("t:sms", "SMS"), ("t:wa", "WhatsApp")],
+    )
+    for pid, name in ((Q, "Q"), (R, "R"), (S, "S")):
+        conn.execute("INSERT INTO persons VALUES (?, ?, 'expert:test')", (pid, name))
+    for acc, pid, status in (
+        ("a:q:sms", Q, "confirmed"),
+        ("a:r:wa", R, "confirmed"),
+        ("a:r:sms", R, "confirmed"),
+        ("a:s:wa", S, "proposed"),
+    ):
+        conn.execute(
+            "INSERT INTO identity_links VALUES (?, ?, ?, ?, 'confirmed', 'test', 'expert:test',"
+            " '2026-05-01T00:00:00Z')",
+            (f"link:{acc}", acc, pid, status),
+        )
+    msgs = [
+        # id, sender, direction, body
+        ("m:alpha", "a:x:wa", "incoming", "alpha"),
+        ("m:bravo", "a:unflagged:wa", "outgoing", "bravo"),
+        ("m:charlie", "a:own:wa", "outgoing", "charlie"),
+        ("m:delta", "a:r:wa", "incoming", "delta"),
+        ("m:echo", "a:s:wa", "incoming", "echo"),
+        ("m:foxtrot", "a:y:wa", "incoming", "foxtrot"),
+        ("m:golf", "a:x:wa", "unknown", "golf"),
+        ("m:hotel1", "a:q:sms", "incoming", "hotel"),
+        ("m:hotel2", "a:r:wa", "incoming", "hotel"),
+        ("m:india1", "a:q:sms", "incoming", "india"),
+        ("m:india2", "a:x:wa", "incoming", "india"),
+        ("m:juliet", "a:r:sms", "incoming", "juliet"),
+    ]
+    for mid, sender, direction, body in msgs:
+        tid = "t:sms" if ":sms" in sender else "t:wa"
+        conn.execute(
+            "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id,"
+            " direction, ts_utc, body) VALUES (?, 'p1', 'x', ?, ?, ?, '2026-03-10T15:00:00Z', ?)",
+            (mid, tid, sender, direction, body),
+        )
+    stipulate(conn, OWNER, "Owner", "dev:p1")
+    return conn
+
+
+@pytest.mark.parametrize(
+    ("words", "party", "want"),
+    [
+        # B24's shape: a person defined by one linked account; the words came from an account
+        # on another app that no confirmed link ties to anyone. Unknown, never a fail.
+        ("alpha", {"person_ids": [Q]}, CheckOutcome.INCONCLUSIVE),
+        # The owner expected, and the phone recorded the message as received: someone else's.
+        ("alpha", {"person_ids": [OWNER]}, CheckOutcome.FAIL),
+        # The owner expected, an outgoing row from an own handle the export did not flag.
+        ("bravo", {"person_ids": [OWNER]}, CheckOutcome.INCONCLUSIVE),
+        # The owner expected, and the direction is unknown.
+        ("golf", {"person_ids": [OWNER]}, CheckOutcome.INCONCLUSIVE),
+        # A third party expected, and the phone's own account sent it.
+        ("charlie", {"person_ids": [Q]}, CheckOutcome.FAIL),
+        # The sender is another person's by a confirmed link.
+        ("delta", {"person_ids": [Q]}, CheckOutcome.FAIL),
+        # The same with only a proposed link: proposed links never count.
+        ("echo", {"person_ids": [Q]}, CheckOutcome.INCONCLUSIVE),
+        # A bare account expected, another unlinked account on the same app sent it: one user
+        # can hold two handles.
+        ("foxtrot", {"account_ids": ["a:x:wa"]}, CheckOutcome.INCONCLUSIVE),
+        # The sender is R's, and so is the account expected: not someone else.
+        ("juliet", {"account_ids": ["a:r:wa"]}, CheckOutcome.INCONCLUSIVE),
+        # Mixed copies: one from Q, one from R (someone else) or from no one known.
+        ("hotel", {"person_ids": [Q]}, CheckOutcome.INCONCLUSIVE),
+        ("india", {"person_ids": [Q]}, CheckOutcome.INCONCLUSIVE),
+        # Every copy from someone else, and every copy from the party, are unchanged.
+        ("delta", {"person_ids": [OWNER]}, CheckOutcome.FAIL),
+        ("delta", {"person_ids": [R]}, CheckOutcome.PASS),
+        ("charlie", {"person_ids": [OWNER]}, CheckOutcome.PASS),
+    ],
+)
+def test_the_sender_check_fails_only_on_a_record_or_a_confirmed_fact(words, party, want):
+    r = check(sender_case(), "sender", quoted_text=words, **party)
+    assert r.outcome is want, r.detail
+    if words in {"alpha", "foxtrot", "golf"} and want is CheckOutcome.INCONCLUSIVE:
+        assert "no confirmed link ties" in r.detail

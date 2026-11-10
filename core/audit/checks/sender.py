@@ -5,25 +5,80 @@ from __future__ import annotations
 from core.audit.checks._common import (
     TEXT_MATCH,
     CaseData,
+    Key,
+    Row,
     channel_ok,
     fmt_key,
     messages_with_text,
     parties,
+    person_party,
     sentences,
 )
 from core.audit.checks.base import TemplateCheck
-from core.contracts import AssumptionParams, CheckOutcome, CheckResult
+from core.contracts import AssumptionParams, CheckOutcome, CheckResult, MessageDirection
+
+
+def _tied_people(data: CaseData) -> dict[Key, set[str]]:
+    """Each account key a confirmed fact ties to a person: an expert-confirmed identity link,
+    or a confirmed device_owner stipulation (the owner accounts of that phone). Proposed links
+    and stipulations never count."""
+    out: dict[Key, set[str]] = {}
+    for _, account_id, pid in data.links:
+        acc = data.accounts.get(account_id)
+        if acc is not None:
+            out.setdefault(acc.key, set()).add(pid)
+    for _, device_id, pid, status in data.stipulations:
+        if status != "confirmed":
+            continue
+        for acc in data.accounts.values():
+            if acc.device_id == device_id:
+                out.setdefault(acc.key, set()).add(pid)
+    return out
+
+
+def _someone_else(
+    data: CaseData, row: Row, expected: set[Key], tied: dict[Key, set[str]]
+) -> str | None:
+    """Why a copy whose sender is not an expected account is from someone else, or None when
+    no record or confirmed fact says so. One user may hold accounts no link names, so an
+    account that is not the party's is not by itself another person's:
+      (a) the sender is a phone's own account;
+      (b) a confirmed link or stipulation ties the sender to a person none of whose confirmed
+          accounts is expected;
+      (c) the expected party is exactly the own accounts of the phone the copy is on, and that
+          phone recorded the message as received."""
+    acc = data.accounts[row.sender or ""]
+    if any(a.is_owner and a.key == acc.key for a in data.accounts.values()):
+        return f"{fmt_key(acc.key)} is a phone's own account"
+    others = sorted(
+        pid for pid in tied.get(acc.key, set()) if not person_party(data, pid).keys & expected
+    )
+    if others and len(others) == len(tied[acc.key]):
+        return f"{fmt_key(acc.key)} is {', '.join(others)}'s, per a confirmed link or stipulation"
+    info = data.sources.get(row.source_id)
+    devices = set(info.device_ids) if info else set()
+    own = {
+        a.key for a in data.accounts.values() if a.device_id is not None and a.device_id in devices
+    }
+    if own and expected == own and row.direction == MessageDirection.INCOMING.value:
+        return f"{row.source_id} recorded it as received, so its owner did not send it"
+    return None
 
 
 class SenderCheck(TemplateCheck):
     """Pass if every message carrying the words came from the party's accounts. Fail if every
-    one came from someone else. Mixed or unknown senders are inconclusive. Display names are
+    one came from someone else, which a record or a confirmed fact must show (_someone_else):
+    an account no confirmed link ties to anyone is unknown, never someone else. Mixed or
+    unknown senders are inconclusive. Display names are
     never compared: two handles on one user id are one sender, one name on two numbers is two.
     The check speaks about accounts; whether a person typed the words is a separate question.
     """
 
     name = "sender"
-    version = "1.0.2"  # 1.0.2: curly quotes and runs of spaces fold (TEXT_MATCH)
+    # 1.0.2: curly quotes and runs of spaces fold (TEXT_MATCH). 1.1.0: a copy from an account
+    # that is not the party's fails only when a record or a confirmed fact says it is someone
+    # else's (_someone_else); otherwise it is unknown.
+    version = "1.1.0"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         sources = data.sources_for(p.device_ids)
@@ -59,6 +114,7 @@ class SenderCheck(TemplateCheck):
             )
 
         good, bad, unknown, lines = [], [], [], []
+        tied = _tied_people(data)
         for row in rows:
             acc = data.accounts.get(row.sender or "")
             if row.id in data.forwarded:
@@ -73,11 +129,21 @@ class SenderCheck(TemplateCheck):
                 unknown.append(row.id)
                 lines.append(f"{row.id} on {row.app} has no recorded sender")
                 continue
-            (good if row.sender in sender_ids else bad).append(row.id)
             lines.append(
                 f"{row.id} on {row.app} was sent by {fmt_key(acc.key)} "
                 f"({acc.display_name or 'no name'})"
             )
+            if row.sender in sender_ids:
+                good.append(row.id)
+            elif why := _someone_else(data, row, party.keys, tied):
+                bad.append(row.id)
+                lines.append(why)
+            else:
+                unknown.append(row.id)
+                lines.append(
+                    f"no confirmed link ties {fmt_key(acc.key)} to anyone, and the record does "
+                    f"not show who sent it, so it may be {party.label}'s"
+                )
         if good and not bad and not unknown:
             outcome, verdict = CheckOutcome.PASS, f"Every copy came from {party.label}"
         elif bad and not good and not unknown:

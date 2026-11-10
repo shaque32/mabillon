@@ -473,10 +473,12 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     participants), so every check resolving handles records a bumped version."""
     r = check(build(), "sender", quoted_text="see you at noon", person_ids=[B],
               device_ids=["dev:p2"])  # fmt: skip
-    assert r.id.endswith("|sender@1.0.2")
+    assert r.id.endswith("|sender@1.1.0")
     assert {CHECKS[n].version for n in ("absence", "same_account")} == {"1.0.1"}
     # The checks that match a quote's text record the fold (curly quotes, runs of spaces).
-    assert {CHECKS[n].version for n in ("sender", "weekday")} == {"1.0.2"}
+    assert CHECKS["weekday"].version == "1.0.2"
+    # The sender check fails only on a record or a confirmed fact (1.1.0).
+    assert CHECKS["sender"].version == "1.1.0"
     assert CHECKS["time"].version == "1.0.3"  # and a call is on the app named beside "call"
     assert CHECKS["count"].version == "1.2.0"  # and counts calls (validation fill f)
 
