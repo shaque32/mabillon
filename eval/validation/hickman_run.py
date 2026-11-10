@@ -318,34 +318,14 @@ class Budgeted:
         }
 
 
-class _Pausing:
-    """The filler's model port: a sticky cloud failure pauses the audit (CloudPaused), as the
-    stance labeler's CloudPort does; any other failure is that one answer dropped."""
-
-    def __init__(self, model) -> None:  # noqa: ANN001
-        self._m = model
-        self.name, self.sha256 = model.name, model.sha256
-        self.params, self.where = model.params, getattr(model, "where", "cloud")
-
-    def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
-        from core.audit._llm_json import CloudPaused
-        from core.llm.cloud import CloudError
-
-        try:
-            return self._m.generate_json(prompt, schema, params)
-        except CloudError as e:
-            if e.sticky:
-                raise CloudPaused(f"the cloud model stopped answering ({e.reason})") from e
-            raise
-
-
 def cloud_components(conn, model):  # noqa: ANN001, ANN201
     """The product's components with Claude filling assumptions and labeling stance."""
     from core import pipeline
     from core.audit import assumption_filler, stance
-    from core.audit._local_model import SentLog
 
-    filler = assumption_filler.create(conn, model=_Pausing(SentLog(model, conn)))
+    # The product's cloud path for every job (#254): each request logged before it is sent,
+    # and a sticky failure pauses the audit (core/audit/_local_model.py open_cloud_run).
+    filler = assumption_filler.create(conn, cloud_model=model)
     labeler = stance.create(conn, cloud_model=model)
     return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
 
