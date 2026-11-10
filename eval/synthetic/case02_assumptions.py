@@ -190,8 +190,10 @@ SPEC: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text="bring the cash friday", person_ids=[BRANDT]),
-                "pass",
-                "Both copies (Item 1 and Item 2) are from +13125550119.",
+                "inconclusive",
+                "Both copies (Item 1 and Item 2) are from +13125550119. "
+                "The claim's words are only part of a sentence of the message, so the check does "
+                "not judge it (sender 1.2.0, time 1.1.0).",
             ),
             A(
                 "record_time",
@@ -200,8 +202,10 @@ SPEC: tuple[ClaimSpec, ...] = (
                     person_ids=[BRANDT, QUINTERO],
                     window=day("2026-03-11", "2026-03-12", "On March 11, 2026"),
                 ),
-                "pass",
-                "1:02:48 PM CDT Mar 11.",
+                "inconclusive",
+                "1:02:48 PM CDT Mar 11. "
+                "The claim's words are only part of a sentence of the message, so the check does "
+                "not judge it (sender 1.2.0, time 1.1.0).",
             ),
             A(
                 "meaning",

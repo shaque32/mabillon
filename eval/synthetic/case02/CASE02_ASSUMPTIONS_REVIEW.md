@@ -19,7 +19,7 @@ How to read it:
 | C03 | supported | 2 | pass, pass |  | [ ] |
 | C04 | contradicted | 2 | fail | 1 | [ ] |
 | C05 | unproven | 3 | pass, pass, - |  | [ ] |
-| C06 | unproven | 3 | pass, pass, - |  | [ ] |
+| C06 | unproven | 3 | inconclusive, inconclusive, - |  | [ ] |
 | C07 | contradicted | 3 | pass, pass, - |  | [ ] |
 | C08 | contradicted | 2 | -, inconclusive | 1 | [ ] |
 | C09 | unproven | 1 | - | 1 | [ ] |
@@ -100,8 +100,8 @@ Arsh: [ ] agree  [ ] change ______  Note:
 
 | # | Template | Core | Parameters | Check | Why |
 |---|---|---|---|---|---|
-| 1 | `sender` | yes | quoted_text: bring the cash friday<br>person_ids: person:brandt | pass | Both copies (Item 1 and Item 2) are from +13125550119. |
-| 2 | `record_time` | yes | quoted_text: bring the cash friday<br>person_ids: person:brandt, person:quintero<br>window: "On March 11, 2026" (America/Chicago, local wall clock) | pass | 1:02:48 PM CDT Mar 11. |
+| 1 | `sender` | yes | quoted_text: bring the cash friday<br>person_ids: person:brandt | inconclusive | Both copies (Item 1 and Item 2) are from +13125550119. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). |
+| 2 | `record_time` | yes | quoted_text: bring the cash friday<br>person_ids: person:brandt, person:quintero<br>window: "On March 11, 2026" (America/Chicago, local wall clock) | inconclusive | 1:02:48 PM CDT Mar 11. The claim's words are only part of a sentence of the message, so the check does not judge it (sender 1.2.0, time 1.1.0). |
 | 3 | `meaning` | yes | quoted_text: bring the cash friday<br>person_ids: person:brandt | - | That the demand was BRANDT's own. The message reads 'wade said "bring the cash friday"': he reports Wade's words (rule 1). |
 
 Arsh: [ ] agree  [ ] change ______  Note:
