@@ -93,9 +93,9 @@ import platform
 import re
 import sqlite3
 import sys
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from core import pipeline
 from core.audit.assumptions import is_code_made
@@ -106,9 +106,6 @@ from core.ingest.govdoc import PdfGovDocIngester
 from core.report.html import quote_check_label, write_report
 from core.review import actions
 from eval.run_eval import load_jsonl, score
-
-if TYPE_CHECKING:
-    from core.audit import testability
 
 EVAL_TIME = datetime(2026, 10, 7, tzinfo=UTC)  # fixed, so runs are byte-for-byte repeatable
 GOLD_ACTOR = "expert:eval-gold-claims"
@@ -660,38 +657,63 @@ def testability_step(
     return step
 
 
-def left_out(got: testability.Named, want: testability.Named) -> list[str]:
-    """What the signed sheet's core rows for a claim name that a set of assumptions does not:
-    a template, a person or a time window. Each is a part of the claim the set leaves untested
+# A meaning row states only what its quoted words mean ("The words ... mean what the claim says
+# they mean"); the people and time range a sheet gives it only point to the message, and the
+# filler's code-made meaning names neither. So left_out asks a meaning row for its template only.
+SCOPE_ONLY_TEMPLATES = frozenset({"meaning"})
+
+
+def left_out(got: Iterable[tuple[str, Mapping]], want: Iterable[tuple[str, Mapping]]) -> list[str]:
+    """Each of the signed sheet's core rows for a claim (`want`, as (template id, parameters))
+    that no one assumption of a set (`got`, the same shape) covers: one of the same template
+    that names at least the row's people and its time window. Row by row, so a person the sheet
+    names in its sender row is not covered by the same person named only in a time range
+    (Greptile on #258). Each such row is a part of the claim the set leaves untested
     ("SUBJECT-1 texted the COURIER from the BURNER" tested only on the BURNER's account leaves
-    out who used it, the recipient and the day). Phones, accounts, apps, handles and quoted
-    words are not asked for: the sheet writes the ones it looked up, and the filler finds its
-    own (a claim that names no phone reads an account in every report)."""
+    out who used it and the day). Phones, accounts, apps, handles and quoted words are not
+    asked for: the sheet writes the ones it looked up, and the filler finds its own (a claim
+    that names no phone reads an account in every report). Nor are a meaning row's people and
+    time range (SCOPE_ONLY_TEMPLATES)."""
+    from core.audit import testability
+
+    have = [testability.named([row]) for row in got]
     out = []
-    for what, have, need in (
-        ("template", got.templates, want.templates),
-        ("person", got.people, want.people),
-        ("time window", got.windows, want.windows),
-    ):
-        for x in sorted(need - have):
-            shown = " to ".join(x) if isinstance(x, tuple) else repr(x)
-            out.append(f"leaves out the {what} {shown}, which the signed sheet names")
+    for template_id, params in want:
+        need = testability.named([(template_id, params)])
+        if template_id in SCOPE_ONLY_TEMPLATES:
+            need = testability.Named(templates=need.templates)
+        if any(
+            h.templates == need.templates and need.people <= h.people and need.windows <= h.windows
+            for h in have
+        ):
+            continue
+        shown = f"leaves out the sheet's {template_id!r} row"
+        if need.people:
+            shown += f" naming {', '.join(sorted(need.people))}"
+        if need.windows:
+            shown += " for " + ", ".join(" to ".join(w) for w in sorted(need.windows))
+        out.append(shown)
     return out
 
 
-def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: ANN001
+def both_passes(
+    result: pipeline.RunResult,
+    step,  # noqa: ANN001
+    sheet_rows: Iterable[Mapping],
+) -> dict[str, int]:
     """The go/no-go's coverage, scored on both passes together (Arsh, 2026-11-08, decision
     card): of the claims the signed sheet makes testable (those it gives a core row), how many
     end the audit with core assumptions, from the first pass or a repair the examiner accepted,
-    that match the sheet's rows: they name nothing the sheet does not (testability.mismatch,
-    with a party the claim's own words name not counted as a wrong person, as the step's sheet
-    check does) and leave out no template, person or time window it names (left_out; rows
-    required 2026-11-10, after a set that tested only one of a claim's three sheet rows counted
-    as matching). Read from the run's assumptions, which hold exactly those: a refused or
-    rejected try is never stored. For information, the claims that name nothing extra but leave
-    a sheet row out, the first pass's own share, and how many of its claims name a person, phone
-    or window the sheet does not (the step's tries are bar 2's; the first pass's are not a bar).
-    Only the claims the run audited count (an eval run of some claims scores those)."""
+    that match the sheet's rows (`sheet_rows`, the signed sheet as read): they name nothing the
+    sheet does not (testability.mismatch, with a party the claim's own words name not counted
+    as a wrong person, as the step's sheet check does) and leave none of its core rows out
+    (left_out; every row required 2026-11-10, Arsh, after a set that tested only one of a
+    claim's three sheet rows counted as matching). Read from the run's assumptions, which hold
+    exactly those: a refused or rejected try is never stored. For information, the claims that
+    name nothing extra but leave a sheet row out, the first pass's own share, and how many of
+    its claims name a person, phone or window the sheet does not (the step's tries are bar 2's;
+    the first pass's are not a bar). Only the claims the run audited count (an eval run of some
+    claims scores those)."""
     import dataclasses
 
     from core.audit import testability
@@ -720,6 +742,14 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
         "SELECT claim_id, template_id, params_json FROM assumptions WHERE is_core = 1 ORDER BY id"
     ):
         core.setdefault(cid, []).append((template_id, json.loads(params)))
+    people = sheet_people(conn)
+    wanted: dict[str, list[tuple[str, dict]]] = {}
+    for r in sheet_rows:
+        if r.get("is_core"):
+            params = dict(r.get("params") or {})
+            if params.get("person_ids"):
+                params["person_ids"] = [people.get(p, p) for p in params["person_ids"]]
+            wanted.setdefault(r["claim_id"], []).append((r["template_id"], params))
     matching = partial = first_kept = first_matching = first_entity = 0
     for cid, want in sheet.items():
         rows = core.get(cid)
@@ -730,7 +760,7 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
             parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
         )
         diff = testability.mismatch(got, want)
-        match = not diff and not left_out(got, want)
+        match = not diff and not left_out(rows, wanted.get(cid, ()))
         matching += match
         partial += not diff and not match
         if cid not in result.testability:
@@ -799,7 +829,13 @@ def testability_summary(
     testable = [r for r in reps if r.sheet is not None]
     converted = [r for r in reps if r.assumptions]
     signed = prompt is None or prompt == TESTABILITY_SIGNED_PROMPT
-    both = both_passes(result, step)
+    sheet = assumption_sheet(case)
+    sheet_rows = (
+        [json.loads(line) for line in sheet.read_text(encoding="utf-8").splitlines() if line]
+        if sheet is not None
+        else []
+    )
+    both = both_passes(result, step, sheet_rows)
     out: dict[str, object] = {
         "prompt": "signed" if signed else "DRAFT, not signed by Arsh",
         "cap": step.cap,
