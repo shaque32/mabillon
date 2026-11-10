@@ -164,6 +164,20 @@ def test_runtime_errors_are_never_reused_but_bad_output_is(case_db):
     assert second.port.generate("P2", SCHEMA) == "not json"  # fails again, the same way
 
 
+def test_a_cloud_run_asks_a_misquote_again_but_reuses_an_answer_that_quoted_nothing(case_db):
+    first = _open(case_db, Counting(), reuse_unusable=False)
+    empty = '{"stance": "irrelevant", "quote": "", "rationale": "r"}'
+    _store(case_db, first, "P1", empty, "quote_failed")
+    _store(case_db, first, "P2", '{"stance": "supports", "quote": "nope"}', "quote_failed")
+    _store(case_db, first, "P3", "not json", "invalid_output")
+    model = Counting()
+    second = _open(case_db, model, reuse_unusable=False)
+    assert second.port.generate("P1", SCHEMA) == empty  # nothing to get wrong: not paid again
+    assert second.port.generate("P2", SCHEMA) == '{"x": "y"}'
+    assert second.port.generate("P3", SCHEMA) == '{"x": "y"}'
+    assert model.prompts == ["P2", "P3"]
+
+
 def test_reuse_off_always_calls_the_model(case_db):
     model = Counting()
     first = _open(case_db, model)

@@ -148,7 +148,7 @@ from core.identity.aliases import spans as alias_spans
 from core.review import account_names
 from core.review.device_names import keys as phone_keys
 from core.review.device_names import logged_names, name_key
-from core.zones import resolve_zone
+from core.zones import device_zones, resolve_zone
 
 PROMPT_FILE = "assumptions.md"
 PLACEHOLDERS = frozenset({"claim", "paragraph", "templates", "channels"})
@@ -165,7 +165,11 @@ MAX_PROPOSALS = 8
 #      range drops words a claim that quotes nothing never quoted; a range whose words state
 #      one plain range takes code's reading of them; "texting" names SMS and "spoke by phone"
 #      a call.
-FILLER_VERSION = "5"
+#   6: a whole-day date written with a part of the day ("in the early hours of", "on the
+#      evening of", "late on") is not read, instead of being widened to the whole day; a
+#      number the model writes on the call channel ("call") as its app is read in the call log
+#      on ruling R1's terms.
+FILLER_VERSION = "6"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 
@@ -252,6 +256,8 @@ WHOLE_APP_TEMPLATES = frozenset({"message_count", "no_contact"})
 # claim that names no app and writes the other party as a phone number is searched there
 # (validation ruling R1).
 NATIVE_CALL_APP = "unknown"
+# The call channel's own words, which a model may write as an account's app.
+_CALL_CHANNEL_WORDS = frozenset({"call", "calls"})
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -1145,6 +1151,17 @@ class StatedWindow:
     zone: str | None = None
 
 
+# Words that narrow a stated day to a part of it ("the early hours of", "the evening of"),
+# which stated_windows does not read: a date written with one is not read as the whole day.
+_PART_OF_DAY_RE = re.compile(
+    r"\b(?:early|late|mid|wee)\b|\b(?:mornings?|afternoons?|evenings?|nights?|nighttime|"
+    r"overnight|dawn|dusk|daybreak|sunrise|sunset|midday|lunchtime|noontime|bedtime)\b|"
+    r"\b(?:end|start|beginning|close|middle) of\b|"
+    r"\bsmall hours\b|\bfirst thing\b|\bafter (?:dark|work|school)\b",
+    re.IGNORECASE,
+)
+
+
 def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
     """Every date the text states, as the range it plainly means, or None when any date is
     not plain: an open range ("before", "after", "since", "until", "from 9 p.m. on", "at 9
@@ -1165,7 +1182,9 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
       in `zone`, for the filler to check against the phone's zone.
     - Any time of day the text writes outside quoted words that no range above read (a
       second time, "beginning at", "after 10 a.m.") makes the whole answer None: a time is
-      never widened to the whole day.
+      never widened to the whole day. So does a part of the day written beside a whole-day
+      date ("in the early hours of", "on the evening of", "late on"): the whole day would
+      let any time that day pass.
     """
     years = {int(y) for y in _YEAR_RE.findall(text + " " + context)}
     out: list[StatedWindow] = []
@@ -1249,6 +1268,11 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
         else:
             if _LOOSE_TIME_RE.search(before) or _THEN_LOOSE_RE.match(after):
                 return None  # a time code cannot read: never widen it to the whole day
+            if _PART_OF_DAY_RE.search(plain):
+                # "In the early hours of November 2, 2025", "on the evening of May 7": a part
+                # of the day code does not read is never widened to the whole day, where any
+                # time that day would pass the check.
+                return None
             lead = _LEAD_RE.search(before)
             if lead is not None:
                 start_i = m.start() - len(before) + lead.start()
@@ -2591,6 +2615,7 @@ class LocalAssumptionFiller:
         named_on: set[str] = set()  # the apps it wrote them on
         own_ids: set[str] = set()  # a phone's own accounts, the phone written as an account
         for acc in p.accounts:
+            acc = self._call_log_account(acc, claim.text, tpl.id)
             try:
                 account_ids |= self._accounts(
                     acc, device_ids, claim.text, one_number=tpl.id != "contact_entry"
@@ -3747,6 +3772,28 @@ class LocalAssumptionFiller:
                 " absence is read on it"
             )
 
+    def _call_log_account(self, acc: _Account, claim_text: str, template_id: str) -> _Account:
+        """A number the model wrote on the call channel ("call") as if it were an app is a
+        number in the phone's call log, on the terms ruling R1 reads a call there: the claim
+        is about a call and names no app, the case has a call log, and the words are a phone
+        number. Never for a count or an absence, which read every record on the app they
+        search: "no contact with (212) 555-0199" read on the call log alone would miss texts
+        with the number (Greptile on #253). Otherwise the account is left as written, and an
+        app no account is on still matches nothing."""
+        app = acc.app.strip().casefold()
+        if (
+            app in _CALL_CHANNEL_WORDS
+            and template_id not in WHOLE_APP_TEMPLATES
+            and _CALL_WORD_RE.search(_unquoted(_nfc(claim_text)))
+            and not any(a.app.casefold() == app for a in self.data.accounts.values())
+            and NATIVE_CALL_APP in self.channels()
+            and phone_digits(acc.as_written) is not None
+            and not self._named_apps(claim_text)
+            and not _names_an_app_off_the_case(_unquoted(_nfc(claim_text)))
+        ):
+            return _Account(as_written=acc.as_written, app=NATIVE_CALL_APP)
+        return acc
+
     def _accounts(
         self, acc: _Account, device_ids: list[str], claim_text: str = "", one_number: bool = True
     ) -> set[str]:
@@ -4268,6 +4315,11 @@ class LocalAssumptionFiller:
         if zone is None and w.zone == "UTC":
             raise Reject("the range does not say UTC")
         check_window(start, end, w.as_written, claim_text, para, template_id)
+        if end - start >= timedelta(days=1) and _PART_OF_DAY_RE.search(_unquoted(claim_text)):
+            # "In the early hours of November 2, 2025" with the model copying only "November 2,
+            # 2025": the whole day would let an afternoon record pass a claim that narrowed it
+            # (Greptile on #253), as stated_windows refuses it when code reads the date.
+            raise Reject("the claim narrows the day to a part code does not read")
         tied = event_windows(claim_text, self._events())
         if tied and not any(t.start <= start and end <= t.end for t in tied):
             # "On March 22, 2026, the day after the RAID" with the RAID on March 20: the claim's
@@ -4414,7 +4466,7 @@ class LocalAssumptionFiller:
         return tz
 
     def _phone_zone(self, device_ids: list[str]) -> str:
-        rows = self.conn.execute("SELECT id, timezone FROM devices ORDER BY id").fetchall()
+        rows = list(device_zones(self.conn).items())
         zones = {resolve_zone(tz) for did, tz in rows if not device_ids or did in device_ids}
         if len(zones) != 1 or None in zones:
             raise Reject("the phones do not share one known time zone; name the phone")

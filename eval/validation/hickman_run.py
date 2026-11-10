@@ -12,7 +12,14 @@ It builds one case the way an expert would, then runs `mabillon audit` with its 
    of telephone number (919) 888-7386") is linked to each account whose identifier is that
    number, written any way (a WhatsApp id 19198887386@s.whatsapp.net too), never to an account
    by its display name;
-4. runs the audit with the product's local components (no AI reviewer, no cloud);
+4. runs the audit with the product's local components (no AI reviewer, no cloud), or with
+   --cloud, with Claude (core/llm/cloud.py) for the two model jobs an audit of given claims
+   runs: assumption filling and stance labeling. Stance goes through the product's cloud path
+   (the signed cloud prompt, every request in the audit log, a sticky failure pauses the run);
+   the filler gets the same logging and pausing here, until the product routes it to the cloud
+   (CLAUDE.md, signed 2026-11-09). --max-usd stops the run once its estimated spend passes the
+   figure, as a sticky failure would; out of API credit stops it the same way. Resume with the
+   same DIR: finished claims reuse their stored answers and cost nothing;
 5. writes DIR/report.html, DIR/run.json (versions, machine, times) and DIR/results.zip. If the
    report's own checks refuse it, run.json says why and the results go out without it.
 
@@ -103,7 +110,9 @@ def render_affidavit(claims: list[dict], path: Path) -> Path:
     return path
 
 
-def build(ufdr: Path, claims: list[dict], out: Path, log) -> None:  # noqa: ANN001
+def build(  # noqa: ANN001
+    ufdr: Path, claims: list[dict], out: Path, log, phone_zone: str | None = None
+) -> None:
     from core.ingest.govdoc import PdfGovDocIngester
     from core.ingest.ufdr import UfdrImporter
     from core.review import actions
@@ -126,6 +135,14 @@ def build(ufdr: Path, claims: list[dict], out: Path, log) -> None:  # noqa: ANN0
         kind = ClaimType(c["claim_type"])
         actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
     actions.name_device(conn, f"dev:{SOURCE_ID}", [PHONE_NAME], ACTOR)
+    if phone_zone:
+        # The examiner's statement of the zone, for a package that records none; the action
+        # refuses it when the package does (core/review/actions.set_device_zone).
+        try:
+            actions.set_device_zone(conn, f"dev:{SOURCE_ID}", phone_zone, ACTOR)
+        except actions.ReviewError as e:
+            raise SystemExit(f"--phone-zone: {e}") from None
+        log(f"the phone's zone, as the examiner gives it: {phone_zone}")
     actions.stipulate_device_owner(conn, f"dev:{SOURCE_ID}", OWNER, ACTOR)
     others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - {OWNER})
     linked = {}
@@ -204,7 +221,106 @@ def machine() -> dict:
     return info
 
 
-def audit(out: Path, fake: bool, log) -> dict:  # noqa: ANN001
+# Dollars per million (input, output) tokens. A copy of eval/bench/claude_bench.py's table, which
+# the installer does not ship; tests/test_validation_run.py checks the two agree.
+PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+
+class Budgeted:
+    """A cloud model that counts its spend and stops once it passes a cap. The cap and the
+    out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
+    the answers stored so far are kept, and a resume picks up where it stopped."""
+
+    def __init__(self, model, max_usd: float | None, spent_usd: float = 0.0) -> None:  # noqa: ANN001
+        self._m = model
+        self.name, self.sha256 = model.name, model.sha256
+        self.params, self.where = model.params, getattr(model, "where", "cloud")
+        self.max_usd = max_usd
+        self.spent_usd = spent_usd
+        self.calls = self.input_tokens = self.output_tokens = 0
+        self._price = PRICES_PER_MTOK.get(model.name)
+
+    def request(self, prompt: str, schema):  # noqa: ANN001, ANN201
+        return self._m.request(prompt, schema)
+
+    def prepare(self) -> None:
+        prepare = getattr(self._m, "prepare", None)
+        if prepare is not None:
+            prepare()
+
+    def _count(self, out) -> None:  # noqa: ANN001
+        if out is None:
+            return
+        inp, outp = int(out.prompt_tokens or 0), int(out.completion_tokens or 0)
+        self.input_tokens += inp
+        self.output_tokens += outp
+        if self._price is not None:
+            self.spent_usd += (inp * self._price[0] + outp * self._price[1]) / 1_000_000
+
+    def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
+        from core.llm.cloud import CloudError
+
+        if self.max_usd is not None and self.spent_usd >= self.max_usd:
+            raise CloudError(
+                f"the run's spend cap of ${self.max_usd:.2f} is reached"
+                f" (${self.spent_usd:.2f} spent)",
+                sticky=True,
+            )
+        self.calls += 1
+        try:
+            out = self._m.generate_json(prompt, schema, params)
+        except CloudError as e:
+            self._count(getattr(e, "response", None))
+            raise
+        self._count(out)
+        return out
+
+    def usage(self) -> dict:
+        return {
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "spent_usd": round(self.spent_usd, 2),
+        }
+
+
+class _Pausing:
+    """The filler's model port: a sticky cloud failure pauses the audit (CloudPaused), as the
+    stance labeler's CloudPort does; any other failure is that one answer dropped."""
+
+    def __init__(self, model) -> None:  # noqa: ANN001
+        self._m = model
+        self.name, self.sha256 = model.name, model.sha256
+        self.params, self.where = model.params, getattr(model, "where", "cloud")
+
+    def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
+        from core.audit._llm_json import CloudPaused
+        from core.llm.cloud import CloudError
+
+        try:
+            return self._m.generate_json(prompt, schema, params)
+        except CloudError as e:
+            if e.sticky:
+                raise CloudPaused(f"the cloud model stopped answering ({e.reason})") from e
+            raise
+
+
+def cloud_components(conn, model):  # noqa: ANN001, ANN201
+    """The product's components with Claude filling assumptions and labeling stance."""
+    from core import pipeline
+    from core.audit import assumption_filler, stance
+    from core.audit._local_model import SentLog
+
+    filler = assumption_filler.create(conn, model=_Pausing(SentLog(model, conn)))
+    labeler = stance.create(conn, cloud_model=model)
+    return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
+
+
+def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
     from core import pipeline
 
     conn = connect(out / "case.db")
@@ -212,6 +328,8 @@ def audit(out: Path, fake: bool, log) -> dict:  # noqa: ANN001
         from eval.pipeline_fakes import fake_components
 
         comps = fake_components()
+    elif cloud_model is not None:
+        comps = cloud_components(conn, cloud_model)
     else:
         comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
     # The run 3 plan keeps the challenge step off (on by default since #162), so run 3 changes
@@ -219,7 +337,8 @@ def audit(out: Path, fake: bool, log) -> dict:  # noqa: ANN001
     comps.challenge = False
 
     def progress(done: int, total: int, d) -> None:  # noqa: ANN001
-        log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}")
+        spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
+        log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
 
     t = time.monotonic()
     result = pipeline.run_audit(conn, comps, progress=progress)
@@ -284,7 +403,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--claims-sha256", help="refuse a claims file with another hash")
     ap.add_argument("--report-sha256", help="refuse a package whose report.xml has another hash")
     ap.add_argument("--fake", action="store_true", help="stand-in components (tests only)")
+    ap.add_argument(
+        "--cloud",
+        metavar="MODEL",
+        help="Claude for assumption filling and stance (e.g. claude-opus-5-5); the key comes"
+        " from $MABILLON_ANTHROPIC_API_KEY",
+    )
+    ap.add_argument("--effort", default=None, help="the cloud model's effort (default: medium)")
+    ap.add_argument(
+        "--phone-zone",
+        help="the phone's zone, as the examiner gives it, for a package that records none",
+    )
+    ap.add_argument(
+        "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
+    )
     a = ap.parse_args(argv)
+    if a.cloud and a.max_usd is not None and a.cloud not in PRICES_PER_MTOK:
+        # Without a price the spend counter never moves, so the cap would never stop a call.
+        raise SystemExit(f"--max-usd: no price for {a.cloud}; add it to PRICES_PER_MTOK")
     a.out.mkdir(parents=True, exist_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 
@@ -319,6 +455,14 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 f"{a.out} was built from report.xml {was['report_xml_sha256']}; use a new --out"
             )
+        # The zone is given only when the case is built, so a resume never changes it.
+        zone_was = was.get("phone_zone", run.get("phone_zone_given"))
+        if (a.phone_zone or None) != (zone_was or None):
+            raise SystemExit(
+                f"--phone-zone: {a.out} was built with "
+                + (f"the zone {zone_was}" if zone_was else "no zone given")
+                + "; resume with the same --phone-zone, or use a new --out"
+            )
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -333,14 +477,45 @@ def main(argv: list[str] | None = None) -> int:
         if a.report_sha256 and report_sha != a.report_sha256:
             raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
         run["report_xml_sha256"] = report_sha
-        build(a.ufdr, claims, a.out, log)
-        inputs = {"claims_sha256": claims_sha, "report_xml_sha256": report_sha, "setup": SETUP}
+        build(a.ufdr, claims, a.out, log, a.phone_zone)
+        run["phone_zone_given"] = a.phone_zone
+        inputs = {
+            "claims_sha256": claims_sha,
+            "report_xml_sha256": report_sha,
+            "setup": SETUP,
+            "phone_zone": a.phone_zone,
+        }
         built.write_text(json.dumps(inputs), encoding="utf-8")
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing
 
+    cloud_model = None
+    if a.cloud and not a.fake:
+        from core.llm import cloud
+
+        cfg = cloud.load_config()
+        cfg = cloud.CloudConfig(
+            api_key=cfg.api_key, model=a.cloud, effort=a.effort or cloud.DEFAULT_EFFORT
+        )
+        spent_before = float(run.get("cloud", {}).get("spent_usd", 0.0))
+        cloud_model = Budgeted(cloud.ClaudeModel(cfg), a.max_usd, spent_before)
+        run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": ["assumptions", "stance"]}
     try:
-        run["audit"] = audit(a.out, a.fake, log)
+        try:
+            run["audit"] = audit(a.out, a.fake, log, cloud_model)
+        finally:
+            if cloud_model is not None:
+                total = run.setdefault("cloud", {"sessions": []})
+                total["sessions"].append(cloud_model.usage())
+                total["spent_usd"] = round(cloud_model.spent_usd, 2)
+                run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+                log(f"cloud spend so far: ${cloud_model.spent_usd:.2f}")
+    except CloudPaused as e:
+        log(f"paused: {e}")
+        plog.close()
+        print(f"paused: {e}. Run the same command again to resume.")
+        return 3
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"

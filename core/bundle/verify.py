@@ -1606,6 +1606,7 @@ _REPAIR_INPUTS = frozenset(
         "stipulation.confirm",
         "stipulation.withdraw",
         "device.names",
+        "device.timezone",  # the filler reads a phone's time ranges in the expert's zone
         "account.names",  # the filler reads a claim's number by the expert's names for it
         "case.import",
         "import",

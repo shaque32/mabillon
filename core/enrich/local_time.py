@@ -10,7 +10,7 @@ import sqlite3
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from core.zones import resolve_zone
+from core.zones import device_zones, resolve_zone
 
 
 def parse_utc(value: str | None) -> datetime | None:
@@ -25,11 +25,11 @@ def parse_utc(value: str | None) -> datetime | None:
 def device_zone(conn: sqlite3.Connection, device_id: str | None) -> ZoneInfo | None:
     if device_id is None:
         return None
-    row = conn.execute("SELECT timezone FROM devices WHERE id = ?", (device_id,)).fetchone()
-    if row is None or not row[0]:
+    tz = device_zones(conn).get(device_id)
+    if not tz:
         return None
     try:
-        return ZoneInfo(resolve_zone(row[0]))
+        return ZoneInfo(resolve_zone(tz))
     except (ZoneInfoNotFoundError, ValueError):
         return None
 
