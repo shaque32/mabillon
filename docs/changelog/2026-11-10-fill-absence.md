@@ -35,7 +35,10 @@
   - Android 12 practice phone: one claim refused before is now tested, inconclusive (unknown
     fidelity).
   - No other claim on either phone changed.
-  - `make check` results are in the branch report.
+  - `make check` passed on 2026-11-10, in the agent's cloud container: 4129 tests passed and
+    7 skipped. case01 model-free: accuracy 1.00, false-supported 0. The hostile run passed. The
+    case02 aggregate accuracy was 0.90, false-supported 0. Every eval number matches the base
+    commit 7f1cc67.
 - Open: The phone's side is a person id (the owner), so the text names that person where the
   claim names the phone. What is searched is the same. A contract field for "this phone's own
   accounts" would remove this, and is proposed in `proposed/absence.md` with three rulings: an
