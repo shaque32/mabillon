@@ -226,14 +226,16 @@ def stored_output_lookup(
     prompt file, output schema and settings. Outputs of failed calls ('error') never count.
     Unusable output ('invalid_output', 'quote_failed') is reused and fails the same way, as a
     seeded local model would answer the same again; with reuse_unusable=False (the cloud model,
-    which may answer differently) it is asked again instead."""
+    which may answer differently) it is asked again instead. The one exception is an answer that
+    quoted nothing ('"quote": ""', an irrelevant label): there was no quote to get wrong, so it is
+    reused, and resuming a paused cloud case does not pay again for every irrelevant label."""
     key = _reuse_key(run.params)
-    skip = ("error",) * 3 if reuse_unusable else ("error", "invalid_output", "quote_failed")
+    skip = ("error",) * 3 if reuse_unusable else ("error", "invalid_output", "error")
 
     def lookup(prompt: str) -> str | None:
         try:
             rows = conn.execute(
-                "SELECT mc.raw_output, mr.params_json FROM model_calls mc"
+                "SELECT mc.raw_output, mr.params_json, mc.outcome FROM model_calls mc"
                 " JOIN model_runs mr ON mr.id = mc.model_run_id"
                 " WHERE mr.purpose = ? AND mr.model_sha256 = ? AND mr.prompt_sha256 = ?"
                 " AND mc.prompt = ? AND mc.outcome NOT IN (?, ?, ?)"
@@ -242,12 +244,23 @@ def stored_output_lookup(
             ).fetchall()
         except db.OperationalError:  # schema without model_calls (pre-v0.2)
             return None
-        for raw, params_json in rows:
+        for raw, params_json, outcome in rows:
+            if outcome == "quote_failed" and not reuse_unusable and not _quoted_nothing(raw):
+                continue
             if _reuse_key(json.loads(params_json)) == key:
                 return raw
         return None
 
     return lookup
+
+
+def _quoted_nothing(raw: str) -> bool:
+    """True when the stored answer is a JSON object whose quote is the empty string."""
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        return False
+    return isinstance(obj, dict) and obj.get("quote") == ""
 
 
 def next_call_seq(conn: sqlite3.Connection, run_id: str) -> int:

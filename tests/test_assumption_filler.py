@@ -676,8 +676,9 @@ def test_stated_windows_read_times_of_day(text, raw, start, end):
         "between 11 and 1 p.m. on May 2, 2026",  # the bare hour cannot take p.m.
         "between 10 p.m. and midnight on May 2, 2026",
         "between 11 p.m. and 1 a.m. on May 2, 2026",  # crosses midnight
-        "between about 9 and 11 p.m. on May 2, 2026",
-        "between 9 p.m. and about 11 p.m. on May 2, 2026",
+        # "about" a range's end is read (tests/test_fill_windows.py); "roughly" is not
+        "between roughly 9 and 11 p.m. on May 2, 2026",
+        "between 9 p.m. and roughly 11 p.m. on May 2, 2026",
         "between 9 and 11 on May 2, 2026",  # no a.m. or p.m.
         "at 21:00 on May 2, 2026",
     ],
@@ -1868,6 +1869,50 @@ def test_a_call_on_no_app_to_a_number_is_searched_in_the_call_log(call_log):
     assert t.channels == ("call", "unknown") and t.device_ids == ("dev:item1",)
 
 
+@pytest.mark.parametrize("app", ["call", "Call", "calls"])
+def test_a_number_the_model_puts_on_the_call_channel_is_read_in_the_call_log(call_log, app):
+    # A model that writes the channel ("call") as the account's app means the call log, when
+    # the claim names no app (R1): seen on the iOS 15 rerun, 2026-11-10.
+    text = (
+        "On March 12, 2026, at approximately 9:00 p.m., dev:item1 placed an outgoing telephone"
+        " call to (212) 555-0199."
+    )
+    prop = {"template_id": "record_time", "channels": ["call"],
+            "accounts": [{"as_written": "(212) 555-0199", "app": app}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.COMMUNICATION, [prop])
+    (t,) = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert t.account_ids == ("acct:t:log1", "acct:t:log2"), filler.drops
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "On March 12, 2026, PETROV had no contact with (212) 555-0199 on dev:item1.",
+        "On March 12, 2026, there were no calls between dev:item1 and (212) 555-0199.",
+    ],
+)
+def test_the_call_channel_as_an_app_is_never_the_call_log_for_an_absence(call_log, text):
+    # Read on the call log alone, an absence would miss texts with the number (Greptile on #253).
+    window = W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00")
+    prop = {"template_id": "no_contact", "phones": ["dev:item1"], "window": window,
+            "accounts": [{"as_written": "(212) 555-0199", "app": "call"}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.ABSENCE, [prop])
+    made = [a.params for a in assumptions if a.template_id == "no_contact"]
+    assert not any(set(p.account_ids) & {"acct:t:log1", "acct:t:log2"} for p in made), made
+
+
+def test_the_call_channel_as_an_app_is_not_the_call_log_when_the_claim_names_an_app(call_log):
+    text = (
+        "On March 12, 2026, at approximately 9:00 p.m., dev:item1 had a Telegram call with"
+        " (212) 555-0199."
+    )
+    prop = {"template_id": "record_time", "channels": ["call"],
+            "accounts": [{"as_written": "(212) 555-0199", "app": "call"}]}  # fmt: skip
+    assumptions, filler = build_text(call_log, text, ClaimType.COMMUNICATION, [prop])
+    made = [a.params for a in assumptions if a.template_id == "record_time"]
+    assert not any(set(p.account_ids) & {"acct:t:log1", "acct:t:log2"} for p in made), made
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -2770,13 +2815,31 @@ def test_a_direction_is_not_read_past_a_limit_before_the_clause(conn, text, valu
     [
         "On March 21, 2026, a Saturday, on dev:item1, PETROV sent REYES exactly one Telegram"
         " message.",
-        "On the morning of March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
+        "On Saturday, March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
         " message.",
     ],
 )
 def test_a_date_and_phone_before_the_clause_are_plain(conn, text):
     made, filler = _count(conn, text, 1, phones=["dev:item1"])
     assert any(a.params.sent_by == (PETROV,) for a in made), filler.drops
+
+
+def test_a_part_of_the_day_is_not_counted_over_the_whole_day(conn):
+    # "the morning of" narrows the day; a count over the whole of March 21 would test less.
+    text = (
+        "On the morning of March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
+        " message."
+    )
+    made, filler = _count(conn, text, 1, phones=["dev:item1"])
+    assert made == [], [a.params for a in made]
+    # nor when the model copies only the bare date the claim also writes (Greptile on #253)
+    bare = W("March 21, 2026", "2026-03-21T00:00", "2026-03-22T00:00")
+    prop = P("message_count", count={"value": 1}, people=["PETROV", "REYES"],
+             channels=["Telegram"], phones=["dev:item1"], window=bare)  # fmt: skip
+    assumptions, filler = build_text(conn, text, ClaimType.COUNT, [prop])
+    made = [a for a in assumptions if a.template_id == "message_count"]
+    assert made == [], [a.params for a in made]
+    assert any("part code does not read" in d.reason for d in filler.drops), filler.drops
 
 
 @pytest.mark.parametrize("phrase", ["with each other", "with one another"])

@@ -32,6 +32,8 @@ def _measures(**changed: object) -> dict:
     t = {
         "prompt": "signed",
         "cap": 2,
+        "sheet_testable_claims": 20,
+        "ending_with_sheet_matching_assumptions": 10,
         "claims_the_filler_left_untested": 20,
         "of_them_the_sheet_makes_testable": 16,
         "converted_and_accepted": 8,
@@ -62,19 +64,46 @@ def test_every_bar_held_is_a_go():
     r = _decide(_measures())
     assert r["decision"] == "GO" and r["why"] == []
     assert len(r["checks"]) == 7 and all(c["ok"] for c in r["checks"])
-    (conv,) = [c for c in r["checks"] if c["bar"].startswith("conversion")]
-    assert conv["value"] == "8 of 16 (50%, Wilson 95% 28% to 72%)"
+    (cov,) = [c for c in r["checks"] if c["bar"].startswith("at least 40% of the claims")]
+    assert cov["bar"].endswith("end with assumptions that match it, both passes together")
+    assert cov["value"] == (
+        "10 of 20 (50%, Wilson 95% 30% to 70%); the step converted 8 of the 16 it worked on"
+        " that the sheet makes testable, for information"
+    )
 
 
-def test_conversion_exactly_at_x_passes():
-    r = _decide(_measures(converted_and_accepted=6, of_them_the_sheet_makes_testable=15))
-    assert r["decision"] == "GO"  # 6 of 15 is 40%
+def test_coverage_exactly_at_x_passes():
+    r = _decide(_measures(ending_with_sheet_matching_assumptions=8))
+    assert r["decision"] == "GO"  # 8 of 20 is 40%
+
+
+def test_the_step_s_own_share_is_shown_beside_the_bar_not_scored():
+    """Arsh, 2026-11-08 (decision card): both passes together. A stronger first pass leaves the
+    step fewer, harder claims, so its own share below X is no longer a no-go."""
+    r = _decide(_measures(converted_and_accepted=1))
+    assert r["decision"] == "GO"
+    assert "the step converted 1 of the 16" in r["checks"][0]["value"]
+
+
+def test_a_first_pass_that_leaves_the_step_nothing_still_gets_a_decision():
+    t = _measures(
+        claims_the_filler_left_untested=0,
+        of_them_the_sheet_makes_testable=0,
+        converted_and_accepted=0,
+        tries=0,
+        seconds=0.0,
+    )
+    r = _decide(t, fs=0)
+    (cov, *_) = r["checks"]
+    assert cov["value"].endswith("the first pass left the step no claim the sheet makes testable")
+    calls = [c for c in r["checks"] if "calls per claim" in c["bar"]]
+    assert calls and calls[0]["ok"]
 
 
 @pytest.mark.parametrize(
     ("changed", "fs", "repeat", "bar"),
     [
-        ({"converted_and_accepted": 5}, 0, SAME, "conversion at least 40%"),
+        ({"ending_with_sheet_matching_assumptions": 7}, 0, SAME, "at least 40% of the claims"),
         ({"mismatch_person_phone_or_window": 1}, 0, SAME, "no try names a different person"),
         ({}, 1, SAME, "0 false supported on the claims the agent changed"),
         ({"invalid_outputs": 1}, 0, SAME, "100% valid outputs"),
@@ -95,10 +124,12 @@ def test_a_repeat_that_differs_says_what_differs():
     assert rep["value"] == "different (model_calls), 50 filler and step calls compared"
 
 
-def test_too_few_testable_refusals_is_insufficient_not_a_decision():
-    r = _decide(_measures(of_them_the_sheet_makes_testable=14, converted_and_accepted=14))
+def test_too_few_testable_claims_is_insufficient_not_a_decision():
+    r = _decide(_measures(sheet_testable_claims=14, ending_with_sheet_matching_assumptions=14))
     assert r["decision"] == "insufficient" and r["checks"] == []
-    assert "14 refusals the sheet makes testable, fewer than the 15" in r["why"][0]
+    assert "14 claims the sheet makes testable, fewer than the 15" in r["why"][0]
+    # the step's own denominator no longer decides it
+    assert _decide(_measures(of_them_the_sheet_makes_testable=3))["decision"] == "GO"
 
 
 def test_no_decision_until_arsh_sets_the_values_and_the_run_can_measure_every_bar():

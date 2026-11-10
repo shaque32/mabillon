@@ -20,7 +20,7 @@ sets no cookies. It is not part of the Mabillon app and makes no call from `core
    Project name `mabillon-demo-form`. Root directory `workers/demo-form`. Leave the build
    command empty; the deploy command stays `npx wrangler deploy`. Deploy.
 2. The Worker > Settings > Variables and secrets > Add > type Secret, name `NOTIFY_TO`, value
-   the inbox that support@getmabillon.com forwards to. Deploy.
+   `team@getmabillon.com` (the Google Workspace inbox; it must be a verified destination in Email Routing). Deploy.
 3. The Worker > Settings > Domains & Routes should list `forms.getmabillon.com` (from
    `wrangler.toml`). If it does not, add it as a custom domain there.
 4. Test: submit the form on getmabillon.com/demo.html. The email arrives from

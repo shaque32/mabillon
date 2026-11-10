@@ -129,6 +129,7 @@ NEEDS_NO_JOB: dict[str, tuple[str, ...]] = {
     "/stipulate": ("audit",),
     "/stipulation/withdraw": ("audit",),
     "/device/names": ("audit",),
+    "/device/zone": ("audit",),
     "/person/add": ("audit",),
     "/person/remove": ("audit",),
     "/person/aliases": ("audit",),
@@ -734,6 +735,7 @@ class App:
             "/stipulate": lambda: self._stipulate(conn, f),  # type: ignore[arg-type]
             "/stipulation/withdraw": lambda: self._withdraw(conn, f),  # type: ignore[arg-type]
             "/device/names": lambda: self._name_device(conn, f),  # type: ignore[arg-type]
+            "/device/zone": lambda: self._set_zone(conn, f),  # type: ignore[arg-type]
             "/person/add": lambda: self._add_person(conn, f),  # type: ignore[arg-type]
             "/person/remove": lambda: self._remove_person(conn, f),  # type: ignore[arg-type]
             "/person/aliases": lambda: self._set_aliases(conn, f),  # type: ignore[arg-type]
@@ -1036,6 +1038,14 @@ class App:
             return "Names cleared." + _applies(conn, " Run the audit again to apply it.")
         return f"Saved {', '.join(kept)}." + _applies(
             conn, " Run the audit again so claims that name it are tested."
+        )
+
+    def _set_zone(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
+        zone = actions.set_device_zone(conn, f.get("device", ""), f.get("zone", ""), self.actor)
+        if zone is None:
+            return "Time zone cleared." + _applies(conn, " Run the audit again to apply it.")
+        return f"Saved {zone}." + _applies(
+            conn, " Run the audit again so time ranges on this phone are read in it."
         )
 
     def _stipulate(self, conn: sqlite3.Connection, f: dict[str, str]) -> str:
