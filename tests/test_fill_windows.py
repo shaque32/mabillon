@@ -481,6 +481,16 @@ def test_the_time_of_a_planned_meeting_is_not_when_the_messages_were_sent(conn, 
     assert local(w)[0].date() == D(2025, 10, 28).date(), local(w)
 
 
+def test_a_planned_meeting_is_no_event_window_but_a_meeting_that_happened_is(conn):
+    words = "7 p.m. on Thursday, October 30, 2025"
+    with pytest.raises(Reject, match="time of another act"):
+        model_window(conn, MEET, W(words, "2025-10-30T18:52", "2025-10-30T19:09"), "event")
+    held = "PETROV and REYES attended a meeting on Thursday, October 30, 2025."
+    model_window(
+        conn, held, W("Thursday, October 30, 2025", "2025-10-30T00:00", "2025-10-31T00:00"), "event"
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "words"),
     [

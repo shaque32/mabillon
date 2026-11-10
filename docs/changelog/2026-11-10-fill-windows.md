@@ -37,7 +37,9 @@
     refused; for record_time, message_count and no_contact, model words that follow "meet",
     "meeting", or "arranged", "planned", "scheduled", "set" or "agreed" ... "for", "at" or "on"
     (not across a comma) are the time of another act and are refused (`time_of_another_act`),
-    so code reads the claim's own range or refuses.
+    so code reads the claim's own range or refuses. An event's window is refused on the cues
+    of a plan only ("to meet", "would meet", "arranged", "planned", "scheduled", "set",
+    "agreed"): "attended a meeting on June 2" keeps the meeting's own time.
 - Where: PR #255
 - Verified: new `tests/test_fill_windows.py` (67 tests, synthetic case01), covering:
     - the bounds of every approximate form, at their boundary instants, for record_time,

@@ -1340,17 +1340,26 @@ _OTHER_ACT_BEFORE_RE = re.compile(
     r"(?:\s+[^\s,.;:]+){0,6}?\s+(?:for|at|on)\s*$",
     re.IGNORECASE,
 )
+# For an event, only words that make the time a plan: "agreed to meet at 7 p.m." states no
+# meeting that happened, while "attended a meeting on June 2" states the meeting's own time.
+_PLANNED_ACT_BEFORE_RE = re.compile(
+    r"\b(?:(?:to|would|will)\s+meet|arranged|planned|scheduled|set|agreed)\b"
+    r"(?:\s+[^\s,.;:]+){0,6}?\s+(?:for|at|on)\s*$",
+    re.IGNORECASE,
+)
 
 
-def time_of_another_act(as_written: str, claim: str) -> bool:
+def time_of_another_act(as_written: str, claim: str, *, planned_only: bool = False) -> bool:
     """True when the model's words, wherever the claim writes them outside quoted words, follow
     a cue that makes them the time of another act ("to meet at 7 p.m. on Thursday, October 30,
-    2025"): the time a meeting was set for is not when the messages that set it were sent."""
+    2025"): the time a meeting was set for is not when the messages that set it were sent.
+    `planned_only` (for an event) takes only the cues of a plan, never a plain "meeting on"."""
     words = _flat(_nfc(as_written.strip()))
     plain = _unquoted(_flat(_nfc(claim)))
+    cue = _PLANNED_ACT_BEFORE_RE if planned_only else _OTHER_ACT_BEFORE_RE
     i = plain.find(words) if words else -1
     while i >= 0:
-        if _OTHER_ACT_BEFORE_RE.search(plain[:i]):
+        if cue.search(plain[:i]):
             return True
         i = plain.find(words, i + 1)
     return False
@@ -5249,8 +5258,8 @@ class LocalAssumptionFiller:
             # 2:22 p.m.", "10:00 a.m." from "after 10:00 a.m.", or words only in quotes: the
             # model's words are not the claim's range, so `_stated` reads the claim instead.
             raise Reject("the window's words are cut from a longer range the claim writes")
-        if template_id in ("record_time", "message_count", "no_contact") and time_of_another_act(
-            w.as_written, claim_text
+        if template_id in ("record_time", "message_count", "no_contact", "event") and (
+            time_of_another_act(w.as_written, claim_text, planned_only=template_id == "event")
         ):
             # "arranged by text to meet at 7 p.m. on Thursday, October 30, 2025": the meeting's
             # time, not when the texts were sent, so `_stated` reads the claim instead.
