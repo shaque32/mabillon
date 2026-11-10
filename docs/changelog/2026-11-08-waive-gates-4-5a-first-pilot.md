@@ -13,8 +13,9 @@
 - Verified: docs only; `make check` run on this branch.
 - Open: the separate author and forwarder fields, the second embedded level and the Reader-count
   comparison are still not done; nothing may say the UFDR import is checked against Cellebrite
-  Reader's own counts. Arsh also decided on 2026-11-07 that the first pilot waits for plan C (the
-  hosted model), which adds plan C steps outside this file's gate list.
+  Reader's own counts. Arsh also decided that the first pilot waits for the cloud model path
+  (on 2026-11-09 changed to Opus on Mabillon's zero-retention Anthropic account), which adds
+  steps outside this file's gate list.
 - Affects: customer-facing claims (pilot readiness); no capability, privacy or performance change.
 - Status doc: pending: section 11, after the gate count sentence ("N of 19 met (...)"), add "Gates 4 and 5a are waived for
   the first pilot (Arsh, 2026-11-08); they stay not met, and the gates still open for the first
