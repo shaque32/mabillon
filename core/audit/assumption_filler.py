@@ -123,7 +123,14 @@ from core.audit._llm_json import (
     run_json_call,
 )
 from core.audit._local_model import LocalModel, open_run
-from core.audit.assumptions import TEMPLATES, Proposal, Template, local_window, parse_params
+from core.audit.assumptions import (
+    CODE_ONLY_TEMPLATES,
+    TEMPLATES,
+    Proposal,
+    Template,
+    local_window,
+    parse_params,
+)
 from core.audit.checks._common import (
     CALL_CHANNEL,
     NOT_COPY,
@@ -169,9 +176,18 @@ MAX_PROPOSALS = 8
 #      evening of", "late on") is not read, instead of being widened to the whole day; a
 #      number the model writes on the call channel ("call") as its app is read in the call log
 #      on ruling R1's terms.
-FILLER_VERSION = "6"
+#   7: the fills found on the hosted-model practice runs of 2026-11-10: a phone named as a
+#      party of a no-contact claim is its exact owner's accounts; code adds who placed a call
+#      (template `caller`) for the plain call forms; a text message's number on no app is read
+#      on the phone's one messaging app, and bare digits match a WhatsApp id; a message cue
+#      takes "wrote to X on <app>"; approximate ranges, whole months and timed open ranges
+#      are read by code, and a claim dated only by a month or a year needs a window;
+#      "exchanged messages" proposed as an event is read as an each-way count, and a phone
+#      can be a side of a count.
+FILLER_VERSION = "7"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
+_DAY = timedelta(days=1)
 
 # What each template means, for the prompt. Every template in TEMPLATES must have one.
 TEMPLATE_HELP: dict[str, str] = {
@@ -200,6 +216,8 @@ TEMPLATE_HELP: dict[str, str] = {
     "person_identity": "an account or handle belongs to a person. Needs people.",
     "role": "a person played the role the claim states (directed, chose, led). Needs people.",
     "event": "an event the claim states happened (a seizure, a meeting, a delivery).",
+    # code-only (CODE_ONLY_TEMPLATES): never in a prompt
+    "caller": "who placed one call, read by code from the claim's plain words.",
 }
 
 # The template a claim of each type must keep, or the claim gets no assumptions.
@@ -258,6 +276,11 @@ WHOLE_APP_TEMPLATES = frozenset({"message_count", "no_contact"})
 NATIVE_CALL_APP = "unknown"
 # The call channel's own words, which a model may write as an account's app.
 _CALL_CHANNEL_WORDS = frozenset({"call", "calls"})
+# Words that make a claim about a phone's own text message ("sent ... a text message", "texted"),
+# for reading a number written on no app. "text" alone is left out: "the text of the message".
+_TEXT_MESSAGE_RE = re.compile(r"\b(?:sms|mms|text[\s-]?messages?|texted|texting)\b", re.I)
+# The words a model may write as an account's app for a phone's text messages.
+_TEXT_CHANNEL_WORDS = frozenset({NATIVE_CALL_APP, *CHANNEL_WORDS["sms"], "text messages"})
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -541,9 +564,13 @@ _NUM_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _YEAR_RE = re.compile(r"\b(19\d\d|20\d\d)\b")
 _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])", re.IGNORECASE)
 _TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:a\.?m|p\.?m))", re.IGNORECASE)
-# "between 9 and 11 p.m.": the bare first hour takes the second time's a.m. or p.m.
+# The words code reads as "about" a time: 8 minutes either side (ABOUT_MINUTES).
+_ABOUT_W = r"(?:about|approximately|around)"
+# "between 9 and 11 p.m.": the bare first hour takes the second time's a.m. or p.m. So does
+# "between approximately 2:06 and 2:22 p.m." and "between 2:06 and about 2:22 p.m."
 _BARE_HOUR_RE = re.compile(
-    r"\b(?:between|from)\s+(\d{1,2})(?::(\d{2}))?\s*(?:and|to|until|till|through|thru|-|–)\s*$",
+    rf"\b(?:between|from)\s+(?:{_ABOUT_W}\s+)?(\d{{1,2}})(?::(\d{{2}}))?\s*"
+    rf"(?:and|to|until|till|through|thru|-|–)\s*(?:{_ABOUT_W}\s+)?$",
     re.IGNORECASE,
 )
 
@@ -771,17 +798,22 @@ def date_mentions(text: str) -> list[_DateMention]:
 
 def time_mentions(text: str) -> list[time]:
     out: list[time] = []
+    taken: set[int] = set()  # where a bare first hour was read, never also as 24-hour time
     for m in _TIME_RE.finditer(text):
         t = _clock(m.group(1), m.group(2), m.group(3))
         if t is None:
             continue
-        bare = _BARE_HOUR_RE.search(text[max(0, m.start() - 16) : m.start()])
+        lead = max(0, m.start() - 40)
+        bare = _BARE_HOUR_RE.search(text[lead : m.start()])
         if bare is not None:
             first = _clock(bare.group(1), bare.group(2), m.group(3))
             if first is not None and first < t:
                 out.append(first)
+                taken.add(lead + bare.start(1))
         out.append(t)
     for m in _TIME24_RE.finditer(text):
+        if m.start() in taken:
+            continue  # "between approximately 2:06 and 2:22 p.m.": 2:06 p.m., not 02:06
         out.append(time(int(m.group(1)), int(m.group(2))))
     if _has_word(text, "midnight"):
         out.append(time(0, 0))
@@ -811,10 +843,12 @@ def _clock_re(p: str, ap_optional: bool = False) -> str:
     )
 
 
-# "between 9 and 11 p.m.", "from 9 p.m. to 11 p.m.", "between noon and 2 p.m."
+# "between 9 and 11 p.m.", "from 9 p.m. to 11 p.m.", "between noon and 2 p.m.". "about" (or
+# "approximately", "around") right after "between" or "from" makes both ends approximate,
+# right before the second time only that end: `_range_approx`.
 _RANGE_TIME = (
-    rf"\b(?:between|from)\s+{_clock_re('a', ap_optional=True)}\s*"
-    rf"(?:and|to|until|till|through|thru|-|–)\s*{_clock_re('b')}"
+    rf"\b(?:between|from)\s+(?P<aab>{_ABOUT_W}\s+)?{_clock_re('a', ap_optional=True)}\s*"
+    rf"(?:and|to|until|till|through|thru|-|–)\s*(?P<bab>{_ABOUT_W}\s+)?{_clock_re('b')}"
 )
 _RANGE_TIME_RE = re.compile(_RANGE_TIME, re.IGNORECASE)
 
@@ -848,6 +882,18 @@ def _unquoted(text: str) -> str:
     """The text with quoted words blanked out, same length, so a time in a quoted message
     ("meet me at noon") is not read as when something happened."""
     return _QUOTE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _names_unquoted(text: str, names: Iterable[str]) -> str:
+    """The text with the quotation marks around a party's name blanked and the name kept
+    ('the GroupMe user "DFIR Two"'), same length. Any other quoted span is kept whole."""
+    want = {_nfc(n).strip().casefold() for n in names if n and n.strip()}
+
+    def name(m: re.Match[str]) -> str:
+        inner = m.group(0)[1:-1]
+        return f" {inner} " if _nfc(inner).strip().casefold() in want else m.group(0)
+
+    return _QUOTE_SPAN_RE.sub(name, text)
 
 
 _QUOTE_MARKS = "\"“”‘’'"
@@ -974,6 +1020,80 @@ def _near_a_stated_instant(
     return False
 
 
+# A month, or a run of months, with its year: "in May 2023", "In April and May 2023",
+# "during April through June 2023". Only after "in", "during" or "throughout" (or at the
+# start), so "early May 2023", "before May 2023", "between April and June 2023" and a day
+# first ("1 May 2023") are not read as whole months.
+_MONTH_RUN_RE = re.compile(
+    rf"(?:^|\b(?:in|during|throughout)\s+)(?:the\s+months?\s+of\s+)?"
+    rf"(?P<run>(?:{_MONTH_RE})\.?(?:\s*(?:,\s*and|,|and|through|thru|to|-|–)\s*(?:{_MONTH_RE})\.?)*)"
+    r"\s*,?\s+(?P<y>(?:19|20)\d\d)\b(?!\s*[-–/]\s*\d)",
+    re.IGNORECASE,
+)
+_MONTH_JOIN_RE = re.compile(r"\s*(,\s*and|,|and|through|thru|to|-|–)\s*", re.IGNORECASE)
+# "in 2023", "during 2023": the whole year
+_YEAR_RUN_RE = re.compile(
+    r"(?:^|\b(?:in|during|throughout)\s+)(?:the\s+year\s+)?(?P<y>(?:19|20)\d\d)\b(?!\s*[-–/]\s*\d)",
+    re.IGNORECASE,
+)
+# Any month with a year, or a year after "in", "during" or "throughout", that is not part of a
+# date code reads: the claim is dated by it, so some time range must test it (coverage_gap).
+_MONTH_YEAR_RE = re.compile(rf"\b(?:{_MONTH_RE})\.?\s*,?\s+(?:19|20)\d\d\b", re.IGNORECASE)
+
+
+def months_stated(text: str) -> tuple[datetime, datetime] | None:
+    """The whole months (or year) the text states as one run, wall clock, end exclusive:
+    "In April and May 2023" is April 1, 2023 to June 1, 2023; "in 2023" is all of 2023. None
+    when the text states a date, a time of day, a part of a month, an open or offset range,
+    months that leave a gap ("April and June 2023") or "or", or no month or year this way."""
+    plain = _unquoted(text)
+    if date_mentions(plain) or _ANY_TIME_RE.search(plain) or _NUM_DATE_RE.search(plain):
+        return None
+    if _PART_OF_DAY_RE.search(plain) or _OPEN_WORDS_RE.search(plain):
+        return None
+    if re.search(r"\b(?:or|between|from|except|other\s+than)\b", plain, re.IGNORECASE):
+        return None
+    months: set[tuple[int, int]] = set()
+    runs = list(_MONTH_RUN_RE.finditer(plain))
+    for m in runs:
+        y = int(m.group("y"))
+        names = _MONTH_JOIN_RE.split(m.group("run"))
+        # names alternates month, joiner, month, ...
+        prev: int | None = None
+        joiner = ""
+        for part in names:
+            word = part.strip().rstrip(".").lower()
+            if word in _MONTHS:
+                mon = _MONTHS[word]
+                if prev is not None and joiner in ("through", "thru", "to", "-", "–"):
+                    if mon < prev:
+                        return None
+                    months.update((y, k) for k in range(prev, mon + 1))
+                else:
+                    months.add((y, mon))
+                prev = mon
+            else:
+                joiner = " ".join(word.split()).replace(", ", ",")
+    if not runs:
+        years = list(_YEAR_RUN_RE.finditer(plain))
+        if len(years) != 1 or _MONTH_YEAR_RE.search(plain):
+            return None
+        y = int(years[0].group("y"))
+        return datetime(y, 1, 1), datetime(y + 1, 1, 1)
+    if len(_MONTH_YEAR_RE.findall(plain)) != len(runs):
+        return None  # a month and year written another way beside the run
+    first, last = min(months), max(months)
+    run = []
+    y, mo = first
+    while (y, mo) <= last:
+        run.append((y, mo))
+        y, mo = (y + 1, 1) if mo == 12 else (y, mo + 1)
+    if set(run) != months:
+        return None  # "April and June 2023": May is not stated
+    after = (last[0] + 1, 1) if last[1] == 12 else (last[0], last[1] + 1)
+    return datetime(first[0], first[1], 1), datetime(after[0], after[1], 1)
+
+
 def check_window(
     start: datetime,
     end: datetime,
@@ -1022,6 +1142,27 @@ def check_window(
     # after" and "since" keep the day itself.
     if weekday_mismatch(as_written, years) or weekday_mismatch(claim, years):
         raise Reject("a weekday the document gives is not that date's weekday")
+    months = months_stated(as_written)
+    if months is not None and not times:
+        # "In April and May 2023" is April 1 to June 1: exactly the months the words state,
+        # never one of them (narrower, for a count or an absence) or a month between two
+        # stated ones (wider, for an event).
+        if (start, end) != months:
+            raise Reject("a range of whole months is the months the words state, first to last")
+        # "May 2023" copied from "In April and May 2023" is the claim's run cut short: the
+        # range is the whole run the claim writes around the words, never part of it.
+        words = _flat(_nfc(as_written.strip()))
+        plain_claim = _unquoted(_flat(_nfc(claim)))
+        at = plain_claim.find(words) if words else -1
+        while at >= 0:
+            for run in _MONTH_RUN_RE.finditer(plain_claim):
+                if run.start() < at + len(words) and at < run.end():
+                    if months_stated(run.group(0)) != months:
+                        raise Reject(
+                            "the words are cut from a longer run of months the claim states"
+                        )
+            at = plain_claim.find(words, at + 1)
+        return
     after = []
     for m in _DATE_RE.finditer(as_written):
         head = as_written[: m.start()]
@@ -1053,6 +1194,17 @@ def check_window(
     if not times and start.time() != time(0, 0):
         raise Reject("a range with no time of day must start at midnight")
 
+    if times and (open_start or open_end):
+        # "before 9 a.m. on May 7", "after 10:00 a.m. on May 7": one stated day, cut at the
+        # time (validation fill c). The open side ends at that day's midnight, never further:
+        # a model's end on May 20 would let a record on May 15 pass an event claim.
+        day = start.date()
+        if last.date() != day or not _date_stated(day, mentions, years):
+            raise Reject("an open range with a time of day stays on one stated day")
+        if open_start and not _near(start, times) and start.time() != time(0, 0):
+            raise Reject("an open start with a time of day is that day's midnight or a stated time")
+        if open_end and not _near(end, times) and end != datetime.combine(day, time(0)) + _DAY:
+            raise Reject("an open end with a time of day is that day's midnight or a stated time")
     if open_end:
         return
     if times:
@@ -1081,7 +1233,9 @@ _AT_TIME_RE = re.compile(
     rf"{_zone_opt('z')}{_TIED}",
     re.IGNORECASE,
 )
-_AT_RANGE_RE = re.compile(_RANGE_TIME + _zone_opt("z") + _TIED, re.IGNORECASE)
+# "approximately between 9 and 11 p.m.": both ends approximate (`_range_approx`)
+_PRE_ABOUT = rf"(?P<pre>\b{_ABOUT_W}\s+)?"
+_AT_RANGE_RE = re.compile(_PRE_ABOUT + _RANGE_TIME + _zone_opt("z") + _TIED, re.IGNORECASE)
 # the date first, then its time: "On April 30, 2023, at approximately 11:11 a.m. EDT"
 _THEN = r"^\s*,?\s*"
 _THEN_TIME_RE = re.compile(
@@ -1089,7 +1243,16 @@ _THEN_TIME_RE = re.compile(
     rf"{_zone_opt('z')}",
     re.IGNORECASE,
 )
-_THEN_RANGE_RE = re.compile(_THEN + _RANGE_TIME + _zone_opt("z"), re.IGNORECASE)
+_THEN_RANGE_RE = re.compile(_THEN + _PRE_ABOUT + _RANGE_TIME + _zone_opt("z"), re.IGNORECASE)
+
+
+def _range_approx(m: re.Match[str]) -> tuple[bool, bool]:
+    """Which ends of a range code read are approximate: both after "between about" (or
+    "approximately", "around") and "approximately between", the end alone after "and about"."""
+    both = bool(m.group("aab") or m.groupdict().get("pre"))
+    return both, both or bool(m.group("bab"))
+
+
 # a time with no a.m. or p.m. right after the date ("On May 2, 2026, between 9 and 11, ..."),
 # not a count ("between 10 and 12 messages")
 _THEN_LOOSE_RE = re.compile(
@@ -1138,6 +1301,103 @@ _OPEN_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 _JOIN_AHEAD_RE = re.compile(r"\s*(?:(?:and|to|until|till|through|thru)\b|[-–])", re.IGNORECASE)
+# Words that leave one end of a range open or set by something other than the words' own
+# times and dates: "before", "after 10:00 a.m.", "since", "beginning at", "by 9 p.m.", "from
+# May 1" with no end. A count or an absence on such a range is read by code (R5's extraction
+# edges, fill c's rest of the day), never from the model's choice of edge (`_window`).
+_OPEN_WORDS_RE = re.compile(
+    r"\b(?:before|prior\s+to|until|till|up\s+to|after|since|onwards?|thereafter|afterwards?|"
+    r"forward|later|earlier|starting|beginning|commencing|as\s+of|no\s+(?:later|earlier)\s+than)\b"
+    rf"|\bby\s+(?:{_ABOUT_W}\s+)?(?:\d|noon\b|midnight\b|(?:{_MONTH_RE})\b|(?:{_WD_RE})\b)"
+    r"|\bfrom\b(?!.*(?:\b(?:to|until|till|through|thru|and)\b|[-–]))",
+    re.IGNORECASE | re.DOTALL,
+)
+# The claim's words right around the model's that make them part of a longer range: an
+# "about" or an open word right before them ("at approximately" + "7:58 p.m.", "after" +
+# "10:00 a.m.", "between" + "2:06"), a time or date joined to them ("9 p.m. and" + "11 p.m."),
+# or right after them, a second end or an open end ("2:06" + " and 2:22 p.m.", " or later").
+_CUT_BEFORE_RE = re.compile(
+    r"(?:\b(?:about|approximately|around|roughly|nearly|almost|circa|approx\.?|after|before|since|until|"
+    r"till|by|from|between|starting|beginning|commencing|as\s+of|prior\s+to|up\s+to|"
+    r"no\s+(?:later|earlier)\s+than)"
+    r"|(?:\d|\b[ap]\.?m\.?|\bnoon|\bmidnight)\s*,?\s*(?:and|or|to|until|till|through|thru|-|–))"
+    r"\s*,?\s*(?:(?:at|on)\s+)?$",
+    re.IGNORECASE,
+)
+_CUT_AFTER_RE = re.compile(
+    r"^\s*,?\s*(?:(?:and|or|to|until|till|through|thru)\s+(?:(?:at|on)\s+)?"
+    rf"(?:{_ABOUT_W}\s+)?(?:\d|noon\b|midnight\b|(?:{_MONTH_RE})\b\.?\s*\d)|[-–]\s*\d|or\s+so\b)",
+    re.IGNORECASE,
+)
+
+
+# Words that make what follows the time of another act the claim names, not of its records:
+# "arranged by text to meet at 7 p.m. on Thursday, October 30", "planned for May 9", "a
+# meeting on June 2". Up to six words may sit between the cue and "for", "at" or "on", none
+# across a comma or a stop.
+_OTHER_ACT_BEFORE_RE = re.compile(
+    r"\b(?:meet|meeting|arranged|planned|scheduled|set|agreed)\b"
+    r"(?:\s+[^\s,.;:]+){0,6}?\s+(?:for|at|on)\s*$",
+    re.IGNORECASE,
+)
+# For an event, only words that make the time a plan: "agreed to meet at 7 p.m." states no
+# meeting that happened, while "attended a meeting on June 2" states the meeting's own time.
+_PLANNED_ACT_BEFORE_RE = re.compile(
+    r"\b(?:(?:to|would|will)\s+meet|arranged|planned|scheduled|set|agreed)\b"
+    r"(?:\s+[^\s,.;:]+){0,6}?\s+(?:for|at|on)\s*$",
+    re.IGNORECASE,
+)
+
+
+# The templates whose range is never the time of another act the claim names.
+_OTHER_ACT_TEMPLATES = ("record_time", "message_count", "no_contact", "event")
+
+
+def time_of_another_act(as_written: str, claim: str, *, planned_only: bool = False) -> bool:
+    """True when the model's words, wherever the claim writes them outside quoted words, follow
+    a cue that makes them the time of another act ("to meet at 7 p.m. on Thursday, October 30,
+    2025"): the time a meeting was set for is not when the messages that set it were sent.
+    `planned_only` (for an event) takes only the cues of a plan, never a plain "meeting on"."""
+    words = _flat(_nfc(as_written.strip()))
+    plain = _unquoted(_flat(_nfc(claim)))
+    cue = _PLANNED_ACT_BEFORE_RE if planned_only else _OTHER_ACT_BEFORE_RE
+    # Code's own stated range keeps its lead word ("at 7 p.m. on ..."), which is then the
+    # cue's last word.
+    lead = re.match(r"(?:for|at|on)\b", words, re.IGNORECASE)
+    tail = lead.group(0) if lead else ""
+    i = plain.find(words) if words else -1
+    while i >= 0:
+        if cue.search(plain[:i] + tail):
+            return True
+        i = plain.find(words, i + 1)
+    return False
+
+
+def cut_from_longer(as_written: str, claim: str) -> bool:
+    """True when the model's words, wherever the claim writes them, are cut from a longer range
+    the claim writes (`_CUT_BEFORE_RE`, `_CUT_AFTER_RE`, `_OPEN_TAIL_RE`, read outside quoted
+    words), or lie inside quoted words: code's reading of the words alone would then not be
+    the claim's range."""
+    words = _flat(_nfc(as_written.strip()))
+    text = _flat(_nfc(claim))
+    plain = _unquoted(text)
+    quotes = [m.span() for m in _QUOTE_SPAN_RE.finditer(text)]
+    i = text.find(words) if words else -1
+    if i < 0:
+        return True
+    while i >= 0:
+        j = i + len(words)
+        if any(a <= i and j <= b for a, b in quotes):
+            return True  # "meet me at 9 p.m. on May 9": the message's time, not the claim's
+        rest = plain[j:]
+        if (
+            _CUT_BEFORE_RE.search(plain[:i])
+            or _CUT_AFTER_RE.match(rest)
+            or _OPEN_TAIL_RE.match(rest)
+        ):
+            return True
+        i = text.find(words, i + 1)
+    return False
 
 
 @dataclass(frozen=True)
@@ -1149,6 +1409,10 @@ class StatedWindow:
     start: datetime
     end: datetime
     zone: str | None = None
+    # The wall-clock times the words state, when an approximate end widens past them: each
+    # must be one instant in the zone too, so "between about 2:05 and 2:55 a.m." on the night
+    # the clocks skip that hour is refused although its ends exist (`_zoned_window`).
+    stated: tuple[datetime, ...] = ()
 
 
 # Words that narrow a stated day to a part of it ("the early hours of", "the evening of"),
@@ -1176,8 +1440,12 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
       12:00. "midnight" is not read: it may be the start or the end of the day.
     - "Between 9 and 11 p.m. on May 2, 2026", "From 9 p.m. to 11 p.m. ..." or "On May 2, 2026,
       between 9 and 11 p.m.": 9:00 p.m. through the 11:00 p.m. minute. A bare first hour takes
-      the end's a.m. or p.m.; a range that would cross midnight, or carries "about", is not
-      read.
+      the end's a.m. or p.m.; a range whose stated times would cross midnight is not read.
+      An approximate end is 8 minutes wider, as "about" one time is: "between approximately
+      2:06 and 2:22 p.m." (or "approximately between ...") is 1:58 through 2:29 p.m., and
+      "between 2:06 and about 2:22 p.m." is 2:06 through 2:29 p.m. That is the words' own
+      reading under the signed "about" rule, so it is no wider than the claim for an event
+      and no narrower for a count or an absence.
     - A zone written right after the time ("11:11 a.m. EDT", "(ET)", "Eastern Time") is kept
       in `zone`, for the filler to check against the phone's zone.
     - Any time of day the text writes outside quoted words that no range above read (a
@@ -1245,12 +1513,18 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
                 start_i = m.start() - len(before) + lead.start()
         elif tied is not None:
             start_i = m.start() - len(before) + tied.start()
+        stated: tuple[datetime, ...] = ()
         if rng is not None:
             times = _time_range(rng)
             if times is None:
                 return None
-            start = datetime.combine(d1, times[0])
-            end = datetime.combine(d1, times[1]) + timedelta(minutes=1)  # through the end minute
+            # "between approximately 2:06 and 2:22 p.m." is 1:58 to 2:30 p.m.: each
+            # approximate end is 8 minutes wider, as "about 2:06 p.m." is; an exact end is its
+            # own minute.
+            about_start, about_end = _range_approx(rng)
+            stated = (datetime.combine(d1, times[0]), datetime.combine(d1, times[1]))
+            start = stated[0] - timedelta(minutes=ABOUT_MINUTES if about_start else 0)
+            end = stated[1] + timedelta(minutes=ABOUT_MINUTES if about_end else 1)
         elif at is not None:
             if then is None and _JOINED_RE.search(before[: at.start()]):
                 return None  # "about 9 p.m. and 11 p.m. on ...": a range not read as one
@@ -1258,6 +1532,7 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
             if tt is None:
                 return None
             t = datetime.combine(d1, tt)
+            stated = (t,)
             if at.group("about"):
                 start, end = (
                     t - timedelta(minutes=ABOUT_MINUTES),
@@ -1288,7 +1563,7 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
         if rng is None and not m.group(5) and _FROM_RE.search(before):
             return None  # "from January 9, 2026" with no end: not read
         read.append((start_i, end_i))
-        out.append(StatedWindow(text[start_i:end_i].strip(), start, end, zone))
+        out.append(StatedWindow(text[start_i:end_i].strip(), start, end, zone, stated))
     if _NUM_DATE_RE.search(text):
         return None  # numeric dates (3/12/2026) may be either order; never guess
     for t in _ANY_TIME_RE.finditer(plain):
@@ -1327,6 +1602,44 @@ _ONE_CALL_RE = re.compile(
     r"last|final|second|third|each|another|latest|earliest)\s+(?:[\w-]+\s+){0,2}(?:call|one)\b",
     re.IGNORECASE,
 )
+# One call's clause in the plain forms whose two sides code reads from the claim's words, with
+# each side a party token (`_party_tokens`): "<A> placed (or made) a call to <B>", "<A> called
+# <B>", "<A> received a call from <B>", "<A> missed a call from <B>", and "<A> had N calls with
+# <B>", which names no caller. Nothing else may sit in the clause: a word the forms do not hold
+# ("returned", "attempted", "answered", "connected", "back") leaves the caller unread.
+_TOKEN = "\x01\x03*\x02"
+_CALL_FORM_RE = re.compile(
+    rf"^(?P<lead>[^\x01]*?)(?:the\s+)?(?P<a>{_TOKEN})\s+(?:"
+    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call\s+to"
+    rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
+    rf"|(?P<called>called)"
+    rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
+    rf")\s+(?:the\s+)?(?P<b>{_TOKEN})(?P<tail>[^\x01]*)$",
+    re.IGNORECASE,
+)
+# What a call's noun phrase may hold besides the app's name: one article or ordinal, the
+# direction word its verb allows, and a word for a phone call.
+_CALL_ARTICLES = frozenset({"a", "an", "another"})
+_CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
+# A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
+_CALL_LENGTH_TAIL_RE = re.compile(
+    r"^\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+)
+
+
+@dataclass(frozen=True)
+class CallForm:
+    """A call's clause read by `LocalAssumptionFiller.call_form`: its two sides as party
+    tokens, which of them placed the call ('a', 'b' or None for "had calls with"), whether the
+    claim says the call was missed, and the length words after it, if any."""
+
+    a: tuple[str, str]  # (kind, value): ("phone", device), ("person", id) or ("acct", words)
+    b: tuple[str, str]
+    caller: str | None
+    missed: bool
+    length: str | None
+
+
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
 # the range's date and the case's app names (Codex on #169).
 _PLAIN_CONTACT_WORDS = frozenset(
@@ -1754,6 +2067,9 @@ _EXCHANGED_RE = re.compile(
 # Where a recipient is written: right after "sent" ("sent REYES three messages") or after
 # "to" ("sent three messages to REYES").
 _RECIPIENT_BEFORE_RE = re.compile(r"(?:^|\bto)\s*(?:the\s+)?$", re.IGNORECASE)
+# Where a phone stands as a side of an "exchanged" clause: at its start ("the TARGET PHONE
+# exchanged ..."), or after "with" or "and" ("X and the TARGET PHONE exchanged ...").
+_PHONE_SIDE_BEFORE_RE = re.compile(r"(?:^|\b(?:with|and))\s*(?:the\s+)?$", re.IGNORECASE)
 
 
 def _app_words(params: dict[str, Any]) -> set[str]:
@@ -2323,10 +2639,20 @@ _SAYING = (
 _NAMES_A_WRITER_RE = re.compile(
     rf"\b(?:(?!read\b|reads\b|reading\b)(?:{_SAYING})|from|by|via)\b", re.IGNORECASE
 )
+# After the verb, the one it went to may be written with "to", "the" or as a number, and the
+# app it went by after or before them ('wrote to SUBJECT-1 on WhatsApp "..."', 'texted
+# (212) 555-0199 by iMessage "..."', 'told REYES via Signal direct message "..."'). These words
+# only mark the quote as a message: no party or app is read from them here.
+_CUE_TO = rf"(?:\s+to)?\s+(?:(?:the\s+)?(?-i:{_RECIPIENT})|\+?\(?\d[\d\s().-]{{5,}}\d)"
+_CUE_BY = (
+    r"\s+(?:on|over|via|by|in|through|using)\s+(?:an?\s+|the\s+)?"
+    r"(?-i:(?:[A-Z]|i(?=[A-Z]))[\w'.-]*)(?:\s+(?-i:[A-Z][\w'.-]*))?"
+    r"(?:\s+(?:chat|messages?|direct\s+messages?|dms?|texts?|group|thread))?"
+)
 # A word for a message dated right before its quote is a cue too: 'the Wickr message of May 7,
 # 2023, "..."' (PAST-30 fill a).
 _MESSAGE_CUE_RE = re.compile(
-    rf"(?:\b(?:{_SAYING})(?:\s+(?-i:{_RECIPIENT}))?|\b{_QUOTE_NOUNS}"
+    rf"(?:\b(?:{_SAYING})(?:{_CUE_TO})?(?:{_CUE_BY})?(?:{_CUE_TO})?|\b{_QUOTE_NOUNS}"
     rf"(?:\s+of\s+(?:{_DATE_RE.pattern}))?|:)\s*,?\s*$",
     re.IGNORECASE,
 )
@@ -2356,6 +2682,8 @@ _CLAUSE_JOINER_RE = re.compile(
 # What may be a call's party whatever the case knows: a handle, an address, or a run of five
 # or more digits.
 _UNREAD_PARTY_RE = re.compile(r"@[\w.-]*\w|\S+@\S*\w|(?<![\w-])\+?\d[\d\s().-]{3,}\d(?![\w-])")
+# An address a no-contact claim may write as its other party: "kay@example.org".
+_ADDRESS_PARTY_RE = re.compile(r"(?<![\w.+@-])[\w.+-]*\w@\w[\w-]*(?:\.[\w-]*\w)+(?![\w@])")
 # Words that hand on what another wrote: 'REYES forwarded what PETROV posted: "ok"'.
 _PASSED_ON_RE = re.compile(
     r"\b(?:forward\w*|quot(?:e|ed|es|ing)|relay\w*|repost\w*|shared|screenshot\w*)\b",
@@ -2419,7 +2747,8 @@ def coverage_gap(
     or an account's name: 'sent 13 messages to the Telegram user "Marcus R"') quotes no
     message. A day the claim ties to one of `events` (the case's readable events,
     `event_windows`) is a stated date too: "The day after the RAID, PETROV wrote ..." is not
-    tested on its sender alone.
+    tested on its sender alone. So is a month or a year the claim writes outside quoted words
+    ("In April 2023", "during 2023").
     """
     kept = {p.template_id for p in proposals}
     needed = REQUIRED_TEMPLATES.get(claim.claim_type, frozenset())
@@ -2429,6 +2758,11 @@ def coverage_gap(
     raws = [w.raw for w in windows if w is not None]
     if date_mentions(claim.text) and not raws:
         return "the claim states a date but no assumption tests a time range"
+    bare = _unquoted(claim.text)
+    if not raws and (_MONTH_YEAR_RE.search(bare) or _YEAR_RUN_RE.search(bare)):
+        # "In April 2023, PETROV wrote ...": a month or a year dates the claim as a day does,
+        # so it is never judged on its sender alone.
+        return "the claim states a month or a year but no assumption tests a time range"
     if events and not raws and event_windows(claim.text, list(events)):
         return "the claim is dated by a defined event but no assumption tests a time range"
     if time_mentions(_unquoted(claim.text)) and not any(time_mentions(r) for r in raws):
@@ -2493,6 +2827,7 @@ class LocalAssumptionFiller:
 
     def __call__(self, claim: Claim, allowed: list[Template]) -> list[Proposal]:
         allowed_ids = {t.id for t in allowed}
+        offered = [t for t in allowed if t.id not in CODE_ONLY_TEMPLATES]  # the model's to fill
         run_id = model_run_id(self.model)
         if run_id is None:
             self._drop(claim, None, "model has no run id", None)
@@ -2506,12 +2841,12 @@ class LocalAssumptionFiller:
                 "paragraph": para or "(paragraph not available)",
                 "templates": "\n".join(
                     f"- {t.id}: {TEMPLATE_HELP.get(t.id, t.id)}"
-                    for t in sorted(allowed, key=lambda t: t.id)
+                    for t in sorted(offered, key=lambda t: t.id)
                 ),
                 "channels": ", ".join(channels),
             },
         )
-        schema = fill_schema(allowed_ids, channels)
+        schema = fill_schema({t.id for t in offered}, channels)
         try:
             items, call = run_json_call(
                 self.model, self.recorder, run_id, (claim.id,), prompt, schema, _validate_list
@@ -2521,6 +2856,7 @@ class LocalAssumptionFiller:
             return []
 
         out: list[Proposal] = []
+        events: list[_ProposalOut] = []  # the model's event items, as it gave them
         for i, item in enumerate(items):
             try:
                 p = _ProposalOut.model_validate(item)
@@ -2529,18 +2865,61 @@ class LocalAssumptionFiller:
                 p, note = unquoted_time_quote(claim.text, p)
                 if note:
                     self._drop(claim, i, note, call.id)
+                if p.template_id == "event":
+                    events.append(p)
                 out.append(self._resolve(claim, para, p))
             except ValidationError as e:
                 self._drop(claim, i, f"wrong shape: {e.error_count()} errors", call.id)
             except Reject as e:
                 self._drop(claim, i, str(e), call.id)
 
+        out = self._exchange_from_event(claim, para, out, events, allowed_ids, call.id)
         out = self.code_fills(claim, para, self._shaped(claim, out, call.id), allowed_ids, call.id)
         gap = coverage_gap(claim, out, frozenset(self._names(claim.text)), tuple(self._events()))
         if gap:
             self._drop(claim, None, f"{gap}; the claim stays unproven", call.id)
             return []
         return out
+
+    def _exchange_from_event(
+        self,
+        claim: Claim,
+        para: str,
+        out: list[Proposal],
+        events: list[_ProposalOut],
+        allowed_ids: set[str],
+        call_id: str | None,
+    ) -> list[Proposal]:
+        """A claim that says its two sides "exchanged" messages ("the TARGET PHONE exchanged Signal
+        messages with (919) 555-0142") whose model answer gave it as one event gets that event read
+        as the count it is: the same parties, phone, apps, window and any count, resolved as a
+        message_count (ruling R3: with no number, at least two, one each way; a stated number is
+        still compared). Every check of that path still runs: the clause's every word, the words
+        before it, the phones and the window. The count takes the event's place; on any refusal the
+        event stays as the model gave it, and the refusal is recorded. Only with exactly one event
+        and no message_count, sender or record_time kept: a record_time cannot take an unquoted
+        message (`_time_rule`), so the count is the template for "exchanged messages"."""
+        if "message_count" not in allowed_ids or len(events) != 1:
+            return out
+        if any(p.template_id in {"message_count", "sender", "record_time"} for p in out):
+            return out
+        if exchanged(claim.text) is None:
+            return out
+        (event,) = events
+        try:
+            made = self._resolve(
+                claim, para, event.model_copy(update={"template_id": "message_count"})
+            )
+            parse_params("message_count", made.params)
+        except (Reject, ValueError) as e:
+            self._drop(
+                claim, None, f"the model's event, read as the claim's exchange: {e}", call_id
+            )
+            return out
+        if not (isinstance(made.params, dict) and made.params.get("each_way")):
+            return out  # read as some other count: not the exchange this fill is for
+        kept = [p for p in out if p.template_id != "event"]
+        return [*kept, Proposal("message_count", made.params, is_core=True, code_made=True)]
 
     def _shaped(self, claim: Claim, out: list[Proposal], call_id: str | None) -> list[Proposal]:
         """The proposals whose parameters fit their template, as the builder will check them.
@@ -2565,6 +2944,8 @@ class LocalAssumptionFiller:
 
     def _resolve(self, claim: Claim, para: str, p: _ProposalOut) -> Proposal:
         tpl = TEMPLATES[p.template_id]
+        if tpl.id in CODE_ONLY_TEMPLATES:
+            raise Reject(f"template {tpl.id!r} is filled by code from the claim's words only")
         texts = (claim.text, para)
         params: dict[str, Any] = {}
         code_made = False  # code filled a parameter the model left out or got wrong
@@ -2614,8 +2995,13 @@ class LocalAssumptionFiller:
         named: set[str] = set()  # people the model wrote as accounts
         named_on: set[str] = set()  # the apps it wrote them on
         own_ids: set[str] = set()  # a phone's own accounts, the phone written as an account
+        text_apps: set[str] = set()  # the phone's messaging app a text's number was read on
         for acc in p.accounts:
             acc = self._call_log_account(acc, claim.text, tpl.id)
+            read_as = self._text_message_account(acc, claim.text, tpl.id, channels)
+            if read_as is not acc:
+                text_apps.add(read_as.app)
+                acc = read_as
             try:
                 account_ids |= self._accounts(
                     acc, device_ids, claim.text, one_number=tpl.id != "contact_entry"
@@ -2687,6 +3073,10 @@ class LocalAssumptionFiller:
             params["person_ids"] = sorted(set(params.get("person_ids", [])) | named)
             if not channels:
                 params["channels"] = sorted(named_on, key=str.lower)
+        if text_apps and not params.get("channels"):
+            # The search stays on the app the number was read on: a quoted text found on
+            # another app has a sender on that app, which would read as someone else.
+            params["channels"] = sorted(text_apps, key=str.lower)
         if handles:
             if "handles" not in tpl.allowed:
                 raise Reject(f"template {tpl.id!r} does not take handles")
@@ -2704,6 +3094,11 @@ class LocalAssumptionFiller:
                         " absence is read on its accounts"
                     )
 
+        if tpl.id == "message_count" and len(device_ids) == 1:
+            # "the TARGET PHONE exchanged Signal messages with (919) 555-0142": the phone the
+            # claim writes as one side is that side, through its exact owner.
+            code_made |= self._phone_side(claim.text, p.count, params, device_ids[0])
+
         if (
             tpl.id == "record_time"
             and not p.quoted_text
@@ -2712,7 +3107,9 @@ class LocalAssumptionFiller:
         ):
             # A call the model named without its parties: code reads them from the claim.
             app = self._call_app(claim.text, params.get("channels", []))
-            people, accounts, phone = self._call_parties(claim, device_ids, app)
+            people, accounts, phone = self._call_parties(
+                claim, device_ids, app, phone_is_side=self._phone_is_a_side(claim, app, device_ids)
+            )
             code_made = True
             params["channels"] = sorted({CALL_CHANNEL, app}, key=str.lower)
             if phone and not device_ids:
@@ -2736,6 +3133,7 @@ class LocalAssumptionFiller:
             params["expected_count"] = p.count.value
             if sent is not None:
                 # "SUBJECT-2 sent SUBJECT-1 three messages": only that side's (ruling R2)
+                self._quotes_name_sides(claim.text, params)
                 self._phones_kept(claim.text, params)
                 words = _unquoted(_flat(_nfc(claim.text)))
                 lead = len(words) - len(words.lstrip())
@@ -2764,6 +3162,7 @@ class LocalAssumptionFiller:
                     # model did not give is not read as "at least two" (Codex on #172)
                     raise Reject("the claim states how many messages; the model gave no count")
                 params["count_op"], params["expected_count"] = "ge", 2
+            self._quotes_name_sides(claim.text, params)
             self._phones_kept(claim.text, params)
             words = _unquoted(_flat(_nfc(claim.text)))
             self._plain_prefix(claim.text, _exchange_clause_start(words))
@@ -2791,7 +3190,17 @@ class LocalAssumptionFiller:
         if tpl.id == "no_contact" and not (params.get("person_ids") or account_ids or handles):
             # "The TARGET PHONE never communicated with (919) 555-0142": the model named the
             # phone but no party; code reads both from the claim (validation ruling R5).
-            device_ids = self._absence_parties(claim, params, device_ids)
+            device_ids = self._absence_parties(claim, params, device_ids, para)
+            code_made = True
+        elif (
+            tpl.id == "no_contact"
+            and not handles
+            and len(params.get("person_ids", [])) + bool(account_ids) == 1
+            and self._written_phones(_unquoted(_nfc(claim.text)))
+        ):
+            # "... between the TARGET PHONE and (212) 555-0144": the model named the phone and
+            # one other party; the phone is the other side, as its own accounts.
+            device_ids = self._phone_as_party(claim, params, device_ids, para)
             code_made = True
         open_range = tpl.id == "no_contact" and _open_range_wording(_unquoted(_nfc(claim.text)))
         if open_range and not device_ids:
@@ -2823,6 +3232,61 @@ class LocalAssumptionFiller:
 
         return Proposal(p.template_id, params, is_core=True, code_made=code_made)
 
+    def _side_names(self, params: dict[str, Any]) -> list[str]:
+        """The names a count's accounts side is written by: its handles, and its accounts'
+        identifiers and display names."""
+        found = [self.data.accounts[a] for a in params.get("account_ids", [])]
+        return [
+            *params.get("handles", []),
+            *(x for a in found for x in (a.identifier, a.display_name) if x),
+        ]
+
+    def _quotes_name_sides(self, claim_text: str, params: dict[str, Any]) -> None:
+        """Raises Reject when a direction count's claim puts in quotation marks anything but a
+        side's name: 'exchanged "urgent" messages' limits the messages by what they say, which
+        the count check does not read, and the direction readers do not see quoted words."""
+        names = {_nfc(n).strip().casefold() for n in self._side_names(params) if n.strip()}
+        for m in _QUOTE_SPAN_RE.finditer(_flat(_nfc(claim_text))):
+            inner = _nfc(m.group(0)[1:-1]).strip()
+            if inner.casefold() not in names:
+                raise Reject(f"the claim quotes words the count does not read ({inner!r})")
+
+    def _phone_side(
+        self, claim_text: str, count: _Count | None, params: dict[str, Any], device: str
+    ) -> bool:
+        """Makes the phone the claim writes as a side of a message count that side, through its
+        owner by confirmed stipulation, when the model named only the other side: "the TARGET
+        PHONE exchanged Signal messages with (919) 555-0142", "the TARGET PHONE's Kik account
+        sent ten messages to <account>". Only in the two direction forms, whose every word is
+        then read (`_sent_by`, `_limits_on_exchange`), and only when the owner is exactly the
+        phone's own accounts, as for a count of calls (`_count_calls`). In the "exchanged"
+        form the phone must stand as a side, at the clause's start or after "with" or "and":
+        "X exchanged messages on the TARGET PHONE" names where, not with whom. Returns True
+        when it added the side."""
+        if count is not None and counts_calls(claim_text, count.value):
+            return False  # a count of calls reads its phone's side in _count_calls
+        people = list(params.get("person_ids", []))
+        if len(people) + bool(params.get("account_ids") or params.get("handles")) != 1:
+            return False
+        if count is not None and sent_form(claim_text, count.value) is not None:
+            pass  # `_sent_by` reads where the phone is written, as sender or recipient
+        elif exchanged(claim_text) is not None:
+            words = _unquoted(_flat(_nfc(claim_text)))
+            clause = words[_exchange_clause_start(words) :]
+            spans = self._phone_spans(clause)
+            if len(spans) != 1 or spans[0][0] != device:
+                return False
+            if not _PHONE_SIDE_BEFORE_RE.search(clause[: spans[0][1]]):
+                return False
+        else:
+            return False
+        own = {a.id for a in self.data.accounts.values() if a.device_id == device}
+        owner = self._exact_owner(own) if own else None
+        if owner is None or owner in people:
+            return False
+        params["person_ids"] = sorted({*people, owner})
+        return True
+
     def _plain_prefix(self, claim_text: str, clause_start: int) -> None:
         """Raises Reject when the words before the direction's clause hold anything but its date,
         time and phone (`_PREFIX_WORDS`): "On March 21, in Spanish, PETROV sent ..." limits the
@@ -2850,8 +3314,11 @@ class LocalAssumptionFiller:
         assumption's persons by name and its accounts by identifier, display name or number."""
         words = _unquoted(_flat(_nfc(claim_text)))
         # The whole clause from "exchanged" to the end, commas and all: "... in Spanish, on
-        # dev:p1." keeps "in Spanish" in it (Codex on #172).
-        clause = words[_exchange_clause_start(words) :]
+        # dev:p1." keeps "in Spanish" in it (Codex on #172). A side's name in quotation marks
+        # ('the GroupMe user "DFIR Two"') is read as written; other quoted words refuse the
+        # count before this (`_quotes_name_sides`) and stay blank here.
+        named = _unquoted(_names_unquoted(_flat(_nfc(claim_text)), self._side_names(params)))
+        clause = named[_exchange_clause_start(words) :]
         left = list(clause)
         spans = [s for _, *s in self._phone_spans(clause)]
         # Only the assumption's own sides: "... with SOKOLOV" names a third party the count
@@ -2867,7 +3334,8 @@ class LocalAssumptionFiller:
                 spans += _ident_spans(clause, i)
         for a in found:  # "the BURNER" for its number, as the expert named it
             spans += self._named_spans(clause, a.id)
-        numbers = {d for i in idents if i and (d := phone_digits(i)) is not None}
+        # a WhatsApp id is its number, as `_accounts` found it (ruling R6)
+        numbers = {d for i in idents if i and (d := ident_digits(i)) is not None}
         written_numbers = set()
         for m in _PHONE_RE.finditer(clause):
             if (d := phone_digits(m.group(0).strip(" .,-"))) is not None:
@@ -2879,7 +3347,7 @@ class LocalAssumptionFiller:
             names = [x for x in (a.identifier, a.display_name) if x and x.strip()]
             if (
                 not any(_ident_spans(clause, x) for x in names)
-                and not any(phone_digits(x) in written_numbers for x in names)
+                and not any(ident_digits(x) in written_numbers for x in names)
                 and not self._named_spans(clause, a.id)
             ):
                 # An account the clause does not write: the count would credit its messages
@@ -2932,7 +3400,7 @@ class LocalAssumptionFiller:
             for a in accounts:  # "the BURNER sent ...", for the number the expert named
                 out += [("accounts", s, e, False) for s, e in self._named_spans(text, a)]
             # one number written another way ("+1 (212) 555-0122" for +12125550122; R6)
-            numbers = {d for i in idents if i and (d := phone_digits(i)) is not None}
+            numbers = {d for i in idents if i and (d := ident_digits(i)) is not None}
             for m in _PHONE_RE.finditer(text):
                 if phone_digits(m.group(0).strip(" .,-")) in numbers:
                     out.append(("accounts", *m.span(), False))
@@ -2987,7 +3455,7 @@ class LocalAssumptionFiller:
             out = set()
             for a in accounts:
                 i = (self.data.accounts[a].identifier or "").strip()
-                d = phone_digits(i) if i else None
+                d = ident_digits(i) if i else None
                 if i and (_ident_spans(text, i) or self._named_spans(text, a)):
                     out.add(a)
                 elif d is not None and any(
@@ -3058,11 +3526,24 @@ class LocalAssumptionFiller:
             except ValueError:
                 day = None
             stated = [w for w in stated if w.start.date() == day]
+        if template_id in _OTHER_ACT_TEMPLATES:
+            # After the model's day is picked, so the other day is never taken in its place:
+            # "arranged by text to meet at 7 p.m. on Thursday, October 30": the range the
+            # meeting was set for is not the claim's own, here as in `_window` (agents thread
+            # on #255: the fallback brought the refused meeting time back).
+            own = [
+                w
+                for w in stated
+                if not time_of_another_act(w.raw, claim.text, planned_only=template_id == "event")
+            ]
+            if stated and not own:
+                raise Reject("the claim's stated range is the time of another act it names")
+            stated = own
         if len(stated) != 1:
             raise Reject("the time range is not one the claim plainly states")
         (w,) = stated
         check_window(w.start, w.end, w.raw, claim.text, para, template_id)
-        return self._zoned_window(w.zone, w.start, w.end, device_ids, w.raw)
+        return self._zoned_window(w.zone, w.start, w.end, device_ids, w.raw, w.stated)
 
     def the_quote(self, claim: Claim, out: list[Proposal]) -> str | None:
         """The one message the claim quotes, word for word, or None.
@@ -3074,12 +3555,14 @@ class LocalAssumptionFiller:
         display name: 'the Teams user "ThisIs DfirTwo"'), led by what leads a message
         (_MESSAGE_CUE_RE: "PETROV wrote: ...", "a message reading ...", not "saved as ..."),
         on one line. Two such quotes, or any doubt, give None: code never picks one."""
+        return self._quote_and_why(claim, out)[0]
+
+    def _quote_and_why(self, claim: Claim, out: list[Proposal]) -> tuple[str | None, str]:
+        """`the_quote`, and when it is None, why: what the claim quotes that is not one
+        message, so a refusal names the real cause."""
         text, names = _nfc(claim.text), self._names(claim.text)
-        spans = [
-            m.span()
-            for m in _QUOTE_SPAN_RE.finditer(_flat(text))
-            if m.group(0)[1:-1].strip() and m.group(0)[1:-1].strip().casefold() not in names
-        ]
+        quoted = [m for m in _QUOTE_SPAN_RE.finditer(_flat(text)) if m.group(0)[1:-1].strip()]
+        spans = [m.span() for m in quoted if m.group(0)[1:-1].strip().casefold() not in names]
         messages = [(s, e) for s, e in spans if _MESSAGE_CUE_RE.search(text[:s])]
         used = {
             str(p.params["quoted_text"])
@@ -3090,16 +3573,28 @@ class LocalAssumptionFiller:
         }
         if used:
             # The model's words, when they lie in a quote that is a message.
-            (words,) = used if len(used) == 1 else (None,)
-            inside = words is not None and any(
-                _flat(_nfc(words)) in _flat(text)[s + 1 : e - 1] for s, e in messages
-            )
-            return words if inside else None
+            if len(used) != 1:
+                return None, "the kept assumptions quote different words"
+            (words,) = used
+            if any(_flat(_nfc(words)) in _flat(text)[s + 1 : e - 1] for s, e in messages):
+                return words, ""
+            return None, f"{words!r} is not inside a quote the claim marks as a message"
+        if not quoted:
+            return None, "the claim quotes no words"
+        if not spans:
+            return None, "the claim's only quoted words are a name, not a message"
+        if len(messages) > 1:
+            return None, f"the claim quotes {len(messages)} messages; code never picks one"
         if len(spans) != 1 or len(messages) != 1:
-            return None
+            return None, (
+                "no single quote is led by what marks a message (a verb of writing, a word for"
+                " a message, or a colon)"
+            )
         start, end = messages[0]
         words = text[start + 1 : end - 1].strip()
-        return None if "\n" in words or "\r" in words else words
+        if "\n" in words or "\r" in words or not words:
+            return None, "the quoted message is empty or runs over two lines"
+        return words, ""
 
     def _events(self) -> list[case_events.CaseEvent]:
         """The defined events code may date a claim by (case_events.readable), read once."""
@@ -3197,8 +3692,8 @@ class LocalAssumptionFiller:
         allowed_ids: set[str],
         call_id: str | None,
     ) -> list[Proposal]:
-        """Code's own fills after the model's items, in order: sender, time, call count and
-        meaning. The first pass and the testability step's repair both run exactly these
+        """Code's own fills after the model's items, in order: sender, time, caller, call count
+        and meaning. The first pass and the testability step's repair both run exactly these
         (Codex on #169).
 
         Where code cannot read the claim's own words for a fill ("on the samsung" for the
@@ -3208,6 +3703,7 @@ class LocalAssumptionFiller:
         try:
             out = self._shaped(claim, self._add_sender(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
+            out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             return self._add_meaning(claim, out, allowed_ids, call_id)
         except Reject as e:
@@ -3260,11 +3756,28 @@ class LocalAssumptionFiller:
             return out
         if any(p.template_id == "meaning" for p in out):
             return out
-        quote = self.the_quote(claim, out)
+        quote, why = self._quote_and_why(claim, out)
+        if quote is not None and (n := self._message_quotes(claim)) > 1:
+            # 'PETROV wrote "ok" and REYES replied "fine", showing ...': the meaning of one of
+            # them is not the claim's reading, and the other's writer may be untested.
+            quote, why = None, f"the claim quotes {n} messages; code never picks one"
         if quote is None:
-            self._drop(claim, None, "meaning from the claim: no one quoted message", call_id)
+            why = f"meaning from the claim: no one quoted message ({why})"
+            self._drop(claim, None, why, call_id)
             return out
         return [*out, Proposal("meaning", {"quoted_text": quote}, is_core=True, code_made=True)]
+
+    def _message_quotes(self, claim: Claim) -> int:
+        """How many quotes of the claim are messages: not empty, not a name, and led by what
+        leads a message (_MESSAGE_CUE_RE)."""
+        text, names = _nfc(claim.text), self._names(claim.text)
+        return sum(
+            1
+            for m in _QUOTE_SPAN_RE.finditer(_flat(text))
+            if m.group(0)[1:-1].strip()
+            and m.group(0)[1:-1].strip().casefold() not in names
+            and _MESSAGE_CUE_RE.search(text[: m.start()])
+        )
 
     def _add_record_time(
         self, claim: Claim, para: str, out: list[Proposal], allowed_ids: set[str]
@@ -3794,6 +4307,61 @@ class LocalAssumptionFiller:
             return _Account(as_written=acc.as_written, app=NATIVE_CALL_APP)
         return acc
 
+    def _text_message_account(
+        self, acc: _Account, claim_text: str, template_id: str, channels: list[str]
+    ) -> _Account:
+        """A number the model wrote on no app ("unknown", "SMS", "text") in a claim about a
+        text message is a number on the phone's own messaging app, when the case has exactly
+        one app of a phone's own messages that holds messages (Android or iOS "Native
+        Messages", or "SMS"), the claim names no other app, and the check reads one quoted
+        message (sender, record_time, meaning). A count or an absence reads every record on
+        the app it searches, so it is never rewritten; and since "unknown" is the phone's call
+        log, a text message's number is never read there either: for those templates, or when
+        the case has no such app or more than one, or the claim names another app, the number
+        is refused (Greptile on #253: an absence read on one app misses the others). Other
+        templates, and a claim that also names a call (which record the number is on is not
+        known), are left as written."""
+        app = acc.app.strip().casefold()
+        if app not in _TEXT_CHANNEL_WORDS:
+            return acc
+        if app != NATIVE_CALL_APP and any(app == c.casefold() for c in self.channels()):
+            return acc  # the case has an app by that name ("SMS"): the model named it
+        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim_text)))
+        if not _TEXT_MESSAGE_RE.search(bare) or _CALL_WORD_RE.search(bare):
+            return acc
+        written = acc.as_written.strip()
+        named_ident = account_names.designated(self.conn, written)
+        number = phone_digits(written) if named_ident is None else self._named_number(named_ident)
+        if number is None or template_id not in MESSAGE_TEXT_TEMPLATES | WHOLE_APP_TEMPLATES:
+            return acc  # a name or an id, or an identity: `_accounts` reads it as before
+        phone_apps = self._phone_message_apps()
+        why = None
+        if template_id in WHOLE_APP_TEMPLATES:
+            why = "a count or an absence would miss the messages on every other app"
+        elif _names_an_app_off_the_case(bare) or set(self._named_apps(claim_text)) - set(
+            phone_apps
+        ):
+            why = "the claim names another app"
+        elif len(phone_apps) != 1:
+            why = f"the case holds {len(phone_apps)} apps of a phone's own messages, not one"
+        elif any(c.casefold() != phone_apps[0].casefold() for c in channels):
+            why = f"the proposal's channels are not {phone_apps[0]!r}"
+        if why is not None:
+            raise Reject(f"{written!r} is a text message's number on no app, and {why}")
+        return _Account(as_written=acc.as_written, app=phone_apps[0])
+
+    def _phone_message_apps(self) -> list[str]:
+        """The apps of a phone's own messages ("SMS", "MMS", "iMessage", or an export's
+        "Native Messages") that hold any message thread in the case."""
+        with_threads = {r[0] for r in self.conn.execute("SELECT DISTINCT app FROM threads")}
+        return [
+            app
+            for app in self.channels()
+            if app != CALL_CHANNEL
+            and app in with_threads
+            and (namespace(app) == "tel" or app.strip().casefold() in WIDER_APPS)
+        ]
+
     def _accounts(
         self, acc: _Account, device_ids: list[str], claim_text: str = "", one_number: bool = True
     ) -> set[str]:
@@ -3823,6 +4391,15 @@ class LocalAssumptionFiller:
         hits = {a.id for a in mine if a.key == want}
         number = phone_digits(ident) if named_ident is None else self._named_number(ident)
         named = app == NATIVE_CALL_APP or self._app_named(claim_text, acc.app)
+        if number is None and named_ident is None and named:
+            jid = _jid_number(ident, mine)
+            if jid is not None and hits:
+                # "12125550199" is one account's whole id and another's WhatsApp number
+                raise Reject(
+                    f"{acc.as_written!r} on {acc.app} is one account's id and another's number;"
+                    " which one the claim means is not known"
+                )
+            number = jid
         if number is not None and named:
             # One number written two ways on one app ("+19195677484" and "9195677484", from two
             # databases) is one party: the same digits, only the formatting differs (ruling
@@ -3903,7 +4480,7 @@ class LocalAssumptionFiller:
         return app
 
     def _call_parties(
-        self, claim: Claim, device_ids: list[str], app: str
+        self, claim: Claim, device_ids: list[str], app: str, *, phone_is_side: bool = False
     ) -> tuple[list[str], list[str], list[str]]:
         """The parties of a call the claim describes, read from its own words: each person
         the expert created whom it names, and each number, identifier or quoted display name
@@ -4004,26 +4581,291 @@ class LocalAssumptionFiller:
         # read ("On the TARGET PHONE, PETROV called Jonathan"; Codex on #164).
         written = self._written_phones(bare)
         phone = sorted(written) if not device_ids and len(written) == 1 else []
-        sides = len(people) + bool(accounts) + bool((device_ids or phone) and not people)
+        # The phone counts beside a person only where the call's plain clause makes the phone
+        # itself one side ("the TARGET PHONE had eight Telegram calls with REYES", `call_form`).
+        sides = (
+            len(people)
+            + bool(accounts)
+            + bool((device_ids or phone) and (not people or phone_is_side))
+        )
         if sides < 2:
             raise Reject("the claim names one side of the call; code reads both or none")
         return sorted(people), sorted(accounts), phone
 
+    def _party_tokens(self, claim_text: str, app: str) -> tuple[str, dict[int, tuple[str, str]]]:
+        """The claim's words outside quotes, with each party it writes as `_call_parties` reads
+        them (a phone, a person, a number or a name the expert gave one, a quoted name, an
+        identifier on the app) replaced by a token of the same length, and each token's start
+        -> (kind, words): kind "phone" (a device id), "person" (a person id) or "acct". Raises
+        Reject where two such readings overlap: the words are not plainly one party."""
+        text = _flat(_nfc(claim_text))
+        bare = _unquoted(text)
+        spans: list[tuple[int, int, str, str]] = [
+            (st, en, "phone", did) for did, st, en in self._phone_spans(bare)
+        ]
+        for pid, found in self._person_spans(bare).items():
+            spans += [(st, en, "person", pid) for st, en in found]
+        for m in _PHONE_RE.finditer(bare):
+            words = m.group(0).strip(" .,-")
+            if phone_digits(words) is not None:
+                st = m.start() + m.group(0).index(words)
+                spans.append((st, st + len(words), "acct", words))
+        spans += [(st, en, "acct", ident) for ident, st, en in self._numbers_named(bare)]
+        for m in _QUOTE_SPAN_RE.finditer(text):
+            if m.group(0)[1:-1].strip():
+                spans.append((*m.span(), "acct", m.group(0)[1:-1].strip()))
+        for a in self.data.accounts.values():
+            i = a.identifier.strip()
+            if a.app != app or len(i) < 6 or re.search(r"\s", i):
+                continue
+            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
+                spans.append((*m.span(), "acct", i))
+        tokens: dict[int, tuple[str, str]] = {}
+        kinds: dict[tuple[int, int], set[str]] = {}
+        for st, en, kind, value in spans:
+            kinds.setdefault((st, en), set()).add(kind if kind == "acct" else f"{kind}:{value}")
+        # "Reyes" inside "Marcus Reyes": one reading of one party, the outer one
+        kinds = {
+            (st, en): found
+            for (st, en), found in kinds.items()
+            if not any(
+                s2 <= st and en <= e2 and (s2, e2) != (st, en) and f2 == found
+                for (s2, e2), f2 in kinds.items()
+            )
+        }
+        out = list(bare)
+        for (st, en), found in sorted(kinds.items()):
+            if len(found) != 1 or any(
+                st < e2 and s2 < en and (s2, e2) != (st, en) for s2, e2 in kinds
+            ):
+                raise Reject(f"{text[st:en]!r} is not plainly one party")
+            if en - st < 2:
+                raise Reject(f"{text[st:en]!r} is too short to read as a party")
+            out[st:en] = ["\x01", *(["\x03"] * (en - st - 2)), "\x02"]
+            (one,) = found
+            kind, _, value = one.partition(":") if one != "acct" else ("acct", "", text[st:en])
+            tokens[st] = (kind, value)
+        return "".join(out), tokens
+
+    def call_form(self, claim: Claim, app: str) -> CallForm | None:
+        """The claim's one call in a plain form (`_CALL_FORM_RE`), or None when its wording is
+        not one: a denial, another clause, a kind of call, words before the clause other than
+        its date, time and phone, or after it other than a length or its date and time, or a
+        direction word the verb does not allow ("placed an incoming call", "received an
+        outgoing call") all leave it unread. Code then reads no caller: a misread direction
+        would contradict a true claim."""
+        bare = _unquoted(_flat(_nfc(claim.text)))
+        if _DENIAL_RE.search(bare) or _CLAUSE_JOINER_RE.search(bare) or _CALL_KIND_RE.search(bare):
+            return None
+        try:
+            skeleton, tokens = self._party_tokens(claim.text, app)
+        except Reject:
+            return None
+        m = _CALL_FORM_RE.match(skeleton.rstrip())
+        if m is None:
+            return None
+        try:
+            self._plain_prefix(claim.text, m.end("lead"))
+        except Reject:
+            return None
+        verb = (m.group("placed") or m.group("got") or m.group("called") or m.group("had")).lower()
+        np = m.group("np_to") or m.group("np_from") or m.group("np_with") or ""
+        if not self._plain_call_noun(np, verb, app):
+            return None
+        tail = m.group("tail")
+        length = None
+        if tail.strip(" ."):
+            at = _CALL_LENGTH_TAIL_RE.match(tail)
+            if at is not None:
+                length = at.group("len")
+            elif any(
+                not (w in _PREFIX_WORDS or w in _MONTHS or w in _WEEKDAYS or w.isdigit())
+                for w in _words(tail).split()
+            ):
+                return None
+        caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
+        return CallForm(
+            a=tokens[m.start("a")],
+            b=tokens[m.start("b")],
+            caller=caller.get(verb),
+            missed=verb == "missed",
+            length=length,
+        )
+
+    @staticmethod
+    def _plain_call_noun(np: str, verb: str, app: str) -> bool:
+        """True when the words before "call" are only an article (or, for "had", a number), the
+        direction word the verb allows, the app's name and a phone word. An ordinal ("a second
+        call") is refused: it states an earlier call that no check reads."""
+        words = _words(np).split()
+        if verb == "called":
+            return not words
+        if not words:
+            return False
+        head = words.pop(0)
+        if verb == "had":
+            if head not in ("a", "an") and _number(head) is None:
+                return False
+        elif head not in _CALL_ARTICLES:
+            return False
+        allowed = {"placed": "outgoing", "made": "outgoing", "received": "incoming"}
+        allowed["missed"] = "incoming"
+        if words and words[0] in ("outgoing", "incoming"):
+            if allowed.get(verb) != words.pop(0):
+                return False
+        if words and words[-1] in _CALL_PHONE_WORDS:
+            words.pop()
+        if not words:
+            return True
+        names = [] if app == NATIVE_CALL_APP else [app, *APP_ALIASES.get(app.casefold(), ())]
+        return " ".join(words) in {_words(n).strip() for n in names}
+
+    def _phone_is_a_side(self, claim: Claim, app: str, device_ids: list[str]) -> bool:
+        """True when the claim's call is in a plain form (`call_form`) with a phone as one side
+        and a party that is no phone as the other: "the TARGET PHONE had eight Telegram calls
+        with REYES". The phone is the one searched, or, with none given, the one the claim
+        writes."""
+        form = self.call_form(claim, app)
+        if form is None:
+            return False
+        phones = [v for k, v in (form.a, form.b) if k == "phone"]
+        if len(phones) != 1:
+            return False
+        written = self._written_phones(_unquoted(_nfc(claim.text)))
+        return phones[0] in device_ids if device_ids else written == {phones[0]}
+
+    def _add_caller(
+        self, claim: Claim, out: list[Proposal], allowed_ids: set[str]
+    ) -> list[Proposal]:
+        """A claim that says who placed its one call ("the TARGET PHONE placed an outgoing call
+        to (919) 555-0142", "(919) 555-0142 called the TARGET PHONE", "PETROV received a
+        Telegram call from REYES") gets a caller assumption from code: the call's time range's
+        parties, phone, app, length and window, with the side the claim's verb makes the
+        caller as sent_by. Only the plain forms are read (`call_form`), each side must be one
+        of the time range's parties (the phone written as a side is its exact owner by
+        confirmed stipulation, `_exact_owner`), and both sides must be named. "missed" adds a
+        core event assumption beside it: the call log does not reliably record whether an
+        incoming call was answered, so only an expert can carry that part. Anything else
+        keeps no caller, and rule 3e keeps a communication claim unproven."""
+        if "caller" not in allowed_ids or any(p.template_id == "caller" for p in out):
+            return out
+        times = [
+            p
+            for p in out
+            if p.template_id == "record_time"
+            and isinstance(p.params, dict)
+            and CALL_CHANNEL in p.params.get("channels", [])
+            and not p.params.get("quoted_text")
+        ]
+        if len(times) != 1:
+            return out
+        rt = dict(times[0].params)
+        try:
+            made = self._caller_params(claim, rt)
+        except Reject:
+            return out
+        if made is None:
+            return out
+        params, missed = made
+        out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
+        if missed and "event" in allowed_ids:
+            allowed = TEMPLATES["event"].allowed
+            event = {k: v for k, v in params.items() if k in allowed}
+            out.append(Proposal("event", event, is_core=True, code_made=True))
+        return out
+
+    def _caller_params(
+        self, claim: Claim, rt: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool] | None:
+        """The caller assumption's parameters and whether the call was missed, from the claim's
+        plain form and its call's time range `rt`; None when the claim says no caller. Raises
+        Reject where the form's sides are not the time range's parties."""
+        if rt.get("handles"):
+            return None  # a handle is resolved by the checks; code never names it as a side
+        channels = [c for c in rt.get("channels", []) if c != CALL_CHANNEL]
+        app = self._call_app(claim.text, channels)
+        form = self.call_form(claim, app)
+        if form is None or form.caller is None:
+            return None
+        device_ids = list(rt.get("device_ids", []))
+        phones = [v for k, v in (form.a, form.b) if k == "phone"]
+        if len(phones) > 1:
+            return None
+        people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
+        if set(people) != set(rt.get("person_ids", [])) or set(accounts) != set(
+            rt.get("account_ids", [])
+        ):
+            return None  # the time range tests other parties than the clause names
+        sides: dict[str, str] = {}
+        for name, (kind, value) in (("a", form.a), ("b", form.b)):
+            if kind == "phone":
+                if device_ids != [value]:
+                    return None
+                own = {a.id for a in self.data.accounts.values() if a.device_id == value}
+                owner = self._exact_owner(own) if own else None
+                if owner is None:
+                    return None  # the phone's side is no one person code can name
+                sides[name] = owner
+            elif kind == "person":
+                sides[name] = value
+            else:
+                if not accounts:
+                    return None
+                sides[name] = "accounts"
+        if sides["a"] == sides["b"]:
+            return None
+        persons = sorted({v for v in sides.values() if v != "accounts"})
+        if set(rt.get("person_ids", [])) - set(persons) or (
+            accounts and "accounts" not in sides.values()
+        ):
+            return None  # a party of the time range is not a side of the clause
+        if len(persons) + bool(accounts) != 2:
+            return None
+        caller = sides[form.caller]
+        if bool(form.length) != bool(rt.get("duration_s")):
+            return None  # a length the time range does not test, or one the claim does not state
+        if form.length and duration_range(form.length, claim.text) != tuple(rt["duration_s"]):
+            return None
+        params: dict[str, Any] = {
+            "person_ids": persons,
+            "sent_by": sorted(accounts) if caller == "accounts" else [caller],
+            "window": rt["window"],
+            # the claim's app always scopes the caller, even when the proposal wrote only
+            # "call": a call on another app is never the claim's call
+            "channels": sorted({CALL_CHANNEL, app}),
+        }
+        if accounts:
+            params["account_ids"] = sorted(accounts)
+        if device_ids:
+            params["device_ids"] = device_ids
+        if rt.get("duration_s"):
+            params["duration_s"] = rt["duration_s"]
+        return params, form.missed
+
     def _absence_parties(
-        self, claim: Claim, params: dict[str, Any], device_ids: list[str]
+        self,
+        claim: Claim,
+        params: dict[str, Any],
+        device_ids: list[str],
+        para: str = "",
+        given: tuple[list[str], list[str]] | None = None,
     ) -> list[str]:
         """The two sides of "no contact" read from the claim when the model named none: the
         one phone it writes, as its owner by confirmed stipulation when that person is exactly
-        the phone's own accounts, and one other party, a person the expert created or a phone
+        the phone's own accounts, and one other party, a person the expert created, a phone
         number (every account on the phone's sources whose identifier is that number, on the
-        apps the proposal names, or on any app when it names none). Returns the device ids.
-        Raises Reject when either side is not exactly one."""
+        apps the proposal names, or on any app when it names none) or an address on the app
+        the claim names (every account there with that identifier). Returns the device ids.
+        Raises Reject when either side is not exactly one.
+
+        `given` is the model's one party, (people, accounts), when it named the phone as the
+        other side (`_phone_as_party`): it must be the party the claim's words give, the same
+        person, or accounts with the same number or address."""
         bare = _unquoted(_nfc(claim.text))
         phones = sorted(set(device_ids) or self._written_phones(bare))
         if len(phones) != 1:
             raise Reject("no contact: the claim writes no one phone for its side")
-        own = {a.id for a in self.data.accounts.values() if a.device_id == phones[0]}
-        owner = self._exact_owner(own) if own else None
+        owner = self._phone_owner(phones[0])
         if owner is None:
             raise Reject("no contact: the phone's side is no one person code can name")
         people: set[str] = set()
@@ -4032,8 +4874,14 @@ class LocalAssumptionFiller:
             if pid != owner and found:
                 people.add(pid)
                 spans += found
+        # An address ("kay@example.org") is read whole, before any number in it.
+        addresses: set[str] = set()
+        for m in _ADDRESS_PARTY_RE.finditer(bare):
+            addresses.add(m.group(0).casefold())
+            spans.append(m.span())
+        unaddressed = _ADDRESS_PARTY_RE.sub(lambda m: " " * len(m.group(0)), bare)
         numbers: set[str] = set()
-        for m in _PHONE_RE.finditer(bare):
+        for m in _PHONE_RE.finditer(unaddressed):
             if (d := phone_digits(m.group(0).strip(" .,-"))) is not None:
                 numbers.add(d)
                 spans.append(m.span())
@@ -4044,17 +4892,30 @@ class LocalAssumptionFiller:
                 raise Reject(f"no contact: {bare[start:end]!r} names an id, not a number")
             numbers.add(d)
             spans.append((start, end))
-        if joiner := self._absence_joiner(bare):
+        # "On May 7, 2023, ... after 10:00 a.m. EDT": the part of the stated day is the range's
+        # own words (stated_part_day reads it), not another clause or a word beyond contact.
+        part_day = []
+        if stated_part_day(claim.text, para) is not None:
+            part_day = [m.span() for m in _PART_DAY_RE.finditer(bare)]
+        unjoined = bare
+        for start, end in part_day:
+            unjoined = unjoined[:start] + " " * (end - start) + unjoined[end:]
+        if joiner := self._absence_joiner(unjoined):
             # "never communicated with SMITH while REYES was abroad" (Codex on #169)
             raise Reject(f"no contact: the claim joins another clause ({joiner!r})")
         for start, end in spans:
             # "REYES's assistant" or "a friend of REYES" is not REYES (Codex on #169).
             if _NOT_A_PARTY_AFTER.match(bare, end) or _NOT_A_PARTY_BEFORE.search(bare[:start]):
                 raise Reject(f"no contact: {bare[start:end]!r} may not be the other party")
-        if len(people) + len(numbers) != 1 or _UNREAD_PARTY_RE.search(
-            _PHONE_RE.sub(" ", bare) if numbers else bare
+        if len(people) + len(numbers) + len(addresses) != 1 or _UNREAD_PARTY_RE.search(
+            _PHONE_RE.sub(" ", unaddressed) if numbers else unaddressed
         ):
             raise Reject("no contact: the claim does not write exactly one other party")
+        if given is not None and not self._given_is_read(given, people, numbers, addresses):
+            # The model's party and the claim's words must be one party: code never picks
+            # between them (a number the model wrote on one app is read on every app the
+            # claim leaves open, so contact on another app is not missed).
+            raise Reject("no contact: the model's party is not the one party the claim writes")
         # "never called X" says nothing of messages, whatever channels the model gave: the
         # absence check would search both, so a call-only claim is not filled (Codex on #169).
         if _CALL_WORD_RE.search(bare):
@@ -4064,12 +4925,30 @@ class LocalAssumptionFiller:
         if _ONE_DIRECTION_RE.search(bare):
             # "never sent anything to REYES": the absence check reads both ways (Codex on #169)
             raise Reject("no contact one way: code reads no one-direction scope")
-        named = self._named_apps(claim.text)
+        # The phone's own name is no word for a channel: "the TARGET PHONE" says nothing of
+        # the Phone app's calls, nor "the WHATSAPP PHONE" of WhatsApp.
+        unnamed = list(bare)
+        for _, start, end in self._phone_spans(bare):
+            unnamed[start:end] = " " * (end - start)
+        scope = "".join(unnamed)
+        named = self._named_apps(scope)
+        kept = []
+        for app in params.get("channels", []):
+            try:
+                kept += self._channels(scope, [app])
+            except Reject:
+                pass  # named only inside the phone's name ("the TARGET PHONE" for Phone)
+        if params.get("channels") and kept != params["channels"]:
+            # the model's channel stands only on words the claim writes outside the phone's
+            # name; otherwise the claim leaves every app open and code reads its scope below
+            params.pop("channels")
+            if kept:
+                params["channels"] = kept
         if not named and _names_an_app_off_the_case(bare):
             # "never communicated by Signal" on a case with no Signal: the scope cannot be
             # kept, so code does not widen it to every app (Codex on #169).
             raise Reject("no contact: the claim names an app the case does not hold")
-        if self._absence_leftover(bare, phones[0], spans):
+        if self._absence_leftover(bare, phones[0], [*spans, *part_day]):
             # "never communicated with REYES about narcotics": a topic, or any word beyond
             # plain contact, is a scope the absence check cannot keep (Codex on #169).
             raise Reject("no contact: the claim says more than plain contact code can check")
@@ -4078,28 +4957,102 @@ class LocalAssumptionFiller:
             # comes from the claim's own words (Codex on #169).
             if named:
                 params["channels"] = named
-            elif self._message_apps(claim.text) != []:
+            elif self._message_apps(scope) != []:
                 # "texted" or "by SMS" may be SMS or iMessage, and a phone app may hold calls
                 raise Reject("no contact by text: code reads no phone-message scope")
+        for app in params.get("channels", []):
+            # "never communicated by iMessage": iOS "Native Messages" holds SMS too, so an
+            # absence there would fail on messages the claim does not name.
+            said = [w for w in APP_ALIASES.get(app.casefold(), ()) if _has_alias(claim.text, w)]
+            if app.casefold() in WIDER_APPS and said:
+                raise Reject(
+                    f"{app!r} holds more than the claim's {said[0]!r} names, so no absence is"
+                    " read on it"
+                )
+        mine = person_party(self.data, owner).keys
         params["device_ids"] = phones
         if people:
+            (other,) = people
+            if person_party(self.data, other).keys & mine:
+                raise Reject("no contact: the other party holds an account of the phone's own")
             params["person_ids"] = sorted({owner, *people})
             return phones
-        (number,) = numbers
         sources = set(self.data.sources_for(phones))
         apps = {c.casefold() for c in params.get("channels", []) if c != CALL_CHANNEL}
-        found = {
-            a.id
-            for a in self.data.accounts.values()
-            if a.source_id in sources
-            and (not apps or a.app.casefold() in apps)
-            and _same_number(number, a)
-        }
+        if addresses:
+            (address,) = addresses
+            if not apps:
+                # An address alone never picks the app it is an account on.
+                raise Reject("no contact: the claim writes an address but names no app")
+            found = {
+                a.id
+                for a in self.data.accounts.values()
+                if a.source_id in sources
+                and a.app.casefold() in apps
+                and a.identifier.strip().casefold() == address
+            }
+        else:
+            (number,) = numbers
+            found = {
+                a.id
+                for a in self.data.accounts.values()
+                if a.source_id in sources
+                and (not apps or a.app.casefold() in apps)
+                and _same_number(number, a)
+            }
         if not found:
-            raise Reject("no contact: the number is on no account on the phone")
+            raise Reject("no contact: the party is on no account on the phone")
+        if any(self.data.accounts[a].key in mine for a in found):
+            # "no contact between the TARGET PHONE and (its own number)": one side, not two.
+            raise Reject("no contact: the other party is one of the phone's own accounts")
         params["person_ids"] = [owner]
         params["account_ids"] = sorted(found)
         return phones
+
+    def _given_is_read(
+        self,
+        given: tuple[list[str], list[str]],
+        people: set[str],
+        numbers: set[str],
+        addresses: set[str],
+    ) -> bool:
+        """True when the model's one party is the one party the claim's words give: the same
+        person, or accounts whose identifiers are all the number or address the claim writes."""
+        given_people, given_accounts = given
+        if given_people:
+            return not given_accounts and set(given_people) == people
+        accs = [self.data.accounts.get(a) for a in given_accounts]
+        if not accs or None in accs or people:
+            return False
+        if numbers:
+            (number,) = numbers
+            return all(_same_number(number, a) for a in accs if a is not None)
+        (address,) = addresses
+        return all(a.identifier.strip().casefold() == address for a in accs if a is not None)
+
+    def _phone_owner(self, device: str) -> str | None:
+        """The phone's exact owner by confirmed stipulation (`_exact_owner`), or None."""
+        own = {a.id for a in self.data.accounts.values() if a.device_id == device}
+        return self._exact_owner(own) if own else None
+
+    def _phone_as_party(
+        self, claim: Claim, params: dict[str, Any], device_ids: list[str], para: str
+    ) -> list[str]:
+        """No contact with the phone as a side ("There was no contact between the TARGET PHONE
+        and (212) 555-0144"): the model named the phone and one other party. The phone the
+        claim writes as a side stands for that phone's own accounts on it, never for whoever
+        held it: its exact owner by confirmed stipulation, a person whose accounts are exactly
+        the phone's own (`_exact_owner`), so the check searches those accounts and no other.
+        Code reads both sides from the claim's words as when the model named none
+        (`_absence_parties`), and the model's party must be the one the claim writes. Exactly
+        one phone, written in the claim itself. Returns the device ids; raises Reject
+        otherwise, and the claim stays untested."""
+        bare = _unquoted(_nfc(claim.text))
+        written = self._written_phones(bare)
+        if len(written) != 1 or (device_ids and set(device_ids) != written):
+            raise Reject("no contact: the claim does not write exactly one phone as a side")
+        given = (list(params.pop("person_ids", [])), list(params.pop("account_ids", [])))
+        return self._absence_parties(claim, params, sorted(written), para, given)
 
     def _names_a_recipient(self, bare: str) -> bool:
         """True when the words write a person the case knows, a phone number or a handle as
@@ -4257,7 +5210,9 @@ class LocalAssumptionFiller:
             params.get("person_ids") or params.get("account_ids") or params.get("handles")
         )
         if not supplied:
-            people, accounts, phone = self._call_parties(claim, device_ids, app)
+            people, accounts, phone = self._call_parties(
+                claim, device_ids, app, phone_is_side=self._phone_is_a_side(claim, app, device_ids)
+            )
             if phone and not device_ids:
                 device_ids = phone
                 params["device_ids"] = phone
@@ -4273,7 +5228,12 @@ class LocalAssumptionFiller:
                 # The model's one side: the claim's own words must make the phone the other
                 # side and name that one side, as when code reads the parties ("REYES and
                 # SMITH had two calls" on the phone is no call with its owner; Codex on #169).
-                people, accounts, _ = self._call_parties(claim, device_ids, app)
+                people, accounts, _ = self._call_parties(
+                    claim,
+                    device_ids,
+                    app,
+                    phone_is_side=self._phone_is_a_side(claim, app, device_ids),
+                )
                 if (
                     params.get("handles")
                     or sorted(params.get("person_ids", [])) != people
@@ -4314,6 +5274,29 @@ class LocalAssumptionFiller:
         zone = written_zone(w.as_written, claim_text)
         if zone is None and w.zone == "UTC":
             raise Reject("the range does not say UTC")
+        if cut_from_longer(w.as_written, claim_text):
+            # "7:58 p.m." from "at approximately 7:58 p.m.", "2:06" from "between 2:06 and
+            # 2:22 p.m.", "10:00 a.m." from "after 10:00 a.m.", or words only in quotes: the
+            # model's words are not the claim's range, so `_stated` reads the claim instead.
+            raise Reject("the window's words are cut from a longer range the claim writes")
+        if template_id in _OTHER_ACT_TEMPLATES and (
+            time_of_another_act(w.as_written, claim_text, planned_only=template_id == "event")
+        ):
+            # "arranged by text to meet at 7 p.m. on Thursday, October 30, 2025": the meeting's
+            # time, not when the texts were sent, so `_stated` reads the claim instead.
+            raise Reject("the window's words are the time of another act the claim names")
+        bare_words = _unquoted(w.as_written)
+        if _ANY_TIME_RE.search(bare_words) and not (
+            date_mentions(bare_words) or _NUM_DATE_RE.search(bare_words)
+        ):
+            # "between approximately 2:06 and 2:22 p.m." with no date: the model's ends are
+            # held only to 15 minutes of the stated times, so code reads the claim's own range.
+            raise Reject("the window's words give a time of day without its date")
+        if template_id in TWO_SIDED_TEMPLATES and _OPEN_WORDS_RE.search(bare_words):
+            # "after 10:00 a.m.", "before May 1, 2023", "beginning at 8 p.m.": the open end of a
+            # count or an absence is read by code (R5, fill c), never taken from the model's
+            # edge, which could leave out records the claim's words take in.
+            raise Reject("an open range for a count or an absence is read by code, not the model")
         check_window(start, end, w.as_written, claim_text, para, template_id)
         if end - start >= timedelta(days=1) and _PART_OF_DAY_RE.search(_unquoted(claim_text)):
             # "In the early hours of November 2, 2025" with the model copying only "November 2,
@@ -4329,33 +5312,55 @@ class LocalAssumptionFiller:
         # When the range's own words state one plain range, code's reading of them is the
         # range, not the model's arithmetic: "at about 11:50 p.m." is 11:42 to 11:58, never the
         # 11:50 to midnight a model may give and the 15 minutes check_window allows let pass.
-        # Only within those 15 minutes: further off, the words are part of the range or open
-        # ("March 9, 2026" copied from "between March 9, 2026 and March 12, 2026", "first made
-        # contact ... on March 12", "at 10:05 p.m. ... and after that call"), so code's reading
-        # of them is not the claim's range, and the model's, held to the claim's dates and
-        # times by check_window, stands. Read as written, "March 9, 2026" would search an
-        # absence on one day of four (Codex on #211).
+        # A reading with a time of day always wins: the model's ends are held only to 15
+        # minutes of the stated times, so "between approximately 2:02 and 5:07 p.m." is never
+        # the 2:10 to 5:00 p.m. a model may give (narrower than the words for a count or an
+        # absence), and the words are never cut from a longer range (above). A reading of
+        # whole days wins only within those 15 minutes: further off, the words are part of the
+        # range or open ("March 9, 2026" copied from "between March 9, 2026 and March 12,
+        # 2026", "first made contact ... on March 12"), so code's reading of them is not the
+        # claim's range, and the model's, held to the claim's dates by check_window, stands.
+        # Read as written, "March 9, 2026" would search an absence on one day of four (Codex
+        # on #211).
         plain = stated_windows(w.as_written, f"{claim_text}\n{para}")
+        stated: tuple[datetime, ...] = ()
         if (
             plain is not None
             and len(plain) == 1
             and (plain[0].start, plain[0].end) != (start, end)
-            and abs(plain[0].start - start) <= TIME_SLACK
-            and abs(plain[0].end - end) <= TIME_SLACK
+            and (
+                plain[0].end - plain[0].start < _DAY
+                or (
+                    abs(plain[0].start - start) <= TIME_SLACK
+                    and abs(plain[0].end - end) <= TIME_SLACK
+                )
+            )
         ):
-            start, end = plain[0].start, plain[0].end
+            start, end, stated = plain[0].start, plain[0].end, plain[0].stated
             check_window(start, end, w.as_written, claim_text, para, template_id)
-        return self._zoned_window(zone, start, end, device_ids, w.as_written.strip())
+        elif plain is not None and len(plain) == 1:
+            stated = plain[0].stated
+        return self._zoned_window(zone, start, end, device_ids, w.as_written.strip(), stated)
 
     def _zoned_window(
-        self, zone: str | None, start: datetime, end: datetime, device_ids: list[str], raw: str
+        self,
+        zone: str | None,
+        start: datetime,
+        end: datetime,
+        device_ids: list[str],
+        raw: str,
+        stated: tuple[datetime, ...] = (),
     ) -> Any:
         """The range in the zone `_read_zone` gives, with each end read as the one instant it
         is there. On the night the clocks go back, "1:59 a.m. EDT" in New York ends at 2:00
-        a.m., which is EST: read as is, the minute would be 61 minutes (Codex on #150)."""
+        a.m., which is EST: read as is, the minute would be 61 minutes (Codex on #150). Each
+        time the words state (`StatedWindow.stated`) must be one instant there too: an
+        approximate end can widen past a time the clocks skip or repeat."""
         tz = self._read_zone(zone, start, end, device_ids)
         fixed = WRITTEN_ZONES[" ".join(zone.split()).casefold()] if zone else None
         want = fixed if isinstance(fixed, timedelta) else None
+        for t in stated:
+            _instant(t, tz, want)
         try:
             return local_window(_instant(start, tz, want), _instant(end, tz, want), tz, raw)
         except ValueError as e:
@@ -4509,6 +5514,29 @@ def phone_digits(words: str) -> str | None:
     if area[0] not in "23456789" or exchange[0] not in "23456789":
         return None
     return "1" + area + exchange + line
+
+
+def _jid_number(ident: str, accounts: list[Account]) -> str | None:
+    """Bare digits ("12125550199") are a phone number when an account on the app the claim
+    names has exactly those digits as its WhatsApp id ("12125550199@s.whatsapp.net"): the id
+    writes the number with its country code and no "+", so the words are that number, as
+    WhatsApp writes it, and every account on the app with the same number is one party (ruling
+    R6). Only the whole digits: "2125550199" is not "12125550199@s.whatsapp.net", and a group
+    ("@g.us") or a linked id ("@lid") is no number."""
+    if not re.fullmatch(r"\d{8,15}", ident):
+        return None
+    jid = f"{ident}@s.whatsapp.net"
+    return ident if any(a.identifier.strip() == jid for a in accounts) else None
+
+
+def ident_digits(identifier: str) -> str | None:
+    """The phone number an account identifier plainly is, as `phone_digits` gives it, or a
+    WhatsApp id's number ("12125550122@s.whatsapp.net" is 12125550122); else None. A user id
+    that happens to be digits is never one."""
+    if (d := phone_digits(identifier)) is not None:
+        return d
+    jid = re.fullmatch(r"(\d{8,15})@s\.whatsapp\.net", identifier.strip())
+    return jid.group(1) if jid is not None else None
 
 
 def _same_number(number: str, acc: Account) -> bool:

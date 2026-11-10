@@ -676,8 +676,9 @@ def test_stated_windows_read_times_of_day(text, raw, start, end):
         "between 11 and 1 p.m. on May 2, 2026",  # the bare hour cannot take p.m.
         "between 10 p.m. and midnight on May 2, 2026",
         "between 11 p.m. and 1 a.m. on May 2, 2026",  # crosses midnight
-        "between about 9 and 11 p.m. on May 2, 2026",
-        "between 9 p.m. and about 11 p.m. on May 2, 2026",
+        # "about" a range's end is read (tests/test_fill_windows.py); "roughly" is not
+        "between roughly 9 and 11 p.m. on May 2, 2026",
+        "between 9 p.m. and roughly 11 p.m. on May 2, 2026",
         "between 9 and 11 on May 2, 2026",  # no a.m. or p.m.
         "at 21:00 on May 2, 2026",
     ],

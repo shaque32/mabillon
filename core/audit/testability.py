@@ -99,7 +99,7 @@ from core.audit.assumption_filler import (
     phone_digits,
     unquoted_time_quote,
 )
-from core.audit.assumptions import Proposal, from_proposal, templates_for
+from core.audit.assumptions import CODE_ONLY_TEMPLATES, Proposal, from_proposal, templates_for
 from core.audit.checks._common import key
 from core.audit.invariants import InvariantViolation
 from core.contracts import (
@@ -920,7 +920,10 @@ class Testability:
         return self.filler.conn
 
     def prompt(self, claim: Claim, found: list[Lookup], refused: list[str]) -> str:
-        allowed = sorted(templates_for(claim.claim_type), key=lambda t: t.id)
+        allowed = sorted(
+            (t for t in templates_for(claim.claim_type) if t.id not in CODE_ONLY_TEMPLATES),
+            key=lambda t: t.id,
+        )
         para = self.filler.paragraph_text(claim)
         return fill_prompt(
             self.template,
@@ -943,7 +946,7 @@ class Testability:
         run_id = model_run_id(self.model)
         if run_id is None:
             return "model has no run id", None
-        allowed = {t.id for t in templates_for(claim.claim_type)}
+        allowed = {t.id for t in templates_for(claim.claim_type)} - CODE_ONLY_TEMPLATES
         schema = fill_schema(allowed, self.filler.channels())
         try:
             items, call = run_json_call(

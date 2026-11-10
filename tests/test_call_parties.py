@@ -56,7 +56,9 @@ def build(conn, text: str, kind: ClaimType = ClaimType.COMMUNICATION, **change):
     f = LocalAssumptionFiller(FakeModel(json.dumps({"assumptions": [answer]})), conn,
                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
     assumptions = TemplateAssumptionBuilder(f).build(claim(text, kind))
-    return assumptions, f
+    # The caller assumption code adds beside a plain "placed a call to" is tested in
+    # tests/test_fill_calls.py; these tests are about the time range's parties.
+    return [a for a in assumptions if a.template_id != "caller"], f
 
 
 @pytest.mark.parametrize(
