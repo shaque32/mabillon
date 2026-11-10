@@ -94,7 +94,6 @@ from core.audit.assumption_filler import (
     _ProposalOut,
     _same_number,
     _validate_list,
-    coverage_gap,
     fill_schema,
     phone_digits,
     unquoted_time_quote,
@@ -586,7 +585,7 @@ def check_answer(
     kept = filler.code_fills(claim, para, kept, allowed, None)
     reasons += [d.reason for d in filler.drops[before:]]
     del filler.drops[before:]  # this try's refusals are the step's, not the first pass's
-    gap = coverage_gap(claim, kept, frozenset(filler._names()), tuple(filler._events()))
+    gap = filler.gap(claim, kept)
     if gap:
         return "refused", [*reasons, gap], Named(), []
     out: dict[str, Assumption] = {}

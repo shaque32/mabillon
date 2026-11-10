@@ -24,11 +24,12 @@ from core.audit.assumption_filler import (
     _ProposalOut,
     check_window,
     count_op,
+    coverage_gap,
     date_mentions,
     only_addressed,
     stated_part_day,
 )
-from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder
+from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder
 from core.audit.checks import CHECKS
 from core.contracts import CheckOutcome, Claim, ClaimStatus, ClaimType, ModelCallOutcome
 from eval.synthetic.generate import generate
@@ -3107,3 +3108,81 @@ def test_a_whole_alias_stands_in_whatever_names_the_case_holds(aliased):
         assert filler.stated_sender(c, "ok") == REYES
     finally:
         aliased.execute("DELETE FROM persons WHERE id = 'person:bsmith'")
+
+
+# case05 C04 (a false SUPPORTED, agents bench 2026-11-10): "SUBJECT-1 texted the COURIER from
+# the BURNER: ..." kept on one sender row naming only the BURNER's account, so the checks passed
+# on who sent the words and never on SUBJECT-1 using the BURNER, or on the day.
+ALEX = {"as_written": "@alex92", "app": "Telegram"}
+BURNER_TEXT = 'PETROV texted REYES from @alex92 on Telegram: "need 2 more by friday".'
+
+
+def test_a_named_writer_no_assumption_ties_to_the_account_leaves_the_claim_unproven(conn):
+    answer = [P("sender", accounts=[ALEX], quoted_text="need 2 more by friday")]
+    assumptions, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+    assert assumptions == []
+    (drop,) = [d.reason for d in filler.drops if "ties them" in d.reason]
+    # REYES is the one written to, whom a sender row never tests; PETROV is the writer.
+    assert "Daniel Petrov" in drop and "Marcus Reyes" not in drop
+
+
+def test_a_writer_the_assumption_names_is_bound(conn):
+    answer = [P("sender", people=["PETROV"], accounts=[ALEX], quoted_text="need 2 more by friday")]
+    _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+    assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+
+
+def test_a_confirmed_link_or_an_owned_phone_binds_the_writer(conn):
+    answer = [P("sender", accounts=[ALEX], quoted_text="need 2 more by friday")]
+    conn.execute(
+        "INSERT INTO identity_links (id, account_id, person_id, status, tier, basis, decided_by,"
+        " decided_at_utc) VALUES ('link:test:alex', 'acct:item1:Telegram:5551234', ?,"
+        " 'confirmed', 'confirmed', 'test', 'expert:test', '2026-11-10T00:00:00Z')",
+        (PETROV,),
+    )
+    try:
+        _, filler = build_text(conn, BURNER_TEXT, ClaimType.COMMUNICATION, answer)
+        assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+    finally:
+        conn.execute("DELETE FROM identity_links WHERE id = 'link:test:alex'")
+    # dp_garage is PETROV's own Instagram account on Item 1, whose owner the expert confirmed.
+    text = 'PETROV, using the Instagram account dp_garage, told REYES "got the money, come get it".'
+    answer = [P("sender", accounts=[DP_GARAGE], quoted_text="got the money, come get it")]
+    _, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
+
+
+@pytest.mark.parametrize(
+    "lead",
+    [
+        "Two days before the LOCKER BURGLARY,",
+        "The day after the meeting,",
+        "The next morning,",
+        "Later that night,",
+        "3 hours after the call,",
+    ],
+)
+def test_a_day_dated_from_another_needs_a_time_range(lead):
+    c = Claim(
+        id="X9",
+        paragraph_id="p",
+        text=f'{lead} PETROV wrote to @northstar: "need 2 more by friday".',
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    sender = Proposal("sender", {"quoted_text": "need 2 more by friday"})
+    assert coverage_gap(c, [sender]) == (
+        "the claim dates itself from another day but no assumption tests a time range"
+    )
+
+
+def test_relative_words_inside_the_quote_date_nothing():
+    c = Claim(
+        id="X9",
+        paragraph_id="p",
+        text='PETROV wrote to @northstar: "two days before the drop, call me".',
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    sender = Proposal("sender", {"quoted_text": "two days before the drop, call me"})
+    assert coverage_gap(c, [sender]) is None

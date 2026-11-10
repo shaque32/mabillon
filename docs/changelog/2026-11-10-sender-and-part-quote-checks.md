@@ -23,6 +23,18 @@
     closing quotation mark ('"..., ready when needed," shows') is the claim's punctuation and is
     dropped from the quoted words, so the checks search for words the message holds. It was held
     back from #255 until the sender fix, because finding more messages exposes the sender gap.
+  - Filler coverage (`unbound_person` and `coverage_gap` in `core/audit/assumption_filler.py`,
+    FILLER_VERSION 9; the testability step uses the same gate). A communication, timing or
+    count claim now needs every person it names outside quoted words bound to a core
+    assumption: named in it, or tied to an account it names by a confirmed identity link, or
+    the confirmed owner of the phone whose own account it names. A person written only as the
+    one written to ("texted the COURIER"), or only inside a kept time range's words, is not
+    asked for. A day the claim dates from another ("Two days before the LOCKER BURGLARY", "the
+    next morning", "later that night") needs a time range even when that other day is no
+    defined event. Either gap leaves the claim unproven. Before, case05 C04 ("Two days before
+    the LOCKER BURGLARY, SUBJECT-1 texted the COURIER from the BURNER: ...") kept one sender row
+    on the BURNER's account and went SUPPORTED (checked) with SUBJECT-1's use of the BURNER and
+    the day untested (agents bench of 2026-11-10, gold unproven).
   - Signed sheets re-signed by Arsh on 2026-11-10 (approved as written, labels kept): 19 rows of `eval/gold/case02`, `case04`,
     `case05` and `case06` move to inconclusive, and five contradicted claims on case04 to case06
     move to unproven. The draft keys (`eval/synthetic/case0{2,4,5,6}*`) match, and each case04
@@ -37,7 +49,8 @@
   Linux cloud container, with the re-signed rows: 4,370 passed, 7 skipped. Eval unchanged:
   case01 unreviewed 0.70 (report only), after the simulated expert 1.00 with 0 false
   supported, hostile PASS, case02 aggregate 0.90 with 0 false supported.
-- Open: a quote set off by quotation marks inside a message ('wade said "bring the cash
+- Open: the sender check tests who wrote a message, not whom it went to; a claim's
+  addressee ("PETROV wrote to REYES") stays untested, as before this PR. A quote set off by quotation marks inside a message ('wade said "bring the cash
   friday"') is still part of a sentence, so it stays inconclusive; reading it as whole would
   also pass 'never say "..."'. Five synthetic contradictions now rest on an expert's decision,
   not a check.
