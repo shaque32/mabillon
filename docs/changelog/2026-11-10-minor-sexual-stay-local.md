@@ -1,4 +1,4 @@
-## 2026-11-10: Stay local for any case involving a minor and sexual conduct (draft, awaits Arsh's signature)
+## 2026-11-10: Stay local for any case involving a minor and sexual conduct, awaiting Arsh's signature (#256)
 - Changed: the stay-local box at setup named only child sexual abuse material. It now reads
   "This case concerns sexual material or conduct involving a minor, or someone presented as a
   minor: for example child sexual abuse material, enticement, sextortion or trafficking. This
@@ -15,7 +15,7 @@
   the wider words in `csam_note`. `docs/SECURITY_PRIVACY.md` (intro and section 5, items 1 and
   2) and `docs/ARCHITECTURE.md` match. The CLAUDE.md line is proposed in `PROPOSED_CHANGES.md`.
   All five texts are drafts awaiting Arsh's "approved" (plans/minor-sexual-stay-local.md).
-- Where: branch claude/project-thread-kqb5ex, stacked on #254 (merges after it)
+- Where: PR #256 (merges after #254)
 - Verified: make check (see PR). New tests in `tests/test_cloud.py`: the attestation and box
   texts are pinned; a marked case stays local with the exact reason and keeps the words ticked;
   a case marked under the earlier box still stays local; a case attested before the new
