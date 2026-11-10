@@ -1,11 +1,11 @@
-## 2026-11-10: Gate 11 met: an outside Windows install of the signed build
+## 2026-11-10: Gate 11 met: an outside Windows install of the signed build (#252)
 - Changed: `docs/PILOT_GATES.md` marks gate 11 (outside install test) met and the count goes from
   14 to 15 of 19. One person outside the project downloaded the signed
   `Mabillon-Setup-0.0.1+9c4e8b3.exe` (main build run 42430786224, 2026-11-08) from a 7-day private
   R2 link made with `tools/pilot_link.py`, checked its SHA-256 and the Shayan Haque signature,
   installed it with the model download unticked and opened the demo in its own window. Arsh
   reported it on 2026-11-10 and accepted it as meeting the gate.
-- Where: branch claude/project-thread-s0yxae
+- Where: PR #252
 - Verified: reported by Arsh in the Windows pilots thread (2026-11-10, "windows test worked",
   "yes all good"). The tester's own written reply is not in the repo, and nobody on the project
   saw the run. This was the first real installer in the R2 bucket (it held only a 48-byte object
