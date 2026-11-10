@@ -1502,18 +1502,22 @@ class App:
             )
         if mode == "fast" and csam:
             raise ReviewError(
-                "a case that may contain CSAM never uses cloud AI: choose "
+                f"a case that concerns {cloud_policy.MINOR_CONTENT} never uses cloud AI: choose "
                 f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
             )
         if mode == "fast" and f.get("allowed") != "1":
             raise ReviewError(
                 "Fast needs your statement about the protective order, the key's zero data "
-                "retention and your client's consent: tick it, or choose "
+                "retention, your client's consent and that the case concerns no "
+                f"{cloud_policy.MINOR_CONTENT}: tick it, or choose "
                 f"{cloud_policy.LOCAL.lower()}. Nothing was saved."
             )
         entry = cloud_policy.set_cloud(conn, self.actor, allowed=mode == "fast", csam=csam)
         if entry["csam"]:
-            return "Saved: this case may contain CSAM, so every model step runs on this computer."
+            return (
+                f"Saved: this case concerns {cloud_policy.MINOR_CONTENT}, so every model step "
+                "runs on this computer."
+            )
         if entry["allowed"]:
             return (
                 f"Saved: {cloud_policy.FAST} for this case. If the cloud model stops answering,"

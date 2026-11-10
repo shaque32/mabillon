@@ -408,6 +408,7 @@ def test_the_report_shows_who_attested_and_the_words_they_agreed_to(tmp_path):
     assert "expert:Ana" in page and "set_cloud" in page
     assert "excerpts of its evidence to be sent to Anthropic for AI processing" in page
     assert "zero data retention in writing" in page and "informed consent" in page
+    assert "or someone presented as a minor" in page
 
 
 def test_a_cloud_estimate_runs_every_call_at_the_cloud_speed():
@@ -577,6 +578,51 @@ def test_only_a_named_expert_sets_the_choice(case_db):
         cloud_policy.set_cloud(case_db, "system", allowed=True, csam=False)
 
 
+# The attestation #254 shipped (approved 2026-11-10 07:27Z), before its sentence on minors.
+_BEFORE_MINORS = (
+    "This case's protective order (or the court's or the government's written consent) allows "
+    "excerpts of its evidence to be sent to Anthropic for AI processing. The Anthropic key used "
+    "for it belongs to an organization with zero data retention in writing. My client has given "
+    "informed consent."
+)
+
+
+def test_any_sexual_case_involving_a_minor_stays_local_with_the_words_ticked(case_db):
+    """The stay-local box covers enticement, sextortion and trafficking as well as CSAM, and an
+    officer presented as a minor; a provider must report all of them to NCMEC (18 U.S.C. 2258A).
+    The texts are pinned so they cannot drift from what Arsh signs."""
+    assert cloud_policy.ATTESTATION == (
+        f"{_BEFORE_MINORS} This case does not concern sexual material or conduct involving a "
+        "minor, or someone presented as a minor."
+    )
+    for words in ("someone presented as a minor", "child sexual abuse material", "enticement",
+                  "sextortion", "trafficking"):  # fmt: skip
+        assert words in cloud_policy.CSAM_NOTE
+    entry = cloud_policy.set_cloud(case_db, "expert:Ana", allowed=False, csam=True)
+    assert entry == {"allowed": False, "csam": True, "chosen": True}
+    choice = cloud_policy.choose(case_db, _key)
+    assert not choice.use
+    assert choice.why == ("Local model: the case is marked as concerning sexual material or "
+                          "conduct involving a minor, so it never uses cloud AI.")  # fmt: skip
+    (payload,) = [json.loads(p) for (p,) in case_db.execute("SELECT payload_json FROM audit_log")]
+    assert payload["csam_note"] == cloud_policy.CSAM_NOTE  # the words the expert ticked
+
+
+def test_a_case_marked_under_the_earlier_box_still_stays_local(case_db):
+    earlier = "This case may contain child sexual abuse material."
+    _log(case_db, "expert:Ana", {"allowed": False, "csam": True, "csam_note": earlier})
+    assert cloud_policy.case_cloud(case_db) == {"allowed": False, "csam": True, "chosen": True}
+    assert not cloud_policy.choose(case_db, _key).use
+
+
+def test_a_case_attested_before_the_sentence_on_minors_must_choose_again(case_db):
+    _log(case_db, "expert:Ana",
+         {"allowed": True, "csam": False, "attestation": _BEFORE_MINORS})  # fmt: skip
+    assert cloud_policy.case_cloud(case_db) == {"allowed": False, "csam": False, "chosen": False}
+    assert not cloud_policy.chosen(case_db)
+    assert not cloud_policy.choose(case_db, _key).use
+
+
 # ---------------------------------------------------------------- what the expert reads
 
 
@@ -685,6 +731,30 @@ def test_fast_needs_the_attestation_ticked_and_never_takes_a_csam_case(tmp_path,
     post("/cloud/case", mode="local")
     entry = _cloud_entry(app)
     assert entry["chosen"] is True and entry["allowed"] is False
+
+
+def test_the_setup_box_keeps_any_sexual_case_involving_a_minor_on_this_computer(
+    tmp_path, monkeypatch
+):
+    app, get, post = _screen(tmp_path, monkeypatch)
+    form = get("/setup").text.split('action="/cloud/case"', 1)[1].split("</form>", 1)[0]
+    form = html.unescape(form)
+    assert f"For Fast: {cloud_policy.ATTESTATION}</label>" in form
+    assert (
+        f"{cloud_policy.CSAM_NOTE} This case then runs only on this computer. If unsure, tick it."
+        in form
+    )
+    post("/cloud/case", mode="fast", allowed="1", csam="1")
+    assert _cloud_entry(app) == {}  # refused, nothing saved
+    assert app.flash is not None and app.flash[1] is True
+    assert f"a case that concerns {cloud_policy.MINOR_CONTENT} never uses cloud AI" in app.flash[0]
+    post("/cloud/case", mode="local", csam="1")
+    assert _cloud_entry(app)["csam"] is True
+    assert app.flash == (
+        "Saved: this case concerns sexual material or conduct involving a minor, so every model "
+        "step runs on this computer.",
+        False,
+    )
 
 
 def test_claims_and_the_audit_wait_for_the_choice(tmp_path, monkeypatch):
