@@ -30,9 +30,9 @@
   sender, record_time and meaning (sender and time checks pass) and A16 a person_identity;
   no other claim on either phone changed. `make check` result in the branch report.
 - Open: which apps count as a phone's own text messages is a judgment call, written for a
-  ruling in `proposed/accounts.md`; the conservative reading is implemented. Bare digits
+  ruling in the rulings note for this area (project files, validation fix round); the conservative reading is implemented. Bare digits
   against a "+"-written number (iOS 15 B12) and a contact entry on a number no account of the
-  named app holds (B15) are left refused, also in `proposed/accounts.md`.
+  named app holds (B15) are left refused, also in the rulings note for this area (project files, validation fix round).
 - Affects: capabilities (more claims about text messages and WhatsApp numbers can be tested;
   fewer absences are read on the call log alone). No privacy, network or verdict-rule change.
 - Status doc: pending: in the "5. Assumptions" row, after "one number written several ways

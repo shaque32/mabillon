@@ -53,7 +53,7 @@
   - call counts by direction (D25, D19);
   - a count whose claim writes no phone (C08);
   - "received" counts.
-  The three rulings needed are in `proposed/counts.md`. A phone's own account written by
+  The three rulings needed are in the rulings note for this area (project files, validation fix round). A phone's own account written by
   identifier ("the Wickr account <id> on the TARGET PHONE exchanged ...", iOS 15 B20) is
   still one party with the other account, so it stays refused, a follow-up. D07 and D19 are
   refused by the window reader ("between approximately 2:06 and 2:22 p.m."), not by the count.

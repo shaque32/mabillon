@@ -46,7 +46,7 @@
     (checked): the caller and time checks both pass on outgoing calls of the stated length.
     C07, the known reversed claim, is not contradicted: its window also holds the 12:01
     incoming call. It is inconclusive, and the detail shows both directions.
-- Open: Two rulings, in `proposed/calls.md`: reading "answered" or "connected" with a length,
+- Open: Two rulings, in the rulings note for this area (project files, validation fix round): reading "answered" or "connected" with a length,
   and whether a caller fail should contradict without an expert step. A comment-only
   contracts diff for `sent_by` is optional. Not fixed (found): the time and count checks miss a
   two-party call row where the phone's own side is blank. That leaves B06, B07 and B33

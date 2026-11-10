@@ -180,10 +180,10 @@ MAX_PROPOSALS = 8
 #      party of a no-contact claim is its exact owner's accounts; code adds who placed a call
 #      (template `caller`) for the plain call forms; a text message's number on no app is read
 #      on the phone's one messaging app, and bare digits match a WhatsApp id; a message cue
-#      takes "wrote to X on <app>", and the claim's own comma inside a closing quote is
-#      dropped; approximate ranges, whole months and timed open ranges are read by code, and
-#      a claim dated only by a month or a year needs a window; "exchanged messages" proposed
-#      as an event is read as an each-way count, and a phone can be a side of a count.
+#      takes "wrote to X on <app>"; approximate ranges, whole months and timed open ranges
+#      are read by code, and a claim dated only by a month or a year needs a window;
+#      "exchanged messages" proposed as an event is read as an each-way count, and a phone
+#      can be a side of a count.
 FILLER_VERSION = "7"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)

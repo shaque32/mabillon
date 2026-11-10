@@ -41,7 +41,7 @@
     commit 7f1cc67.
 - Open: The phone's side is a person id (the owner), so the text names that person where the
   claim names the phone. What is searched is the same. A contract field for "this phone's own
-  accounts" would remove this, and is proposed in `proposed/absence.md` with three rulings: an
+  accounts" would remove this, and is proposed in the rulings note for this area (project files, validation fix round) with three rulings: an
   address with no app, a number no account holds, and "any other user". A claim of no contact with "any
   other user" of an app stays refused. A claim whose number no account holds stays refused.
 - Affects: capabilities (more no-contact claims tested); verdicts (a check can now fail, so the

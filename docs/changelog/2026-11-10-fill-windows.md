@@ -61,7 +61,7 @@
     - case02 aggregate accuracy 0.90, 0 false supported.
 - Open: unmeasured on a model run; the points below are open.
   - The 8 minutes on each approximate end extend the signed "about" rule. That needs Arsh's
-    confirmation (proposed/windows.md W1).
+    confirmation (rulings note W1).
   - An exact message count over an approximate edge can still fail on a message at the edge
     (W2).
   - Parts of the day are still refused (W3).
