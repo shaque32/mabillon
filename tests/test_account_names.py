@@ -892,7 +892,16 @@ def test_window_words_that_are_part_of_the_claims_range_never_shorten_it(
     # Code's reading of the window's own words replaces the model's range only within the 15
     # minutes check_window allows (Codex on #211).
     ny = ZoneInfo("America/New_York")
-    got = _filler(conn)._window(text, "", _Window.model_validate(window), [], "no_contact")
+    filler = _filler(conn)
+    try:
+        got = filler._window(text, "", _Window.model_validate(window), [], "no_contact")
+    except Reject as e:
+        # Words cut from the claim's range give way to code's reading of the whole claim
+        # (tests/test_fill_windows.py), which is the same range.
+        assert "cut from a longer range" in str(e)
+        claim = Claim(id="X1", paragraph_id="para:none", text=text,
+                      claim_type=ClaimType.ABSENCE, status=ClaimStatus.ACCEPTED)  # fmt: skip
+        got = filler._stated(claim, "", [], "no_contact", window["start"])
     assert got.start_utc == first.replace(tzinfo=ny).astimezone(UTC)
     assert got.end_utc == last.replace(tzinfo=ny).astimezone(UTC) - timedelta(microseconds=1)
 

@@ -6,6 +6,7 @@ on. Checks never call a model, never write to the database and never change an a
 tier: rules.py decides what a result means.
 
     sender        who sent the message with these exact words (by account id, not name)
+    caller        who placed one call, by the direction the phone's call log records
     time          a record falls in the claimed window; shown in the phone's own zone
     count         messages between two parties in a window, on one phone
     absence       no contact in a window; passes only on full extractions that cover it
@@ -21,6 +22,7 @@ import sqlite3
 from core.audit.assumptions import template_of
 from core.audit.checks.absence import AbsenceCheck
 from core.audit.checks.base import TemplateCheck
+from core.audit.checks.caller import CallerCheck
 from core.audit.checks.count import CountCheck
 from core.audit.checks.identity import ContactCheck, SameAccountCheck
 from core.audit.checks.sender import SenderCheck
@@ -32,6 +34,7 @@ CHECKS: dict[str, TemplateCheck] = {
     c.name: c
     for c in [
         SenderCheck(),
+        CallerCheck(),
         TimeCheck(),
         CountCheck(),
         AbsenceCheck(),
@@ -61,6 +64,7 @@ def run_checks(assumption: Assumption, conn: sqlite3.Connection) -> list[CheckRe
 __all__ = [
     "CHECKS",
     "AbsenceCheck",
+    "CallerCheck",
     "ContactCheck",
     "CountCheck",
     "SameAccountCheck",
