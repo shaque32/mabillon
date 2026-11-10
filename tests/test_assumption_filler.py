@@ -3152,6 +3152,33 @@ def test_a_confirmed_link_or_an_owned_phone_binds_the_writer(conn):
     assert not [d for d in filler.drops if "ties them" in d.reason], filler.drops
 
 
+QUOTE16 = "got the money, come get it"
+
+
+def test_an_owner_confirmed_on_another_copy_of_the_account_binds_the_writer(conn):
+    # Greptile on #257: scoped to Item 2, the sender row keeps only Item 2's copy of dp_garage;
+    # Item 1 holds it as PETROV's own account, and the checks read both by the same key.
+    text = 'PETROV wrote from the Instagram account dp_garage: "got the money, come get it".'
+    p = Proposal(
+        "sender",
+        {"quoted_text": QUOTE16, "account_ids": ["acct:item2:Instagram:dp_garage"]},
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    assert filler.unbound_person(c, [p]) is None
+    other = Proposal(
+        "sender",
+        {"quoted_text": QUOTE16, "account_ids": ["acct:item2:Telegram:7001077"]},
+    )
+    assert "Daniel Petrov" in (filler.unbound_person(c, [other]) or "")
+
+
 @pytest.mark.parametrize(
     "lead",
     [

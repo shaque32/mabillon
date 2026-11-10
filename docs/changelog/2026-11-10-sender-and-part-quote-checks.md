@@ -46,7 +46,7 @@
   `tests/test_axiom.py` updated for the new rule. A replay of stored model answers from two
   practice phones (no model call) is recorded in project files: the one false contradiction it
   found becomes inconclusive, and the correct contradictions stay. `make check` on 2026-11-10,
-  Linux cloud container, with the re-signed rows: 4,370 passed, 7 skipped. Eval unchanged:
+  Linux cloud container, at the head of PR #257: 4,413 passed, 7 skipped. Eval unchanged:
   case01 unreviewed 0.70 (report only), after the simulated expert 1.00 with 0 false
   supported, hostile PASS, case02 aggregate 0.90 with 0 false supported.
 - Open: the sender check tests who wrote a message, not whom it went to; a claim's

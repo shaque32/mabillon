@@ -2987,13 +2987,19 @@ class LocalAssumptionFiller:
         if not named:
             return None
         data = self.data
-        linked: dict[str, set[str]] = {}
-        for _, account, person in data.links:
-            linked.setdefault(account, set()).add(person)
+        # By account key (app and identifier), as the checks read a party (person_party): a
+        # confirmed link or owner on one phone's copy of an account binds every copy of it.
         owners: dict[str, set[str]] = {}
         for _, device, person, status in data.stipulations:
             if status == "confirmed":
                 owners.setdefault(device, set()).add(person)
+        by_key: dict[object, set[str]] = {}
+        for _, account_id, person in data.links:
+            if (acc := data.accounts.get(account_id)) is not None:
+                by_key.setdefault(acc.key, set()).add(person)
+        for acc in data.accounts.values():
+            if acc.device_id is not None and acc.device_id in owners:
+                by_key.setdefault(acc.key, set()).update(owners[acc.device_id])
         bound: set[str] = set()
         for p in proposals:
             if not p.is_core:
@@ -3001,17 +3007,11 @@ class LocalAssumptionFiller:
             params = p.params if isinstance(p.params, Mapping) else p.params.model_dump()
             bound |= set(params.get("person_ids") or [])
             handles = {_nfc(h).strip().casefold() for h in params.get("handles") or []}
-            by_handle = {
-                a.id
-                for a in data.accounts.values()
-                if {_nfc(x).strip().casefold() for x in (a.identifier, a.display_name) if x}
-                & handles
-            }
-            for account_id in [*(params.get("account_ids") or []), *sorted(by_handle)]:
-                bound |= linked.get(account_id, set())
-                acc = data.accounts.get(account_id)
-                if acc is not None and acc.device_id is not None:
-                    bound |= owners.get(acc.device_id, set())
+            for acc in data.accounts.values():
+                names = (acc.identifier, acc.display_name)
+                written = {_nfc(x).strip().casefold() for x in names if x}
+                if acc.id in (params.get("account_ids") or []) or written & handles:
+                    bound |= by_key.get(acc.key, set())
         loose = sorted(named - bound)
         if not loose:
             return None
