@@ -850,6 +850,18 @@ def _unquoted(text: str) -> str:
     return _QUOTE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), text)
 
 
+def _names_unquoted(text: str, names: Iterable[str]) -> str:
+    """The text with the quotation marks around a party's name blanked and the name kept
+    ('the GroupMe user "DFIR Two"'), same length. Any other quoted span is kept whole."""
+    want = {_nfc(n).strip().casefold() for n in names if n and n.strip()}
+
+    def name(m: re.Match[str]) -> str:
+        inner = m.group(0)[1:-1]
+        return f" {inner} " if _nfc(inner).strip().casefold() in want else m.group(0)
+
+    return _QUOTE_SPAN_RE.sub(name, text)
+
+
 _QUOTE_MARKS = "\"“”‘’'"
 
 
@@ -1754,6 +1766,9 @@ _EXCHANGED_RE = re.compile(
 # Where a recipient is written: right after "sent" ("sent REYES three messages") or after
 # "to" ("sent three messages to REYES").
 _RECIPIENT_BEFORE_RE = re.compile(r"(?:^|\bto)\s*(?:the\s+)?$", re.IGNORECASE)
+# Where a phone stands as a side of an "exchanged" clause: at its start ("the TARGET PHONE
+# exchanged ..."), or after "with" or "and" ("X and the TARGET PHONE exchanged ...").
+_PHONE_SIDE_BEFORE_RE = re.compile(r"(?:^|\b(?:with|and))\s*(?:the\s+)?$", re.IGNORECASE)
 
 
 def _app_words(params: dict[str, Any]) -> set[str]:
@@ -2521,6 +2536,7 @@ class LocalAssumptionFiller:
             return []
 
         out: list[Proposal] = []
+        events: list[_ProposalOut] = []  # the model's event items, as it gave them
         for i, item in enumerate(items):
             try:
                 p = _ProposalOut.model_validate(item)
@@ -2529,18 +2545,61 @@ class LocalAssumptionFiller:
                 p, note = unquoted_time_quote(claim.text, p)
                 if note:
                     self._drop(claim, i, note, call.id)
+                if p.template_id == "event":
+                    events.append(p)
                 out.append(self._resolve(claim, para, p))
             except ValidationError as e:
                 self._drop(claim, i, f"wrong shape: {e.error_count()} errors", call.id)
             except Reject as e:
                 self._drop(claim, i, str(e), call.id)
 
+        out = self._exchange_from_event(claim, para, out, events, allowed_ids, call.id)
         out = self.code_fills(claim, para, self._shaped(claim, out, call.id), allowed_ids, call.id)
         gap = coverage_gap(claim, out, frozenset(self._names(claim.text)), tuple(self._events()))
         if gap:
             self._drop(claim, None, f"{gap}; the claim stays unproven", call.id)
             return []
         return out
+
+    def _exchange_from_event(
+        self,
+        claim: Claim,
+        para: str,
+        out: list[Proposal],
+        events: list[_ProposalOut],
+        allowed_ids: set[str],
+        call_id: str | None,
+    ) -> list[Proposal]:
+        """A claim that says its two sides "exchanged" messages ("the TARGET PHONE exchanged Signal
+        messages with (919) 555-0142") whose model answer gave it as one event gets that event read
+        as the count it is: the same parties, phone, apps, window and any count, resolved as a
+        message_count (ruling R3: with no number, at least two, one each way; a stated number is
+        still compared). Every check of that path still runs: the clause's every word, the words
+        before it, the phones and the window. The count takes the event's place; on any refusal the
+        event stays as the model gave it, and the refusal is recorded. Only with exactly one event
+        and no message_count, sender or record_time kept: a record_time cannot take an unquoted
+        message (`_time_rule`), so the count is the template for "exchanged messages"."""
+        if "message_count" not in allowed_ids or len(events) != 1:
+            return out
+        if any(p.template_id in {"message_count", "sender", "record_time"} for p in out):
+            return out
+        if exchanged(claim.text) is None:
+            return out
+        (event,) = events
+        try:
+            made = self._resolve(
+                claim, para, event.model_copy(update={"template_id": "message_count"})
+            )
+            parse_params("message_count", made.params)
+        except (Reject, ValueError) as e:
+            self._drop(
+                claim, None, f"the model's event, read as the claim's exchange: {e}", call_id
+            )
+            return out
+        if not (isinstance(made.params, dict) and made.params.get("each_way")):
+            return out  # read as some other count: not the exchange this fill is for
+        kept = [p for p in out if p.template_id != "event"]
+        return [*kept, Proposal("message_count", made.params, is_core=True, code_made=True)]
 
     def _shaped(self, claim: Claim, out: list[Proposal], call_id: str | None) -> list[Proposal]:
         """The proposals whose parameters fit their template, as the builder will check them.
@@ -2704,6 +2763,11 @@ class LocalAssumptionFiller:
                         " absence is read on its accounts"
                     )
 
+        if tpl.id == "message_count" and len(device_ids) == 1:
+            # "the TARGET PHONE exchanged Signal messages with (919) 555-0142": the phone the
+            # claim writes as one side is that side, through its exact owner.
+            code_made |= self._phone_side(claim.text, p.count, params, device_ids[0])
+
         if (
             tpl.id == "record_time"
             and not p.quoted_text
@@ -2736,6 +2800,7 @@ class LocalAssumptionFiller:
             params["expected_count"] = p.count.value
             if sent is not None:
                 # "SUBJECT-2 sent SUBJECT-1 three messages": only that side's (ruling R2)
+                self._quotes_name_sides(claim.text, params)
                 self._phones_kept(claim.text, params)
                 words = _unquoted(_flat(_nfc(claim.text)))
                 lead = len(words) - len(words.lstrip())
@@ -2764,6 +2829,7 @@ class LocalAssumptionFiller:
                     # model did not give is not read as "at least two" (Codex on #172)
                     raise Reject("the claim states how many messages; the model gave no count")
                 params["count_op"], params["expected_count"] = "ge", 2
+            self._quotes_name_sides(claim.text, params)
             self._phones_kept(claim.text, params)
             words = _unquoted(_flat(_nfc(claim.text)))
             self._plain_prefix(claim.text, _exchange_clause_start(words))
@@ -2823,6 +2889,61 @@ class LocalAssumptionFiller:
 
         return Proposal(p.template_id, params, is_core=True, code_made=code_made)
 
+    def _side_names(self, params: dict[str, Any]) -> list[str]:
+        """The names a count's accounts side is written by: its handles, and its accounts'
+        identifiers and display names."""
+        found = [self.data.accounts[a] for a in params.get("account_ids", [])]
+        return [
+            *params.get("handles", []),
+            *(x for a in found for x in (a.identifier, a.display_name) if x),
+        ]
+
+    def _quotes_name_sides(self, claim_text: str, params: dict[str, Any]) -> None:
+        """Raises Reject when a direction count's claim puts in quotation marks anything but a
+        side's name: 'exchanged "urgent" messages' limits the messages by what they say, which
+        the count check does not read, and the direction readers do not see quoted words."""
+        names = {_nfc(n).strip().casefold() for n in self._side_names(params) if n.strip()}
+        for m in _QUOTE_SPAN_RE.finditer(_flat(_nfc(claim_text))):
+            inner = _nfc(m.group(0)[1:-1]).strip()
+            if inner.casefold() not in names:
+                raise Reject(f"the claim quotes words the count does not read ({inner!r})")
+
+    def _phone_side(
+        self, claim_text: str, count: _Count | None, params: dict[str, Any], device: str
+    ) -> bool:
+        """Makes the phone the claim writes as a side of a message count that side, through its
+        owner by confirmed stipulation, when the model named only the other side: "the TARGET
+        PHONE exchanged Signal messages with (919) 555-0142", "the TARGET PHONE's Kik account
+        sent ten messages to <account>". Only in the two direction forms, whose every word is
+        then read (`_sent_by`, `_limits_on_exchange`), and only when the owner is exactly the
+        phone's own accounts, as for a count of calls (`_count_calls`). In the "exchanged"
+        form the phone must stand as a side, at the clause's start or after "with" or "and":
+        "X exchanged messages on the TARGET PHONE" names where, not with whom. Returns True
+        when it added the side."""
+        if count is not None and counts_calls(claim_text, count.value):
+            return False  # a count of calls reads its phone's side in _count_calls
+        people = list(params.get("person_ids", []))
+        if len(people) + bool(params.get("account_ids") or params.get("handles")) != 1:
+            return False
+        if count is not None and sent_form(claim_text, count.value) is not None:
+            pass  # `_sent_by` reads where the phone is written, as sender or recipient
+        elif exchanged(claim_text) is not None:
+            words = _unquoted(_flat(_nfc(claim_text)))
+            clause = words[_exchange_clause_start(words) :]
+            spans = self._phone_spans(clause)
+            if len(spans) != 1 or spans[0][0] != device:
+                return False
+            if not _PHONE_SIDE_BEFORE_RE.search(clause[: spans[0][1]]):
+                return False
+        else:
+            return False
+        own = {a.id for a in self.data.accounts.values() if a.device_id == device}
+        owner = self._exact_owner(own) if own else None
+        if owner is None or owner in people:
+            return False
+        params["person_ids"] = sorted({*people, owner})
+        return True
+
     def _plain_prefix(self, claim_text: str, clause_start: int) -> None:
         """Raises Reject when the words before the direction's clause hold anything but its date,
         time and phone (`_PREFIX_WORDS`): "On March 21, in Spanish, PETROV sent ..." limits the
@@ -2850,8 +2971,11 @@ class LocalAssumptionFiller:
         assumption's persons by name and its accounts by identifier, display name or number."""
         words = _unquoted(_flat(_nfc(claim_text)))
         # The whole clause from "exchanged" to the end, commas and all: "... in Spanish, on
-        # dev:p1." keeps "in Spanish" in it (Codex on #172).
-        clause = words[_exchange_clause_start(words) :]
+        # dev:p1." keeps "in Spanish" in it (Codex on #172). A side's name in quotation marks
+        # ('the GroupMe user "DFIR Two"') is read as written; other quoted words refuse the
+        # count before this (`_quotes_name_sides`) and stay blank here.
+        named = _unquoted(_names_unquoted(_flat(_nfc(claim_text)), self._side_names(params)))
+        clause = named[_exchange_clause_start(words) :]
         left = list(clause)
         spans = [s for _, *s in self._phone_spans(clause)]
         # Only the assumption's own sides: "... with SOKOLOV" names a third party the count
@@ -2867,7 +2991,8 @@ class LocalAssumptionFiller:
                 spans += _ident_spans(clause, i)
         for a in found:  # "the BURNER" for its number, as the expert named it
             spans += self._named_spans(clause, a.id)
-        numbers = {d for i in idents if i and (d := phone_digits(i)) is not None}
+        # a WhatsApp id is its number, as `_accounts` found it (ruling R6)
+        numbers = {d for i in idents if i and (d := ident_digits(i)) is not None}
         written_numbers = set()
         for m in _PHONE_RE.finditer(clause):
             if (d := phone_digits(m.group(0).strip(" .,-"))) is not None:
@@ -2879,7 +3004,7 @@ class LocalAssumptionFiller:
             names = [x for x in (a.identifier, a.display_name) if x and x.strip()]
             if (
                 not any(_ident_spans(clause, x) for x in names)
-                and not any(phone_digits(x) in written_numbers for x in names)
+                and not any(ident_digits(x) in written_numbers for x in names)
                 and not self._named_spans(clause, a.id)
             ):
                 # An account the clause does not write: the count would credit its messages
@@ -2932,7 +3057,7 @@ class LocalAssumptionFiller:
             for a in accounts:  # "the BURNER sent ...", for the number the expert named
                 out += [("accounts", s, e, False) for s, e in self._named_spans(text, a)]
             # one number written another way ("+1 (212) 555-0122" for +12125550122; R6)
-            numbers = {d for i in idents if i and (d := phone_digits(i)) is not None}
+            numbers = {d for i in idents if i and (d := ident_digits(i)) is not None}
             for m in _PHONE_RE.finditer(text):
                 if phone_digits(m.group(0).strip(" .,-")) in numbers:
                     out.append(("accounts", *m.span(), False))
@@ -2987,7 +3112,7 @@ class LocalAssumptionFiller:
             out = set()
             for a in accounts:
                 i = (self.data.accounts[a].identifier or "").strip()
-                d = phone_digits(i) if i else None
+                d = ident_digits(i) if i else None
                 if i and (_ident_spans(text, i) or self._named_spans(text, a)):
                     out.add(a)
                 elif d is not None and any(
@@ -4509,6 +4634,16 @@ def phone_digits(words: str) -> str | None:
     if area[0] not in "23456789" or exchange[0] not in "23456789":
         return None
     return "1" + area + exchange + line
+
+
+def ident_digits(identifier: str) -> str | None:
+    """The phone number an account identifier plainly is, as `phone_digits` gives it, or a
+    WhatsApp id's number ("12125550122@s.whatsapp.net" is 12125550122); else None. A user id
+    that happens to be digits is never one."""
+    if (d := phone_digits(identifier)) is not None:
+        return d
+    jid = re.fullmatch(r"(\d{8,15})@s\.whatsapp\.net", identifier.strip())
+    return jid.group(1) if jid is not None else None
 
 
 def _same_number(number: str, acc: Account) -> bool:
