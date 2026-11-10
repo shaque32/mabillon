@@ -207,6 +207,27 @@ def _count_rule(p: AssumptionParams) -> str | None:
     return _two_parties(p)
 
 
+def _caller_rule(p: AssumptionParams) -> str | None:
+    if CALL_WORD not in {c.strip().lower() for c in p.channels}:
+        return "a caller is read from the call log; channels must hold 'call'"
+    if not (
+        (len(p.sent_by) == 1 and p.sent_by[0] in p.person_ids)
+        or (
+            set(p.sent_by) == set(p.account_ids)
+            and not set(p.sent_by) & set(p.person_ids)
+            and not p.handles
+        )
+    ):
+        return "sent_by names the side that placed the call: one person, or exactly the accounts"
+    return _two_parties(p)
+
+
+def _caller(p: AssumptionParams, n: Names) -> str:
+    if len(p.sent_by) == 1 and p.sent_by[0] in p.person_ids:
+        return n.person(p.sent_by[0])
+    return "/".join(n.accounts(p.sent_by))
+
+
 def _same_account_rule(p: AssumptionParams) -> str | None:
     if len(p.handles) < 2:
         return "name at least two handles"
@@ -224,6 +245,7 @@ def _none(_: AssumptionParams) -> str | None:
 
 
 _ALL = frozenset(ClaimType)
+CALL_WORD = "call"  # the channel that means the call log
 _FREE = _FIELDS - {"expected_count", "count_op", "duration_s", "sent_by", "each_way"}
 
 TEMPLATES: dict[str, Template] = {
@@ -253,6 +275,22 @@ TEMPLATES: dict[str, Template] = {
                 f'The message "{p.quoted_text}" ({_who(p, n)}) was sent {_when(p)}'
                 if p.quoted_text
                 else f"A call between {_who(p, n)}{_lasting(p)} happened {_when(p)}"
+            ),
+        ),
+        Template(
+            # Who placed one call: code fills it from a claim's plain words ("X placed a call
+            # to Y", "X received a call from Y"), never the model. sent_by is the calling side.
+            # The caller check reads the call log's direction on the phone that holds it.
+            "caller",
+            AssumptionKind.IDENTITY,
+            _ALL,
+            ("caller",),
+            frozenset({"window", "channels", "sent_by"}),
+            frozenset({"window", "channels", "sent_by", "device_ids", "duration_s", *PARTY_FIELDS}),
+            _caller_rule,
+            lambda p, n: (
+                f"{_caller(p, n)} placed the call between {_who(p, n)}{_lasting(p)}{_on(p)} "
+                f"{_when(p)}"
             ),
         ),
         Template(
@@ -380,6 +418,12 @@ TEMPLATES: dict[str, Template] = {
         ),
     ]
 }
+
+
+# Templates only code fills, from the claim's own words: no model is offered them (the filler's
+# and the testability step's prompts and answer schemas leave them out), and a model's answer
+# naming one is refused.
+CODE_ONLY_TEMPLATES = frozenset({"caller"})
 
 
 # ---------------------------------------------------------------- building assumptions

@@ -123,7 +123,14 @@ from core.audit._llm_json import (
     run_json_call,
 )
 from core.audit._local_model import LocalModel, open_run
-from core.audit.assumptions import TEMPLATES, Proposal, Template, local_window, parse_params
+from core.audit.assumptions import (
+    CODE_ONLY_TEMPLATES,
+    TEMPLATES,
+    Proposal,
+    Template,
+    local_window,
+    parse_params,
+)
 from core.audit.checks._common import (
     CALL_CHANNEL,
     NOT_COPY,
@@ -201,6 +208,8 @@ TEMPLATE_HELP: dict[str, str] = {
     "person_identity": "an account or handle belongs to a person. Needs people.",
     "role": "a person played the role the claim states (directed, chose, led). Needs people.",
     "event": "an event the claim states happened (a seizure, a meeting, a delivery).",
+    # code-only (CODE_ONLY_TEMPLATES): never in a prompt
+    "caller": "who placed one call, read by code from the claim's plain words.",
 }
 
 # The template a claim of each type must keep, or the claim gets no assumptions.
@@ -1546,6 +1555,45 @@ _ONE_CALL_RE = re.compile(
     r"last|final|second|third|each|another|latest|earliest)\s+(?:[\w-]+\s+){0,2}(?:call|one)\b",
     re.IGNORECASE,
 )
+# One call's clause in the plain forms whose two sides code reads from the claim's words, with
+# each side a party token (`_party_tokens`): "<A> placed (or made) a call to <B>", "<A> called
+# <B>", "<A> received a call from <B>", "<A> missed a call from <B>", and "<A> had N calls with
+# <B>", which names no caller. Nothing else may sit in the clause: a word the forms do not hold
+# ("returned", "attempted", "answered", "connected", "back") leaves the caller unread.
+_TOKEN = "\x01\x03*\x02"
+_CALL_FORM_RE = re.compile(
+    rf"^(?P<lead>[^\x01]*?)(?:the\s+)?(?P<a>{_TOKEN})\s+(?:"
+    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call\s+to"
+    rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
+    rf"|(?P<called>called)"
+    rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
+    rf")\s+(?:the\s+)?(?P<b>{_TOKEN})(?P<tail>[^\x01]*)$",
+    re.IGNORECASE,
+)
+# What a call's noun phrase may hold besides the app's name: one article or ordinal, the
+# direction word its verb allows, and a word for a phone call.
+_CALL_ARTICLES = frozenset({"a", "an", "another"})
+_CALL_ORDINALS = frozenset({"second", "third", "fourth", "fifth", "further"})
+_CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
+# A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
+_CALL_LENGTH_TAIL_RE = re.compile(
+    r"^\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+)
+
+
+@dataclass(frozen=True)
+class CallForm:
+    """A call's clause read by `LocalAssumptionFiller.call_form`: its two sides as party
+    tokens, which of them placed the call ('a', 'b' or None for "had calls with"), whether the
+    claim says the call was missed, and the length words after it, if any."""
+
+    a: tuple[str, str]  # (kind, value): ("phone", device), ("person", id) or ("acct", words)
+    b: tuple[str, str]
+    caller: str | None
+    missed: bool
+    length: str | None
+
+
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
 # the range's date and the case's app names (Codex on #169).
 _PLAIN_CONTACT_WORDS = frozenset(
@@ -2733,6 +2781,7 @@ class LocalAssumptionFiller:
 
     def __call__(self, claim: Claim, allowed: list[Template]) -> list[Proposal]:
         allowed_ids = {t.id for t in allowed}
+        offered = [t for t in allowed if t.id not in CODE_ONLY_TEMPLATES]  # the model's to fill
         run_id = model_run_id(self.model)
         if run_id is None:
             self._drop(claim, None, "model has no run id", None)
@@ -2746,12 +2795,12 @@ class LocalAssumptionFiller:
                 "paragraph": para or "(paragraph not available)",
                 "templates": "\n".join(
                     f"- {t.id}: {TEMPLATE_HELP.get(t.id, t.id)}"
-                    for t in sorted(allowed, key=lambda t: t.id)
+                    for t in sorted(offered, key=lambda t: t.id)
                 ),
                 "channels": ", ".join(channels),
             },
         )
-        schema = fill_schema(allowed_ids, channels)
+        schema = fill_schema({t.id for t in offered}, channels)
         try:
             items, call = run_json_call(
                 self.model, self.recorder, run_id, (claim.id,), prompt, schema, _validate_list
@@ -2849,6 +2898,8 @@ class LocalAssumptionFiller:
 
     def _resolve(self, claim: Claim, para: str, p: _ProposalOut) -> Proposal:
         tpl = TEMPLATES[p.template_id]
+        if tpl.id in CODE_ONLY_TEMPLATES:
+            raise Reject(f"template {tpl.id!r} is filled by code from the claim's words only")
         texts = (claim.text, para)
         params: dict[str, Any] = {}
         code_made = False  # code filled a parameter the model left out or got wrong
@@ -3014,7 +3065,9 @@ class LocalAssumptionFiller:
         ):
             # A call the model named without its parties: code reads them from the claim.
             app = self._call_app(claim.text, params.get("channels", []))
-            people, accounts, phone = self._call_parties(claim, device_ids, app)
+            people, accounts, phone = self._call_parties(
+                claim, device_ids, app, phone_is_side=self._phone_is_a_side(claim, app, device_ids)
+            )
             code_made = True
             params["channels"] = sorted({CALL_CHANNEL, app}, key=str.lower)
             if phone and not device_ids:
@@ -3584,8 +3637,8 @@ class LocalAssumptionFiller:
         allowed_ids: set[str],
         call_id: str | None,
     ) -> list[Proposal]:
-        """Code's own fills after the model's items, in order: sender, time, call count and
-        meaning. The first pass and the testability step's repair both run exactly these
+        """Code's own fills after the model's items, in order: sender, time, caller, call count
+        and meaning. The first pass and the testability step's repair both run exactly these
         (Codex on #169).
 
         Where code cannot read the claim's own words for a fill ("on the samsung" for the
@@ -3595,6 +3648,7 @@ class LocalAssumptionFiller:
         try:
             out = self._shaped(claim, self._add_sender(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
+            out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             return self._add_meaning(claim, out, allowed_ids, call_id)
         except Reject as e:
@@ -4371,7 +4425,7 @@ class LocalAssumptionFiller:
         return app
 
     def _call_parties(
-        self, claim: Claim, device_ids: list[str], app: str
+        self, claim: Claim, device_ids: list[str], app: str, *, phone_is_side: bool = False
     ) -> tuple[list[str], list[str], list[str]]:
         """The parties of a call the claim describes, read from its own words: each person
         the expert created whom it names, and each number, identifier or quoted display name
@@ -4472,10 +4526,265 @@ class LocalAssumptionFiller:
         # read ("On the TARGET PHONE, PETROV called Jonathan"; Codex on #164).
         written = self._written_phones(bare)
         phone = sorted(written) if not device_ids and len(written) == 1 else []
-        sides = len(people) + bool(accounts) + bool((device_ids or phone) and not people)
+        # The phone counts beside a person only where the call's plain clause makes the phone
+        # itself one side ("the TARGET PHONE had eight Telegram calls with REYES", `call_form`).
+        sides = (
+            len(people)
+            + bool(accounts)
+            + bool((device_ids or phone) and (not people or phone_is_side))
+        )
         if sides < 2:
             raise Reject("the claim names one side of the call; code reads both or none")
         return sorted(people), sorted(accounts), phone
+
+    def _party_tokens(self, claim_text: str, app: str) -> tuple[str, dict[int, tuple[str, str]]]:
+        """The claim's words outside quotes, with each party it writes as `_call_parties` reads
+        them (a phone, a person, a number or a name the expert gave one, a quoted name, an
+        identifier on the app) replaced by a token of the same length, and each token's start
+        -> (kind, words): kind "phone" (a device id), "person" (a person id) or "acct". Raises
+        Reject where two such readings overlap: the words are not plainly one party."""
+        text = _flat(_nfc(claim_text))
+        bare = _unquoted(text)
+        spans: list[tuple[int, int, str, str]] = [
+            (st, en, "phone", did) for did, st, en in self._phone_spans(bare)
+        ]
+        for pid, found in self._person_spans(bare).items():
+            spans += [(st, en, "person", pid) for st, en in found]
+        for m in _PHONE_RE.finditer(bare):
+            words = m.group(0).strip(" .,-")
+            if phone_digits(words) is not None:
+                st = m.start() + m.group(0).index(words)
+                spans.append((st, st + len(words), "acct", words))
+        spans += [(st, en, "acct", ident) for ident, st, en in self._numbers_named(bare)]
+        for m in _QUOTE_SPAN_RE.finditer(text):
+            if m.group(0)[1:-1].strip():
+                spans.append((*m.span(), "acct", m.group(0)[1:-1].strip()))
+        for a in self.data.accounts.values():
+            i = a.identifier.strip()
+            if a.app != app or len(i) < 6 or re.search(r"\s", i):
+                continue
+            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
+                spans.append((*m.span(), "acct", i))
+        tokens: dict[int, tuple[str, str]] = {}
+        kinds: dict[tuple[int, int], set[str]] = {}
+        for st, en, kind, value in spans:
+            kinds.setdefault((st, en), set()).add(kind if kind == "acct" else f"{kind}:{value}")
+        # "Reyes" inside "Marcus Reyes": one reading of one party, the outer one
+        kinds = {
+            (st, en): found
+            for (st, en), found in kinds.items()
+            if not any(
+                s2 <= st and en <= e2 and (s2, e2) != (st, en) and f2 == found
+                for (s2, e2), f2 in kinds.items()
+            )
+        }
+        out = list(bare)
+        for (st, en), found in sorted(kinds.items()):
+            if len(found) != 1 or any(
+                st < e2 and s2 < en and (s2, e2) != (st, en) for s2, e2 in kinds
+            ):
+                raise Reject(f"{text[st:en]!r} is not plainly one party")
+            if en - st < 2:
+                raise Reject(f"{text[st:en]!r} is too short to read as a party")
+            out[st:en] = ["\x01", *(["\x03"] * (en - st - 2)), "\x02"]
+            (one,) = found
+            kind, _, value = one.partition(":") if one != "acct" else ("acct", "", text[st:en])
+            tokens[st] = (kind, value)
+        return "".join(out), tokens
+
+    def call_form(self, claim: Claim, app: str) -> CallForm | None:
+        """The claim's one call in a plain form (`_CALL_FORM_RE`), or None when its wording is
+        not one: a denial, another clause, a kind of call, words before the clause other than
+        its date, time and phone, or after it other than a length or its date and time, or a
+        direction word the verb does not allow ("placed an incoming call", "received an
+        outgoing call") all leave it unread. Code then reads no caller: a misread direction
+        would contradict a true claim."""
+        bare = _unquoted(_flat(_nfc(claim.text)))
+        if _DENIAL_RE.search(bare) or _CLAUSE_JOINER_RE.search(bare) or _CALL_KIND_RE.search(bare):
+            return None
+        try:
+            skeleton, tokens = self._party_tokens(claim.text, app)
+        except Reject:
+            return None
+        m = _CALL_FORM_RE.match(skeleton.rstrip())
+        if m is None:
+            return None
+        try:
+            self._plain_prefix(claim.text, m.end("lead"))
+        except Reject:
+            return None
+        verb = (m.group("placed") or m.group("got") or m.group("called") or m.group("had")).lower()
+        np = m.group("np_to") or m.group("np_from") or m.group("np_with") or ""
+        if not self._plain_call_noun(np, verb, app):
+            return None
+        tail = m.group("tail")
+        length = None
+        if tail.strip(" ."):
+            at = _CALL_LENGTH_TAIL_RE.match(tail)
+            if at is not None:
+                length = at.group("len")
+            elif any(
+                not (w in _PREFIX_WORDS or w in _MONTHS or w in _WEEKDAYS or w.isdigit())
+                for w in _words(tail).split()
+            ):
+                return None
+        caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
+        return CallForm(
+            a=tokens[m.start("a")],
+            b=tokens[m.start("b")],
+            caller=caller.get(verb),
+            missed=verb == "missed",
+            length=length,
+        )
+
+    @staticmethod
+    def _plain_call_noun(np: str, verb: str, app: str) -> bool:
+        """True when the words before "call" are only an article (or, for "had", a number),
+        an ordinal, the direction word the verb allows, the app's name and a phone word."""
+        words = _words(np).split()
+        if verb == "called":
+            return not words
+        if not words:
+            return False
+        head = words.pop(0)
+        if verb == "had":
+            if head not in ("a", "an") and _number(head) is None:
+                return False
+        elif head not in _CALL_ARTICLES:
+            return False
+        if words and words[0] in _CALL_ORDINALS and head in ("a", "an"):
+            words.pop(0)
+        allowed = {"placed": "outgoing", "made": "outgoing", "received": "incoming"}
+        allowed["missed"] = "incoming"
+        if words and words[0] in ("outgoing", "incoming"):
+            if allowed.get(verb) != words.pop(0):
+                return False
+        if words and words[-1] in _CALL_PHONE_WORDS:
+            words.pop()
+        if not words:
+            return True
+        names = [] if app == NATIVE_CALL_APP else [app, *APP_ALIASES.get(app.casefold(), ())]
+        return " ".join(words) in {_words(n).strip() for n in names}
+
+    def _phone_is_a_side(self, claim: Claim, app: str, device_ids: list[str]) -> bool:
+        """True when the claim's call is in a plain form (`call_form`) with a phone as one side
+        and a party that is no phone as the other: "the TARGET PHONE had eight Telegram calls
+        with REYES". The phone is the one searched, or, with none given, the one the claim
+        writes."""
+        form = self.call_form(claim, app)
+        if form is None:
+            return False
+        phones = [v for k, v in (form.a, form.b) if k == "phone"]
+        if len(phones) != 1:
+            return False
+        written = self._written_phones(_unquoted(_nfc(claim.text)))
+        return phones[0] in device_ids if device_ids else written == {phones[0]}
+
+    def _add_caller(
+        self, claim: Claim, out: list[Proposal], allowed_ids: set[str]
+    ) -> list[Proposal]:
+        """A claim that says who placed its one call ("the TARGET PHONE placed an outgoing call
+        to (919) 555-0142", "(919) 555-0142 called the TARGET PHONE", "PETROV received a
+        Telegram call from REYES") gets a caller assumption from code: the call's time range's
+        parties, phone, app, length and window, with the side the claim's verb makes the
+        caller as sent_by. Only the plain forms are read (`call_form`), each side must be one
+        of the time range's parties (the phone written as a side is its exact owner by
+        confirmed stipulation, `_exact_owner`), and both sides must be named. "missed" adds a
+        core event assumption beside it: the call log does not reliably record whether an
+        incoming call was answered, so only an expert can carry that part. Anything else
+        keeps no caller, and rule 3e keeps a communication claim unproven."""
+        if "caller" not in allowed_ids or any(p.template_id == "caller" for p in out):
+            return out
+        times = [
+            p
+            for p in out
+            if p.template_id == "record_time"
+            and isinstance(p.params, dict)
+            and CALL_CHANNEL in p.params.get("channels", [])
+            and not p.params.get("quoted_text")
+        ]
+        if len(times) != 1:
+            return out
+        rt = dict(times[0].params)
+        try:
+            made = self._caller_params(claim, rt)
+        except Reject:
+            return out
+        if made is None:
+            return out
+        params, missed = made
+        out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
+        if missed and "event" in allowed_ids:
+            allowed = TEMPLATES["event"].allowed
+            event = {k: v for k, v in params.items() if k in allowed}
+            out.append(Proposal("event", event, is_core=True, code_made=True))
+        return out
+
+    def _caller_params(
+        self, claim: Claim, rt: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool] | None:
+        """The caller assumption's parameters and whether the call was missed, from the claim's
+        plain form and its call's time range `rt`; None when the claim says no caller. Raises
+        Reject where the form's sides are not the time range's parties."""
+        if rt.get("handles"):
+            return None  # a handle is resolved by the checks; code never names it as a side
+        channels = [c for c in rt.get("channels", []) if c != CALL_CHANNEL]
+        app = self._call_app(claim.text, channels)
+        form = self.call_form(claim, app)
+        if form is None or form.caller is None:
+            return None
+        device_ids = list(rt.get("device_ids", []))
+        phones = [v for k, v in (form.a, form.b) if k == "phone"]
+        if len(phones) > 1:
+            return None
+        people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
+        if set(people) != set(rt.get("person_ids", [])) or set(accounts) != set(
+            rt.get("account_ids", [])
+        ):
+            return None  # the time range tests other parties than the clause names
+        sides: dict[str, str] = {}
+        for name, (kind, value) in (("a", form.a), ("b", form.b)):
+            if kind == "phone":
+                if device_ids != [value]:
+                    return None
+                own = {a.id for a in self.data.accounts.values() if a.device_id == value}
+                owner = self._exact_owner(own) if own else None
+                if owner is None:
+                    return None  # the phone's side is no one person code can name
+                sides[name] = owner
+            elif kind == "person":
+                sides[name] = value
+            else:
+                if not accounts:
+                    return None
+                sides[name] = "accounts"
+        if sides["a"] == sides["b"]:
+            return None
+        persons = sorted({v for v in sides.values() if v != "accounts"})
+        if set(rt.get("person_ids", [])) - set(persons) or (
+            accounts and "accounts" not in sides.values()
+        ):
+            return None  # a party of the time range is not a side of the clause
+        if len(persons) + bool(accounts) != 2:
+            return None
+        caller = sides[form.caller]
+        if bool(form.length) != bool(rt.get("duration_s")):
+            return None  # a length the time range does not test, or one the claim does not state
+        if form.length and duration_range(form.length, claim.text) != tuple(rt["duration_s"]):
+            return None
+        params: dict[str, Any] = {
+            "person_ids": persons,
+            "sent_by": sorted(accounts) if caller == "accounts" else [caller],
+            "window": rt["window"],
+            "channels": rt["channels"],
+        }
+        if accounts:
+            params["account_ids"] = sorted(accounts)
+        if device_ids:
+            params["device_ids"] = device_ids
+        if rt.get("duration_s"):
+            params["duration_s"] = rt["duration_s"]
+        return params, form.missed
 
     def _absence_parties(
         self,
@@ -4833,7 +5142,9 @@ class LocalAssumptionFiller:
             params.get("person_ids") or params.get("account_ids") or params.get("handles")
         )
         if not supplied:
-            people, accounts, phone = self._call_parties(claim, device_ids, app)
+            people, accounts, phone = self._call_parties(
+                claim, device_ids, app, phone_is_side=self._phone_is_a_side(claim, app, device_ids)
+            )
             if phone and not device_ids:
                 device_ids = phone
                 params["device_ids"] = phone
@@ -4849,7 +5160,12 @@ class LocalAssumptionFiller:
                 # The model's one side: the claim's own words must make the phone the other
                 # side and name that one side, as when code reads the parties ("REYES and
                 # SMITH had two calls" on the phone is no call with its owner; Codex on #169).
-                people, accounts, _ = self._call_parties(claim, device_ids, app)
+                people, accounts, _ = self._call_parties(
+                    claim,
+                    device_ids,
+                    app,
+                    phone_is_side=self._phone_is_a_side(claim, app, device_ids),
+                )
                 if (
                     params.get("handles")
                     or sorted(params.get("person_ids", [])) != people
