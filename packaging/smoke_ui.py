@@ -83,8 +83,9 @@ def start_screen(page: Page, base: str) -> None:
     need(page.url.endswith("/cases"), f"start screen went to {page.url}, not /cases")
     need("Mabillon" in page.title(), page.title())
     body = page.inner_text("body")
-    for words in ("Offline", "Cases folder", "New case"):
+    for words in ("On this computer", "Cases folder", "New case"):
         need(words in body, f"start screen lacks {words!r}")
+    need("Offline" not in body, "start screen says 'Offline' (CLAUDE.md: never describe it so)")
     print(f"ok  start screen {page.url}: {page.title()}")
 
 
