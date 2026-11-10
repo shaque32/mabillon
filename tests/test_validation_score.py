@@ -501,3 +501,46 @@ def test_bare_words_are_not_a_refusal_kind():
         "time range not plainly stated",
         "count or duration not readable",
     ]
+
+
+def test_the_r1_card_scores_the_run_before_any_review(scored):
+    _, s = scored
+    card = s["r1_card"]["card"]
+    assert card["claims"] == 3
+    # Gold not supported: C02 and C03. Stand-in components support nothing before review.
+    assert card["false_supported"]["n"] == 2 and card["false_supported"]["k"] == 0
+    assert card["false_contradicted"]["k"] == 0
+    bars = s["v4_bars"]
+    # Two not-supported claims are far under v4's floor of 100, so bar 1 cannot pass here.
+    assert bars["1"]["pass"] is False and bars["1"]["false_supported"]["n"] == 2
+    assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
+    assert bars["8_import_counts"]["pass"] is True
+    assert "6" not in bars  # no pass 2 given
+    assert s["scorer_version"] == "1.4.0"
+
+
+def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    s = score_hickman.score(
+        run / "results.zip", base / "keys", base / "dump", tmp_path / "out", run / "results.zip"
+    )
+    assert s["repeat"]["same"]["k"] == 3 and s["repeat"]["same"]["n"] == 3
+    assert s["v4_bars"]["6"]["pass"] is True
+    assert "Validation v4 bars" in (tmp_path / "out" / "score.md").read_text("utf-8")
+
+
+def test_a_flip_or_a_missing_verdict_is_never_the_same():
+    first = {
+        "A": {"r1": "supported"},
+        "B": {"r1": "contradicted"},
+        "C": {"r1": "unproven"},
+        "D": {"r1": None},
+        "E": {"r1": "unproven"},
+    }
+    second = {"A": "contradicted", "B": "contradicted", "C": "unproven", "D": None}
+    got = score_hickman.repeat(first, second)
+    assert got["same"]["k"] == 2 and got["same"]["n"] == 5  # B and C; D has no verdict either time
+    assert got["supported_contradicted_flips"] == ["A"]
+    assert set(got["differences"]) == {"A", "D", "E"}
+    assert got["differences"]["E"] == {"pass_1": "unproven", "pass_2": None}

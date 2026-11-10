@@ -50,7 +50,7 @@ from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
 
 ACTOR = "expert:validation"
-SOURCE_ID = "ios15"
+SOURCE_ID = "ios15"  # the default; --source-id names another phone (validation v4)
 OWNER = "SUBJECT-1"
 PHONE_NAME = "TARGET PHONE"  # the affidavit's name for the phone
 # The people the affidavit defines, found in the claims text by this rule alone (never from the
@@ -59,6 +59,10 @@ SUBJECT = re.compile(r"\bSUBJECT-\d+\b")
 # The affidavit's header defines these people by a telephone number (PREREGISTERED_v3.md, R4). The
 # number is the definition, as the phone is SUBJECT-1's: a premise of the affidavit, not a claim.
 DEFINED_NUMBERS = {"SUBJECT-2": "(919) 888-7386"}
+# --definitions FILE replaces them with the affidavit header another claims writer wrote (v4,
+# PREREGISTERED_v4.md): {"SUBJECT-<n>": "<telephone number>", ..., "phone_time_zone": "<zone>"},
+# the zone optional and given to the case as the examiner's statement (--phone-zone).
+ZONE_KEY = "phone_time_zone"
 # An identifier that is a telephone number: digits with + ( ) - . and spaces, or a WhatsApp id.
 _NUMBER_ID = re.compile(r"\+?[\d\s().-]+(?:@s\.whatsapp\.net)?")
 TITLE = "AFFIDAVIT (VALIDATION V1, HICKMAN PUBLIC IMAGE, NOT A REAL CASE)"
@@ -110,8 +114,33 @@ def render_affidavit(claims: list[dict], path: Path) -> Path:
     return path
 
 
+def load_definitions(path: Path) -> dict[str, str]:
+    """The affidavit header a v4 claims writer hands over. Refused unless every key is a
+    SUBJECT-<n> other than the phone's user, defined by a telephone number, or the phone's zone."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"--definitions: {e}") from None
+    if not isinstance(raw, dict) or not all(isinstance(v, str) for v in raw.values()):
+        raise SystemExit("--definitions: an object of names to strings")
+    for key, value in raw.items():
+        if key == ZONE_KEY:
+            continue
+        if not SUBJECT.fullmatch(key) or key == OWNER:
+            raise SystemExit(f"--definitions: {key!r} is not a SUBJECT-<n> other than {OWNER}")
+        if number_digits(value) is None:
+            raise SystemExit(f"--definitions: {key} is defined by {value!r}, not a number")
+    return raw
+
+
 def build(  # noqa: ANN001
-    ufdr: Path, claims: list[dict], out: Path, log, phone_zone: str | None = None
+    ufdr: Path,
+    claims: list[dict],
+    out: Path,
+    log,
+    phone_zone: str | None = None,
+    source_id: str = SOURCE_ID,
+    defined: dict[str, str] | None = None,
 ) -> None:
     from core.ingest.govdoc import PdfGovDocIngester
     from core.ingest.ufdr import UfdrImporter
@@ -122,7 +151,8 @@ def build(  # noqa: ANN001
     conn = connect(db)
     apply_schema(conn)
     t = time.monotonic()
-    src = UfdrImporter(source_id=SOURCE_ID).import_source(ufdr, conn)
+    defined = DEFINED_NUMBERS if defined is None else defined
+    src = UfdrImporter(source_id=source_id).import_source(ufdr, conn)
     log(f"imported {src.file_name} ({src.fidelity.value}) in {time.monotonic() - t:.0f} s")
     _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
         render_affidavit(claims, out / "affidavit.pdf"), conn
@@ -134,22 +164,22 @@ def build(  # noqa: ANN001
             raise SystemExit(f"{c['claim_id']}: the ingester found no paragraph {c['para_no']}")
         kind = ClaimType(c["claim_type"])
         actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
-    actions.name_device(conn, f"dev:{SOURCE_ID}", [PHONE_NAME], ACTOR)
+    actions.name_device(conn, f"dev:{source_id}", [PHONE_NAME], ACTOR)
     if phone_zone:
         # The examiner's statement of the zone, for a package that records none; the action
         # refuses it when the package does (core/review/actions.set_device_zone).
         try:
-            actions.set_device_zone(conn, f"dev:{SOURCE_ID}", phone_zone, ACTOR)
+            actions.set_device_zone(conn, f"dev:{source_id}", phone_zone, ACTOR)
         except actions.ReviewError as e:
             raise SystemExit(f"--phone-zone: {e}") from None
         log(f"the phone's zone, as the examiner gives it: {phone_zone}")
-    actions.stipulate_device_owner(conn, f"dev:{SOURCE_ID}", OWNER, ACTOR)
+    actions.stipulate_device_owner(conn, f"dev:{source_id}", OWNER, ACTOR)
     others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - {OWNER})
     linked = {}
     for name in others:
         pid = actions.add_person(conn, name, ACTOR)
-        if name in DEFINED_NUMBERS:
-            linked[name] = link_defined_number(conn, pid, DEFINED_NUMBERS[name])
+        if name in defined:
+            linked[name] = link_defined_number(conn, pid, defined[name])
     conn.close()
     log(
         f"case built: {len(claims)} claims on {len(paragraphs)} paragraphs; the phone is"
@@ -417,7 +447,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
     )
+    ap.add_argument("--source-id", default=SOURCE_ID, help="the phone's source id in the case")
+    ap.add_argument(
+        "--definitions",
+        type=Path,
+        help="the affidavit header as JSON (SUBJECT-<n> to a number, and phone_time_zone);"
+        " replaces the iOS 15 definitions",
+    )
     a = ap.parse_args(argv)
+    defined = None
+    if a.definitions is not None:
+        defs = load_definitions(a.definitions)
+        zone = defs.pop(ZONE_KEY, None)
+        if zone and a.phone_zone and zone != a.phone_zone:
+            raise SystemExit(f"--phone-zone {a.phone_zone} differs from the definitions' {zone}")
+        a.phone_zone = a.phone_zone or zone
+        defined = defs
     if a.cloud and a.max_usd is not None and a.cloud not in PRICES_PER_MTOK:
         # Without a price the spend counter never moves, so the cap would never stop a call.
         raise SystemExit(f"--max-usd: no price for {a.cloud}; add it to PRICES_PER_MTOK")
@@ -446,6 +491,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 f"{a.out} was set up by an earlier version of this run (setup"
                 f" {was.get('setup', 1)}, now {SETUP}); use a new --out"
+            )
+        if was.get("source_id", SOURCE_ID) != a.source_id or was.get("definitions") != (
+            defined if a.definitions is not None else None
+        ):
+            raise SystemExit(
+                f"{a.out} was built with another source id or definitions; use a new --out"
             )
         if was["claims_sha256"] != claims_sha:
             raise SystemExit(
@@ -477,13 +528,17 @@ def main(argv: list[str] | None = None) -> int:
         if a.report_sha256 and report_sha != a.report_sha256:
             raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
         run["report_xml_sha256"] = report_sha
-        build(a.ufdr, claims, a.out, log, a.phone_zone)
+        build(a.ufdr, claims, a.out, log, a.phone_zone, a.source_id, defined)
         run["phone_zone_given"] = a.phone_zone
+        run["source_id"] = a.source_id
+        run["definitions"] = defined if a.definitions is not None else None
         inputs = {
             "claims_sha256": claims_sha,
             "report_xml_sha256": report_sha,
             "setup": SETUP,
             "phone_zone": a.phone_zone,
+            "source_id": a.source_id,
+            "definitions": defined if a.definitions is not None else None,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
