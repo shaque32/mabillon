@@ -640,7 +640,7 @@ def readiness(case: Case, conn: sqlite3.Connection) -> list[Ready]:
     proposed = conn.execute("SELECT COUNT(*) FROM claims WHERE status = 'proposed'").fetchone()[0]
     order = claim_order(case, conn)
     if not order:
-        out.append(Ready(False, "Add claims: propose them with the local model, or add your own."))
+        out.append(Ready(False, "Add claims: propose them with the model, or add your own."))
     elif proposed:
         out.append(
             Ready(

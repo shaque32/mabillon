@@ -1457,7 +1457,7 @@ class App:
         return cloud_policy.choose(conn, self._cloud_load)
 
     def _case_uses_cloud(self) -> bool:
-        """For the header pill: does the open case send stance questions to the cloud?"""
+        """For the header pill: does the open case run its model steps on the cloud?"""
         if self.case is None:
             return False
         job = self._job("audit")

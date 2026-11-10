@@ -141,7 +141,7 @@ class Page:
         self.busy = busy  # an audit is running: no re-run of the verdicts
         self.many_cases = many_cases  # the screen was started on a cases folder
         self.path = path  # the page's own path, to mark its tab
-        self.cloud = cloud  # the open case sends stance questions to the cloud model
+        self.cloud = cloud  # the open case runs its model steps on the cloud model
         # the folded demo or test-run banner (stand_in_note), on every page of the case
         self.stand_in = stand_in
 
@@ -2905,9 +2905,9 @@ def setup_page(
             )
         )
         out.append(
-            "<p class='muted'>The local model is still needed with cloud AI: it proposes "
-            "claims and fills in assumptions on this computer. Only stance questions go to "
-            "the cloud.</p>"
+            "<p class='muted'>With cloud AI on, every model step of this case runs on the cloud "
+            "model: proposing claims, filling in assumptions, stance labels and the AI reviewer. "
+            "The local model is needed only for a case that runs on this computer.</p>"
         )
 
     out.append("<h2 id='run'>Run the audit</h2>")
@@ -2986,7 +2986,7 @@ def cloud_section(
     key_from: str | None = None,
     encrypted: bool = False,
 ) -> str:
-    """Step 4's cloud part: which model labels this case, the per-case attestation, the key."""
+    """Step 4's cloud part: which model runs this case, the per-case attestation, the key."""
     from core.casework.cloud import ATTESTATION, CSAM_NOTE
 
     use = bool(getattr(choice, "use", False))
