@@ -164,6 +164,23 @@ def load_keys(keys: Path) -> tuple[list[GoldClaim], dict[str, str]]:
     return gold, hashes
 
 
+def check_key_covers(conn: sqlite3.Connection, gold: list[GoldClaim]) -> None:
+    """Refuse a key that is not exactly the run's claims, so a missing key file or row can never
+    drop a claim (and its verdict) from the scores."""
+    ids = [g.claim_id for g in gold]
+    if len(set(ids)) != len(ids):
+        raise SystemExit("score: the key holds a claim id more than once")
+    in_run = {
+        r[0] for r in conn.execute("SELECT id FROM claims WHERE status != 'removed'").fetchall()
+    }
+    missing, extra = sorted(in_run - set(ids)), sorted(set(ids) - in_run)
+    if missing or extra:
+        raise SystemExit(
+            f"score: the key does not match the run's claims; no key for {missing or 'none'},"
+            f" not in the run {extra or 'none'}"
+        )
+
+
 def load_dump(dump: Path) -> tuple[dict[str, dict], dict[str, str | None], dict[str, int]]:
     """Records by source_index, each chat's app by chat id, and top-level counts."""
     by_index: dict[str, dict] = {}
@@ -767,6 +784,7 @@ def score(
     run = pipeline.last_run(conn)
     if run is None:
         raise SystemExit(f"{results}: no completed audit in case.db")
+    check_key_covers(conn, gold)
     mapped, mapping = map_keys(conn, gold, by_index, chats)
     r1 = r1_measures(conn, run, mapped)
     ready = key_recall(conn, run, mapping["groups"])

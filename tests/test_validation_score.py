@@ -575,6 +575,16 @@ def test_a_v4_key_folder_holds_gold_jsonl_alone(tmp_path):
     assert set(hashes) == {"gold.jsonl"}
 
 
+def test_a_key_missing_a_run_claim_is_refused(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "gold.jsonl").write_text("".join(json.dumps(g) + "\n" for g in GOLD[1:]), "utf-8")
+    with pytest.raises(SystemExit, match=f"no key for \\['{GOLD[0]['claim_id']}'\\]"):
+        score_hickman.score(run / "results.zip", keys, base / "dump", tmp_path / "out")
+
+
 def test_a_key_folder_without_gold_jsonl_is_refused(tmp_path):
     (tmp_path / "gold_b2.jsonl").write_text("", "utf-8")
     with pytest.raises(SystemExit, match="no gold.jsonl"):
