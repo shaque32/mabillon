@@ -269,5 +269,9 @@ def test_words_in_messages_from_different_senders_are_not_settled(conn):
                window=window)]  # fmt: skip
     c, made, filler = build(conn, text, ClaimType.CONTENT_MEANING, props)
     assert "meaning" in {a.template_id for a in made}, reasons(filler)
+    (sender,) = [a for a in made if a.template_id == "sender"]
+    (r,) = run_checks(sender, conn)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "different or unknown senders" in r.detail
+    # (Every "ok" of PETROV's on the phone is dated another day, so the time check fails.)
     decision, _ = verdict(conn, c, made)
     assert decision.verdict is not Verdict.SUPPORTED
