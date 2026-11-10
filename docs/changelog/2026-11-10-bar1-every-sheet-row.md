@@ -1,4 +1,4 @@
-## 2026-11-10: Testability go/no-go bar 1 counts a claim only when no sheet row is left out (eval only)
+## 2026-11-10: Testability go/no-go bar 1 counts a claim only when no sheet row is left out (eval only) (#258)
 - Changed: bar 1 (`eval/run_pipeline.py`, `both_passes`) now counts a claim only when its core
   assumptions, from the first pass or an accepted repair, name nothing the signed sheet does not
   and leave out none of the sheet's templates, people or time windows for it (`left_out`). Until
@@ -11,7 +11,7 @@
   recheck on spent case05, C04's repair tested only that the BURNER's account sent the message.
   It left out that SUBJECT-1 used the BURNER and the day, still counted toward bar 1, and went
   false supported.
-- Where: branch claude/project-thread-6i2msb-strict-coverage
+- Where: PR #258
 - Verified: unit tests (`left_out` names each missing template, person and window; `both_passes`
   counts a full set, and counts case01's C16 tested without its authorship row and C05 without its
   day only beside the bar) and make check. Stored case05 runs replayed through `both_passes`
