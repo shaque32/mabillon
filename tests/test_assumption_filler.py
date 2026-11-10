@@ -2770,13 +2770,23 @@ def test_a_direction_is_not_read_past_a_limit_before_the_clause(conn, text, valu
     [
         "On March 21, 2026, a Saturday, on dev:item1, PETROV sent REYES exactly one Telegram"
         " message.",
-        "On the morning of March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
+        "On Saturday, March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
         " message.",
     ],
 )
 def test_a_date_and_phone_before_the_clause_are_plain(conn, text):
     made, filler = _count(conn, text, 1, phones=["dev:item1"])
     assert any(a.params.sent_by == (PETROV,) for a in made), filler.drops
+
+
+def test_a_part_of_the_day_is_not_counted_over_the_whole_day(conn):
+    # "the morning of" narrows the day; a count over the whole of March 21 would test less.
+    text = (
+        "On the morning of March 21, 2026, on dev:item1, PETROV sent REYES exactly one Telegram"
+        " message."
+    )
+    made, filler = _count(conn, text, 1, phones=["dev:item1"])
+    assert made == [], [a.params for a in made]
 
 
 @pytest.mark.parametrize("phrase", ["with each other", "with one another"])

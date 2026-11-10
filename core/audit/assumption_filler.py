@@ -165,7 +165,9 @@ MAX_PROPOSALS = 8
 #      range drops words a claim that quotes nothing never quoted; a range whose words state
 #      one plain range takes code's reading of them; "texting" names SMS and "spoke by phone"
 #      a call.
-FILLER_VERSION = "5"
+#   6: a whole-day date written with a part of the day ("in the early hours of", "on the
+#      evening of", "late on") is not read, instead of being widened to the whole day.
+FILLER_VERSION = "6"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 
@@ -1145,6 +1147,17 @@ class StatedWindow:
     zone: str | None = None
 
 
+# Words that narrow a stated day to a part of it ("the early hours of", "the evening of"),
+# which stated_windows does not read: a date written with one is not read as the whole day.
+_PART_OF_DAY_RE = re.compile(
+    r"\b(?:early|late|mid|wee)\b|\b(?:mornings?|afternoons?|evenings?|nights?|nighttime|"
+    r"overnight|dawn|dusk|daybreak|sunrise|sunset|midday|lunchtime|noontime|bedtime)\b|"
+    r"\b(?:end|start|beginning|close|middle) of\b|"
+    r"\bsmall hours\b|\bfirst thing\b|\bafter (?:dark|work|school)\b",
+    re.IGNORECASE,
+)
+
+
 def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
     """Every date the text states, as the range it plainly means, or None when any date is
     not plain: an open range ("before", "after", "since", "until", "from 9 p.m. on", "at 9
@@ -1165,7 +1178,9 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
       in `zone`, for the filler to check against the phone's zone.
     - Any time of day the text writes outside quoted words that no range above read (a
       second time, "beginning at", "after 10 a.m.") makes the whole answer None: a time is
-      never widened to the whole day.
+      never widened to the whole day. So does a part of the day written beside a whole-day
+      date ("in the early hours of", "on the evening of", "late on"): the whole day would
+      let any time that day pass.
     """
     years = {int(y) for y in _YEAR_RE.findall(text + " " + context)}
     out: list[StatedWindow] = []
@@ -1249,6 +1264,11 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
         else:
             if _LOOSE_TIME_RE.search(before) or _THEN_LOOSE_RE.match(after):
                 return None  # a time code cannot read: never widen it to the whole day
+            if _PART_OF_DAY_RE.search(plain):
+                # "In the early hours of November 2, 2025", "on the evening of May 7": a part
+                # of the day code does not read is never widened to the whole day, where any
+                # time that day would pass the check.
+                return None
             lead = _LEAD_RE.search(before)
             if lead is not None:
                 start_i = m.start() - len(before) + lead.start()

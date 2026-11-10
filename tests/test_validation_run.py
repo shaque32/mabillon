@@ -268,3 +268,9 @@ def test_the_spend_cap_stops_further_calls_as_a_sticky_failure():
         m.generate_json("p", {})
     assert e.value.sticky
     assert m.usage()["calls"] == 2
+
+
+def test_the_driver_prices_match_the_bench_prices():
+    from eval.bench.claude_bench import PRICES_PER_MTOK
+
+    assert hickman_run.PRICES_PER_MTOK == PRICES_PER_MTOK

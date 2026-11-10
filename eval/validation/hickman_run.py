@@ -211,14 +211,21 @@ def machine() -> dict:
     return info
 
 
+# Dollars per million (input, output) tokens. A copy of eval/bench/claude_bench.py's table, which
+# the installer does not ship; tests/test_validation_run.py checks the two agree.
+PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+
 class Budgeted:
     """A cloud model that counts its spend and stops once it passes a cap. The cap and the
     out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
     the answers stored so far are kept, and a resume picks up where it stopped."""
 
     def __init__(self, model, max_usd: float | None, spent_usd: float = 0.0) -> None:  # noqa: ANN001
-        from eval.bench.claude_bench import PRICES_PER_MTOK
-
         self._m = model
         self.name, self.sha256 = model.name, model.sha256
         self.params, self.where = model.params, getattr(model, "where", "cloud")
