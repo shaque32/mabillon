@@ -39,7 +39,9 @@
     (not across a comma) are the time of another act and are refused (`time_of_another_act`),
     so code reads the claim's own range or refuses. An event's window is refused on the cues
     of a plan only ("to meet", "would meet", "arranged", "planned", "scheduled", "set",
-    "agreed"): "attended a meeting on June 2" keeps the meeting's own time.
+    "agreed"): "attended a meeting on June 2" keeps the meeting's own time. Code's own
+    fallback reading (`_stated`) applies the same rule after it picks the model's day, so a
+    refused meeting time never comes back through it; with no other range that day, it refuses.
 - Where: PR #255
 - Verified: new `tests/test_fill_windows.py` (67 tests, synthetic case01), covering:
     - the bounds of every approximate form, at their boundary instants, for record_time,

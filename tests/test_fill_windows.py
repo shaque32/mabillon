@@ -491,6 +491,32 @@ def test_a_planned_meeting_is_no_event_window_but_a_meeting_that_happened_is(con
     )
 
 
+ONLY_MEET = (
+    "PETROV and REYES arranged by text to meet at 7 p.m. on Thursday, October 30, 2025, at the"
+    " lot by the grain elevator."
+)
+
+
+@pytest.mark.parametrize("template", ["record_time", "message_count", "no_contact", "event"])
+def test_code_never_falls_back_to_the_time_of_a_planned_act(conn, template):
+    # The model's words are refused, and the claim states no other range: code's own reading
+    # must refuse too, never bring the meeting's time back (agents thread on #255, C43).
+    with pytest.raises(Reject, match="time of another act"):
+        code_window(conn, ONLY_MEET, template)
+    w = W("7 p.m. on Thursday, October 30, 2025", "2025-10-30T19:00", "2025-10-30T19:01")
+    with pytest.raises(Reject, match="time of another act it names"):
+        filler(conn)._resolve(claim(ONLY_MEET), "", proposal(window=w, quoted_text=""))
+
+
+def test_the_fallback_on_the_meetings_day_never_takes_the_meeting(conn):
+    # MEET states October 28 (the texts) and October 30 (the meeting). The model's day is the
+    # 30th, and that day's only stated range is the meeting's, so the fallback refuses; it never
+    # swaps in the 28th, a day the model did not give.
+    w = W("7 p.m. on Thursday, October 30, 2025", "2025-10-30T19:00", "2025-10-30T19:01")
+    with pytest.raises(Reject, match="time of another act it names"):
+        filler(conn)._resolve(claim(MEET), "", proposal(window=w, quoted_text=""))
+
+
 @pytest.mark.parametrize(
     ("text", "words"),
     [

@@ -1349,6 +1349,10 @@ _PLANNED_ACT_BEFORE_RE = re.compile(
 )
 
 
+# The templates whose range is never the time of another act the claim names.
+_OTHER_ACT_TEMPLATES = ("record_time", "message_count", "no_contact", "event")
+
+
 def time_of_another_act(as_written: str, claim: str, *, planned_only: bool = False) -> bool:
     """True when the model's words, wherever the claim writes them outside quoted words, follow
     a cue that makes them the time of another act ("to meet at 7 p.m. on Thursday, October 30,
@@ -1357,9 +1361,13 @@ def time_of_another_act(as_written: str, claim: str, *, planned_only: bool = Fal
     words = _flat(_nfc(as_written.strip()))
     plain = _unquoted(_flat(_nfc(claim)))
     cue = _PLANNED_ACT_BEFORE_RE if planned_only else _OTHER_ACT_BEFORE_RE
+    # Code's own stated range keeps its lead word ("at 7 p.m. on ..."), which is then the
+    # cue's last word.
+    lead = re.match(r"(?:for|at|on)\b", words, re.IGNORECASE)
+    tail = lead.group(0) if lead else ""
     i = plain.find(words) if words else -1
     while i >= 0:
-        if cue.search(plain[:i]):
+        if cue.search(plain[:i] + tail):
             return True
         i = plain.find(words, i + 1)
     return False
@@ -3518,6 +3526,19 @@ class LocalAssumptionFiller:
             except ValueError:
                 day = None
             stated = [w for w in stated if w.start.date() == day]
+        if template_id in _OTHER_ACT_TEMPLATES:
+            # After the model's day is picked, so the other day is never taken in its place:
+            # "arranged by text to meet at 7 p.m. on Thursday, October 30": the range the
+            # meeting was set for is not the claim's own, here as in `_window` (agents thread
+            # on #255: the fallback brought the refused meeting time back).
+            own = [
+                w
+                for w in stated
+                if not time_of_another_act(w.raw, claim.text, planned_only=template_id == "event")
+            ]
+            if stated and not own:
+                raise Reject("the claim's stated range is the time of another act it names")
+            stated = own
         if len(stated) != 1:
             raise Reject("the time range is not one the claim plainly states")
         (w,) = stated
@@ -5258,7 +5279,7 @@ class LocalAssumptionFiller:
             # 2:22 p.m.", "10:00 a.m." from "after 10:00 a.m.", or words only in quotes: the
             # model's words are not the claim's range, so `_stated` reads the claim instead.
             raise Reject("the window's words are cut from a longer range the claim writes")
-        if template_id in ("record_time", "message_count", "no_contact", "event") and (
+        if template_id in _OTHER_ACT_TEMPLATES and (
             time_of_another_act(w.as_written, claim_text, planned_only=template_id == "event")
         ):
             # "arranged by text to meet at 7 p.m. on Thursday, October 30, 2025": the meeting's
