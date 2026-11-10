@@ -94,6 +94,7 @@ from core.review.status import (
 )
 from core.selection.audit import selection_audit
 from core.selection.paired import paired_check
+from core.zones import given_zones
 from ui.css import PAGE_CSS
 from ui.theme import FONT_CSS, MARK, THEME_CSS
 
@@ -591,6 +592,10 @@ def _devices(conn: sqlite3.Connection, page: Page, back: str, heading: bool = Tr
     devices = list(conn.execute("SELECT id, label, model, source_id FROM devices ORDER BY id"))
     stips = {s.subject_id: s for s in pipeline.load_stipulations(conn)}
     named = device_names.logged_names(conn)
+    given = given_zones(conn)
+    no_zone = {
+        did for (did,) in conn.execute("SELECT id FROM devices WHERE coalesce(timezone, '') = ''")
+    }
     out = [
         ("<h2>Devices and stipulations</h2>" if heading else "")
         + "<p class='muted'>A stipulation you make, not a finding. Every report lists it as a "
@@ -643,6 +648,19 @@ def _devices(conn: sqlite3.Connection, page: Page, back: str, heading: bool = Tr
             back,
             f"dev-{dev_id}",
         )
+        if dev_id in no_zone:
+            # The extraction records no zone: the expert may give one, or no time range on
+            # the phone can be read.
+            names += page.form(
+                "/device/zone",
+                f"<input type='hidden' name='device' value='{e(dev_id)}'>"
+                "<input type='text' name='zone' maxlength='60' placeholder='America/New_York'"
+                f" value='{e(given.get(dev_id, ('',))[0])}'>"
+                "<button type='submit'>Save time zone</button>",
+                "inline",
+                back,
+                f"dev-{dev_id}",
+            )
         # The model line is left out when the label already is the model.
         shown_model = "" if not model or model == label else f"<br>{q(model)}"
         out.append(
@@ -1716,11 +1734,15 @@ def _agent_card(
         f"<li>&ldquo;{e(str(f.get('written', '')))}&rdquo;: {e(str(f.get('means', '')))}</li>"
         for f in x.lookups
     )
-    sheet = (
-        " The case's signed assumption sheet names the same people, phones and time ranges."
-        if x.check == testability.SHEET_CHECK
-        else ""
-    )
+    sheet = {
+        testability.SHEET_CHECK: (
+            " The case's signed assumption sheet names the same people, phones and time ranges."
+        ),
+        testability.SHEET_CHECK_PARTIES: (
+            " The case's signed assumption sheet names the same people, phones and time ranges,"
+            " apart from parties to the record that the claim itself names."
+        ),
+    }.get(x.check, "")
     fields = (
         f"<input type='hidden' name='claim' value='{e(x.claim_id)}'>"
         f"<input type='hidden' name='run' value='{e(x.run_id)}'>"

@@ -9,6 +9,7 @@ searched and what the sources could and could not show.
 from __future__ import annotations
 
 from core.audit.checks._common import (
+    CALL_CHANNEL,
     NOT_COPY,
     CaseData,
     Row,
@@ -87,6 +88,7 @@ class AbsenceCheck(TemplateCheck):
             )
 
         gaps = _coverage_gaps(data, p.window, p.channels, sources)
+        gaps += _party_gaps(data, p.channels, sources, [(a.label, a_ids), (b.label, b_ids)])
         lines = ["Found none"]
         if unplaced:
             lines.append(
@@ -108,6 +110,35 @@ class AbsenceCheck(TemplateCheck):
             [r.id for r in unplaced],
             sources,
         )
+
+
+def _party_gaps(
+    data: CaseData,
+    channels: tuple[str, ...],
+    sources: list[str],
+    sides: list[tuple[str, set[str]]],
+) -> list[str]:
+    """Plain statements of each app the claim names on which a party holds no account in the
+    searched sources: no record there could tie that party to contact, so finding none there
+    shows nothing ("never communicated with SMITH over Instagram", where no Instagram account
+    is known to be SMITH's)."""
+    gaps: list[str] = []
+    searched = set(sources)
+    for app in channels:
+        if app.strip().lower() == CALL_CHANNEL:
+            continue
+        for label, ids in sides:
+            if not any(
+                (acc := data.accounts.get(i)) is not None
+                and acc.source_id in searched
+                and acc.app.strip().lower() == app.strip().lower()
+                for i in ids
+            ):
+                gaps.append(
+                    f"{label} has no {app} account in the searched sources, so contact on"
+                    f" {app} can be neither found nor ruled out"
+                )
+    return gaps
 
 
 def _coverage_gaps(

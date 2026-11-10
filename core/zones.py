@@ -9,14 +9,21 @@ resolve_zone() turns the second and third into the IANA name, but only when the 
 has the offset the text states (in winter or in summer): a name and an offset that disagree are
 not guessed at. Anything else comes back as given, so the callers that cannot read it still
 say so with the source's own words, as before.
+
+When an extraction records no zone, the expert may give one (device_zones, given_zones); every
+reader of a phone's zone goes through device_zones, so a stated zone is read everywhere alike.
 """
 
 from __future__ import annotations
 
+import json
 import re
+import sqlite3
 from datetime import datetime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from core import db
 
 _OFFSET = r"\((?:UTC|GMT)(?:(?P<sign>[+-])(?P<h>\d{1,2}):(?P<m>\d{2}))?\)"
 # '(UTC-05:00)  New_York  (America)', '(UTC+05:30) Kolkata (Asia)'
@@ -76,3 +83,37 @@ def resolve_zone(raw: str | None) -> str | None:
         if z is not None and _has_offset(z, _offset(m)):
             return name
     return raw
+
+
+# The expert's statement of a phone's zone, for an extraction that records none
+# (core/review/actions.set_device_zone). The audit log is the record: the newest entry for a
+# device is its zone, and an entry with no zone clears it.
+GIVEN_ACTION = "device.timezone"
+
+
+def given_zones(conn: sqlite3.Connection) -> dict[str, tuple[str, str, str]]:
+    """Device id -> (zone, actor, at_utc) from the expert's newest `device.timezone` entry for
+    it, when that entry gives a zone."""
+    newest: dict[str, tuple[str | None, str, str]] = {}
+    try:
+        rows = conn.execute(
+            "SELECT actor, at_utc, payload_json FROM audit_log WHERE action = ? ORDER BY seq",
+            (GIVEN_ACTION,),
+        ).fetchall()
+    except db.OperationalError:  # a database without the audit log
+        return {}
+    for actor, at, payload in rows:
+        p = json.loads(payload)
+        newest[str(p["device_id"])] = (p.get("zone") or None, actor, at)
+    return {did: (z, actor, at) for did, (z, actor, at) in newest.items() if z}
+
+
+def device_zones(conn: sqlite3.Connection) -> dict[str, str | None]:
+    """Device id -> the zone text Mabillon reads the phone's times in: the extraction's own
+    (devices.timezone) when it records one, else the zone the expert gave, else None. An
+    expert's zone never replaces one the extraction records."""
+    given = given_zones(conn)
+    return {
+        did: tz if tz else (given[did][0] if did in given else None)
+        for did, tz in conn.execute("SELECT id, timezone FROM devices ORDER BY id")
+    }

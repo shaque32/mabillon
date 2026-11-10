@@ -128,7 +128,8 @@ def test_the_date_first_and_a_written_zone_are_read(text, start, end, zone):
         "On January 9, 2026, beginning at approximately 8:00 p.m., Item 1 placed calls.",
         "On January 9, 2026, there was no contact between them after 10:00 a.m. EST.",
         "On January 9, 2026, Item 1 called REYES at 9:15 p.m.",  # the time is not tied
-        "On January 9, 2026, between approximately 9:10 and 9:40 p.m., Item 1 sent texts.",
+        # "approximately" is read (tests/test_fill_windows.py); "roughly" is not
+        "On January 9, 2026, between roughly 9:10 and 9:40 p.m., Item 1 sent texts.",
         "between January 9, 2026 at 9 p.m. and January 10, 2026 at 1 a.m., Item 1 called.",
         "from January 9, 2026, at 9 p.m., Item 1 called REYES.",
         "On January 9, 2026, between 9 and 11, Item 1 called.",  # no a.m. or p.m.
@@ -139,6 +140,37 @@ def test_the_date_first_and_a_written_zone_are_read(text, start, end, zone):
 )
 def test_a_time_no_range_reads_is_never_widened_to_the_whole_day(text):
     assert stated_windows(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "In the early hours of November 2, 2025, Item 1 called REYES.",
+        "On the evening of May 7, 2026, Item 1 called.",
+        "Late on January 9, 2026, Item 1 called.",
+        "On the night of January 9, 2026, Item 1 called.",
+        "On the morning of Friday, January 9, 2026, Item 1 called.",
+        "Overnight on January 9, 2026, Item 1 sent texts.",
+        "Toward the end of January 9, 2026, Item 1 called.",
+        "In the small hours of November 2, 2025, Item 1 called.",
+        "After dark on November 2, 2025, Item 1 called.",
+        "First thing on November 2, 2025, Item 1 called.",
+        "After work on November 2, 2025, Item 1 called.",
+        "On November 2, 2025, Item 1 met REYES, and that evening Item 1 called.",
+        "On November 2, Item 1 called; in the early hours of November 2, 2025 it texted.",
+    ],
+)
+def test_a_part_of_the_day_is_never_widened_to_the_whole_day(text):
+    # Read as the whole day, any time that day would pass a check the claim narrowed.
+    assert stated_windows(text) is None
+
+
+def test_a_part_of_the_day_beside_a_minute_or_in_quotes_still_reads():
+    text = "On January 9, 2026, at 9:15 p.m., Item 1 called REYES in the evening."
+    (w,) = stated_windows(text)
+    assert w.raw == "On January 9, 2026, at 9:15 p.m."
+    (w,) = stated_windows('On January 9, 2026, Item 1 texted "see you tonight, early".')
+    assert w.raw == "On January 9, 2026"
 
 
 @pytest.mark.parametrize(
@@ -358,10 +390,12 @@ def test_a_zone_the_phone_is_not_in_then_is_refused(conn, text, said):
 
 def test_a_zone_the_claim_writes_after_the_models_words_is_checked(conn):
     # The model's words stop before the zone; code still reads the zone that follows them.
+    # Words with a time and no date are refused, and code reads the claim's own range, zone
+    # included (tests/test_fill_windows.py).
     text = f'At 7:58 p.m. CST on January 9, 2026, PETROV wrote "{QUOTE}".'
-    w = _Window.model_validate(W("At 7:58 p.m.", "2026-01-09T19:58", "2026-01-09T19:59"))
-    with pytest.raises(Reject, match="CST"):
-        filler(conn)._window(text, "", w, [], "record_time")
+    p = proposal(window=W("At 7:58 p.m.", "2026-01-09T19:58", "2026-01-09T19:59"))
+    with pytest.raises(Reject, match="without its date, and .*CST"):
+        filler(conn)._resolve(claim(text), "", p)
 
 
 def test_a_whole_day_in_utc_is_read_in_utc(conn):
