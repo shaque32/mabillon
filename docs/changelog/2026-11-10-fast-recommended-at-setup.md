@@ -21,12 +21,15 @@
   are refused and save nothing; claim proposal and the audit wait for the choice; Fast with no
   key waits instead of running locally; an old-text attestation must choose again; the page
   never says "Offline". No API calls.
-- Open: `docs/SECURITY_PRIVACY.md` and other customer privacy text still describe the old
-  opt-in and stance-only cloud; they need Arsh's sign-off before this ships to anyone. Zero
-  retention needs Anthropic's written agreement, which needs the company to exist. The CLI
-  default stays local.
+  `docs/SECURITY_PRIVACY.md` now describes the choice, Fast running every model step, what each
+  step sends and the new attestation, in wording Arsh signed on 2026-11-10 08:17Z ("approved",
+  on `baker/plans/security-privacy-every-job-diff.md`); its "opted-in case" markers read "Fast
+  case" to match. While claims are being proposed, the cloud choice and key cannot change (as
+  during an audit), so a running proposal never outlasts a withdrawn permission.
+- Open: zero retention needs Anthropic's written agreement, which needs the company to exist.
+  The CLI default stays local. The privacy doc's "As of" line still names 2026-10-24.
 - Affects: capabilities, privacy (cloud is now the recommended choice), customer-facing claims
-  (setup text, attestation)
+  (setup text, attestation, the security and privacy doc)
 - Status doc: pending: in "When Opus is used", replace "Opt-in per case, local by default (Arsh
   chose "Opt-in cloud", 2026-10-15 07:10Z)" with "Chosen per case at setup: Fast (Opus,
   recommended, per CLAUDE.md signed 2026-11-09) or on this computer; nothing is pre-chosen and

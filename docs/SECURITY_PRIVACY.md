@@ -4,17 +4,19 @@ For firms, examiners and counsel deciding whether to install Mabillon. As of 202
 cloud request carries and its open limitations, section 5; #101, the cloud gate's first entry;
 earlier text as of `main` `19d8461`, after #68 and #74).
 
-**Mabillon is local by default; cloud AI only when your case allows it and you opt in.** The opt-in
-cloud option (#68) is gated on a model passing Mabillon's signed stance test. One has: Claude Opus
-5.5 at medium effort with the cloud stance prompt, stance v1.2 (`PROBE_PASSED` in
-`core/llm/cloud.py`, signed 2026-10-20). So a case the expert opts in sends its stance questions to
-Anthropic, as below; every other case labels locally and nothing from it leaves the computer.
-Statements about what an opted-in case sends are marked "opted-in case".
+**Each case chooses where its AI runs: Fast (Claude Opus through Anthropic, recommended) or on
+this computer.** Nothing is pre-chosen, and Mabillon proposes claims or runs an audit only once
+the examiner chooses. A case marked as possibly containing CSAM, or whose protective order does
+not allow cloud AI, runs on this computer. Fast is gated on a model passing Mabillon's signed
+stance test. One has: Claude Opus 5.5 at medium effort with the cloud stance prompt, stance v1.2
+(`PROBE_PASSED` in `core/llm/cloud.py`, signed 2026-10-20). A Fast case sends one question at a
+time to Anthropic for every model step, as below; a case on this computer sends nothing.
+Statements about what a Fast case sends are marked "Fast case".
 
 ## 1. Data flow
 
 ```
- Expert's computer (everything happens here, except an opted-in case's stance questions)
+ Expert's computer (everything happens here, except a Fast case's model questions)
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │                                                                             │
  │  Original files ──read-only, SHA-256──▶ Case folder                          │
@@ -27,26 +29,28 @@ Statements about what an opted-in case sends are marked "opted-in case".
  │                                         └─ case.json case name etc. (plain)  │
  │                                                ▲                             │
  │  Local model (Qwen3-14B, pinned SHA-256) ◀──────┤ claims, assumptions,       │
- │                                                 │ stance labels, AI review   │
+ │  (a case on this computer)                      │ stance labels, AI review   │
  │  Browser ◀── http://127.0.0.1 only ──▶ Mabillon screen                          │
  │                                                 │                            │
  │  Report (plain HTML) ◀── saved only when the expert downloads it             │
  │                                                                             │
  └───────────────────────────────┬─────────────────────────────────────────────┘
-                                 │ Opted-in case only (Opus 5.5 at medium, the one
-                                 │ model that has passed the gate): one stance question
-                                 │ per (assumption, record) pair, sent up to 3
-                                 │ times on a network error, timeout, 408, 409,
-                                 │ 429 or 5xx; each send logged first
+                                 │ Fast case only (Opus 5.5 at medium, the one model
+                                 │ that has passed the gate): one question per model
+                                 │ step (claim proposal, assumption filling, stance
+                                 │ label, AI review), sent up to 3 times on a network
+                                 │ error, timeout, 408, 409, 429 or 5xx; each send
+                                 │ logged first
                                  ▼
-                     api.anthropic.com (Claude, the expert's own key)
+                     api.anthropic.com (Claude, a key from an organization with zero
+                     data retention in writing)
 ```
 
-| Data | A case not opted in | Opted-in case |
+| Data | A case on this computer | Fast case |
 |---|---|---|
 | Original evidence files | Stay on the computer, never modified | Same. Never sent |
 | Case database (all records, claims, decisions, audit log) | Stays on the computer | Same. Never sent |
-| Claim proposal, assumption filling, optional AI review | Local model | Local model |
+| Claim proposal, assumption filling, optional AI review | Local model | Claude Opus 5.5. Claim proposal sends one government-document paragraph; assumption filling sends the claim, its paragraph, the check templates and the case's channel names; AI review sends the assumption, the quoted words and the messages around them. Each send logged before it goes |
 | Stance labels (does this record support, contradict or complicate this assumption?) | Local model | Claude Opus 5.5. Each request holds the filled-in stance prompt: the assumption, one record, its nearby messages, the claim text and, for a group chat, the member list. A send that fails on a network error, timeout, 408, 409, 429 or 5xx is sent again, up to 3 sends in all, each logged before it goes |
 | Report | Written only where the expert saves it | Same |
 | Telemetry, analytics, crash reports, accounts, license server | None | None |
@@ -101,7 +105,7 @@ Full design: `docs/encryption.md`.
 - **Passphrase entry.** The command line asks for it in the terminal. It is never read from an
   option or an environment variable, so it stays out of shell history.
 - **Lost both passphrase and recovery key.** Nobody can open the case, Mabillon included.
-- **Cloud API key (opted-in case).** The expert's own Anthropic key; Mabillon runs no server and holds no key of
+- **Cloud API key (Fast case).** The expert's own Anthropic key; Mabillon runs no server and holds no key of
   its own. It is read from `$MABILLON_ANTHROPIC_API_KEY`; or, in an encrypted case, from the key saved
   in that case, sealed with AES-256-GCM under the case key, so it is unreadable while the case is
   locked; or from `~/.mabillon/cloud.json` (`~/.baker/cloud.json` on a computer set up before the
@@ -127,8 +131,9 @@ unreadable. `case.json` (case name, examiner name, times) and the names of any i
 before the case was encrypted stay readable, so delete the case folder and every backup of it to remove those too. The old plain files of a case encrypted after it was made may remain in free SSD blocks;
 disk encryption covers that.
 
-**At Anthropic (opted-in case only).** Requests go to the Claude API under the expert's own account, so
-Anthropic's terms for that account apply, not Mabillon's. Read them rather than our summary:
+**At Anthropic (Fast case only).** Requests go to the Claude API under an Anthropic organization with zero
+data retention in writing (Mabillon's, or the examiner's own), so Anthropic's terms for that
+organization apply, not Mabillon's. Read them rather than our summary:
 
 - [How long Anthropic stores an organization's data](https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data)
 - [API and data retention, including zero data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)
@@ -143,26 +148,30 @@ the current pages before relying on any of this.
 
 ## 5. Cloud policy
 
-A case uses cloud stance labels only when **all** of these hold, and otherwise runs fully local:
+A case runs every model step on the cloud only when the examiner chose Fast and **all** of these
+hold; otherwise it waits with the reason, or runs on this computer if the examiner chose that:
 
-1. The expert attests, for this case, that "This case's protective order (or the court or the
-   government's consent) allows its evidence to be sent to a cloud AI service under my firm's
-   account, and my client has given informed consent to it." The attestation, who made it and when
-   go into the case's hash-chained audit log.
+1. The expert attests, for this case, that "This case's protective order (or the court's or the
+   government's written consent) allows excerpts of its evidence to be sent to Anthropic for AI
+   processing. The Anthropic key used for it belongs to an organization with zero data retention
+   in writing. My client has given informed consent." The attestation, who made it and when go
+   into the case's hash-chained audit log. A case attested under the earlier words must choose
+   again.
 2. The case is **not** marked as possibly containing child sexual abuse material. Such material
    stays in the government's control (18 U.S.C. 3509(m)), so a marked case never uses cloud,
    whatever the attestation says.
-3. The expert's own Anthropic key is set up.
+3. An Anthropic key from an organization with zero data retention in writing is set up.
 4. The model passed Mabillon's signed stance test at its configured effort with the cloud stance
    prompt, and Arsh signed its entry. One has: Claude Opus 5.5 at medium effort with stance v1.2
    (signed 2026-10-20). With the earlier prompt, v1.1, it scored 73% contradicts precision against
    a 90% bar (2026-10-15); with v1.2, 10 of 10 on the signed set, and no wrong contradicts on new
    items. Another model, another effort or a changed cloud prompt labels locally.
 
-Further rules for an opted-in case:
+Further rules for a Fast case:
 
-- **No mixed labels.** In an opted-in case every stance label comes from the cloud. If the cloud
-  fails, the audit pauses; the expert retries, or turns cloud off and the whole case runs locally.
+- **No mixed models.** In a Fast case every answer of every model step comes from the cloud. If
+  the cloud fails, the audit pauses; the examiner retries, or chooses this computer and the whole
+  case runs again locally.
 - **Logged before sent.** Each request body is written to the case's audit log (`cloud.sent`)
   before it is sent. If that entry can't be written, nothing is sent.
 - **Pinned endpoint.** Only `https://api.anthropic.com`; a stray `ANTHROPIC_BASE_URL` cannot
@@ -170,7 +179,7 @@ Further rules for an opted-in case:
 - **Same checks.** A cloud answer must be valid JSON and its quote must pass the verbatim check,
   exactly like a local answer. Cloud labels never set verdicts.
 
-**What one cloud request carries (opted-in case).** One request per (assumption, record) pair,
+**What one cloud request carries (Fast case).** One request per (assumption, record) pair,
 the filled-in cloud stance prompt and nothing else (`core/audit/stance.py` `create`,
 `core/audit/prompts/stance_cloud.md`):
 
@@ -187,17 +196,24 @@ the filled-in cloud stance prompt and nothing else (`core/audit/stance.py` `crea
   expert confirmed for an account;
 - the model name, effort, answer length limit and the answer's JSON schema.
 
+The other steps send only what their signed prompts name: claim proposal, one paragraph of the
+government document (`core/audit/prompts/claims.md`); assumption filling and the testability
+step, the claim, its paragraph, the check templates, the case's channel names and, for the
+testability step, what the claim's words mean in the case (`assumptions.md`,
+`agent_testability.md`); the AI reviewer, the assumption, the quoted words and the messages
+around them (`reviewer.md`).
+
 It never carries an input file, the case database, a record's locator in its source, a file
 hash, the case's name, the examiner's name or any other case's data. Each request's body is in
 the case's audit log exactly as sent (`cloud.sent`), so the examiner can show what went out, and
 each answer's API request id, message id and the model the API says answered are logged with it
 (`cloud.received`).
 
-**Open limitations (opted-in case).** Before a first real case that uses cloud AI, check each:
+**Open limitations (Fast case).** Before a first real case that uses cloud AI, check each:
 
-1. **Retention at Anthropic is not verified by Mabillon.** It depends on the expert's own Anthropic
-   account: with zero data retention, or without it, the account's terms apply, and flagged
-   requests may be kept up to 2 years even under ZDR (above). Mabillon cannot see or set it.
+1. **Zero retention is the organization's agreement, not something Mabillon can see.** It holds
+   only under a written ZDR agreement with Anthropic, and flagged requests may be kept up to 2
+   years even then (above).
 2. **Only a key saved into an encrypted case is sealed.** Such a key is sealed under the case key.
    A key in `$MABILLON_ANTHROPIC_API_KEY` (read first, for every case) or in
    `~/.mabillon/cloud.json` (owner-only but unencrypted, used when the case holds no key of its
@@ -211,8 +227,8 @@ each answer's API request id, message id and the model the API says answered are
    (the reproducibility bundle, `docs/bundle.md`). The report says so in its "What can be checked
    again" section.
 
-**For a case where the tool's reliability may be challenged in court,** local mode is the
-safer default: the local model's file is pinned by SHA-256 and run with a fixed seed, nothing
+**For a case where the tool's reliability may be challenged in court,** running on this computer is the
+safer choice: the local model's file is pinned by SHA-256 and run with a fixed seed, nothing
 leaves the computer, and no third party holds any of the case. Choosing cloud AI is the
 examiner's and counsel's call per case.
 
@@ -260,7 +276,7 @@ python -m pytest -q \
 `mabillon serve --open` asks the operating system to open your browser at the local address; that is
 the browser's connection to 127.0.0.1, not an outside one.
 
-An opted-in case adds HTTPS connections to `api.anthropic.com`, and only those; each appears in
+A Fast case adds HTTPS connections to `api.anthropic.com`, and only those; each appears in
 the case's audit log as `cloud.sent`.
 
 ## 7. Other safeguards
