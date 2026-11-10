@@ -45,6 +45,9 @@ Usage:
       [--cases case05] [--out eval/out/agent_bench] [--reasoning medium] [--max-tokens N]
   python -m eval.bench.agent_bench --dry-run     no network: every answer is an empty list
                                                  (with --claude: the Claude arm, no network)
+  python -m eval.bench.agent_bench --claude claude-opus-5-5 --replay DB
+                                                 the Claude arm on a finished run's stored
+                                                 answers, no network (a code change replayed)
   python -m eval.bench.agent_bench --estimate    the dry run's prompt tokens, priced per model
   python -m eval.bench.agent_bench --first-pass DB --cases case05
                                                  the first-pass measures of a recorded run
@@ -143,6 +146,41 @@ def dry_claude_client() -> Any:
         )
 
     return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+def stored_claude_client(db: Path) -> Any:
+    """No network: answers each prompt with the raw output a finished run stored for exactly
+    that prompt (its model_calls), so a code change can be replayed on the same answers for
+    nothing. A prompt the run never sent (the code now words a retry differently, or tries a
+    claim it did not) gets no answer: it comes back as an invalid answer, counted in
+    `not_stored`, never as a new model call."""
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        stored: dict[str, str] = {}
+        for prompt, raw in conn.execute(
+            "SELECT prompt, raw_output FROM model_calls WHERE raw_output IS NOT NULL ORDER BY seq"
+        ):
+            stored.setdefault(prompt, raw)
+    finally:
+        conn.close()
+    missed: list[str] = []
+
+    def create(**body: Any) -> Any:
+        prompt = body["messages"][0]["content"]
+        raw = stored.get(prompt)
+        if raw is None:
+            missed.append(hashlib.sha256(prompt.encode("utf-8")).hexdigest())
+            raise ValueError("not stored: the run never sent this prompt")
+        return SimpleNamespace(
+            id="replay",
+            _request_id="replay",
+            model=body["model"],
+            stop_reason="end_turn",
+            content=[SimpleNamespace(type="text", text=raw)],
+            usage=SimpleNamespace(input_tokens=0, output_tokens=0),
+        )
+
+    return SimpleNamespace(messages=SimpleNamespace(create=create), missed=missed)
 
 
 class ClaudeArm:
@@ -433,6 +471,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="the Claude arm (Anthropic API) instead of --models")  # fmt: skip
     ap.add_argument("--effort", default=None,
                     help="the Claude arm's effort (default: core.llm.cloud's)")  # fmt: skip
+    ap.add_argument("--replay", type=Path, default=None, metavar="DB",
+                    help="the Claude arm on a stored run's answers, no network")  # fmt: skip
     args = ap.parse_args(argv)
 
     cases = [check_agent_case(c.strip()) for c in args.cases.split(",") if c.strip()]
@@ -444,15 +484,24 @@ def main(argv: list[str] | None = None) -> int:
     dry = args.dry_run or args.estimate
     results = []
     if args.claude:
+        replay = stored_claude_client(args.replay) if args.replay else None
         arm = ClaudeArm(
             args.claude,
             args.effort,
-            client=dry_claude_client() if dry else None,
+            client=replay or (dry_claude_client() if dry else None),
             max_tokens=None if args.max_tokens == MAX_TOKENS else args.max_tokens,
+            retries=0 if replay else 4,
         )
         for case in cases:
             print(f"{arm.name} {case}", file=sys.stderr, flush=True)
-            results.append(run_bench(arm, case, args.out / arm.name / case))
+            res = run_bench(arm, case, args.out / arm.name / case)
+            if replay is not None:
+                res["replay_of"] = str(args.replay)
+                res["not_stored"] = len(replay.missed)
+                (args.out / arm.name / case / "bench.json").write_text(
+                    json.dumps(res, indent=2) + "\n", encoding="utf-8"
+                )
+            results.append(res)
         print(f"{arm.name}: ${arm.usage.cost_usd:.2f}", file=sys.stderr, flush=True)
         if args.estimate:
             print(estimate_claude(results, arm.name))

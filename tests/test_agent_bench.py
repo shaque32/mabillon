@@ -209,3 +209,30 @@ def test_a_claude_request_that_never_answers_is_invalid() -> None:
     )
     out = arm.generate_json("p", SCHEMA)
     assert out.parsed is None and out.raw_text == "" and arm.usage.failed == 1
+
+
+def test_a_replay_answers_only_from_the_stored_run_and_never_calls_out(tmp_path):
+    out = tmp_path / "first"
+    assert agent_bench.main(["--claude", "claude-opus-5-5", "--dry-run", "--out", str(out)]) == 0
+    db = out / "claude-opus-5-5" / "case05" / "case05.db"
+    again = tmp_path / "again"
+    args = ["--claude", "claude-opus-5-5", "--replay", str(db), "--out", str(again)]
+    assert agent_bench.main(args) == 0
+    first = json.loads((db.parent / "bench.json").read_text("utf-8"))
+    res = json.loads((again / "claude-opus-5-5" / "case05" / "bench.json").read_text("utf-8"))
+    assert res["replay_of"] == str(db) and res["not_stored"] == 0 and res["cost_usd"] == 0.0
+    assert res["calls"] == first["calls"] and res["first_pass"] == first["first_pass"]
+
+
+def test_a_prompt_the_stored_run_never_sent_is_invalid_not_a_call(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "empty.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE model_calls (seq INTEGER, prompt TEXT, raw_output TEXT)")
+    c.commit()
+    c.close()
+    client = agent_bench.stored_claude_client(db)
+    arm = agent_bench.ClaudeArm("claude-opus-5-5", client=client, retries=0)
+    out = arm.generate_json("never sent", SCHEMA)
+    assert out.parsed is None and "not stored" in out.error and len(client.missed) == 1
