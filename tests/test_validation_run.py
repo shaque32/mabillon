@@ -208,3 +208,63 @@ def test_a_person_defined_by_a_number_is_linked_to_that_numbers_accounts_only(tm
     assert sorted(links) == [("a:ph", "confirmed", hickman_run.ACTOR),
                              ("a:sig", "confirmed", hickman_run.ACTOR),
                              ("a:wa", "confirmed", hickman_run.ACTOR)]  # fmt: skip
+
+
+class _NoCredit:
+    """An Anthropic client whose every call fails the way an account out of credit does."""
+
+    class messages:  # noqa: N801 - the SDK's attribute name
+        @staticmethod
+        def create(**kw):  # noqa: ANN003, ANN205
+            raise RuntimeError("Error code: 400 - credit balance is too low")
+
+
+def test_out_of_credit_pauses_the_cloud_run_and_a_resume_is_offered(ufdr, tmp_path, monkeypatch):
+    from core.llm import cloud
+
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _NoCredit())
+    out = tmp_path / "out"
+    rc = hickman_run.main(
+        ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+         "--cloud", "claude-opus-5-5"]
+    )  # fmt: skip
+    assert rc == 3
+    log = (out / "progress.log").read_text(encoding="utf-8")
+    assert "paused: the cloud model stopped answering" in log
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert run["model"] == {"cloud": "claude-opus-5-5", "effort": "medium",
+                            "jobs": ["assumptions", "stance"]}  # fmt: skip
+    assert run["cloud"]["spent_usd"] == 0
+    assert "finished_utc" not in run
+    # every request went into the case's audit log before it was sent
+    conn = sqlite3.connect(out / "case.db")
+    sent = conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'cloud.sent'").fetchone()[0]
+    conn.close()
+    assert sent >= 1
+
+
+class _Out:
+    def __init__(self, inp: int, outp: int) -> None:
+        self.prompt_tokens, self.completion_tokens = inp, outp
+
+
+class _Stub:
+    name, sha256, params, where = "claude-opus-5-5", "api:claude-opus-5-5", None, "cloud"
+
+    def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+        return _Out(1_000_000, 100_000)  # $4 in + $2 out at the Opus price
+
+
+def test_the_spend_cap_stops_further_calls_as_a_sticky_failure():
+    from core.llm.cloud import CloudError
+
+    m = hickman_run.Budgeted(_Stub(), max_usd=10.0, spent_usd=3.0)
+    m.generate_json("p", {})
+    assert round(m.spent_usd, 2) == 9.0
+    m.generate_json("p", {})  # under the cap when sent; it may end past it
+    assert round(m.spent_usd, 2) == 15.0
+    with pytest.raises(CloudError) as e:
+        m.generate_json("p", {})
+    assert e.value.sticky
+    assert m.usage()["calls"] == 2
