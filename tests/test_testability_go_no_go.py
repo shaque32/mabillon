@@ -65,7 +65,9 @@ def test_every_bar_held_is_a_go():
     assert r["decision"] == "GO" and r["why"] == []
     assert len(r["checks"]) == 7 and all(c["ok"] for c in r["checks"])
     (cov,) = [c for c in r["checks"] if c["bar"].startswith("at least 40% of the claims")]
-    assert cov["bar"].endswith("end with assumptions that match it, both passes together")
+    assert cov["bar"].endswith(
+        "end with assumptions that match it, every row, both passes together"
+    )
     assert cov["value"] == (
         "10 of 20 (50%, Wilson 95% 30% to 70%); the step converted 8 of the 16 it worked on"
         " that the sheet makes testable, for information"

@@ -95,6 +95,7 @@ import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core import pipeline
 from core.audit.assumptions import is_code_made
@@ -105,6 +106,9 @@ from core.ingest.govdoc import PdfGovDocIngester
 from core.report.html import quote_check_label, write_report
 from core.review import actions
 from eval.run_eval import load_jsonl, score
+
+if TYPE_CHECKING:
+    from core.audit import testability
 
 EVAL_TIME = datetime(2026, 10, 7, tzinfo=UTC)  # fixed, so runs are byte-for-byte repeatable
 GOLD_ACTOR = "expert:eval-gold-claims"
@@ -656,15 +660,37 @@ def testability_step(
     return step
 
 
+def left_out(got: testability.Named, want: testability.Named) -> list[str]:
+    """What the signed sheet's core rows for a claim name that a set of assumptions does not:
+    a template, a person or a time window. Each is a part of the claim the set leaves untested
+    ("SUBJECT-1 texted the COURIER from the BURNER" tested only on the BURNER's account leaves
+    out who used it, the recipient and the day). Phones, accounts, apps, handles and quoted
+    words are not asked for: the sheet writes the ones it looked up, and the filler finds its
+    own (a claim that names no phone reads an account in every report)."""
+    out = []
+    for what, have, need in (
+        ("template", got.templates, want.templates),
+        ("person", got.people, want.people),
+        ("time window", got.windows, want.windows),
+    ):
+        for x in sorted(need - have):
+            shown = " to ".join(x) if isinstance(x, tuple) else repr(x)
+            out.append(f"leaves out the {what} {shown}, which the signed sheet names")
+    return out
+
+
 def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: ANN001
     """The go/no-go's coverage, scored on both passes together (Arsh, 2026-11-08, decision
     card): of the claims the signed sheet makes testable (those it gives a core row), how many
     end the audit with core assumptions, from the first pass or a repair the examiner accepted,
-    that match the sheet's rows (testability.mismatch, with a party the claim's own words name
-    not counted as a wrong person, as the step's sheet check does). Read from the run's
-    assumptions, which hold exactly those: a refused or rejected try is never stored. For
-    information, the first pass's own share, and how many of its claims name a person, phone or
-    window the sheet does not (the step's tries are bar 2's; the first pass's are not a bar).
+    that match the sheet's rows: they name nothing the sheet does not (testability.mismatch,
+    with a party the claim's own words name not counted as a wrong person, as the step's sheet
+    check does) and leave out no template, person or time window it names (left_out; rows
+    required 2026-11-10, after a set that tested only one of a claim's three sheet rows counted
+    as matching). Read from the run's assumptions, which hold exactly those: a refused or
+    rejected try is never stored. For information, the claims that name nothing extra but leave
+    a sheet row out, the first pass's own share, and how many of its claims name a person, phone
+    or window the sheet does not (the step's tries are bar 2's; the first pass's are not a bar).
     Only the claims the run audited count (an eval run of some claims scores those)."""
     import dataclasses
 
@@ -678,6 +704,7 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
         (
             "sheet_testable_claims",
             "ending_with_sheet_matching_assumptions",
+            "naming_nothing_extra_but_leaving_a_sheet_row_out",
             "first_pass_kept_on_sheet_testable_claims",
             "first_pass_matching_the_sheet",
             "first_pass_naming_another_person_phone_or_window",
@@ -693,7 +720,7 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
         "SELECT claim_id, template_id, params_json FROM assumptions WHERE is_core = 1 ORDER BY id"
     ):
         core.setdefault(cid, []).append((template_id, json.loads(params)))
-    matching = first_kept = first_matching = first_entity = 0
+    matching = partial = first_kept = first_matching = first_entity = 0
     for cid, want in sheet.items():
         rows = core.get(cid)
         if not rows:
@@ -703,10 +730,12 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
             parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
         )
         diff = testability.mismatch(got, want)
-        matching += not diff
+        match = not diff and not left_out(got, want)
+        matching += match
+        partial += not diff and not match
         if cid not in result.testability:
             first_kept += 1
-            first_matching += not diff
+            first_matching += match
             first_entity += any(
                 m.startswith("names " + k) for m in diff for k in testability.NO_GO_KINDS
             )
@@ -714,6 +743,7 @@ def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: AN
         **out,
         "sheet_testable_claims": len(sheet),
         "ending_with_sheet_matching_assumptions": matching,
+        "naming_nothing_extra_but_leaving_a_sheet_row_out": partial,
         "first_pass_kept_on_sheet_testable_claims": first_kept,
         "first_pass_matching_the_sheet": first_matching,
         "first_pass_naming_another_person_phone_or_window": first_entity,
@@ -773,7 +803,7 @@ def testability_summary(
     out: dict[str, object] = {
         "prompt": "signed" if signed else "DRAFT, not signed by Arsh",
         "cap": step.cap,
-        "scoring": "both passes (Arsh, 2026-11-08)",
+        "scoring": "both passes, every sheet row (Arsh, 2026-11-08; rows 2026-11-10)",
         **both,
         "coverage_rate": (
             both["ending_with_sheet_matching_assumptions"] / both["sheet_testable_claims"]
@@ -1135,7 +1165,9 @@ def print_testability(t: dict) -> None:
         print(
             f"pipeline: testability, both passes: {t['ending_with_sheet_matching_assumptions']} "
             f"of the {t['sheet_testable_claims']} claims the sheet makes testable end with "
-            f"assumptions that match it ({cov:.0%}); the first pass kept "
+            f"assumptions that match it, every row ({cov:.0%}); "
+            f"{t.get('naming_nothing_extra_but_leaving_a_sheet_row_out', 0)} more name nothing "
+            "extra but leave a sheet row out; the first pass kept "
             f"{t['first_pass_kept_on_sheet_testable_claims']}, "
             f"{t['first_pass_matching_the_sheet']} matching, "
             f"{t['first_pass_naming_another_person_phone_or_window']} naming another person, "
@@ -1207,8 +1239,9 @@ def testability_go_no_go(
     (`gold`, its key_status); otherwise none is given, with the reasons. With fewer
     sheet-testable claims than the least denominator the result is "insufficient", not a
     decision. Then GO only if every bar holds: at least X% of the sheet-testable claims end with
-    assumptions that match the sheet over both passes (both_passes; Arsh, 2026-11-08, in place
-    of X% of the step's own refusals, which is shown beside it), no try naming a different
+    assumptions that match the sheet's rows, naming nothing extra and leaving none out, over
+    both passes (both_passes; Arsh, 2026-11-08, in place of X% of the step's own refusals,
+    which is shown beside it; every row required 2026-11-10), no try naming a different
     person, phone or window than the sheet, 0 false supported on the claims the agent changed
     (`false_supported`, of `changed` such claims, at least one; `whole_run` is the whole run's
     count, shown for information), every output valid, the repeat identical, and calls and
@@ -1260,7 +1293,7 @@ def testability_go_no_go(
     checks = [
         {
             "bar": f"at least {t['x_percent']:g}% of the claims the sheet makes testable end "
-            "with assumptions that match it, both passes together",
+            "with assumptions that match it, every row, both passes together",
             "value": f"{ending} of {claims} ({ending / claims:.0%}, "
             f"Wilson 95% {low:.0%} to {high:.0%})" + step_share,
             "ok": ending / claims * 100 >= t["x_percent"],
