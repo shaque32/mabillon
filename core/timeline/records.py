@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from core.zones import resolve_zone
+from core.zones import device_zones, resolve_zone
 
 
 def zone(name: str | None) -> ZoneInfo | None:
@@ -88,9 +88,9 @@ class CaseRecords:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         labels: dict[str, tuple[str, str | None]] = {}
-        for sid, label, tz in conn.execute(
-            "SELECT source_id, label, timezone FROM devices ORDER BY id"
-        ):
+        zones = device_zones(conn)
+        for did, sid, label in conn.execute("SELECT id, source_id, label FROM devices ORDER BY id"):
+            tz = zones.get(did)
             if sid not in labels:
                 labels[sid] = (label, resolve_zone(tz))
         self.phones: dict[str, Phone] = {}

@@ -202,11 +202,15 @@ class _Case:
     def zone_of(self, source_id: str | None) -> str | None:
         if source_id is None:
             return None
-        row = self.conn.execute(
-            "SELECT timezone FROM devices WHERE source_id = ? AND timezone IS NOT NULL",
-            (source_id,),
-        ).fetchone()
-        return row[0] if row else None
+        from core.zones import device_zones
+
+        zones = device_zones(self.conn)
+        for (did,) in self.conn.execute(
+            "SELECT id FROM devices WHERE source_id = ? ORDER BY id", (source_id,)
+        ):
+            if zones.get(did):
+                return zones[did]
+        return None
 
 
 class _Writer:

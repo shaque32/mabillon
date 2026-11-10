@@ -818,6 +818,52 @@ def name_device(
     return clean
 
 
+def set_device_zone(
+    conn: sqlite3.Connection,
+    device_id: str,
+    zone: str,
+    actor: str,
+    clock: Clock | None = None,
+) -> str | None:
+    """The expert gives the time zone a phone kept time in, when its extraction records none
+    (some Android exports carry no device zone). Without one, no time range on the phone can
+    be read and every timed claim on it stays untested. It is the expert's statement, not a
+    finding: the report lists it with who gave it and when. The zone is an IANA name
+    ("America/New_York"); an abbreviation ("EST") or an offset is refused, since it does not
+    say when the clocks change. Refused when the extraction records a zone: an expert never
+    replaces the source's own. An empty zone clears it. Returns the zone as recorded."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from core.zones import GIVEN_ACTION
+
+    _expert(actor)
+    dev = conn.execute("SELECT label, timezone FROM devices WHERE id = ?", (device_id,)).fetchone()
+    if dev is None:
+        raise ReviewError(f"no device {device_id}")
+    label, recorded = dev
+    if recorded:
+        raise ReviewError(f"the extraction records this phone's zone ({recorded}); it is kept")
+    name = zone.strip()
+    if name:
+        try:
+            ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            name = ""
+        if not name or "/" not in zone.strip():
+            raise ReviewError(
+                "enter the zone as a place name, such as America/New_York, not an abbreviation"
+            )
+    with conn:
+        audit_log.append(
+            conn,
+            _now(clock),
+            actor,
+            GIVEN_ACTION,
+            {"device_id": device_id, "label": label, "zone": name or None},
+        )
+    return name or None
+
+
 def name_account(
     conn: sqlite3.Connection,
     identifier: str,
