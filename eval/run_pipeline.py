@@ -582,10 +582,12 @@ class _ReplayableFiller:
 # "Build agents into the audit" (2026-10-29 03:16Z; plans/testability-go-no-go.md). A value set
 # to None prints as not set and gives no go/no-go (testability_go_no_go). Y's seconds hold for
 # the MacBook Air M4 the go/no-go runs on; other hardware is not measured.
-TESTABILITY_X_PERCENT: float | None = 40.0  # least share of sheet-testable refusals converted
+# least share of the sheet-testable claims ending with assumptions that match the sheet, over
+# both passes (Arsh, 2026-11-08; until then, of the refusals the step converted)
+TESTABILITY_X_PERCENT: float | None = 40.0
 TESTABILITY_Y_BUDGET: dict[str, float] | None = {"calls": 2, "seconds": 120}  # most, per claim
 TESTABILITY_CAP: int | None = 2  # the per-claim cap the go/no-go runs with
-TESTABILITY_MIN_TESTABLE: int | None = 15  # fewest sheet-testable refusals for a decision
+TESTABILITY_MIN_TESTABLE: int | None = 15  # fewest sheet-testable claims for a decision
 TESTABILITY_SIGNED_PROMPT = Path("core/audit/prompts/agent_testability.md")
 # Cases whose claims and signed sheets were written by someone other than the prompt's author,
 # held out for the go/no-go: case05, written by a builder who never read the step's prompt, code,
@@ -654,6 +656,70 @@ def testability_step(
     return step
 
 
+def both_passes(result: pipeline.RunResult, step) -> dict[str, int]:  # noqa: ANN001
+    """The go/no-go's coverage, scored on both passes together (Arsh, 2026-11-08, decision
+    card): of the claims the signed sheet makes testable (those it gives a core row), how many
+    end the audit with core assumptions, from the first pass or a repair the examiner accepted,
+    that match the sheet's rows (testability.mismatch, with a party the claim's own words name
+    not counted as a wrong person, as the step's sheet check does). Read from the run's
+    assumptions, which hold exactly those: a refused or rejected try is never stored. For
+    information, the first pass's own share, and how many of its claims name a person, phone or
+    window the sheet does not (the step's tries are bar 2's; the first pass's are not a bar).
+    Only the claims the run audited count (an eval run of some claims scores those)."""
+    import dataclasses
+
+    from core.audit import testability
+
+    sheet = dict(getattr(step, "sheet", None) or {})
+    audited = {d.claim_id for d in getattr(result, "decisions", ())}
+    if audited:
+        sheet = {cid: want for cid, want in sheet.items() if cid in audited}
+    out = dict.fromkeys(
+        (
+            "sheet_testable_claims",
+            "ending_with_sheet_matching_assumptions",
+            "first_pass_kept_on_sheet_testable_claims",
+            "first_pass_matching_the_sheet",
+            "first_pass_naming_another_person_phone_or_window",
+        ),
+        0,
+    )
+    if not sheet:
+        return out
+    conn = step.conn
+    texts = dict(conn.execute("SELECT id, text FROM claims"))
+    core: dict[str, list[tuple[str, dict]]] = {}
+    for cid, template_id, params in conn.execute(
+        "SELECT claim_id, template_id, params_json FROM assumptions WHERE is_core = 1 ORDER BY id"
+    ):
+        core.setdefault(cid, []).append((template_id, json.loads(params)))
+    matching = first_kept = first_matching = first_entity = 0
+    for cid, want in sheet.items():
+        rows = core.get(cid)
+        if not rows:
+            continue
+        got = dataclasses.replace(
+            testability.named(rows),
+            parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
+        )
+        diff = testability.mismatch(got, want)
+        matching += not diff
+        if cid not in result.testability:
+            first_kept += 1
+            first_matching += not diff
+            first_entity += any(
+                m.startswith("names " + k) for m in diff for k in testability.NO_GO_KINDS
+            )
+    return {
+        **out,
+        "sheet_testable_claims": len(sheet),
+        "ending_with_sheet_matching_assumptions": matching,
+        "first_pass_kept_on_sheet_testable_claims": first_kept,
+        "first_pass_matching_the_sheet": first_matching,
+        "first_pass_naming_another_person_phone_or_window": first_entity,
+    }
+
+
 def testability_summary(
     result: pipeline.RunResult,
     step,  # noqa: ANN001
@@ -703,9 +769,17 @@ def testability_summary(
     testable = [r for r in reps if r.sheet is not None]
     converted = [r for r in reps if r.assumptions]
     signed = prompt is None or prompt == TESTABILITY_SIGNED_PROMPT
+    both = both_passes(result, step)
     out: dict[str, object] = {
         "prompt": "signed" if signed else "DRAFT, not signed by Arsh",
         "cap": step.cap,
+        "scoring": "both passes (Arsh, 2026-11-08)",
+        **both,
+        "coverage_rate": (
+            both["ending_with_sheet_matching_assumptions"] / both["sheet_testable_claims"]
+        )
+        if both["sheet_testable_claims"]
+        else None,
         "claims_the_filler_left_untested": len(reps),
         "of_them_the_sheet_makes_testable": len(testable),
         # An upper bound filtered by gold: the signed sheet rejects whatever it does not name.
@@ -1056,6 +1130,17 @@ def print_testability(t: dict) -> None:
     """The testability step's measures. The go/no-go is read from them after the run
     (report_go_no_go), since it also needs the repeat and the false-supported count."""
     rate = t["conversion_rate"]
+    if t.get("sheet_testable_claims"):
+        cov = t["coverage_rate"]
+        print(
+            f"pipeline: testability, both passes: {t['ending_with_sheet_matching_assumptions']} "
+            f"of the {t['sheet_testable_claims']} claims the sheet makes testable end with "
+            f"assumptions that match it ({cov:.0%}); the first pass kept "
+            f"{t['first_pass_kept_on_sheet_testable_claims']}, "
+            f"{t['first_pass_matching_the_sheet']} matching, "
+            f"{t['first_pass_naming_another_person_phone_or_window']} naming another person, "
+            "phone or window (for information)"
+        )
     print(
         f"pipeline: testability ({t['prompt']} prompt, cap {t['cap']}): the filler left "
         f"{t['claims_the_filler_left_untested']} claims untested, the sheet makes "
@@ -1120,8 +1205,10 @@ def testability_go_no_go(
     A decision needs all four set, the signed prompt, a held-out case, the rubber-stamp expert
     (the false-supported bar), --repeat (the byte-identical repeat) and Arsh's signed key
     (`gold`, its key_status); otherwise none is given, with the reasons. With fewer
-    sheet-testable refusals than the least denominator the result is "insufficient", not a
-    decision. Then GO only if every bar holds: conversion at least X%, no try naming a different
+    sheet-testable claims than the least denominator the result is "insufficient", not a
+    decision. Then GO only if every bar holds: at least X% of the sheet-testable claims end with
+    assumptions that match the sheet over both passes (both_passes; Arsh, 2026-11-08, in place
+    of X% of the step's own refusals, which is shown beside it), no try naming a different
     person, phone or window than the sheet, 0 false supported on the claims the agent changed
     (`false_supported`, of `changed` such claims, at least one; `whole_run` is the whole run's
     count, shown for information), every output valid, the repeat identical, and calls and
@@ -1144,29 +1231,39 @@ def testability_go_no_go(
         why.append("the gold key is a draft, not signed by Arsh")
     if why:
         return {"decision": "none given", "why": why, "checks": []}
-    testable = int(t["of_them_the_sheet_makes_testable"])
-    if testable < max(1, int(t["min_testable"])):
+    claims = int(t["sheet_testable_claims"])
+    if claims < max(1, int(t["min_testable"])):
         return {
             "decision": "insufficient",
             "why": [
-                f"{testable} refusals the sheet makes testable, fewer than the "
+                f"{claims} claims the sheet makes testable, fewer than the "
                 f"{t['min_testable']} a decision needs"
             ],
             "checks": [],
         }
+    ending = int(t["ending_with_sheet_matching_assumptions"])
+    low, high = wilson(ending, claims)
+    testable = int(t["of_them_the_sheet_makes_testable"])
     converted = int(t["converted_and_accepted"])
-    low, high = wilson(converted, testable)
-    worked = int(t["claims_the_filler_left_untested"])  # >= testable > 0
+    step_share = (
+        f"; the step converted {converted} of the {testable} it worked on that the sheet makes"
+        " testable, for information"
+        if testable
+        else "; the first pass left the step no claim the sheet makes testable"
+    )
+    worked = int(t["claims_the_filler_left_untested"])
     y = t["y_budget"]
-    calls, seconds = t["tries"] / worked, t["seconds"] / worked
+    calls = t["tries"] / worked if worked else 0.0
+    seconds = t["seconds"] / worked if worked else 0.0
     invalid = int(t["invalid_outputs"])
     differ = [k for k in ("predictions", "model_calls") if not repeat[k]]  # type: ignore[index]
     checks = [
         {
-            "bar": f"conversion at least {t['x_percent']:g}%",
-            "value": f"{converted} of {testable} ({converted / testable:.0%}, "
-            f"Wilson 95% {low:.0%} to {high:.0%})",
-            "ok": converted / testable * 100 >= t["x_percent"],
+            "bar": f"at least {t['x_percent']:g}% of the claims the sheet makes testable end "
+            "with assumptions that match it, both passes together",
+            "value": f"{ending} of {claims} ({ending / claims:.0%}, "
+            f"Wilson 95% {low:.0%} to {high:.0%})" + step_share,
+            "ok": ending / claims * 100 >= t["x_percent"],
         },
         {
             "bar": "no try names a different person, phone or window than the sheet",
