@@ -145,9 +145,9 @@ NEEDS_NO_JOB: dict[str, tuple[str, ...]] = {
     "/claims/propose": ("audit", "propose", "model_check"),
     "/model/check": ("audit", "propose", "model_check"),
     "/audit/start": ("audit", "propose", "model_check"),
-    "/cloud/case": ("audit",),
-    "/cloud/key": ("audit",),
-    "/cloud/key/remove": ("audit",),
+    "/cloud/case": ("audit", "propose"),  # a running job keeps the model it started on
+    "/cloud/key": ("audit", "propose"),  # a running job keeps the model it started on
+    "/cloud/key/remove": ("audit", "propose"),  # a running job keeps the model it started on
     "/case/import": ("audit", "propose", "model_check"),
     "/case/remove_file": ("audit", "propose", "model_check"),
     "/case/new": ("audit", "propose", "model_check"),
@@ -578,7 +578,7 @@ class App:
             what = {
                 "audit": f"The audit is running: {job.done} of {job.total} claims finished."
                 + ("" if self.path == "/run" else " <a href='/run'>See its progress</a>."),
-                "propose": f"The local model is proposing claims: {job.done} of {job.total} "
+                "propose": f"The model is proposing claims: {job.done} of {job.total} "
                 "paragraphs. <a href='/setup'>See the claims</a>.",
                 "model_check": "Checking the model. <a href='/setup'>See the result</a>.",
             }

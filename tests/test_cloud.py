@@ -1062,3 +1062,25 @@ def test_a_cloud_choice_without_its_settings_never_falls_back_to_the_local_model
 def test_the_cli_proposes_claims_on_the_case_model():
     src = (Path(__file__).resolve().parents[1] / "cli" / "main.py").read_text(encoding="utf-8")
     assert "extract.create(conn, cloud=choice.config)" in src
+
+
+def test_the_cloud_choice_and_key_cannot_change_while_claims_are_proposed(tmp_path, monkeypatch):
+    """A running claim proposal keeps the model it started on, so withdrawing cloud permission
+    or marking the case CSAM mid-proposal must wait for it, as it does for an audit."""
+    from core.casework import jobs
+
+    app, get, post = _screen(tmp_path, monkeypatch)
+    post("/cloud/key", api_key=KEY)
+    post("/cloud/case", mode="fast", allowed="1")
+    job = jobs.Job("propose", app.case.db)
+    app.jobs.current = job  # a cloud proposal is running
+    post("/cloud/case", mode="local", csam="1")
+    post("/cloud/key/remove")
+    entry = _cloud_entry(app)
+    assert entry["allowed"] is True and entry["csam"] is False  # nothing changed mid-proposal
+    assert cloud.load_config(tmp_path / "cloud.json").api_key == KEY
+    form = get("/setup").text.split('action="/cloud/case"', 1)[1].split("</form>", 1)[0]
+    assert "disabled" in form
+    job.end("done", "finished")
+    post("/cloud/case", mode="local", csam="1")
+    assert _cloud_entry(app)["csam"] is True

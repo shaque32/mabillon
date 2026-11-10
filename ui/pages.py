@@ -2886,7 +2886,7 @@ def setup_page(
                 cloud,
                 cloud_case or {},
                 cloud_key,
-                job_kind == "audit",
+                job_kind in ("audit", "propose"),
                 key_from=cloud_key_from,
                 encrypted=protection != "plain",
             )
