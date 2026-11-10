@@ -17,7 +17,7 @@
   is the text Arsh signed on 2026-11-10 at 19:13 UTC; its freeze record is filled in before the
   run. Eval tooling only: no product code, verdict path,
   model job or prompt changes.
-- Where: branch v4/tooling (local), opens as a PR after the safety PR
+- Where: PR #259
 - Verified: `tests/test_validation_run.py` (another phone's source id and header, resume
   refusals, header refusals, the header's zone) and `tests/test_validation_score.py` (the R1 card,
   the bars on the synthetic fixture, pass 2 compared, flips and missing verdicts), synthetic data
