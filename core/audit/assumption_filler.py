@@ -3054,11 +3054,12 @@ class LocalAssumptionFiller:
         888-7386", "+1 212 555 0122 received"), outside a kept time range's words, as
         identifiers or as written. A person is asked for by name (unbound_person)."""
         spans = [(m.group(0), *m.span()) for m in _HANDLE_RE.finditer(bare)]
-        spans += [
-            (m.group(0).strip(" .,-"), *m.span())
-            for m in _PHONE_RE.finditer(bare)
-            if phone_digits(m.group(0).strip(" .,-")) is not None
-        ]
+        for m in _PHONE_RE.finditer(bare):
+            words = m.group(0).strip(" .,-")
+            if phone_digits(words) is not None:
+                # the match may take the space before "(212)": the number starts after it
+                start = m.start() + m.group(0).index(words)
+                spans.append((words, start, start + len(words)))
         spans += self._numbers_named(bare)
         return [
             words
@@ -3074,7 +3075,8 @@ class LocalAssumptionFiller:
 
     def _row_names(self, p: Proposal, words: str) -> bool:
         """True when this proposal names the party these words write: the same handle, or an
-        account whose identifier or display name it is, a number by its digits."""
+        account whose identifier or display name it is, a number by its digits however the
+        account writes it (`_same_number`: "+12125550122", "12125550122@s.whatsapp.net")."""
         params = p.params if isinstance(p.params, Mapping) else p.params.model_dump()
         want = _nfc(words).strip().casefold()
         digits = phone_digits(words)
@@ -3085,7 +3087,7 @@ class LocalAssumptionFiller:
             if acc is None:
                 continue
             names = {_nfc(x).strip().casefold() for x in (acc.identifier, acc.display_name) if x}
-            if want in names or (digits is not None and phone_digits(acc.identifier) == digits):
+            if want in names or (digits is not None and _same_number(digits, acc)):
                 return True
         return False
 

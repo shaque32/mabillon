@@ -3212,6 +3212,33 @@ def test_a_time_row_with_another_recipient_does_not_test_the_one_written(conn):
     assert filler.unbound_person(c, [sender, by_account]) is None
 
 
+def test_a_recipient_written_as_a_number_matches_its_whatsapp_account(conn):
+    # Greptile on #257: "(212) 555-0122" is the WhatsApp id 12125550122@s.whatsapp.net.
+    text = 'On March 12, 2026, PETROV wrote to (212) 555-0122 on WhatsApp: "hello".'
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.COMMUNICATION,
+        status=ClaimStatus.ACCEPTED,
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    sender = Proposal("sender", {"quoted_text": "hello", "person_ids": [PETROV]})
+
+    def timed(account: str) -> Proposal:
+        return Proposal(
+            "record_time",
+            {"quoted_text": "hello", "person_ids": [PETROV], "account_ids": [account]},
+        )
+
+    jid = "acct:item1:WhatsApp:12125550122@s.whatsapp.net"
+    assert filler.unbound_person(c, [sender, timed(jid)]) is None
+    other = filler.unbound_person(
+        c, [sender, timed("acct:item1:WhatsApp:12125550155@s.whatsapp.net")]
+    )
+    assert other is not None and "(212) 555-0122" in other
+
+
 QUOTE16 = "got the money, come get it"
 
 
