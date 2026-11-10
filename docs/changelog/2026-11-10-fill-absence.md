@@ -25,7 +25,7 @@
     SMITH's. The check version is not bumped here; the lead bumps once.
   - Code: `_phone_as_party`, `_absence_parties`, `_given_is_read` and `_phone_owner` in
     `core/audit/assumption_filler.py`; `_party_gaps` in `core/audit/checks/absence.py`.
-- Where: PR #PRNUM
+- Where: branch claude/project-thread-ds0ify
 - Verified: `tests/test_fill_absence.py`, 23 tests on synthetic case01, and the existing filler
   and check tests. Replay of stored model answers from two practice phones (no model call), 2026-11-10: per-claim results are in the validation fix-round notes in project files, not in the repo. `make check` on the merged branch: see the PR.
 - Open: The phone's side is a person id (the owner), so the text names that person where the

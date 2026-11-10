@@ -32,7 +32,7 @@
     month between two stated ones (`months_stated`). `coverage_gap` now refuses a claim dated
     only by a month or a year (outside quoted words) that no time range tests. Before, "In
     April 2023, PETROV wrote ..." could be judged on its sender alone.
-- Where: PR #PRNUM
+- Where: branch claude/project-thread-ds0ify
 - Verified: new `tests/test_fill_windows.py` (67 tests, synthetic case01), covering:
     - the bounds of every approximate form, at their boundary instants, for record_time,
       no_contact and message_count;

@@ -28,7 +28,7 @@
     record_time cannot take an unquoted message, so the count is the template.
   Why: practice claims written in these plain forms were left untested only because the model
   picked the event template or named the phone as a place.
-- Where: PR #PRNUM
+- Where: branch claude/project-thread-ds0ify
 - Verified: on this container, 2026-11-10, no model call.
   - New tests in `tests/test_fill_counts.py` (synthetic case01, 34). 11 fail without the
     change. They cover:
