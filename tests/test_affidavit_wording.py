@@ -144,6 +144,37 @@ def test_a_time_no_range_reads_is_never_widened_to_the_whole_day(text):
 @pytest.mark.parametrize(
     "text",
     [
+        "In the early hours of November 2, 2025, Item 1 called REYES.",
+        "On the evening of May 7, 2026, Item 1 called.",
+        "Late on January 9, 2026, Item 1 called.",
+        "On the night of January 9, 2026, Item 1 called.",
+        "On the morning of Friday, January 9, 2026, Item 1 called.",
+        "Overnight on January 9, 2026, Item 1 sent texts.",
+        "Toward the end of January 9, 2026, Item 1 called.",
+        "In the small hours of November 2, 2025, Item 1 called.",
+        "After dark on November 2, 2025, Item 1 called.",
+        "First thing on November 2, 2025, Item 1 called.",
+        "After work on November 2, 2025, Item 1 called.",
+        "On November 2, 2025, Item 1 met REYES, and that evening Item 1 called.",
+        "On November 2, Item 1 called; in the early hours of November 2, 2025 it texted.",
+    ],
+)
+def test_a_part_of_the_day_is_never_widened_to_the_whole_day(text):
+    # Read as the whole day, any time that day would pass a check the claim narrowed.
+    assert stated_windows(text) is None
+
+
+def test_a_part_of_the_day_beside_a_minute_or_in_quotes_still_reads():
+    text = "On January 9, 2026, at 9:15 p.m., Item 1 called REYES in the evening."
+    (w,) = stated_windows(text)
+    assert w.raw == "On January 9, 2026, at 9:15 p.m."
+    (w,) = stated_windows('On January 9, 2026, Item 1 texted "see you tonight, early".')
+    assert w.raw == "On January 9, 2026"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "On January 9, 2026, at 9 p.m. onward, PETROV sent no messages.",
         "On January 9, 2026, at 9 p.m. EST or later, PETROV sent no messages.",
         "At 9 p.m. on January 9, 2026, and thereafter, PETROV sent no messages.",
