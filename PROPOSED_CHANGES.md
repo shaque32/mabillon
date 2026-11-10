@@ -1825,3 +1825,24 @@ Diff (Data safety, after the line "- No network calls in `core/` except ..."):
 +  account.getmabillon.com: the email at sign-in, then the license id, sign-in token and app
 +  version. Never case data. It stays off until sign-in is turned on, and a missing or expired
 +  license never blocks opening, reviewing or exporting a case.
+
+## 2026-11-10 claude/project-thread-kqb5ex: CLAUDE.md stay-local line covers any sexual case involving a minor
+APPLIED on branch claude/project-thread-kqb5ex (PR #256) on 2026-11-10 at Arsh's request
+("go", 19:19Z). SIGNED by Arsh on 2026-11-10 19:12Z ("i approve the rest" in the thread
+"Evaluate Fast mode legality and court use"), on this exact wording
+(plans/minor-sexual-stay-local.md, item 5) with the other texts in the same plan.
+File: CLAUDE.md
+Why: Arsh asked to widen the stay-local rule ("widen it", 2026-11-10). The setup box named only
+child sexual abuse material, but enticement, sextortion and trafficking cases are mostly chat
+text, often with an officer presented as a minor. A provider that learns of apparent CSAM,
+enticement of a minor (18 U.S.C. 2422(b)) or child sex trafficking (1591) must report it to
+NCMEC (18 U.S.C. 2258A(a)(2)(A)), and Anthropic may keep a request its safety systems flag for up
+to 2 years, so a Fast run on such a case could end in a report about the defense's own evidence.
+The code on this branch already uses the wider box (`core/casework/cloud.py` CSAM_NOTE) and adds
+the matching sentence to the Fast attestation; CLAUDE.md still names only CSAM.
+Diff (Data safety, the "Files never leave the examiner's machine" bullet):
+-  ordinary case cloud AI is the default choice at setup. A case marked as possibly containing
+-  CSAM, or whose order does not allow it, stays local. Never describe Mabillon as "offline".
++  ordinary case cloud AI is the default choice at setup. A case marked as concerning sexual
++  material or conduct involving a minor or someone presented as one (CSAM included), or whose
++  order does not allow it, stays local. Never describe Mabillon as "offline".

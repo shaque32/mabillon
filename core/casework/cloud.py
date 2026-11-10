@@ -6,9 +6,13 @@ or on this computer. Nothing is pre-chosen and the attestation is never pre-tick
 the expert's statement. A case runs every model step (stance labels, assumption filling, claim
 proposal, the AI reviewer and the testability step) on the cloud model (core/llm/cloud.py) only
 when all of these hold, and otherwise on the local model:
-1. The expert attested, for this case, that its protective order allows cloud AI.
-2. The expert did not mark the case as possibly containing CSAM. Such material stays in the
-   government's control (18 U.S.C. 3509(m)), so a marked case never uses cloud, whatever (1) says.
+1. The expert attested, for this case, that its protective order allows cloud AI and that it
+   concerns no sexual material or conduct involving a minor (ATTESTATION).
+2. The expert did not mark the case as concerning sexual material or conduct involving a minor,
+   or someone presented as one (CSAM_NOTE; child sexual abuse material included). Such material
+   stays in the government's control (18 U.S.C. 3509(m)), and a provider that learns of apparent
+   CSAM, enticement of a minor or child sex trafficking must report it to NCMEC (18 U.S.C.
+   2258A), so a marked case never uses cloud, whatever (1) says.
 3. An Anthropic key is set up on this computer (the expert's own; Mabillon runs no server).
 4. The configured model, at its configured effort, passed Mabillon's signed stance test with the
    cloud stance prompt it would read (core/audit/prompts/stance_cloud.md; core/llm/cloud.py,
@@ -39,27 +43,46 @@ from core.llm import cloud as cloud_llm
 from core.review.actions import _expert
 
 ACTION = "set_cloud"
-# Approved by Arsh 2026-11-10 07:27Z. A case attested under an earlier text reads as not chosen
-# (case_cloud), so the expert chooses again rather than drifting to either side.
+# Approved by Arsh 2026-11-10 07:27Z, and its last sentence on 2026-11-10 19:12Z
+# (/mnt/project-files/baker/plans/minor-sexual-stay-local.md). A case attested under an earlier
+# text reads as not chosen (case_cloud), so the expert chooses again rather than drifting to
+# either side.
 ATTESTATION = (
     "This case's protective order (or the court's or the government's written consent) allows "
     "excerpts of its evidence to be sent to Anthropic for AI processing. The Anthropic key used "
     "for it belongs to an organization with zero data retention in writing. My client has given "
-    "informed consent."
+    "informed consent. This case does not concern sexual material or conduct involving a minor, "
+    "or someone presented as a minor."
 )
 FAST = "Fast: Opus through Anthropic"
 LOCAL = "On this computer"
-# Approved by Arsh 2026-11-10 07:27Z, the setup page's explanation of Fast.
+# Approved by Arsh 2026-11-10 07:27Z, the setup page's explanation of Fast. Its opening, up to
+# "never leave this computer.", approved 2026-11-10 19:12Z (plans/minor-sexual-stay-local.md,
+# item 6): the earlier text left out that claim proposal sends each paragraph of the
+# government's document (core/audit/prompts/claims.md) and that assumption filling sends the
+# case's app names (assumptions.md), which docs/SECURITY_PRIVACY.md section 5 already lists.
 FAST_EXPLAINED = (
-    "With Fast, Mabillon sends one question at a time to Anthropic: the claim, the assumption "
-    "being tested, one record and the messages around it, and for a group chat its member list. "
-    "Never your files or the case database. Under a zero-retention account Anthropic keeps no "
-    "prompts or answers after it replies, except content its safety systems flag (kept up to 2 "
-    "years) or what the law requires, and it never trains on them. Every request is recorded in "
-    "the case's audit log before it is sent. If the cloud model stops answering, the audit "
-    "pauses and you choose to retry or run the whole case on this computer."
+    "With Fast, Mabillon sends one question at a time to Anthropic. To propose claims, it sends "
+    "each paragraph of the government's document. To test a claim, it sends the claim and its "
+    "paragraph, the assumption being tested, one record and the messages around it, the names "
+    "of the case's apps, and for a group chat its member list. The phone extractions themselves "
+    "and the case database never leave this computer. Under a zero-retention account Anthropic "
+    "keeps no prompts or answers after it replies, except content its safety systems flag (kept "
+    "up to 2 years) or what the law requires, and it never trains on them. Every request is "
+    "recorded in the case's audit log before it is sent. If the cloud model stops answering, the "
+    "audit pauses and you choose to retry or run the whole case on this computer."
 )
-CSAM_NOTE = "This case may contain child sexual abuse material."
+# The stay-local box, approved by Arsh 2026-11-10 19:12Z (same plan as the attestation's last
+# sentence). It covers more than CSAM: enticement, sextortion and trafficking cases are mostly
+# chat text, often with an officer presented as a minor. The stored field keeps its first name,
+# csam, so earlier entries still read; each entry records the words the expert ticked
+# (csam_note).
+CSAM_NOTE = (
+    "This case concerns sexual material or conduct involving a minor, or someone presented as a "
+    "minor: for example child sexual abuse material, enticement, sextortion or trafficking."
+)
+# The same category in the short messages: the stay-local reason and the setup page's replies.
+MINOR_CONTENT = "sexual material or conduct involving a minor"
 
 
 @dataclass(frozen=True)
@@ -121,8 +144,8 @@ def choose(
     """The cloud decision for one case, from its audit log and the expert's key."""
     c = case_cloud(conn)
     if c.get("csam") is True:
-        return CloudChoice(False, "Local model: the case is marked as possibly containing CSAM, "
-                                  "so it never uses cloud AI.")  # fmt: skip
+        return CloudChoice(False, f"Local model: the case is marked as concerning {MINOR_CONTENT}"
+                                  ", so it never uses cloud AI.")  # fmt: skip
     if c.get("allowed") is not True:
         return CloudChoice(False, "Local model: nobody has attested that this case's protective "
                                   "order allows cloud AI.")  # fmt: skip

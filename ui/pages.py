@@ -3051,7 +3051,7 @@ def cloud_section(
             f"For Fast: {e(ATTESTATION)}</label>"
             "<label><input type='checkbox' name='csam' value='1'"
             f"{' checked' if csam else ''}> {e(CSAM_NOTE)} This case then runs only on this "
-            "computer.</label></div>"
+            "computer. If unsure, tick it.</label></div>"
             f"<div class='inline-actions'><button type='submit'{off}>Save the choice"
             "</button></div>",
             back="/setup",

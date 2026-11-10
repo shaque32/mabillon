@@ -6,8 +6,9 @@ earlier text as of `main` `19d8461`, after #68 and #74).
 
 **Each case chooses where its AI runs: Fast (Claude Opus through Anthropic, recommended) or on
 this computer.** Nothing is pre-chosen, and Mabillon proposes claims or runs an audit only once
-the examiner chooses. A case marked as possibly containing CSAM, or whose protective order does
-not allow cloud AI, runs on this computer. Fast is gated on a model passing Mabillon's signed
+the examiner chooses. A case marked as concerning sexual material or conduct involving a minor
+(or someone presented as one), or whose protective order does not allow cloud AI, runs on this
+computer. Fast is gated on a model passing Mabillon's signed
 stance test. One has: Claude Opus 5.5 at medium effort with the cloud stance prompt, stance v1.2
 (`PROBE_PASSED` in `core/llm/cloud.py`, signed 2026-10-20). A Fast case sends one question at a
 time to Anthropic for every model step, as below; a case on this computer sends nothing.
@@ -154,11 +155,16 @@ hold; otherwise it waits with the reason, or runs on this computer if the examin
 1. The expert attests, for this case, that "This case's protective order (or the court's or the
    government's written consent) allows excerpts of its evidence to be sent to Anthropic for AI
    processing. The Anthropic key used for it belongs to an organization with zero data retention
-   in writing. My client has given informed consent." The attestation, who made it and when go
-   into the case's hash-chained audit log. A case attested under the earlier words must choose
-   again.
-2. The case is **not** marked as possibly containing child sexual abuse material. Such material
-   stays in the government's control (18 U.S.C. 3509(m)), so a marked case never uses cloud,
+   in writing. My client has given informed consent. This case does not concern sexual material
+   or conduct involving a minor, or someone presented as a minor." The attestation, who made it
+   and when go into the case's hash-chained audit log. A case attested under earlier words must
+   choose again.
+2. The case is **not** marked as concerning sexual material or conduct involving a minor, or
+   someone presented as a minor (for example child sexual abuse material, enticement, sextortion
+   or trafficking). Child sexual abuse material stays in the government's control (18 U.S.C.
+   3509(m)). A provider that learns of apparent child sexual abuse material, enticement of a
+   minor or child sex trafficking must report it to NCMEC (18 U.S.C. 2258A), and Anthropic may
+   keep a request its safety systems flag for up to 2 years. So a marked case never uses cloud,
    whatever the attestation says.
 3. An Anthropic key from an organization with zero data retention in writing is set up.
 4. The model passed Mabillon's signed stance test at its configured effort with the cloud stance

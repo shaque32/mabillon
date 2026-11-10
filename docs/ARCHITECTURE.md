@@ -87,7 +87,8 @@ core/
   casework/           case folders and imports, background audit and claim-proposal jobs,
                       the model check, keeping the computer awake (used by the screen)
                       protect.py: encrypting an existing case, passphrase changes
-                      cloud.py: the per-case cloud choice (attestation, CSAM flag, key)
+                      cloud.py: the per-case cloud choice (attestation, key, and the mark for
+                      sexual material or conduct involving a minor, which keeps a case local)
   timeline/           Timeline check (stated times vs record times) and quiet stretches;
                       derived by code on demand, never stored, never touches verdicts
   hypotheses/         other explanations per claim, with the records that fit each (someone
@@ -140,7 +141,8 @@ Mabillon runs entirely on the expert's computer unless the expert opts a case in
 
 Stance labels come from Claude (Opus 5.5, medium effort by default) for a case where all hold:
 the expert attested at case setup that its protective order allows cloud AI; the case is not
-marked as possibly containing CSAM; the expert's own Anthropic key is set up: `$MABILLON_ANTHROPIC_API_KEY`; or, in an encrypted case,
+marked as concerning sexual material or conduct involving a minor (or someone presented as one);
+the expert's own Anthropic key is set up: `$MABILLON_ANTHROPIC_API_KEY`; or, in an encrypted case,
 the key saved in that case (`case.cloud-key`, AES-256-GCM under the case key, so it is unreadable
 while the case is locked); or `~/.mabillon/cloud.json` (owner-only; `~/.baker/cloud.json` from before the rename), in that order; and the model
 passed the signed stance test at its configured effort with the cloud stance prompt (`PROBE_PASSED` in
