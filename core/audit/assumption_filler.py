@@ -122,7 +122,7 @@ from core.audit._llm_json import (
     required_placeholders,
     run_json_call,
 )
-from core.audit._local_model import LocalModel, open_run
+from core.audit._local_model import LocalModel, open_job_run
 from core.audit.assumptions import (
     CODE_ONLY_TEMPLATES,
     TEMPLATES,
@@ -5708,18 +5708,25 @@ def _validate_list(obj: dict[str, object]) -> list[dict[str, Any]]:
 
 
 def create(
-    conn: sqlite3.Connection, *, model: LocalModel | None = None
+    conn: sqlite3.Connection,
+    *,
+    model: LocalModel | None = None,
+    cloud: Any = None,
+    cloud_model: Any = None,
 ) -> Callable[[Claim, list[Template]], list[Proposal]]:
     """The filler for core.audit.assumptions.create(conn, filler=...). Raises if the signed
-    prompt or the model config is missing."""
+    prompt or the model config is missing. `cloud` or `cloud_model` puts it on the case's
+    cloud model (core/audit/_local_model.py open_cloud_run)."""
     template = load_prompt(PROMPT_FILE)
     # The per-call schema is fixed by the templates and channels the prompt lists, so the
     # empty schema records its shape for stored-output reuse.
-    opened = open_run(
+    opened = open_job_run(
         conn,
         "assumptions",
         template,
         model=model,
+        cloud=cloud,
+        cloud_model=cloud_model,
         schema=fill_schema((), ()),
         code_version=FILLER_VERSION,
     )

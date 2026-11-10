@@ -40,7 +40,6 @@ DEFAULT_SECONDS_PER_CALL = 43.0  # Qwen3-14B Q4 on a 24 GB Mac (Wave 3, PR #28)
 # Opus 5.5 at medium effort on case01: 493 calls in 1,558 s (cloud bench 2026-10-14c).
 CLOUD_SECONDS_PER_CALL = 3.2
 CALLS_PER_CLAIM = 25  # synthetic case01 after PR #29: 495 model calls for 20 claims
-LOCAL_CALLS_PER_CLAIM = 1  # assumption filling, which stays local in a cloud case
 SPEED_FILE = paths.settings_file("speed.json")
 MIN_CALLS_TO_MEASURE = 5
 
@@ -180,12 +179,9 @@ def record_speed(c: pipeline.Components, speed_file: Path = SPEED_FILE) -> None:
 
 
 def estimate_seconds(claims: int, spc: float, cloud_spc: float | None = None) -> float:
-    """spc is the local model's seconds per call. With cloud_spc, stance calls run at the cloud
-    rate and assumption filling stays on the local model."""
-    if cloud_spc is None:
-        return claims * CALLS_PER_CLAIM * spc
-    stance_calls = CALLS_PER_CLAIM - LOCAL_CALLS_PER_CLAIM
-    return claims * (LOCAL_CALLS_PER_CLAIM * spc + stance_calls * cloud_spc)
+    """spc is the local model's seconds per call. With cloud_spc every call runs at the cloud
+    rate, because a cloud case runs every model job on the cloud model."""
+    return claims * CALLS_PER_CLAIM * (spc if cloud_spc is None else cloud_spc)
 
 
 def duration(seconds: float) -> str:
@@ -216,8 +212,8 @@ def audit_job(
     cloud_opt_in: bool = False,
     challenge: bool = True,
 ) -> Callable[[Job], None]:
-    """cloud_opt_in: the case's stance labels come from the cloud model. The local model check
-    still gates the start: assumption filling (and the AI reviewer) run on the local model."""
+    """cloud_opt_in: every model step of the case runs on the cloud model. The screen then
+    passes no model_check, since no local model is loaded."""
 
     def run(job: Job) -> None:
         conn = _open(job.db)
@@ -296,7 +292,7 @@ def audit_job(
 
 
 def propose_job(*, extractor_for: ExtractorFor) -> Callable[[Job], None]:
-    """The local model proposes claims, one paragraph per transaction, so a stop keeps what is
+    """The case's model proposes claims, one paragraph per transaction, so a stop keeps what is
     done and starting again skips paragraphs that already have claims."""
 
     def run(job: Job) -> None:

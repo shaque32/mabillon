@@ -79,6 +79,7 @@ def audited(tmp_path: Path, inputs: dict[str, Path]) -> App:  # noqa: F811
     post(app, "/expert", name=EXPERT)
     post(app, "/case/new", name=CASE_NAME)
     assert app.case is not None
+    post(app, "/cloud/case", mode="local")  # where the AI runs: the local model
     named = tmp_path / "named"
     named.mkdir()
     for sid, kind, name in (
