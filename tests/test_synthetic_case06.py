@@ -278,7 +278,10 @@ def test_the_design_counts(gold):
         wordings = Counter(c.wording for c in key.CLAIMS if c.claim_type == t)
         assert wordings == {"plain": 3, "affidavit": 3}, t
     verdicts = Counter(g.gold_verdict.value for g in gold)
-    assert verdicts == {"supported": 24, "contradicted": 12, "unproven": 12}
+    # the check change of 2026-11-10 moved some contradicted claims to unproven
+    assert verdicts == {"supported": 24, "contradicted": 11, "unproven": 13}
+    signed = Counter(key.CHECK_CHANGE_VERDICT.get(c.claim_id, c.verdict) for c in key.CLAIMS)
+    assert signed == {"supported": 24, "contradicted": 12, "unproven": 12}
     assert not key.FIRST_DRAFT_VERDICT  # the second read changed no verdict
     assert sum(c.hazard != "none" for c in key.CLAIMS) >= 24
     used = {c.hazard for c in key.CLAIMS} - {"none"}

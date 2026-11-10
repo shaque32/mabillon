@@ -656,6 +656,34 @@ def _params_text(p: dict) -> str:
     return "<br>".join(parts).replace("|", "\\|")
 
 
+def check_change() -> list[str]:
+    """The rows and verdicts the check change of 2026-11-10 moved after signing."""
+    by_id = {c.claim_id: c for c in key.CLAIMS}
+    row_now = {(s.claim_id, a.template_id): a.expect for s in key.SHEET for a in s.assumptions}
+    return [
+        f"## Check change ({key.CHECK_CHANGE_DATE})",
+        "",
+        "After this sheet was signed, two check changes moved the rows below. Sender 1.1.0",
+        "counts a copy as someone else's only when a record or a confirmed fact says so: a",
+        "number that no confirmed link ties to anyone may be the expected person's. Sender",
+        "1.2.0 and time 1.1.0 never judge words that are only part of a sentence of a message.",
+        "Re-sign these rows and verdicts.",
+        "",
+        "Verdicts changed: "
+        + ", ".join(
+            f"{cid} ({v} to {by_id[cid].verdict})" for cid, v in key.CHECK_CHANGE_VERDICT.items()
+        )
+        + ".",
+        "",
+        "| Claim | Row | Was | Now |",
+        "|---|---|---|---|",
+        *[
+            f"| {cid} | {tid} | {was} | {row_now[(cid, tid)]} |"
+            for cid, tid, was in key.CHECK_CHANGE_ROWS
+        ],
+    ]
+
+
 def second_read() -> list[str]:
     """The second blind read's findings, one line each: fixed, or kept and why."""
     changed = ", ".join(
@@ -708,6 +736,8 @@ def render_signing_sheet(gold: list[GoldClaim]) -> str:
         "   check exists, so only expert review covers that row.",
         "",
         *second_read(),
+        "",
+        *check_change(),
         "",
         "## Counts",
         "",

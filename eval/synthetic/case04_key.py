@@ -49,6 +49,16 @@ CLAIM_TYPES = (
     "event",
 )
 
+# Sheet notes for the check changes of 2026-11-10 (sender 1.1.0 and 1.2.0, time 1.1.0).
+SENDER_UNKNOWN = (
+    "No record or confirmed fact says whose that number is, so the check is inconclusive "
+    "(sender 1.1.0)."
+)
+PART_QUOTE = (
+    "The claim's words are only part of a sentence of the message, so the check does not judge "
+    "it (sender 1.2.0, time 1.1.0)."
+)
+
 HAZARDS = {
     "same_name": "a second person with the same first name or nickname",
     "second_number": "a second number or account for the same person",
@@ -154,14 +164,15 @@ CLAIMS: tuple[DraftClaim, ...] = (
         "C03",
         "communication",
         "plain",
-        "contradicted",
+        "unproven",
         "same_name",
         'On March 10, 2026, OKAFOR texted FERRO "the yellow ones are in my garage".',
         ("OKAFOR's SMS account sent the message to FERRO on Mar 10",),
         (("item2", "dz_yellow"), ("item2", "contact:Dez"), ("item2", "dz_yellow2")),
         "The only copy is on Item 2, sent by +17735550164, which Item 2 saves as 'Dez'; that "
         "number's next message is 'come grab the boots whenever'. OKAFOR (+17735550176, saved on "
-        "Item 2 as 'Desmond O') did not send it. Observed data rules out the stated sender.",
+        "Item 2 as 'Desmond O') did not send it. No record or confirmed fact says whose "
+        "+17735550164 is, so the records do not rule OKAFOR out: unproven.",
         "DEZ is OKAFOR's nickname (paragraph 2) and Item 1 saves OKAFOR as 'Dez', but on Item 2 "
         "'Dez' is another person. A reading that takes Item 2's 'Dez' for OKAFOR passes the "
         "sender; the sheet names OKAFOR.",
@@ -838,7 +849,7 @@ CLAIMS: tuple[DraftClaim, ...] = (
         "C41",
         "role",
         "affidavit",
-        "contradicted",
+        "unproven",
         "similar_quote",
         'SUBJECT-2 decided where the spools would be kept that night, sending HAL to "the unit on '
         'pulaski".',
@@ -848,7 +859,8 @@ CLAIMS: tuple[DraftClaim, ...] = (
         ),
         (("item1", "hf_pul"), ("item2", "hf_pul")),
         "HALLORAN wrote 'taking them to the unit on pulaski after' to FERRO, who answered 'ok'. "
-        "No copy came from FERRO. Observed data rules out the stated sender.",
+        "No copy came from FERRO, but the claim's words are only part of HALLORAN's sentence, "
+        "so no record is the message the claim quotes: unproven.",
         "FERRO wrote to Item 2's 'Mari' 'moms boxes are at the pulaski unit' (other words, another "
         "thread); the sheet quotes the claim's words.",
         (("item2", "ms_pul"),),
@@ -1247,9 +1259,9 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q03, person_ids=[OKA], channels=["SMS"]),
-                "fail",
+                "inconclusive",
                 "The one copy came from +17735550164, Item 2's 'Dez', not from OKAFOR's "
-                "+17735550176.",
+                "+17735550176. " + SENDER_UNKNOWN,
             ),
             A(
                 "record_time",
@@ -2090,8 +2102,9 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q41, person_ids=[FER]),
-                "fail",
-                "HALLORAN wrote it, to FERRO. No channel: the claim names none.",
+                "inconclusive",
+                "HALLORAN wrote it, to FERRO, inside 'taking them to the unit on pulaski after'. "
+                "No channel: the claim names none. " + PART_QUOTE,
             ),
             A("role", P(person_ids=[FER]), None, "That FERRO chose where the spools went."),
         ),
@@ -2213,8 +2226,8 @@ SHEET: tuple[ClaimSpec, ...] = (
             A(
                 "sender",
                 P(quoted_text=Q46, person_ids=[OKA], channels=["Telegram"]),
-                "pass",
-                "The DRIVER's Telegram, outgoing on Item 3.",
+                "inconclusive",
+                "The DRIVER's Telegram, outgoing on Item 3. " + PART_QUOTE,
             ),
             A(
                 "record_time",
@@ -2229,8 +2242,8 @@ SHEET: tuple[ClaimSpec, ...] = (
                         "to 5 a.m.)",
                     ),
                 ),
-                "pass",
-                "4:48:26 a.m. CDT; Item 3 prints 3:48:26 AM(UTC-6).",
+                "inconclusive",
+                "4:48:26 a.m. CDT; Item 3 prints 3:48:26 AM(UTC-6). " + PART_QUOTE,
             ),
         ),
     ),
@@ -2292,6 +2305,19 @@ NO_SHEET: dict[str, str] = {}
 FIRST_DRAFT_VERDICT: dict[str, str] = {"C37": "supported", "C40": "supported"}
 
 SECOND_READ_DATE = "2026-10-29"
+
+# The check change of 2026-11-10, after the sheet was signed: sender 1.1.0 counts a copy as
+# someone else's only on a record or a confirmed fact, and sender 1.2.0 and time 1.1.0 never
+# judge words that are only part of a sentence of a message. Verdicts it moved: claim id -> the
+# verdict signed before it. Rows it moved: (claim, template, the outcome signed before it).
+CHECK_CHANGE_DATE = "2026-11-10"
+CHECK_CHANGE_VERDICT: dict[str, str] = {"C03": "contradicted", "C41": "contradicted"}
+CHECK_CHANGE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("C03", "sender", "fail"),
+    ("C41", "sender", "fail"),
+    ("C46", "sender", "pass"),
+    ("C46", "record_time", "pass"),
+)
 
 
 @dataclass(frozen=True)

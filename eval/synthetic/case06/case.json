@@ -236,7 +236,7 @@
     "C12": {
       "claim_type": "identity",
       "wording": "affidavit",
-      "verdict": "contradicted",
+      "verdict": "unproven",
       "hazard": "contact_name",
       "wrong_records": [
         "contact:item2:Contacts!6#1",

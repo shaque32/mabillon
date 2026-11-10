@@ -184,7 +184,9 @@ MAX_PROPOSALS = 8
 #      are read by code, and a claim dated only by a month or a year needs a window;
 #      "exchanged messages" proposed as an event is read as an each-way count, and a phone
 #      can be a side of a count.
-FILLER_VERSION = "7"
+#   8: a comma the claim writes inside a closing quotation mark is the claim's, not the
+#      message's, and is dropped from the quoted words.
+FILLER_VERSION = "8"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)

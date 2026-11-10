@@ -354,7 +354,7 @@ def sender_case() -> sqlite3.Connection:
 @pytest.mark.parametrize(
     ("words", "party", "want"),
     [
-        # B24's shape: a person defined by one linked account; the words came from an account
+        # A person defined by one linked account; the words came from an account
         # on another app that no confirmed link ties to anyone. Unknown, never a fail.
         ("alpha", {"person_ids": [Q]}, CheckOutcome.INCONCLUSIVE),
         # The owner expected, and the phone recorded the message as received: someone else's.
