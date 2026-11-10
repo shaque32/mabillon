@@ -8,7 +8,8 @@
   iOS 15 exactly as before. The scorer (`eval/validation/score_hickman.py`) goes to 1.4.0: an R1
   card (the run before any review: false Supported with its basis, false Contradicted, by claim
   type, over all and over tested claims); `--repeat` compares pass 2's verdicts with pass 1's
-  (same share, Supported/Contradicted flips, every difference); and a v4 bars table with each
+  (same share, Supported/Contradicted flips, every difference), overall and by claim type; a
+  key folder may hold v4's single gold.jsonl or v1's three files; and a v4 bars table with each
   bar's pass line (bars 1 to 6 and bar 8's import counts; 7 and 8 stay their own commands). The
   driver's assumption filler now runs on the product's cloud path from #254
   (`assumption_filler.create(conn, cloud_model=...)`), as the stance labeler already did, in

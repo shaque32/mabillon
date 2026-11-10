@@ -527,16 +527,18 @@ def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
     )
     assert s["repeat"]["same"]["k"] == 3 and s["repeat"]["same"]["n"] == 3
     assert s["v4_bars"]["6"]["pass"] is True
+    assert set(s["v4_bars"]["6"]["by_type"]) == {r["type"] for r in s["r1"]["per_claim"].values()}
+    assert "Pass 2 against pass 1, by kind" in (tmp_path / "out" / "score.md").read_text("utf-8")
     assert "Validation v4 bars" in (tmp_path / "out" / "score.md").read_text("utf-8")
 
 
 def test_a_flip_or_a_missing_verdict_is_never_the_same():
     first = {
-        "A": {"r1": "supported"},
-        "B": {"r1": "contradicted"},
-        "C": {"r1": "unproven"},
-        "D": {"r1": None},
-        "E": {"r1": "unproven"},
+        "A": {"r1": "supported", "type": "communication"},
+        "B": {"r1": "contradicted", "type": "communication"},
+        "C": {"r1": "unproven", "type": "timing"},
+        "D": {"r1": None, "type": "timing"},
+        "E": {"r1": "unproven", "type": "count"},
     }
     second = {"A": "contradicted", "B": "contradicted", "C": "unproven", "D": None}
     got = score_hickman.repeat(first, second)
@@ -544,3 +546,36 @@ def test_a_flip_or_a_missing_verdict_is_never_the_same():
     assert got["supported_contradicted_flips"] == ["A"]
     assert set(got["differences"]) == {"A", "D", "E"}
     assert got["differences"]["E"] == {"pass_1": "unproven", "pass_2": None}
+
+
+def test_repeat_reports_each_kind_alongside_the_overall():
+    first = {
+        "A": {"r1": "supported", "type": "communication"},
+        "B": {"r1": "contradicted", "type": "communication"},
+        "C": {"r1": "unproven", "type": "timing"},
+        "D": {"r1": None, "type": "timing"},
+        "E": {"r1": "unproven", "type": "count"},
+    }
+    second = {"A": "contradicted", "B": "contradicted", "C": "unproven", "D": None}
+    by = score_hickman.repeat(first, second)["by_type"]
+    assert set(by) == {"communication", "timing", "count"}
+    assert (by["communication"]["same"]["k"], by["communication"]["same"]["n"]) == (1, 2)
+    assert by["communication"]["supported_contradicted_flips"] == ["A"]
+    assert (by["timing"]["same"]["k"], by["timing"]["same"]["n"]) == (1, 2)
+    assert by["timing"]["supported_contradicted_flips"] == []
+    assert (by["count"]["same"]["k"], by["count"]["same"]["n"]) == (0, 1)
+    assert set(by["count"]["differences"]) == {"E"}
+
+
+def test_a_v4_key_folder_holds_gold_jsonl_alone(tmp_path):
+    g = next(iter(GOLD))
+    (tmp_path / "gold.jsonl").write_text(json.dumps(g) + "\n", "utf-8")
+    gold, hashes = score_hickman.load_keys(tmp_path)
+    assert [x.claim_id for x in gold] == [g["claim_id"]]
+    assert set(hashes) == {"gold.jsonl"}
+
+
+def test_a_key_folder_without_gold_jsonl_is_refused(tmp_path):
+    (tmp_path / "gold_b2.jsonl").write_text("", "utf-8")
+    with pytest.raises(SystemExit, match="no gold.jsonl"):
+        score_hickman.load_keys(tmp_path)

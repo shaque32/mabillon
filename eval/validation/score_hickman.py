@@ -2,9 +2,10 @@
 
     python -m eval.validation.score_hickman --results results.zip --keys DIR --dump DIR --out DIR
 
---keys holds the signed answer keys (gold.jsonl, gold_b2.jsonl, gold_b3.jsonl) and --dump the
-independent ElementTree dump of the phone's report.xml (eval/validation/dump_ufdr.py). Both stay
-in project files. The run's case.db is copied; the copy is scored and the original never changes.
+--keys holds the signed answer keys (gold.jsonl, plus gold_b2.jsonl and gold_b3.jsonl for v1)
+and --dump the independent ElementTree dump of the phone's report.xml
+(eval/validation/dump_ufdr.py). Both stay in project files. The run's case.db is copied; the
+copy is scored and the original never changes.
 
 1. Key evidence: each key record (`ufdr:source_index:N`) is matched to Mabillon's records by
    content, since Mabillon's ids are positional and keep no UFDR id. A message must agree on its
@@ -144,10 +145,16 @@ def _sha256(path: Path) -> str:
 
 
 def load_keys(keys: Path) -> tuple[list[GoldClaim], dict[str, str]]:
+    """Every answer key in the folder. gold.jsonl is required; the v3 layout adds gold_b2.jsonl
+    and gold_b3.jsonl, and the v4 key is gold.jsonl alone. Only the files read are hashed."""
+    if not (keys / KEY_FILES[0]).is_file():
+        raise SystemExit(f"score: no {KEY_FILES[0]} in {keys}")
     gold: list[GoldClaim] = []
     hashes: dict[str, str] = {}
     for name in KEY_FILES:
         path = keys / name
+        if not path.is_file():
+            continue
         hashes[name] = _sha256(path)
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
@@ -666,14 +673,26 @@ def repeat(first: dict[str, dict[str, Any]], second: dict[str, str]) -> dict[str
     """Bar 6: pass 2's first-pass verdicts against pass 1's, over every claim pass 1 holds. A
     claim with no verdict in either pass counts as different, never as the same."""
     s, c = Verdict.SUPPORTED.value, Verdict.CONTRADICTED.value
-    rows = {cid: (r["r1"], second.get(cid)) for cid, r in first.items()}
-    same = sorted(cid for cid, (a, b) in rows.items() if a is not None and a == b)
-    differ = {cid: {"pass_1": a, "pass_2": b} for cid, (a, b) in rows.items() if cid not in same}
-    flips = sorted(cid for cid, (a, b) in rows.items() if {a, b} == {s, c})
+
+    def compare(claims: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        rows = {cid: (r["r1"], second.get(cid)) for cid, r in claims.items()}
+        same = sorted(cid for cid, (a, b) in rows.items() if a is not None and a == b)
+        differ = {
+            cid: {"pass_1": a, "pass_2": b} for cid, (a, b) in rows.items() if cid not in same
+        }
+        flips = sorted(cid for cid, (a, b) in rows.items() if {a, b} == {s, c})
+        return {
+            "same": rate(len(same), len(rows)),
+            "supported_contradicted_flips": flips,
+            "differences": dict(sorted(differ.items())),
+        }
+
+    kinds = sorted({r["type"] for r in first.values()})
     return {
-        "same": rate(len(same), len(rows)),
-        "supported_contradicted_flips": flips,
-        "differences": dict(sorted(differ.items())),
+        **compare(first),
+        "by_type": {
+            k: compare({cid: r for cid, r in first.items() if r["type"] == k}) for k in kinds
+        },
     }
 
 
@@ -724,6 +743,10 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
             and rp["same"]["n"] > 0
             and rp["same"]["k"] / rp["same"]["n"] >= V4_REPEAT_MIN,
             "line": f"no Supported/Contradicted flip, at least {V4_REPEAT_MIN:.0%} the same",
+            "by_type": {
+                k: {"same": r["same"], "flips": r["supported_contradicted_flips"]}
+                for k, r in rp["by_type"].items()
+            },
         }
     return bars
 
@@ -894,6 +917,19 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
         render_markdown(s["r1_card"]["card_over_tested"]),
         "",
     ]
+    if "repeat" in s and s["repeat"]["by_type"]:
+        lines += [
+            "### Pass 2 against pass 1, by kind",
+            "",
+            "| Kind | Same | Flips |",
+            "|---|---|---|",
+        ]
+        lines += [
+            f"| {k} | {_line(r['same'])} | {', '.join(flips) or 'none'} |"
+            for k, r in s["repeat"]["by_type"].items()
+            for flips in [r["supported_contradicted_flips"]]
+        ]
+        lines.append("")
     if "repeat" in s and s["repeat"]["differences"]:
         lines += ["### Pass 2 differences", ""]
         lines += [
