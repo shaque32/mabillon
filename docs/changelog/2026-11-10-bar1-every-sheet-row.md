@@ -22,9 +22,9 @@
   count then new: 14B run of record (Mac, 2026-11-03) 14 to 7 of 48; DeepSeek V4.1 Flash 32k
   (hosted, 2026-11-07) 20 to 13; Kimi K3.1 Pro (hosted, 2026-11-07) 21 to 16; Opus 5.5 (hosted,
   2026-11-10) 19 to 16; Opus 5.5 recheck on main after #255 (2026-11-10) 20 to 15.
-- Open: Arsh approved this change on 2026-11-10 at 21:56Z, at ed58af2. The row-by-row
-  comparison (Greptile on #258) came after and needs his approval too; it gives the same
-  replay numbers. The filler gap that let C04's one-row set through is a separate fix in the
+- Open: Arsh approved this change on 2026-11-10 at 21:56Z, at ed58af2, and the row-by-row
+  comparison (Greptile on #258, 16f5f28) on 2026-11-11 at 05:23Z; it gives the same replay
+  numbers. The filler gap that let C04's one-row set through is a separate fix in the
   validation thread (#257). Bar 5 must still be restated for hosted Opus before case06.
 - Affects: none for the product (eval scoring only; the step stays off by default).
 - Status doc: no change
