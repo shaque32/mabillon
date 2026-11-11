@@ -1036,14 +1036,17 @@ def test_the_eval_reports_the_measures_and_gives_no_go_no_go_until_arsh_sets_the
     assert t["x_percent"] == 40.0 and t["y_budget"] == {"calls": 2, "seconds": 120}
     assert t["cap_set"] == 2 and t["min_testable"] == 15 and not t["go_no_go_case"]
     # Both passes together (Arsh, 2026-11-08): C01, the one claim run, ends with the repair's
-    # assumptions, which match its sheet row; the first pass kept nothing for it.
-    assert t["scoring"] == "both passes (Arsh, 2026-11-08)"
+    # assumptions, which match its sheet rows, leaving none out (2026-11-10); the first pass
+    # kept nothing for it.
+    assert t["scoring"] == "both passes, every sheet row (Arsh, 2026-11-08; rows 2026-11-10)"
     assert t["sheet_testable_claims"] == 1 and t["ending_with_sheet_matching_assumptions"] == 1
+    assert t["naming_nothing_extra_but_leaving_a_sheet_row_out"] == 0
     assert t["coverage_rate"] == 1.0 and t["first_pass_kept_on_sheet_testable_claims"] == 0
     assert t["first_pass_naming_another_person_phone_or_window"] == 0
     printed = capsys.readouterr().out
     assert "an upper bound: the signed sheet filters every try" in printed
     assert "both passes: 1 of the 1 claims the sheet makes testable end with" in printed
+    assert "match it, every row (100%); 0 more name nothing extra but leave a sheet row" in printed
     r = rp.testability_go_no_go(
         t, expert="simulated", false_supported=0, repeat=None, gold="signed"
     )
@@ -1182,6 +1185,7 @@ def test_both_passes_counts_the_first_pass_s_matching_claims_and_the_step_s(tmp_
     t = json.loads((tmp_path / "run.json").read_text("utf-8"))["testability"]
     assert t["claims_the_filler_left_untested"] == 1 and t["converted_and_accepted"] == 1
     assert t["sheet_testable_claims"] == 2 and t["ending_with_sheet_matching_assumptions"] == 2
+    assert t["naming_nothing_extra_but_leaving_a_sheet_row_out"] == 0
     assert t["first_pass_kept_on_sheet_testable_claims"] == 1
     assert t["first_pass_matching_the_sheet"] == 1
     assert t["first_pass_naming_another_person_phone_or_window"] == 0
@@ -1197,3 +1201,125 @@ def test_both_passes_counts_the_first_pass_s_matching_claims_and_the_step_s(tmp_
     finally:
         db.close()
     assert [len(p) for p in people] == [2]  # PETROV and REYES, by the built case's ids
+
+
+# case01's C16, "On March 18, 2026, PETROV, using the Instagram account dp_garage, told REYES
+# ...": the sheet's rows test the account's message, its day and that PETROV wrote it (the
+# shared_account trap). The same shape as case05's C04, which went false supported on Opus.
+DP_GARAGE = ["acct:item1:Instagram:dp_garage", "acct:item2:Instagram:dp_garage"]
+QUOTE_C16 = "got the money, come get it"
+SHEET_WIN_C16 = {"start_utc": "2026-03-18T04:00:00Z", "end_utc": "2026-03-19T03:59:59.999999Z"}
+SHEET_WIN_C12 = {"start_utc": "2026-03-19T04:00:00Z", "end_utc": "2026-03-20T03:59:59.999999Z"}
+
+
+def _sheet_rows(cid: str) -> list[tuple[str, dict]]:
+    return [(r["template_id"], r["params"]) for r in SHEET if r["claim_id"] == cid and r["is_core"]]
+
+
+def test_left_out_names_each_sheet_row_no_one_assumption_covers():
+    """2026-11-10: a set that names nothing the sheet does not can still leave a sheet row out.
+    C16 tested on dp_garage's message and its day alone leaves out that PETROV wrote it."""
+    sheet = testability.sheet_named(SHEET)
+    partial = [
+        ("sender", {"account_ids": DP_GARAGE, "quoted_text": QUOTE_C16}),
+        ("record_time", {"account_ids": DP_GARAGE, "window": SHEET_WIN_C16}),
+    ]
+    assert testability.mismatch(testability.named(partial), sheet["C16"]) == []
+    assert rp.left_out(partial, _sheet_rows("C16")) == [
+        f"leaves out the sheet's 'authorship' row naming {PETROV}"
+    ]
+    no_day = [("sender", {"person_ids": [PETROV], "quoted_text": QUOTE_C12})]
+    assert rp.left_out(no_day, _sheet_rows("C12")) == [
+        f"leaves out the sheet's 'record_time' row naming {PETROV} for 2026-03-19T04:00:00+00:00"
+        " to 2026-03-20T03:59:59.999999+00:00"
+    ]
+    full = [
+        ("sender", {"person_ids": [PETROV], "quoted_text": QUOTE_C12}),
+        ("record_time", {"person_ids": [PETROV], "window": SHEET_WIN_C12}),
+    ]
+    assert rp.left_out(full, _sheet_rows("C12")) == []
+    assert testability.mismatch(testability.named(full), sheet["C12"]) == []
+
+
+def test_left_out_compares_row_by_row_not_the_claim_s_names_together():
+    """Greptile on #258: the same templates, people and windows over the whole set are not
+    enough. PETROV named only in C16's time range, beside an authorship row that names nobody,
+    does not test that PETROV wrote the message."""
+    sheet = testability.sheet_named(SHEET)
+    swapped = [
+        ("sender", {"account_ids": DP_GARAGE, "quoted_text": QUOTE_C16}),
+        (
+            "record_time",
+            {"account_ids": DP_GARAGE, "person_ids": [PETROV], "window": SHEET_WIN_C16},
+        ),
+        ("authorship", {"account_ids": DP_GARAGE}),
+    ]
+    got = testability.named(swapped)
+    assert got.templates == sheet["C16"].templates and got.people == sheet["C16"].people
+    assert got.windows == sheet["C16"].windows and not testability.mismatch(got, sheet["C16"])
+    assert rp.left_out(swapped, _sheet_rows("C16")) == [
+        f"leaves out the sheet's 'authorship' row naming {PETROV}"
+    ]
+    # A row that names more than the sheet's row still covers it (the extra is mismatch's).
+    wider = [*swapped[:2], ("authorship", {"account_ids": DP_GARAGE, "person_ids": [PETROV]})]
+    assert rp.left_out(wider, _sheet_rows("C16")) == []
+
+
+def test_a_meaning_row_is_asked_for_its_template_only():
+    """A meaning row states what its quoted words mean; the people and time range a sheet
+    gives it only point to the message, and code's own meaning names neither."""
+    want = [
+        ("meaning", {"person_ids": [PETROV, REYES], "quoted_text": "q", "window": SHEET_WIN_C12})
+    ]
+    assert rp.left_out([("meaning", {"quoted_text": "q"})], want) == []
+    assert rp.left_out([("sender", {"person_ids": [PETROV], "quoted_text": "q"})], want) == [
+        "leaves out the sheet's 'meaning' row"
+    ]
+
+
+def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
+    """Bar 1 counts a claim only when its core assumptions name nothing the sheet does not and
+    leave none of its templates, people or windows out. The rest that name nothing extra are
+    counted beside it, for information."""
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE claims (id TEXT, text TEXT)")
+    # No stipulated owners, so the sheet's person ids stay as written (sheet_people).
+    db.execute("CREATE TABLE persons (id TEXT, name TEXT)")
+    db.execute("CREATE TABLE stipulations (person_id TEXT, kind TEXT)")
+    db.execute("CREATE TABLE assumptions (id INTEGER PRIMARY KEY, claim_id TEXT,"
+               " template_id TEXT, params_json TEXT, is_core INTEGER)")  # fmt: skip
+    kept = {
+        "C12": [  # every sheet row: counts
+            ("sender", {"person_ids": [PETROV], "quoted_text": QUOTE_C12}),
+            ("record_time", {"person_ids": [PETROV], "window": SHEET_WIN_C12}),
+        ],
+        "C16": [  # leaves out that PETROV wrote it
+            ("sender", {"account_ids": DP_GARAGE, "quoted_text": QUOTE_C16}),
+            ("record_time", {"account_ids": DP_GARAGE, "window": SHEET_WIN_C16}),
+        ],
+        "C05": [("sender", {"person_ids": [PETROV]})],  # leaves out the day
+    }
+    for cid, rows in kept.items():
+        db.execute("INSERT INTO claims VALUES (?, ?)", (cid, GOLD[cid]["text"]))
+        for template_id, params in rows:
+            db.execute(
+                "INSERT INTO assumptions (claim_id, template_id, params_json, is_core)"
+                " VALUES (?, ?, ?, 1)",
+                (cid, template_id, json.dumps(params)),
+            )
+    step = SimpleNamespace(
+        sheet=testability.sheet_named(SHEET),
+        conn=db,
+        filler=LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT),
+    )
+    result = SimpleNamespace(
+        decisions=[SimpleNamespace(claim_id=c) for c in kept], testability={"C16": object()}
+    )
+    assert rp.both_passes(result, step, SHEET) == {
+        "sheet_testable_claims": 3,
+        "ending_with_sheet_matching_assumptions": 1,
+        "naming_nothing_extra_but_leaving_a_sheet_row_out": 2,
+        "first_pass_kept_on_sheet_testable_claims": 2,
+        "first_pass_matching_the_sheet": 1,
+        "first_pass_naming_another_person_phone_or_window": 0,
+    }
