@@ -295,3 +295,79 @@ def test_a_phone_zone_is_refused_when_the_package_records_one(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake"]
     with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
         hickman_run.main([*args, "--phone-zone", "America/New_York"])
+
+
+def _defs(tmp_path: Path, defs: dict) -> Path:
+    path = tmp_path / "definitions.json"
+    path.write_text(json.dumps(defs), encoding="utf-8")
+    return path
+
+
+def test_another_phone_takes_its_own_source_id_and_header_definitions(ufdr, tmp_path):
+    # Validation v4: a second phone's claims writer hands over the affidavit's header.
+    claims = _claims(tmp_path)
+    first = tmp_path / "first"
+    base = ["--ufdr", str(ufdr), "--claims", str(claims), "--fake"]
+    assert hickman_run.main([*base, "--out", str(first)]) == 0
+    conn = sqlite3.connect(first / "case.db")
+    numbers = [
+        ident
+        for ident, app in conn.execute("SELECT identifier, app FROM accounts ORDER BY id")
+        if ident and hickman_run.number_digits(ident, app or "")
+    ]
+    conn.close()
+    assert numbers, "case01 has an account whose identifier is a telephone number"
+    out = tmp_path / "out"
+    defs = _defs(tmp_path, {"SUBJECT-2": numbers[0]})
+    args = [*base, "--out", str(out), "--source-id", "a13", "--definitions", str(defs)]
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    owner = conn.execute("SELECT subject_id FROM stipulations").fetchall()
+    assert owner == [("dev:a13",)]
+    assert logged_names(conn) == {"dev:a13": ["TARGET PHONE"]}
+    assert conn.execute("SELECT COUNT(*) FROM identity_links").fetchone()[0] >= 1
+    conn.close()
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert run["source_id"] == "a13"
+    assert run["definitions"] == {"SUBJECT-2": numbers[0]}
+    # A resume must name the same phone and header; anything else is a new case.
+    with pytest.raises(SystemExit, match="another source id or definitions"):
+        hickman_run.main([*base, "--out", str(out), "--definitions", str(defs)])
+    other = _defs(tmp_path / "first", {"SUBJECT-2": "(212) 555-0144"})
+    with pytest.raises(SystemExit, match="another source id or definitions"):
+        hickman_run.main(
+            [*base, "--out", str(out), "--source-id", "a13", "--definitions", str(other)]
+        )
+    with pytest.raises(SystemExit, match="another source id or definitions"):
+        hickman_run.main([*base, "--out", str(out), "--source-id", "a13"])
+    assert hickman_run.main(args) == 0
+
+
+@pytest.mark.parametrize(
+    ("defs", "why"),
+    [
+        ({"SUBJECT-1": "(212) 555-0144"}, "not a SUBJECT-<n> other than SUBJECT-1"),
+        ({"BOSS": "(212) 555-0144"}, "not a SUBJECT-<n>"),
+        ({"SUBJECT-2": "Marcus"}, "not a number"),
+        ({"SUBJECT-2": 2125550144}, "names to strings"),
+        (["SUBJECT-2"], "names to strings"),
+    ],
+)
+def test_a_header_that_defines_anything_else_is_refused(ufdr, tmp_path, defs, why):
+    defs_path = _defs(tmp_path, defs)
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--definitions", str(defs_path)]  # fmt: skip
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "case.db").exists()
+
+
+def test_the_headers_zone_is_the_examiners_and_a_different_one_is_refused(ufdr, tmp_path):
+    defs = _defs(tmp_path, {"phone_time_zone": "America/New_York"})
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--definitions", str(defs)]  # fmt: skip
+    with pytest.raises(SystemExit, match="differs from the definitions"):
+        hickman_run.main([*args, "--phone-zone", "America/Chicago"])
+    # case01's package records its zone, so the header's zone is refused as --phone-zone is.
+    with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
+        hickman_run.main(args)

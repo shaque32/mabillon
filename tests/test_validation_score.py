@@ -501,3 +501,91 @@ def test_bare_words_are_not_a_refusal_kind():
         "time range not plainly stated",
         "count or duration not readable",
     ]
+
+
+def test_the_r1_card_scores_the_run_before_any_review(scored):
+    _, s = scored
+    card = s["r1_card"]["card"]
+    assert card["claims"] == 3
+    # Gold not supported: C02 and C03. Stand-in components support nothing before review.
+    assert card["false_supported"]["n"] == 2 and card["false_supported"]["k"] == 0
+    assert card["false_contradicted"]["k"] == 0
+    bars = s["v4_bars"]
+    # Two not-supported claims are far under v4's floor of 100, so bar 1 cannot pass here.
+    assert bars["1"]["pass"] is False and bars["1"]["false_supported"]["n"] == 2
+    assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
+    assert bars["8_import_counts"]["pass"] is True
+    assert "6" not in bars  # no pass 2 given
+    assert s["scorer_version"] == "1.4.0"
+
+
+def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    s = score_hickman.score(
+        run / "results.zip", base / "keys", base / "dump", tmp_path / "out", run / "results.zip"
+    )
+    assert s["repeat"]["same"]["k"] == 3 and s["repeat"]["same"]["n"] == 3
+    assert s["v4_bars"]["6"]["pass"] is True
+    assert set(s["v4_bars"]["6"]["by_type"]) == {r["type"] for r in s["r1"]["per_claim"].values()}
+    assert "Pass 2 against pass 1, by kind" in (tmp_path / "out" / "score.md").read_text("utf-8")
+    assert "Validation v4 bars" in (tmp_path / "out" / "score.md").read_text("utf-8")
+
+
+def test_a_flip_or_a_missing_verdict_is_never_the_same():
+    first = {
+        "A": {"r1": "supported", "type": "communication"},
+        "B": {"r1": "contradicted", "type": "communication"},
+        "C": {"r1": "unproven", "type": "timing"},
+        "D": {"r1": None, "type": "timing"},
+        "E": {"r1": "unproven", "type": "count"},
+    }
+    second = {"A": "contradicted", "B": "contradicted", "C": "unproven", "D": None}
+    got = score_hickman.repeat(first, second)
+    assert got["same"]["k"] == 2 and got["same"]["n"] == 5  # B and C; D has no verdict either time
+    assert got["supported_contradicted_flips"] == ["A"]
+    assert set(got["differences"]) == {"A", "D", "E"}
+    assert got["differences"]["E"] == {"pass_1": "unproven", "pass_2": None}
+
+
+def test_repeat_reports_each_kind_alongside_the_overall():
+    first = {
+        "A": {"r1": "supported", "type": "communication"},
+        "B": {"r1": "contradicted", "type": "communication"},
+        "C": {"r1": "unproven", "type": "timing"},
+        "D": {"r1": None, "type": "timing"},
+        "E": {"r1": "unproven", "type": "count"},
+    }
+    second = {"A": "contradicted", "B": "contradicted", "C": "unproven", "D": None}
+    by = score_hickman.repeat(first, second)["by_type"]
+    assert set(by) == {"communication", "timing", "count"}
+    assert (by["communication"]["same"]["k"], by["communication"]["same"]["n"]) == (1, 2)
+    assert by["communication"]["supported_contradicted_flips"] == ["A"]
+    assert (by["timing"]["same"]["k"], by["timing"]["same"]["n"]) == (1, 2)
+    assert by["timing"]["supported_contradicted_flips"] == []
+    assert (by["count"]["same"]["k"], by["count"]["same"]["n"]) == (0, 1)
+    assert set(by["count"]["differences"]) == {"E"}
+
+
+def test_a_v4_key_folder_holds_gold_jsonl_alone(tmp_path):
+    g = next(iter(GOLD))
+    (tmp_path / "gold.jsonl").write_text(json.dumps(g) + "\n", "utf-8")
+    gold, hashes = score_hickman.load_keys(tmp_path)
+    assert [x.claim_id for x in gold] == [g["claim_id"]]
+    assert set(hashes) == {"gold.jsonl"}
+
+
+def test_a_key_missing_a_run_claim_is_refused(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "gold.jsonl").write_text("".join(json.dumps(g) + "\n" for g in GOLD[1:]), "utf-8")
+    with pytest.raises(SystemExit, match=f"no key for \\['{GOLD[0]['claim_id']}'\\]"):
+        score_hickman.score(run / "results.zip", keys, base / "dump", tmp_path / "out")
+
+
+def test_a_key_folder_without_gold_jsonl_is_refused(tmp_path):
+    (tmp_path / "gold_b2.jsonl").write_text("", "utf-8")
+    with pytest.raises(SystemExit, match="no gold.jsonl"):
+        score_hickman.load_keys(tmp_path)

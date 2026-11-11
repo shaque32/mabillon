@@ -2,9 +2,10 @@
 
     python -m eval.validation.score_hickman --results results.zip --keys DIR --dump DIR --out DIR
 
---keys holds the signed answer keys (gold.jsonl, gold_b2.jsonl, gold_b3.jsonl) and --dump the
-independent ElementTree dump of the phone's report.xml (eval/validation/dump_ufdr.py). Both stay
-in project files. The run's case.db is copied; the copy is scored and the original never changes.
+--keys holds the signed answer keys (gold.jsonl, plus gold_b2.jsonl and gold_b3.jsonl for v1)
+and --dump the independent ElementTree dump of the phone's report.xml
+(eval/validation/dump_ufdr.py). Both stay in project files. The run's case.db is copied; the
+copy is scored and the original never changes.
 
 1. Key evidence: each key record (`ufdr:source_index:N`) is matched to Mabillon's records by
    content, since Mabillon's ids are positional and keep no UFDR id. A message must agree on its
@@ -26,6 +27,11 @@ in project files. The run's case.db is copied; the copy is scored and the origin
    (a core assumption went to a deterministic check, whatever its outcome) or expert only, with
    the plan's minimum on the code-checked tier; and, beside measures 1 to 3, the claims a failed
    check contradicted although gold does not.
+7. For validation v4 (PREREGISTERED_v4.md): an R1 card (the run as it stands, before any
+   review: false Supported and false Contradicted, with each Supported's basis), over all claims
+   and over tested claims; with --repeat, pass 2's verdicts against pass 1's (bar 6); and the
+   bars that come from a score, each with its pass line. Bars 7 (verify-bundle) and 8
+   (ufdr-check) are their own commands; the import counts here are bar 8's second half.
 Writes DIR/score.json and DIR/score.md.
 """
 
@@ -52,13 +58,20 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # coverage must account for every gold claim, and refusal kinds match whole refusal phrases.
 # 1.3.0: run 3's tiers (code-checked, check unsettled or expert only) and measure 7, a false
 # Contradicted from a failed check.
-SCORER_VERSION = "1.3.0"
+# 1.4.0: validation v4's R1 card, repeat comparison and bars.
+SCORER_VERSION = "1.4.0"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
 INSUFFICIENT = "insufficient coverage, no accuracy claim"
 # Run 3's minimum (PREREGISTERED_v3.md), counted on the code-checked tier only.
 MINIMUM_CODE_CHECKED = 30
+# Validation v4's lines (PREREGISTERED_v4.md, as Arsh signs them): at least this many
+# not-supported claims for bar 1, at most this share of gold-contradicted claims shown with
+# support only (bar 4), and at least this share of verdicts the same in pass 2 (bar 6).
+V4_MIN_NOT_SUPPORTED = 100
+V4_SUPPORT_ONLY_MAX = 0.05
+V4_REPEAT_MIN = 0.95
 
 # What the assumption filler refused, by kind, read from each untested claim's "Not tested"
 # sentence (the run keeps no other per-claim record of it). A claim counts once per kind it
@@ -132,10 +145,16 @@ def _sha256(path: Path) -> str:
 
 
 def load_keys(keys: Path) -> tuple[list[GoldClaim], dict[str, str]]:
+    """Every answer key in the folder. gold.jsonl is required; the v3 layout adds gold_b2.jsonl
+    and gold_b3.jsonl, and the v4 key is gold.jsonl alone. Only the files read are hashed."""
+    if not (keys / KEY_FILES[0]).is_file():
+        raise SystemExit(f"score: no {KEY_FILES[0]} in {keys}")
     gold: list[GoldClaim] = []
     hashes: dict[str, str] = {}
     for name in KEY_FILES:
         path = keys / name
+        if not path.is_file():
+            continue
         hashes[name] = _sha256(path)
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
@@ -143,6 +162,23 @@ def load_keys(keys: Path) -> tuple[list[GoldClaim], dict[str, str]]:
                 row["claim_type"] = TYPE_ALIASES.get(row["claim_type"], row["claim_type"])
                 gold.append(GoldClaim.model_validate(row))
     return gold, hashes
+
+
+def check_key_covers(conn: sqlite3.Connection, gold: list[GoldClaim]) -> None:
+    """Refuse a key that is not exactly the run's claims, so a missing key file or row can never
+    drop a claim (and its verdict) from the scores."""
+    ids = [g.claim_id for g in gold]
+    if len(set(ids)) != len(ids):
+        raise SystemExit("score: the key holds a claim id more than once")
+    in_run = {
+        r[0] for r in conn.execute("SELECT id FROM claims WHERE status != 'removed'").fetchall()
+    }
+    missing, extra = sorted(in_run - set(ids)), sorted(set(ids) - in_run)
+    if missing or extra:
+        raise SystemExit(
+            f"score: the key does not match the run's claims; no key for {missing or 'none'},"
+            f" not in the run {extra or 'none'}"
+        )
 
 
 def load_dump(dump: Path) -> tuple[dict[str, dict], dict[str, str | None], dict[str, int]]:
@@ -599,21 +635,148 @@ def r2(db: Path, run: dict, mapped: list[GoldClaim], tested: list[str]) -> dict[
     }
 
 
-def score(results: Path, keys: Path, dump: Path, out: Path) -> dict[str, Any]:
-    from core import pipeline
-    from core.db import connect
-
-    out.mkdir(parents=True, exist_ok=True)
-    db = out / "scored.db"
-    run_record: dict[str, Any] | None = None  # the run's own run.json: versions, machine, times
+def _copy_db(results: Path, db: Path) -> dict[str, Any] | None:
+    """Copy the run's case.db out of results.zip (or as given) and return its run.json."""
     if results.suffix == ".zip":
         with zipfile.ZipFile(results) as z:
             with z.open("case.db") as src, db.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
             if "run.json" in z.namelist():
-                run_record = json.loads(z.read("run.json"))
-    else:
-        shutil.copyfile(results, db)
+                return json.loads(z.read("run.json"))
+        return None
+    shutil.copyfile(results, db)
+    return None
+
+
+def r1_card(
+    conn: sqlite3.Connection, run: dict, mapped: list[GoldClaim], tested: list[str]
+) -> dict[str, Any]:
+    """The card on the run as it stands, before any review: bar 1 is its false Supported (under
+    rules 0.5.0 only the checked basis can set one), bar 3 its false Contradicted."""
+    from core import pipeline
+    from eval.validation.card import _verdicts
+
+    preds = pipeline.predictions(conn)
+    verdicts = _verdicts(conn, run["run_id"])
+    return {
+        "card": build_card(mapped, preds, verdicts),
+        "card_over_tested": build_card(
+            [g for g in mapped if g.claim_id in tested], preds, verdicts
+        ),
+    }
+
+
+def last_verdicts(results: Path, work: Path) -> dict[str, str]:
+    """Each claim's verdict in the last completed run of another pass's results."""
+    from core import pipeline
+    from core.db import connect
+
+    db = work / "repeat.db"
+    _copy_db(results, db)
+    conn = connect(db)
+    run = pipeline.last_run(conn)
+    if run is None:
+        raise SystemExit(f"{results}: no completed audit in case.db")
+    out = {}
+    for claim_id in run["manifest"]:
+        v = pipeline.load_verdict(conn, claim_id, run["run_id"])
+        if v is not None:
+            out[claim_id] = v.verdict.value
+    conn.close()
+    return out
+
+
+def repeat(first: dict[str, dict[str, Any]], second: dict[str, str]) -> dict[str, Any]:
+    """Bar 6: pass 2's first-pass verdicts against pass 1's, over every claim pass 1 holds. A
+    claim with no verdict in either pass counts as different, never as the same."""
+    s, c = Verdict.SUPPORTED.value, Verdict.CONTRADICTED.value
+
+    def compare(claims: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        rows = {cid: (r["r1"], second.get(cid)) for cid, r in claims.items()}
+        same = sorted(cid for cid, (a, b) in rows.items() if a is not None and a == b)
+        differ = {
+            cid: {"pass_1": a, "pass_2": b} for cid, (a, b) in rows.items() if cid not in same
+        }
+        flips = sorted(cid for cid, (a, b) in rows.items() if {a, b} == {s, c})
+        return {
+            "same": rate(len(same), len(rows)),
+            "supported_contradicted_flips": flips,
+            "differences": dict(sorted(differ.items())),
+        }
+
+    kinds = sorted({r["type"] for r in first.values()})
+    return {
+        **compare(first),
+        "by_type": {
+            k: compare({cid: r for cid, r in first.items() if r["type"] == k}) for k in kinds
+        },
+    }
+
+
+def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
+    """The bars a score decides (PREREGISTERED_v4.md section 5), each with its numbers."""
+    r1c, r2c = result["r1_card"]["card"], result["r2"]["card"]
+    fs, fc2, fc1 = r1c["false_supported"], r2c["false_contradicted"], r1c["false_contradicted"]
+    shown = result["r1"]["false_claim_shown_only_as_support"]
+    code_checked = len(result["coverage"]["tiers"][CODE_CHECKED])
+    bars: dict[str, Any] = {
+        "1": {
+            "false_supported": fs,
+            "pass": fs["k"] == 0 and fs["n"] >= V4_MIN_NOT_SUPPORTED,
+            "line": f"0 over at least {V4_MIN_NOT_SUPPORTED} not-supported claims",
+        },
+        "2": {
+            "false_supported": r2c["false_supported"],
+            "pass": r2c["false_supported"]["k"] == 0,
+            "line": "0",
+        },
+        "3": {
+            "r1_false_contradicted": fc1,
+            "r2_false_contradicted": fc2,
+            "pass": fc1["k"] == 0 and fc2["k"] == 0,
+            "line": "0 in R1 and R2",
+        },
+        "4": {
+            "shown_only_as_support": {k: shown[k] for k in ("k", "n", "rate", "ci95")},
+            "pass": shown["n"] == 0 or shown["k"] / shown["n"] <= V4_SUPPORT_ONLY_MAX,
+            "line": f"at most {V4_SUPPORT_ONLY_MAX:.0%}",
+        },
+        "5": {
+            "code_checked": code_checked,
+            "pass": code_checked >= MINIMUM_CODE_CHECKED,
+            "line": f"at least {MINIMUM_CODE_CHECKED} code-checked, else no number",
+        },
+        "8_import_counts": {
+            "pass": all(v["mabillon"] == v["dump"] for v in result["import_counts"].values()),
+            "line": "every count equals the dump's",
+        },
+    }
+    if "repeat" in result:
+        rp = result["repeat"]
+        bars["6"] = {
+            "same": rp["same"],
+            "flips": rp["supported_contradicted_flips"],
+            "pass": not rp["supported_contradicted_flips"]
+            and rp["same"]["n"] > 0
+            and rp["same"]["k"] / rp["same"]["n"] >= V4_REPEAT_MIN,
+            "line": f"no Supported/Contradicted flip, at least {V4_REPEAT_MIN:.0%} the same",
+            "by_type": {
+                k: {"same": r["same"], "flips": r["supported_contradicted_flips"]}
+                for k, r in rp["by_type"].items()
+            },
+        }
+    return bars
+
+
+def score(
+    results: Path, keys: Path, dump: Path, out: Path, repeat_of: Path | None = None
+) -> dict[str, Any]:
+    from core import pipeline
+    from core.db import connect
+
+    out.mkdir(parents=True, exist_ok=True)
+    db = out / "scored.db"
+    run_record = _copy_db(results, db)  # the run's own run.json: versions, machine, times
     gold, key_hashes = load_keys(keys)
     by_index, chats, dump_counts = load_dump(dump)
 
@@ -621,13 +784,15 @@ def score(results: Path, keys: Path, dump: Path, out: Path) -> dict[str, Any]:
     run = pipeline.last_run(conn)
     if run is None:
         raise SystemExit(f"{results}: no completed audit in case.db")
+    check_key_covers(conn, gold)
     mapped, mapping = map_keys(conn, gold, by_index, chats)
     r1 = r1_measures(conn, run, mapped)
     ready = key_recall(conn, run, mapping["groups"])
     labels = label_counts(conn, run, mapped)
     counts = import_counts(conn, dump_counts)
-    conn.close()
     covered = coverage(run, mapped, r1)
+    first_card = r1_card(conn, run, mapped, covered["tested_claims"])
+    conn.close()
 
     result = {
         "scorer_version": SCORER_VERSION,
@@ -642,8 +807,13 @@ def score(results: Path, keys: Path, dump: Path, out: Path) -> dict[str, Any]:
         "labels": labels,
         "import_counts": counts,
         "coverage": covered,
+        "r1_card": first_card,
         "r2": r2(db, run, mapped, covered["tested_claims"]),
     }
+    if repeat_of is not None:
+        result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of, out))
+        result["repeat_results_sha256"] = _sha256(repeat_of)
+    result["v4_bars"] = v4_bars(result)
     (out / "score.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     (out / "score.md").write_text(render(result), encoding="utf-8")
     return result
@@ -726,6 +896,68 @@ def _coverage_lines(c: dict[str, Any], card: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _v4_lines(s: dict[str, Any]) -> list[str]:
+    bars = s["v4_bars"]
+    lines = [
+        "## Validation v4 bars (eval/validation/PREREGISTERED_v4.md)",
+        "",
+        "Bars 7 (verify-bundle) and 8 (ufdr-check) are their own commands; 8's import counts"
+        " are below. Bar 6 is here only when pass 2 was given with --repeat.",
+        "",
+        "| Bar | Result | Pass line | Pass |",
+        "| --- | --- | --- | --- |",
+    ]
+    shown = {
+        "1": lambda b: _line(b["false_supported"]),
+        "2": lambda b: _line(b["false_supported"]),
+        "3": lambda b: (
+            f"R1 {_line(b['r1_false_contradicted'])}; R2 {_line(b['r2_false_contradicted'])}"
+        ),
+        "4": lambda b: _line(b["shown_only_as_support"]),
+        "5": lambda b: f"{b['code_checked']} code-checked",
+        "6": lambda b: f"{_line(b['same'])} the same; flips: {', '.join(b['flips']) or 'none'}",
+        "8_import_counts": lambda b: "see Import counts",
+    }
+    for name, b in bars.items():
+        verdict = "PASS" if b["pass"] else "FAIL"
+        lines.append(f"| {name} | {shown[name](b)} | {b['line']} | {verdict} |")
+    card = s["r1_card"]["card"]
+    lines += [
+        "",
+        "### R1 card: the run as it stands, before any review",
+        "",
+        f"False Supported by basis: {card['false_supported']['by_basis'] or 'none'}.",
+        "",
+        render_markdown(card),
+        "",
+        "### R1 card over tested claims only",
+        "",
+        render_markdown(s["r1_card"]["card_over_tested"]),
+        "",
+    ]
+    if "repeat" in s and s["repeat"]["by_type"]:
+        lines += [
+            "### Pass 2 against pass 1, by kind",
+            "",
+            "| Kind | Same | Flips |",
+            "|---|---|---|",
+        ]
+        lines += [
+            f"| {k} | {_line(r['same'])} | {', '.join(flips) or 'none'} |"
+            for k, r in s["repeat"]["by_type"].items()
+            for flips in [r["supported_contradicted_flips"]]
+        ]
+        lines.append("")
+    if "repeat" in s and s["repeat"]["differences"]:
+        lines += ["### Pass 2 differences", ""]
+        lines += [
+            f"- {cid}: pass 1 {d['pass_1']}, pass 2 {d['pass_2']}"
+            for cid, d in s["repeat"]["differences"].items()
+        ]
+        lines.append("")
+    return lines
+
+
 def render(s: dict[str, Any]) -> str:
     r1 = s["r1"]
     m = s["key_mapping"]
@@ -737,6 +969,8 @@ def render(s: dict[str, Any]) -> str:
         f" `{s['results_sha256']}`, scorer {s.get('scorer_version', 'before 1.2.0')}.",
         "",
     ]
+    if "v4_bars" in s:
+        lines += _v4_lines(s)
     if "coverage" in s:
         lines += _coverage_lines(s["coverage"], s["r2"]["card_over_tested"])
     lines += [
@@ -769,8 +1003,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keys", type=Path, required=True, help="the folder holding the keys")
     ap.add_argument("--dump", type=Path, required=True, help="the independent dump's folder")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument(
+        "--repeat", type=Path, help="pass 2's results.zip, compared with --results (bar 6)"
+    )
     a = ap.parse_args(argv)
-    s = score(a.results, a.keys, a.dump, a.out)
+    s = score(a.results, a.keys, a.dump, a.out, a.repeat)
     print(f"scored {s['audit_run']}: see {a.out / 'score.md'}")
     return 0
 
