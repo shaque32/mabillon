@@ -1,4 +1,4 @@
-## 2026-11-15: Rule pack format and trap harness for carrier records (eval only)
+## 2026-11-15: Rule pack format and trap harness for carrier records (eval only) (#260)
 - Changed: Added `eval/rulepacks/`: a versioned, hashed rule pack format for one evidence type
   (layout field maps with a stated time zone, existing assumption templates, and guards that
   can only turn a check result inconclusive), a deterministic synthetic generator of carrier
@@ -6,7 +6,7 @@
   that drops a pack on any false supported, on a guard that blocks no trap (rule-kill), or on
   a supported claim that survives mutation of its records. First step of
   `baker/plans/rule-drafting.md` (AI-drafted rule packs per evidence type).
-- Where: branch claude/project-thread-zweeky
+- Where: PR #260 (branch claude/project-thread-zweeky)
 - Verified: `pytest tests/test_rulepacks.py` (11 tests) on the cloud container, 2026-11-15.
   Harness on the reference pack: 10/10 claims as expected in both layouts, 0 false supported,
   each guard blocks its named traps, no insensitive supported claim. Reading a UTC or Central
