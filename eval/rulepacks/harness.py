@@ -126,6 +126,7 @@ class Report:
     rule_kill: dict[str, list[str]] = field(default_factory=dict)  # guard -> traps it blocks
     unearned_guards: list[str] = field(default_factory=list)
     unblocked_named_traps: list[str] = field(default_factory=list)
+    unknown_traps: list[str] = field(default_factory=list)  # guard:name that is no claim's
     insensitive: list[str] = field(default_factory=list)
     # layout mistake -> claims whose verdict it changes, and those it makes false supported
     trap_strength: dict[str, dict[str, list[str]]] = field(default_factory=dict)
@@ -137,6 +138,7 @@ class Report:
             self.false_supported
             or self.unearned_guards
             or self.unblocked_named_traps
+            or self.unknown_traps
             or self.insensitive
         )
 
@@ -156,8 +158,9 @@ def evaluate(pack: RulePack) -> Report:
         rep.false_supported += [f"{lid}:{c}" for c in sorted(_fs(outs))]
         rep.wrong += [f"{lid}:{o.claim_id}" for o in outs if o.got is not o.expected]
 
-    # rule-kill: each guard must let a trap it names through once removed
-    named = {c.id: set(c.blocked_by) for c in CLAIMS}
+    # rule-kill: each guard must let every trap it names through once removed. A name that is
+    # no claim's fails the gate, so a misspelled trap cannot skip its test.
+    known = {c.id for c in CLAIMS}
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
@@ -167,7 +170,9 @@ def evaluate(pack: RulePack) -> Report:
         if not through:
             rep.unearned_guards.append(g.id)
         for trap in g.blocks:
-            if trap in named and trap not in through:
+            if trap not in known:
+                rep.unknown_traps.append(f"{g.id}:{trap}")
+            elif trap not in through:
                 rep.unblocked_named_traps.append(f"{g.id}:{trap}")
 
     # sensitivity: a SUPPORTED claim must not survive mutation of the records it rests on
@@ -182,26 +187,30 @@ def evaluate(pack: RulePack) -> Report:
             if decide(c, m.conn, pack.guards, m.record_types).got is Verdict.SUPPORTED:
                 rep.insensitive.append(f"{x.id}:{c.id}")
 
-    # trap strength: plausible layout mistakes must each let some trap through
+    # layout mistakes: each must change some claim's verdict from the pack's own result
     for x in pack.layouts:
         for zone in ("UTC", "America/New_York", "America/Chicago"):
             if zone == x.zone:
                 continue
             wrong = x.model_copy(update={"zone": zone})
             rep.trap_strength[f"{x.id}: zone read as {zone}"] = _shows(
-                _with_layout(pack, x.id, wrong)
+                _with_layout(pack, x.id, wrong), by_layout[x.id]
             )
         flipped = {k: _flip(v) for k, v in x.direction_values.items()}
         rep.trap_strength[f"{x.id}: direction map flipped"] = _shows(
-            _with_layout(pack, x.id, x.model_copy(update={"direction_values": flipped}))
+            _with_layout(pack, x.id, x.model_copy(update={"direction_values": flipped})),
+            by_layout[x.id],
         )
     rep.gaps = [k for k, v in rep.trap_strength.items() if not v["changed"]]
     return rep
 
 
-def _shows(outs: list[Outcome]) -> dict[str, list[str]]:
+def _shows(outs: list[Outcome], baseline: list[Outcome]) -> dict[str, list[str]]:
+    """Claims whose verdict the mistake changes from the same pack's own result, and claims
+    it makes false supported against the gold."""
+    before = {o.claim_id: o.got for o in baseline}
     return {
-        "changed": sorted(o.claim_id for o in outs if o.got is not o.expected),
+        "changed": sorted(o.claim_id for o in outs if o.got is not before[o.claim_id]),
         "false_supported": sorted(_fs(outs)),
     }
 
@@ -232,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  other misses: {[w for w in rep.wrong if w not in rep.false_supported]}")
         for g, traps in rep.rule_kill.items():
             print(f"  without guard {g}: {traps or 'nothing gets through (unearned)'}")
+        if rep.unknown_traps:
+            print(f"  guards naming no claim: {rep.unknown_traps}")
         print(f"  insensitive supported claims: {rep.insensitive}")
         for k, v in rep.trap_strength.items():
             shown = f"changes {v['changed']}, false supported {v['false_supported']}"

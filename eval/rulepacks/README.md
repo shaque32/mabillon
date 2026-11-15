@@ -34,12 +34,13 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
 
 1. **Zero false supported** on every claim, in every layout.
 2. **Rule-kill:** removing each guard in turn lets at least one trap it names through as a
-   false supported. A guard that blocks nothing is unearned and fails the gate.
+   false supported, and every trap it names must get through. A guard that blocks nothing, or
+   that names a trap no claim has, fails the gate.
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
    are mutated (direction flipped, time moved six hours).
 
 Beside the gate the harness reports **layout mistakes**: each wrong zone and a flipped direction
-map, and which claims each one changes. A mistake that changes nothing is a gap in the claim set.
+map, and which claims each one changes from the pack's own result. A mistake that changes nothing is a gap in the claim set.
 On the reference pack, reading a UTC or Central time as Eastern lets a trap through as a false
 supported; a flipped direction map does not, because the caller check refuses a row whose
 parties sit on the wrong side for its direction.

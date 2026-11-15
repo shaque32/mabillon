@@ -135,3 +135,20 @@ def test_a_guard_only_ever_turns_a_result_inconclusive() -> None:
             assert out in {outcome, CheckOutcome.INCONCLUSIVE}
             if "r1" in rids:
                 assert out is CheckOutcome.INCONCLUSIVE
+
+
+def test_a_guard_naming_an_unknown_trap_is_dropped(pack: RulePack) -> None:
+    # Greptile on #260: a misspelled trap name must not let the guard skip its test.
+    g = pack.guards[0].model_copy(update={"blocks": ("t-voicemial",)})
+    rep = harness.evaluate(pack.model_copy(update={"guards": (g, *pack.guards[1:])}))
+    assert not rep.passed and rep.unknown_traps == ["voicemail-leg:t-voicemial"]
+
+
+def test_a_layout_mistake_lists_only_claims_it_changes(pack: RulePack) -> None:
+    # Greptile on #260: compare with the pack's own result, not the gold. Without the
+    # voicemail guard, t-count-voicemail is already supported, and the count check reads no
+    # direction, so a flipped direction map does not change it.
+    rep = harness.evaluate(pack.without_guard("voicemail-leg"))
+    flipped = rep.trap_strength["carrier-a: direction map flipped"]
+    assert "t-count-voicemail" not in flipped["changed"]
+    assert "t-count-voicemail" in flipped["false_supported"]
