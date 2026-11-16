@@ -53,6 +53,10 @@ _SKIP_REASON_WORDS = {
         "repeated the record id of an earlier record (the same record listed twice); the "
         "earlier one was imported"
     ),
+    "same_as_an_sms_or_mms_message": (
+        "are the same messages as SMS or MMS messages already imported from the phone's message "
+        "store (the same direction and text within two seconds), so each was imported once"
+    ),
 }
 _TIME_PROBLEM_WORDS = {
     "ambiguous_day_month": (
@@ -189,10 +193,17 @@ FORMAT_UNVERIFIED_AXIOM = (
     "portable case) and compare (each record's locator gives its artifact and hit, or its sheet "
     "and row)."
 )
+FORMAT_UNVERIFIED_LEAPP = (
+    "Mabillon's iLEAPP and ALEAPP reader is not yet verified. It was built from LEAPP's published "
+    "source and run on public test phones only, never on case data, and reads only the messages, "
+    "calls and contacts tables. Before relying on a record, open the same record in the LEAPP "
+    "report or LAVA and compare (each record's locator gives its table and row id)."
+)
 # Per importer: the unverified notice, the tool to compare records in, and what the file is.
 READERS: dict[str, tuple[str, str, str]] = {
     "ufdr": (FORMAT_UNVERIFIED, "Cellebrite Reader", "package"),
     "axiom": (FORMAT_UNVERIFIED_AXIOM, "AXIOM Examine", "report"),
+    "leapp": (FORMAT_UNVERIFIED_LEAPP, "the LEAPP report", "output"),
 }
 
 
@@ -274,6 +285,37 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "import {them}; open each one in {tool}.",
     ),
     "duration_unread": ("attention", "{n} {have} a call duration Mabillon could not read."),
+    "not_sent_or_received": (
+        "attention",
+        "{n} {be} stored as neither sent nor received (a draft, queued, outbox or failed "
+        "message), so {them} {be} imported with direction unknown and none counts as sent.",
+    ),
+    "direction_not_stated": (
+        "attention",
+        "{n} {have} no direction in the {container}, so {them} {be} imported with direction "
+        "unknown.",
+    ),
+    "call_type_not_incoming_outgoing_or_missed": (
+        "attention",
+        "{n} {have} a call type other than incoming, outgoing, missed or rejected (such as "
+        "voicemail, blocked or answered elsewhere), so {them} {be} imported with direction "
+        "unknown.",
+    ),
+    "sent_without_own_account": (
+        "attention",
+        "{n} {be} sent from the phone but name no account or number for it, so no sender was "
+        "recorded.",
+    ),
+    "received_without_sender": (
+        "attention",
+        "{n} {be} received but name no sender, so no sender was recorded.",
+    ),
+    "media_file_not_in_extraction": (
+        "attention",
+        "{n} name{s0} a media file that the parser did not find in the extraction, so only its "
+        "name was recorded as the attachment.",
+    ),
+    "no_body_or_attachment": ("info", "{n} {have} neither text nor an attachment."),
     "no_time": ("attention", "{n} {have} no time in the {container}, so no time was set."),
 }
 
@@ -680,7 +722,24 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
         notice = reader_words(str(p.get("importer", "")))[0]
         items.append(CoverageItem("attention", "format_unverified", (_t(notice),)))
     tables = [t for t in p.get("tables", []) if isinstance(t, dict)]
-    for entry in p.get("not_imported", []) or []:
+    not_imported = [e for e in p.get("not_imported", []) or [] if isinstance(e, dict)]
+    if p.get("importer") == "leapp" and not_imported:
+        # LEAPP parses hundreds of artifacts; one line names every one Mabillon did not read.
+        with_rows = [e for e in not_imported if (e.get("records") or 0) > 0]
+        names = sorted({str(e.get("name")) for e in with_rows})
+        parts: list[Segment] = [
+            _t(
+                f"{_n(len(not_imported), 'other artifacts')} in the LEAPP output were not "
+                "imported: Mabillon reads only its messages, calls and contacts tables, so a "
+                "claim resting on any other app or artifact is not tested from this source, and a "
+                "record missing from them is not shown to be absent from the phone."
+            )
+        ]
+        if names:
+            parts += [_t(f" Those holding records ({len(names)}): "), *_names(names), _t(".")]
+        items.append(CoverageItem("attention", "not_imported", tuple(parts)))
+        not_imported = []
+    for entry in not_imported:
         reason = str(entry.get("reason", ""))
         deliberate = reason == "category not imported" or reason.startswith("section '")
         rows, lines = entry.get("rows"), entry.get("lines")

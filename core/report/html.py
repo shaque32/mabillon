@@ -711,6 +711,7 @@ SOURCE_KIND = {
     "cellebrite_pdf": "Cellebrite PDF report",
     "cellebrite_html": "Cellebrite HTML report",
     "axiom": "Magnet AXIOM report",
+    "leapp": "iLEAPP or ALEAPP output",
     "raw_zip": "Raw ZIP",
     "govdoc": "Government document",
     "synthetic": "Synthetic",
