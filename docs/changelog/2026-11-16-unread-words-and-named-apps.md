@@ -9,15 +9,18 @@
     "never replied", "sent a photo", "forwarded", "the last message", "read", "edited", "twice",
     "while driving", "on a second phone" or "three minutes after the call" passed on the
     sender and time checks alone and was SUPPORTED with no human. Now such a claim stays
-    UNPROVEN until an expert accepts the event.
+    UNPROVEN until an expert accepts the event. A time range's own words are skipped only when they hold
+    nothing more than dates and times ("On March 12, 2026, while driving" kept as a range is
+    still read, Greptile on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets
     the app the claim names from code ("on Viber", "texted" is the phone's own messages app).
     A claim naming an app the case does not hold, or an email, gets no such row and stays
-    unproven. An absence on no app that names one kind of contact ("did not text", "never
-    messaged", "by telephone") is refused, since the absence check reads every app and every
-    kind. Before, "wrote on Viber" passed on a WhatsApp message, and "no contact on Signal" was
+    unproven. An absence that names one kind of contact ("did not text", "never messaged on
+    Telegram", "by telephone") is refused whatever its app, since the absence check reads
+    messages and calls alike. Before, "wrote on Viber" passed on a WhatsApp message, and "no contact on Signal" was
     CONTRADICTED by WhatsApp messages. An app whose name is also a plain word ("his second
-    line") gets no count or absence unless the claim writes it with a capital.
+    line") gets no count or absence unless the claim writes it with a capital, whether code or
+    the model chose it (Greptile on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04")
     gets no minute range, so it is no longer tested by one wider than it states.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0). Rows
@@ -29,12 +32,13 @@
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, seven
   unread tails, a named app bound, an app or email the case lacks, seconds, four absence
   wordings, a plain-word app) and `tests/test_count_look_alike.py`. The filler, fill, replay,
-  override and check suites pass locally (995). Class batteries of new wordings with wrong
+  override and check suites pass locally (1,020). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only) leaves
-  every check outcome unchanged and adds the expert-only event to 15 claims (4 of them false
-  claims in the v4 answer key). `make check` runs on GitHub CI.
+  every check outcome unchanged and adds the expert-only event to 17 claims (4 of them false
+  claims in the v4 answer key); one message-only absence that was inconclusive is now refused.
+  On case01, C11 (gold contradicted, its time check fails) also gains the event. `make check` runs on GitHub CI.
 - Open: the plain-word list is blunt in both directions. A true claim with an unlisted word
   loses the code-checked path and waits for an expert; a word on the list that carries meaning
   in some sentence still passes. These are tests of code's guards, not of the model: a model

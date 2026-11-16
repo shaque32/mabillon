@@ -3210,8 +3210,9 @@ class LocalAssumptionFiller:
     def unread_words(self, text: str, raws: Iterable[str] = ()) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
-        apps it reads, the time ranges `raws` (a kept proposal's words) and every date and time
-        code reads. Empty when the claim states only what its checks test."""
+        apps it reads, every date and time code reads, and the time ranges `raws` (a kept
+        proposal's words) that hold nothing more. Empty when the claim states only what its
+        checks test."""
         flat = _flat(_nfc(text))
         flat = _READ_QUOTE_RE.sub(lambda m: " " * len(m.group(0)), flat)
         flat = _ALL_RECORDED_RE.sub(lambda m: " " * len(m.group(0)), flat)
@@ -3219,6 +3220,11 @@ class LocalAssumptionFiller:
         cut: list[tuple[int, int]] = []
         low = bare.casefold()
         for raw in raws:
+            # A kept range's words are blanked only when they hold nothing past the dates and
+            # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
+            # range, and "while driving" must still be read (Greptile on #265).
+            if self.unread_words(raw):
+                continue
             r = _flat(_nfc(raw)).casefold().strip()
             at = low.find(r) if r else -1
             while at >= 0:
@@ -4272,27 +4278,51 @@ class LocalAssumptionFiller:
         of a phone's own messages. Raises Reject, so the claim stays unproven, when the claim
         names an app the case does not hold, an email, or a text message the case has no
         single app for; for a count or an absence on an app that holds more than the words
-        name (iOS "Native Messages"); and for an absence on no app that names one kind of
-        contact ("never messaged", "by telephone"). Calls keep `_call_app`'s reading."""
-        rows = [
+        name (iOS "Native Messages"); for an absence that names one kind of contact ("never
+        messaged", "by telephone"), whatever its app; and for a count or an absence on an app
+        whose name the claim writes only as a plain word ("his second line"). Calls keep
+        `_call_app`'s reading."""
+        app_rows = [
             i
             for i, p in enumerate(out)
-            if p.is_core
-            and isinstance(p.params, Mapping)
-            and p.template_id in _APP_ROW_TEMPLATES
-            and not p.params.get("channels")
+            if p.is_core and isinstance(p.params, Mapping) and p.template_id in _APP_ROW_TEMPLATES
         ]
-        if not rows:
+        if not app_rows:
             return out
         bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim.text)))
         apps = self._named_apps(claim.text)
-        # "his second line": a plain word that may name no app at all
-        plain = [
-            a
-            for a in apps
-            if a.casefold() in _PLAIN_WORD_APPS
-            and not re.search(rf"\b(?:{re.escape(a)}|{re.escape(a.upper())})\b", bare)
-        ]
+
+        def plain_word(app: str) -> bool:
+            # "his second line": a plain word that may name no app at all
+            return app.casefold() in _PLAIN_WORD_APPS and not re.search(
+                rf"\b(?:{re.escape(app)}|{re.escape(app.upper())})\b", bare
+            )
+
+        one_kind = bool(
+            _MESSAGE_WORD_RE.search(bare) or _CALL_WORD_RE.search(bare) or _BY_PHONE_RE.search(bare)
+        )
+        # Guards on every count and absence row, whether code or the model chose its apps
+        # (Greptile on #265).
+        for i in app_rows:
+            p = out[i]
+            if p.template_id not in WHOLE_APP_TEMPLATES:
+                continue
+            if p.template_id == "no_contact" and one_kind:
+                # "SUBJECT-1 did not message SUBJECT-2", "never messaged on Telegram", "no
+                # contact by telephone": one kind of contact, and the absence check reads
+                # messages and calls alike on every app it searches
+                raise Reject(
+                    "the claim names one kind of contact, and the absence check reads every kind"
+                )
+            chosen = list(p.params.get("channels") or ()) or apps
+            if bad := [a for a in chosen if plain_word(a)]:
+                raise Reject(
+                    f"the claim's {bad[0].casefold()!r} may be a plain word, not the app, so"
+                    " no count or absence is read on it"
+                )
+        rows = [i for i in app_rows if not out[i].params.get("channels")]
+        if not rows:
+            return out
         texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
         if apps:
             found = apps  # "texted REYES on Telegram": the app the claim names
@@ -4305,14 +4335,6 @@ class LocalAssumptionFiller:
                 )
         elif _names_an_app_off_the_case(bare) or _EMAIL_RE.search(bare):
             raise Reject("the claim names an app no assumption of it searches")
-        elif any(out[i].template_id == "no_contact" for i in rows) and (
-            _MESSAGE_WORD_RE.search(bare) or _CALL_WORD_RE.search(bare) or _BY_PHONE_RE.search(bare)
-        ):
-            # "SUBJECT-1 did not message SUBJECT-2", "no contact by telephone": one kind of
-            # contact, and the absence check on every app reads messages and calls alike
-            raise Reject(
-                "the claim names one kind of contact, and the absence check reads every kind"
-            )
         else:
             return out  # the claim names no app: every app is searched, as it says
         made = list(out)
@@ -4324,11 +4346,6 @@ class LocalAssumptionFiller:
                 raise Reject(
                     f"{found[0]!r} holds more than the claim's words name, so no count or"
                     " absence is read on it"
-                )
-            if p.template_id in WHOLE_APP_TEMPLATES and plain:
-                raise Reject(
-                    f"the claim's {plain[0].casefold()!r} may be a plain word, not the app, so"
-                    " no count or absence is read on it"
                 )
             made[i] = Proposal(
                 p.template_id, {**p.params, "channels": list(found)}, is_core=True, code_made=True

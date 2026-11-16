@@ -238,7 +238,8 @@ def build(conn, cid: str, answers: dict[str, list[dict]] | None = None):
 # another time than the claim says.
 CODE_ADDS: dict[str, list[tuple[str, CheckOutcome | None]]] = {
     "C10": [("sender", CheckOutcome.PASS)],
-    "C11": [("sender", CheckOutcome.PASS)],
+    # "warning him about police activity" is the call's content, which no check reads
+    "C11": [("sender", CheckOutcome.PASS), ("event", None)],
     # "two days after the seizure" is a part no check reads, so code adds an event only an
     # expert can carry (filler 12, `unread_words`); it has no check, so no outcome.
     "C04": [("event", None)],
@@ -3437,3 +3438,53 @@ def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
     else:
         with pytest.raises(Reject, match="plain word"):
             filler._bind_named_app(c, out)
+
+
+def test_words_inside_a_kept_range_are_still_read(conn):
+    # The model may keep "On March 12, 2026, while driving" as the day's range; "while
+    # driving" is still a word no check reads (Greptile on #265).
+    raw = "On March 12, 2026, while driving"
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W(raw, "2026-03-12T00:00", "2026-03-13T00:00"),
+        ),
+    ]
+    text = f'{raw}, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "event" in {a.template_id for a in made}
+
+
+@pytest.mark.parametrize("channels", [None, ["Telegram"]])
+def test_an_absence_of_one_kind_of_contact_on_a_named_app_is_never_read(conn, channels):
+    # The absence check reads messages and calls alike on the app it searches, so a Telegram
+    # call would contradict "never messaged each other on Telegram" (Greptile on #265).
+    props = [{**p, "channels": channels or []} for p in GOOD["C14"]]
+    text = (
+        "PETROV and REYES never messaged each other on Telegram between March 20 and"
+        " March 23, 2026."
+    )
+    made, _ = build_text(conn, text, ClaimType.ABSENCE, props)
+    assert made == []
+
+
+def test_a_model_chosen_plain_word_app_gets_no_absence(conn, monkeypatch):
+    # A model answer that names Line for "his second line" passes `_channels` (the word is in
+    # the claim), and is refused like the one code would bind (Greptile on #265).
+    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["Line"])
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV and REYES had no contact on his second line between March 20 and 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [
+        Proposal("no_contact", {"person_ids": [PETROV, REYES], "channels": ["Line"]}, is_core=True)
+    ]
+    with pytest.raises(Reject, match="plain word"):
+        filler._bind_named_app(c, out)
