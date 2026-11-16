@@ -81,6 +81,34 @@ HEADERS: dict[str, tuple[Header, ...]] = {
         "Battery Level (%)", "Battery Status",
     ),
     "usagestatsVersion": ("Property", "Property Value"),
+    # chat apps, read through LEAPP's conversation view
+    "whatsAppMessages": (
+        ("Timestamp", "datetime"), "Direction", "From ID", "Chat Name", "Message",
+        ("Attachment File", "media"), "Local User or Chat Name", "Receiver", "To ID", "Thumb",
+        "Starred?", "Metadata Field 17 (forward count, observed)",
+        "Metadata Field 21 (forwarder, observed)", "Latitude", "Longitude", "Chat ID",
+    ),
+    "instagramDirectMessages": (
+        ("Timestamp", "datetime"), ("Media Taken At", "datetime"), "Direction",
+        "Sender Username", "Message", "Thread", "Item Type (as stored)",
+        "Content Type (as stored)", "Media URL", "Media Owner Username", "Sender ID",
+        "Thread ID", "Item ID",
+    ),
+}  # fmt: skip
+# LEAPP's conversation view for the chat artifacts above (the manifest's data_views), with the
+# columns named as the database names them.
+DATA_VIEWS: dict[str, dict[str, Any]] = {
+    "whatsAppMessages": {
+        "conversationDiscriminatorColumn": "chat_id", "conversationLabelColumn": "chat_name",
+        "textColumn": "message", "directionColumn": "direction",
+        "directionSentValue": "Outgoing", "timeColumn": "timestamp", "senderColumn": "from_id",
+        "mediaColumn": "attachment_file",
+    },
+    "instagramDirectMessages": {
+        "conversationDiscriminatorColumn": "thread", "textColumn": "message",
+        "directionColumn": "direction", "directionSentValue": "Outgoing",
+        "timeColumn": "timestamp", "senderColumn": "sender_username",
+    },
 }  # fmt: skip
 NAMES = {
     "sms": ("SMS & iMessage", "SMS"),
@@ -97,6 +125,8 @@ NAMES = {
     "last_build": ("IOS Build", "iOS Information"),
     "get_battery_usage_v4": ("Settings Services", "battery_usage_v4"),
     "usagestatsVersion": ("Device Information", "OS Version"),
+    "whatsAppMessages": ("WhatsApp", "WhatsApp - Messages"),
+    "instagramDirectMessages": ("Instagram", "Instagram - Direct Messages"),
 }
 
 
@@ -161,6 +191,11 @@ class Lava:
                         "column_map": cmap,
                         "record_count": len(rows),
                         "source_path": f"/synthetic/{key}.db",
+                        **(
+                            {"data_views": {"conversation": DATA_VIEWS[key]}}
+                            if key in DATA_VIEWS
+                            else {}
+                        ),
                     }
                 )
             db.commit()

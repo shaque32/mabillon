@@ -362,6 +362,12 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "attention",
         "{n} {be} received but name no sender, so no sender was recorded.",
     ),
+    "sender_name_only": (
+        "info",
+        "{n} name{s0} the sender by display name only. A display name is not taken as an "
+        "account (two people can share one), so no sender was recorded and a claim about who "
+        "sent {them} is not tested from {them}.",
+    ),
     "media_file_not_in_extraction": (
         "attention",
         "{n} name{s0} a media file that the parser did not find in the extraction, so only its "

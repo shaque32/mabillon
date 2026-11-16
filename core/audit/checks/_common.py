@@ -25,7 +25,7 @@ from core.contracts import (
     check_id,
 )
 from core.ingest import forwarded as forwarded_records
-from core.ingest.cellebrite_common import NUMBERED_COPIES_KEY
+from core.ingest.cellebrite_common import APPS_READ_KEY, NUMBERED_COPIES_KEY
 from core.zones import device_zones, resolve_zone
 
 # Accounts are matched across phones by (namespace, identifier). SMS and phone calls share a
@@ -92,6 +92,20 @@ class Account:
         return self.device_id is not None
 
 
+def apps_read_in_full(conn: sqlite3.Connection) -> dict[str, frozenset[str]]:
+    """Source id -> the apps (lowercase) whose records it read in full, for each source that
+    imported only some apps (APPS_READ_KEY). A source missing here read every app it holds."""
+    out: dict[str, frozenset[str]] = {}
+    for sid, payload_json in conn.execute("SELECT source_id, payload_json FROM source_coverage"):
+        try:
+            apps = json.loads(payload_json).get(APPS_READ_KEY)
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if isinstance(apps, list):
+            out[sid] = frozenset(str(a).strip().lower() for a in apps)
+    return out
+
+
 def numbered_copies(conn: sqlite3.Connection) -> set[str]:
     """Every message id an import listed as numbered by the tool as a copy of another row."""
     out: set[str] = set()
@@ -136,6 +150,10 @@ class CaseData:
         # twice, so no count may pass or fail on them
         self.numbered_copies: set[str] = (
             numbered_copies(conn) if "source_coverage" in tables else set()
+        )
+        # source id -> the apps it read in full, for a source that read only some apps
+        self.apps_read: dict[str, frozenset[str]] = (
+            apps_read_in_full(conn) if "source_coverage" in tables else {}
         )
         self.has_sender_raw = any(
             r[1] == "sender_raw" for r in conn.execute("PRAGMA table_info(messages)")

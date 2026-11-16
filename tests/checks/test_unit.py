@@ -134,6 +134,26 @@ def test_absence_with_a_row_naming_no_receiver_is_inconclusive() -> None:
     assert r.record_ids == ("msg:p1:8",)
 
 
+def test_absence_on_a_source_that_read_only_some_apps_is_inconclusive() -> None:
+    # A LEAPP import lists the apps it read in full; any other app, and every channel at once,
+    # is not covered by that source, so absence cannot pass there.
+    conn = without_undated_row(build())
+    for sid in ("p1", "p2"):
+        conn.execute(
+            "INSERT INTO source_coverage (source_id, importer, importer_version, payload_json)"
+            " VALUES (?, 'leapp', '0.1.0', '{\"apps_read_in_full\": [\"SMS\"]}')",
+            (sid,),
+        )
+    assert check(conn, "no_contact", person_ids=[A, B], window=APRIL, channels=["SMS"]).outcome is (
+        CheckOutcome.PASS
+    )
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert "only some apps" in r.detail
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL, channels=["call"])
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+
+
 def test_absence_fails_on_contact_matching_numbers_across_formats() -> None:
     r = check(build(), "no_contact", person_ids=[A, B], window=MARCH)
     assert r.outcome is CheckOutcome.FAIL

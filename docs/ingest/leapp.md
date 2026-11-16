@@ -55,6 +55,51 @@ matched (`same_as`, the nearest in time) and `seconds_apart`, so another reader 
 every pair. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
 is recorded as the attachment's name, never as text, and flagged (`media_file_not_in_extraction`).
 
+### Other chat apps
+
+LEAPP publishes, for each chat artifact, a conversation view (the manifest's
+`data_views.conversation`) naming its conversation, text, direction, time, sender and media
+columns. Mabillon reads a chat artifact through that view only when it is listed in
+`CHAT_SPECS`, which holds the artifacts checked record by record against Mabillon's UFDR import of
+the same public test phone (2026-11-16): every message with text matched a UFDR message on time
+(within a second), text and direction, and every sender id read matched the UFDR's.
+
+| Tool | Artifact | App | Sender id read from |
+|---|---|---|---|
+| ALEAPP | `instagramDirectMessages` | Instagram | Sender ID (sent and received) |
+| ALEAPP | `kik_messages` | Kik Messenger | Partner JID (received only) |
+| ALEAPP | `get_snapchat_arroyo_messages` | Snapchat | Sender ID (sent and received) |
+| ALEAPP | `get_tikTok` | TikTok | none |
+| ALEAPP | `get_whatsapp_one_to_one_messages` | WhatsApp | Sending Party JID (received only) |
+| iLEAPP | `DiscordChatsA` | Discord | Sender ID (sent and received) |
+| iLEAPP | `facebookMessengerChats` | Facebook Messenger | Sender ID (sent and received) |
+| iLEAPP | `groupMeMessages` | GroupMe | none |
+| iLEAPP | `instagram_threads` | Instagram | Sender ID (sent and received) |
+| iLEAPP | `kikMessages` | Kik Messenger | none |
+| iLEAPP | `get_signalIOSMessages` | Signal | Author (received only) |
+| iLEAPP | `telegramMessages` | Telegram | none |
+| iLEAPP | `tiktok_messages` | TikTok | Sender (sent and received) |
+| iLEAPP | `viber_chats` | Viber | Sender (Phone) (received only) |
+| iLEAPP | `whatsAppMessages` | WhatsApp | From ID (received only; a group's id is not a sender) |
+
+A sender named only by display name gets no account (two people can share one display name),
+and is flagged `sender_name_only`; a sent message whose table does not state the owner's id has
+no sender. A direction other than the view's sent value or a plain received value is unknown
+and flagged. Other chat artifacts, including ones that did not match (iLEAPP `discordChats`,
+`facebook_messenger_client_chats`, `line`, `teamsMessages`, `twitterDirectMessages`,
+`snapchatMessages`, `threema_chats`, `session_messages`; ALEAPP `get_line_messages`,
+`get_Viber_messages`, `get_whatsapp_group_messages`), stay not imported.
+
+### What an absence check may rest on
+
+The coverage record lists `apps_read_in_full`: the phone's own messages (`Native Messages`) and
+call log (`unknown`) when their tables were read, and a chat app only when no other artifact in
+its LEAPP category holds records Mabillon did not read. The absence check (1.0.2) treats any other
+app, a search on every channel at once, and calls on every app as not covered by a LEAPP source,
+so "no contact" never passes on an app LEAPP read only in part. On both development phones every
+chat app was partial (each has other tables, such as WhatsApp's group messages), so only texts
+and the phone's own calls can show absence there.
+
 Every other artifact in the manifest (ALEAPP's combined `SMS and MMS Messages` included, which
 repeats the two tables above) is listed as not imported, with its record count, in one
 attention item: a claim resting on another app is not tested from this source, and a record
@@ -134,6 +179,6 @@ iLEAPP (commit in the PR) on the public iOS 15 test phone, the same way and day:
 
 - No case data has been read with it. The public test phones are the only real LEAPP output it
   has read (`/mnt/project-files/baker/plans/public-image-benchmark.md`).
-- Third-party chat apps (WhatsApp, Signal, Telegram and others) are not read yet.
+- Chat apps outside `CHAT_SPECS`, and the calls apps record, are not read.
 - The device's model is not read.
 - Forwarded and quoted messages are not marked; iLEAPP's SMS table does not state them.

@@ -81,6 +81,7 @@ from core.contracts import (
 from core.encryption import open_input
 from core.ingest import tested
 from core.ingest.cellebrite_common import (
+    APPS_READ_KEY,
     Coverage,
     Party,
     RecordKind,
@@ -158,6 +159,7 @@ class Artifact:
     column_map: dict[str, str]  # column in the database -> the header as LEAPP wrote it
     record_count: int | None
     source_path: str | None
+    data_views: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -267,6 +269,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
                     record_count=int(rc) if isinstance(rc, int) else None,
                     source_path=str(e["source_path"]) if e.get("source_path") else None,
+                    data_views=e["data_views"] if isinstance(e.get("data_views"), dict) else {},
                 )
             )
     return Lava(
@@ -626,6 +629,109 @@ def _android_google_messages(c: _Ctx) -> None:
             c.tc.flag_counts["rows_grouped_into_one_message"] += len(rows) - 1
 
 
+# ---------------------------------------------------------------- other chat apps
+
+
+@dataclass(frozen=True)
+class ChatSpec:
+    """A chat app's LEAPP artifact, read through the conversation view LEAPP itself publishes
+    for it (the manifest's data_views.conversation: which columns hold the conversation, text,
+    direction, time, sender and media). Only artifacts checked record by record against a UFDR
+    of the same public test phone are listed (docs/ingest/leapp.md)."""
+
+    app: str  # the app name every importer gives it (as a UFDR names it)
+    sender_id: str | None = None  # header holding the sender's account id, checked on the UFDR
+    sender_id_outgoing: bool = False  # True when that header also names the owner on sent rows
+
+
+CHAT_SPECS: dict[tuple[str, str], ChatSpec] = {
+    ("ALEAPP", "instagramDirectMessages"): ChatSpec("Instagram", "Sender ID", True),
+    ("ALEAPP", "kik_messages"): ChatSpec("Kik Messenger", "Partner JID"),
+    ("ALEAPP", "get_snapchat_arroyo_messages"): ChatSpec("Snapchat", "Sender ID", True),
+    ("ALEAPP", "get_tikTok"): ChatSpec("TikTok"),
+    ("ALEAPP", "get_whatsapp_one_to_one_messages"): ChatSpec("WhatsApp", "Sending Party JID"),
+    ("iLEAPP", "DiscordChatsA"): ChatSpec("Discord", "Sender ID", True),
+    ("iLEAPP", "facebookMessengerChats"): ChatSpec("Facebook Messenger", "Sender ID", True),
+    ("iLEAPP", "groupMeMessages"): ChatSpec("GroupMe"),
+    ("iLEAPP", "instagram_threads"): ChatSpec("Instagram", "Sender ID", True),
+    ("iLEAPP", "kikMessages"): ChatSpec("Kik Messenger"),
+    ("iLEAPP", "get_signalIOSMessages"): ChatSpec("Signal", "Author"),
+    ("iLEAPP", "telegramMessages"): ChatSpec("Telegram"),
+    ("iLEAPP", "tiktok_messages"): ChatSpec("TikTok", "Sender", True),
+    ("iLEAPP", "viber_chats"): ChatSpec("Viber", "Sender (Phone)"),
+    ("iLEAPP", "whatsAppMessages"): ChatSpec("WhatsApp", "From ID"),
+}
+# Direction values that mean received, beside the view's own sent value.
+_CHAT_IN = {"incoming", "received", "inbound", "in"}
+
+
+def _chat_direction(value: object, sent: object) -> MessageDirection:
+    v = _text(value)
+    if v is None:
+        return MessageDirection.UNKNOWN
+    if v == str(sent).strip():
+        return MessageDirection.OUTGOING
+    if str(sent).strip() in ("1", "True", "true") and v in ("0", "False", "false"):
+        return MessageDirection.INCOMING
+    return MessageDirection.INCOMING if v.lower() in _CHAT_IN else MessageDirection.UNKNOWN
+
+
+def _chat_ident(v: object) -> str | None:
+    """A sender id as stored; a group's id (WhatsApp '@g.us') or a placeholder is not a
+    person's account."""
+    s = _ident(v)
+    if s is None or s.endswith("@g.us") or s.lower() in ("signed-in account", "local user"):
+        return None
+    return s
+
+
+def _chat_messages(c: _Ctx) -> None:
+    """A chat app's messages through LEAPP's conversation view: one message per row."""
+    spec = CHAT_SPECS[(c.lava.leapp_name, c.art.key)]
+    view = c.art.data_views.get("conversation") or {}
+    col = c.art.column_map
+
+    def header(key: str) -> str | None:
+        name = view.get(key)
+        return col.get(str(name), str(name)) if name else None
+
+    h_text, h_dir, h_time = header("textColumn"), header("directionColumn"), header("timeColumn")
+    h_sender, h_convo = header("senderColumn"), header("conversationDiscriminatorColumn")
+    h_label, h_media = header("conversationLabelColumn"), header("mediaColumn")
+    if not (h_text and h_dir and h_time):
+        c.tc.header_notes.append("LEAPP's conversation view for this table names no text, "
+                                 "direction or time column, so nothing was read.")  # fmt: skip
+        return
+    for rowid, r in c.lava.rows(c.art):
+        c.tc.rows_read += 1
+        loc = f"{c.art.table}/rowid={rowid}"
+        direction = _chat_direction(r.get(h_dir), view.get("directionSentValue"))
+        if direction is MessageDirection.UNKNOWN:
+            c.flag("direction_not_stated", loc)
+        # the view's sender column, when it is not the id column itself, is a display name
+        name = _text(r.get(h_sender)) if h_sender and h_sender != spec.sender_id else None
+        sid = _chat_ident(r.get(spec.sender_id)) if spec.sender_id else None
+        if direction is MessageDirection.OUTGOING:
+            sid = sid if spec.sender_id_outgoing else None
+            sender = _party(sid, owner=True) if sid else None
+        elif direction is MessageDirection.INCOMING:
+            # a display name alone is not taken as an account: two people can share one
+            sender = _party(sid) if sid else None
+            if sender is None:
+                c.flag("sender_name_only" if name else "received_without_sender", loc)
+        else:
+            sender = None
+        convo = _text(r.get(h_convo)) if h_convo else None
+        chat_key = f"chat:{convo}" if convo else f"row:{loc}"
+        title = (_text(r.get(h_label)) if h_label else None) or convo
+        media = _text(r.get(h_media)) if h_media else None
+        _add_message(
+            c, spec.app, loc, chat_key, title, sender, [], direction,
+            _time(r.get(h_time)), str(r.get(h_text) or ""),
+            [PurePosixPath(media).name if "/" in media else media] if media else [],
+        )  # fmt: skip
+
+
 # A conversation name that is a phone number or an address, so it names the other party.
 _IDENT_RE = re.compile(r"^(?:\+?[\d\s().-]{5,}|[^@\s]+@[^@\s]+)$")
 
@@ -868,6 +974,31 @@ def device_facts(lava: Lava) -> dict[str, Any]:
 # ---------------------------------------------------------------- importer
 
 
+def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
+    """The apps whose records this import holds in full: the phone's own messages and calls
+    when their tables were read, and a chat app when no artifact LEAPP wrote for it (by its
+    category's first word) holds records Mabillon did not read. Every other app, and a search
+    on every channel, is not covered by this source (the absence check reads this list)."""
+    keys = {a.key for _, a in read}
+    apps: set[str] = set()
+    if keys & {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}:
+        apps.add(NATIVE_MESSAGES_APP)
+    if keys & {"callHistory", "get_calllog"}:
+        apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
+    read_keys = {(lava.leapp_name, a.key) for _, a in read}
+    unread_words = {
+        a.category.split()[0].lower()
+        for a in lava.artifacts
+        if (lava.leapp_name, a.key) not in read_keys and (a.record_count or 0) > 0
+        and a.category.split()
+    }  # fmt: skip
+    for k in read_keys & set(CHAT_SPECS):
+        app = CHAT_SPECS[k].app
+        if app.split()[0].lower() not in unread_words:
+            apps.add(app)
+    return sorted(apps)
+
+
 def _fidelity(m: dict[str, Any]) -> tuple[Fidelity, ExtractionType, str]:
     kind = str(m.get("param_type") or "").strip().lower()
     if kind == "itunes":
@@ -941,6 +1072,8 @@ class LeappImporter:
         read: list[tuple[Spec, Artifact]] = []
         for art in lava.artifacts:
             spec = SPECS.get((lava.leapp_name, art.key))
+            if spec is None and (lava.leapp_name, art.key) in CHAT_SPECS:
+                spec = Spec(RecordKind.CHATS, _chat_messages)
             if spec is None:
                 why = SAME_RECORDS.get((lava.leapp_name, art.key), "Mabillon does not read it")
                 cov.not_imported.append(
@@ -987,6 +1120,7 @@ class LeappImporter:
                 importer_version=IMPORTER_VERSION,
                 fidelity_reason=reason,
                 format_support=FORMAT_SUPPORT,
+                **{APPS_READ_KEY: apps_read_in_full(lava, read)},
                 leapp={
                     "leapp_name": lava.leapp_name,
                     "leapp_version": lava.leapp_version,

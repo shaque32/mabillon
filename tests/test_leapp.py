@@ -479,6 +479,61 @@ def test_a_phone_with_no_zone_says_so(tmp_path: Path) -> None:
     assert "leapp_no_timezone" in {i.code for i in s.items}
 
 
+def test_chat_apps_are_read_through_leapps_conversation_view(tmp_path: Path) -> None:
+    lv = _ios()
+    group = "120363000000000000@g.us"
+    for t, d, frm, text, chat in (
+        ("2024-02-03T10:00:00Z", "Incoming", f"{ALICE[1:]}@s.whatsapp.net", "on my way", "7"),
+        ("2024-02-03T10:01:00Z", "Outgoing", None, "see you", "7"),
+        ("2024-02-03T10:02:00Z", "Incoming", group, "group hello", "8"),  # a group, not a person
+        ("2024-02-03T10:03:00Z", "Pending", None, "queued", "7"),
+    ):
+        row = {"Timestamp": t, "Direction": d, "From ID": frm, "Message": text, "Chat ID": chat}
+        lv.add("whatsAppMessages", **row, **{"Chat Name": "Alice"})
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
+    rows = conn.execute(
+        "SELECT m.locator, m.direction, m.body, a.identifier FROM messages m"
+        " JOIN threads t ON t.id = m.thread_id LEFT JOIN accounts a ON a.id = m.sender_account_id"
+        " WHERE t.app = 'WhatsApp' ORDER BY m.ts_utc"
+    ).fetchall()
+    assert rows == [
+        ("whatsappmessages/rowid=1", "incoming", "on my way", f"{ALICE[1:]}@s.whatsapp.net"),
+        ("whatsappmessages/rowid=2", "outgoing", "see you", None),  # the owner's id is not stated
+        ("whatsappmessages/rowid=3", "incoming", "group hello", None),
+        ("whatsappmessages/rowid=4", "unknown", "queued", None),
+    ]
+    payload = coverage.load(conn, "ios").payload
+    # WhatsApp is read in full here: no other WhatsApp table holds records
+    assert payload["apps_read_in_full"] == ["Native Messages", "WhatsApp", "unknown"]
+    tables = {t["name"]: t for t in payload["tables"]}
+    flags = tables["WhatsApp - Messages"]["flag_counts"]
+    assert flags["direction_not_stated"] == 1 and flags["received_without_sender"] == 1
+
+
+def test_a_chat_sender_named_only_by_display_name_is_no_account(tmp_path: Path) -> None:
+    lv = _android()
+    lv.add("instagramDirectMessages", **{"Timestamp": "2024-03-04T10:00:00Z",
+           "Direction": "Incoming", "Sender Username": "Instagram User", "Message": "hey",
+           "Thread": "t1"})  # fmt: skip
+    lv.add("instagramDirectMessages", **{"Timestamp": "2024-03-04T10:01:00Z",
+           "Direction": "Outgoing", "Sender Username": "me", "Message": "hi", "Thread": "t1",
+           "Sender ID": "555"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    rows = conn.execute(
+        "SELECT m.direction, a.identifier, a.device_id IS NOT NULL FROM messages m"
+        " JOIN threads t ON t.id = m.thread_id LEFT JOIN accounts a ON a.id = m.sender_account_id"
+        " WHERE t.app = 'Instagram' ORDER BY m.ts_utc"
+    ).fetchall()
+    # a sent row's Sender ID is the owner's account (checked on a UFDR of the same phone)
+    assert rows == [("incoming", None, 0), ("outgoing", "555", 1)]
+    s = coverage.summary(conn, "and")
+    assert "sender_name_only" in {i.code for i in s.items}
+    # no other Instagram table holds records, so Instagram is read in full
+    assert "Instagram" in coverage.load(conn, "and").payload["apps_read_in_full"]
+
+
 def test_artifacts_not_read_are_listed_so_absence_is_never_assumed(tmp_path: Path) -> None:
     conn = _db()
     LeappImporter(source_id="ios").import_source(_ios().write_zip(tmp_path / "i.zip"), conn)

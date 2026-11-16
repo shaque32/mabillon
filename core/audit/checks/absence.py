@@ -166,7 +166,18 @@ def _coverage_gaps(
         if lo is None or lo > start or hi < end:
             span = f"{lo} to {hi}" if lo else "no dated records"
             gaps.append(f"{sid}'s dated records ({span}) do not span the window")
+        read = data.apps_read.get(sid)
+        if read is not None and not channels:
+            gaps.append(
+                f"{sid} holds the records of only some apps ({', '.join(sorted(read)) or 'none'}"
+                "), so contact on any other app was not searched there"
+            )
         for app in channels:
+            if read is not None and app.strip().lower() not in read:
+                gaps.append(
+                    f"{sid} did not read every {app} record (only some apps' records were "
+                    "imported from it), so contact there is not ruled out"
+                )
             if app.strip().lower() == "call":
                 (n,) = data.conn.execute(
                     "SELECT count(*) FROM calls WHERE source_id = ?", (sid,)
