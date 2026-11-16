@@ -1,4 +1,4 @@
-## 2026-11-16: iLEAPP and ALEAPP output importer, source kind `leapp` (contracts and schema 0.9.0) (#PR)
+## 2026-11-16: iLEAPP and ALEAPP output importer, source kind `leapp` (contracts and schema 0.9.0) (#264)
 - Changed: New importer `leapp` 0.1.0 (`core/ingest/leapp.py`, doc `docs/ingest/leapp.md`) reads
   the LAVA pair (`_lava_data.lava` and `_lava_artifacts.db`) from a zip of one iLEAPP or ALEAPP
   run's output. It reads iLEAPP `sms`, `callHistory` and `addressBook`, and ALEAPP `get_sms_mms`,
@@ -13,7 +13,7 @@
   kind `leapp` (signed by Arsh 2026-11-16, `PROPOSED_CHANGES.md`). Why: the next held-out public
   test (an iOS 17 and Android 14 pair) is published as raw extractions with no Cellebrite or
   AXIOM export, and LEAPP is the free, open-source way to read them.
-- Where: branch claude/project-thread-mtq9u7
+- Where: PR #264 (branch claude/project-thread-mtq9u7)
 - Verified: `tests/test_leapp.py` (10 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
@@ -35,9 +35,9 @@
 - Affects: capabilities (a new input format, unverified); customer-facing claims (none until a
   scored run; framing stays "tested on public forensic images")
 - Status doc: pending: in "Contracts and schema", change 0.8.0 to 0.9.0 and add "0.9.0 adds
-  source kind `leapp` (signed by Arsh 2026-11-16, #PR)". In "Importers (main)", add "iLEAPP and
-  ALEAPP output `leapp` 0.1.0 (`core/ingest/leapp.py`, #PR; `FORMAT_SUPPORT = "unverified"`;
+  source kind `leapp` (signed by Arsh 2026-11-16, #264)". In "Importers (main)", add "iLEAPP and
+  ALEAPP output `leapp` 0.1.0 (`core/ingest/leapp.py`, #264; `FORMAT_SUPPORT = "unverified"`;
   messages, calls and contacts only, every other artifact listed as not imported)". In section 8
   item 1 (Import), add "iLEAPP and ALEAPP LAVA output (unverified; checked against a UFDR on the
-  public Android 13 and iOS 15 test phones, #PR)". In "Real-data formats unverified", add LEAPP
+  public Android 13 and iOS 15 test phones, #264)". In "Real-data formats unverified", add LEAPP
   output to the formats with no real case export imported.
