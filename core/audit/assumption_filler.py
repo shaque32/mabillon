@@ -195,7 +195,10 @@ MAX_PROPOSALS = 8
 #      times one act from another ("six minutes later", "within a minute of") gives no act a
 #      range from its stated time; a claim about what a message refers to does not date the
 #      message by the time it states (found on a development phone, 2026-11-16).
-FILLER_VERSION = "10"
+#  11: a call's other side may be described by its app ("called the Instagram user ...") and
+#      given with its id beside its name (', user ID ...'), when both are one account; a
+#      comma inside a quoted name's closing mark is the claim's.
+FILLER_VERSION = "11"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1679,7 +1682,16 @@ _CALL_FORM_RE = re.compile(
     rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
-    rf")\s+(?:the\s+)?(?P<b>{_TOKEN})(?P<tail>[^\x01]*)$",
+    rf")\s+(?:the\s+)?(?:(?P<desc>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*)*?)\s+(?:user|account)\s+)?"
+    rf"(?P<b>{_TOKEN})(?P<tail>[^\x01]*(?:{_TOKEN}[^\x01]*)?)$",
+    re.IGNORECASE,
+)
+# The other side's id set beside its name, right after the clause: '"Marc R.," user ID
+# 4984911', "(account ID 4984911)". The id must be the same one account as the name
+# (`CallForm.one_account`), so it narrows the side, never adds a party.
+_CALL_ID_TAIL_RE = re.compile(
+    rf"^\s*,?\s*\(?\s*(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
+    rf"(?P<tok>{_TOKEN})\s*\)?",
     re.IGNORECASE,
 )
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
@@ -1689,7 +1701,7 @@ _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # The app a call was on, right after the clause: "called X on Telegram", "via WhatsApp". Only
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
 _CALL_APP_TAIL_RE = re.compile(
-    r"^\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
+    r"^\s*,?\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
     r"(?=\s*(?:,|\.|$|that\s+lasted|lasting|for\s))",
     re.IGNORECASE,
 )
@@ -1710,6 +1722,7 @@ class CallForm:
     caller: str | None
     missed: bool
     length: str | None
+    one_account: bool = False  # the clause names b by a name and its id: one account
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -4871,7 +4884,9 @@ class LocalAssumptionFiller:
             spans.append((start, end))
         for m in _QUOTE_SPAN_RE.finditer(_flat(text)):
             if m.group(0)[1:-1].strip():
-                written.append(m.group(0)[1:-1].strip())
+                # '"This Is DFIRTwo," user ID ...': a comma before the closing mark is the
+                # claim's punctuation, not the name's.
+                written.append(m.group(0)[1:-1].strip().removesuffix(",").strip())
                 spans.append(m.span())
         ids = {
             a.identifier.strip()
@@ -5027,10 +5042,25 @@ class LocalAssumptionFiller:
         np = m.group("np_to") or m.group("np_from") or m.group("np_with") or ""
         if not self._plain_call_noun(np, verb, app):
             return None
+        b = tokens[m.start("b")]
+        if m.group("desc") is not None:
+            # "called the Instagram user ...": only the call's own app may name the side
+            # (`_plain_call_noun`), and only for an account side, never a person.
+            if b[0] != "acct" or not self._is_app_name(m.group("desc"), app):
+                return None
+        tail = m.group("tail")
+        one_account = False
+        at_id = _CALL_ID_TAIL_RE.match(tail)
+        if at_id is not None:
+            if b[0] != "acct" or tokens[m.start("tail") + at_id.start("tok")][0] != "acct":
+                return None
+            tail, one_account = tail[at_id.end() :], True
+        if "\x01" in tail:
+            return None  # another party after the clause
         tail = (
-            _CALL_APP_TAIL_RE.sub("", m.group("tail"), count=1)
-            if self._names_app(_CALL_APP_TAIL_RE.match(m.group("tail")), app)
-            else m.group("tail")
+            _CALL_APP_TAIL_RE.sub("", tail, count=1)
+            if self._names_app(_CALL_APP_TAIL_RE.match(tail), app)
+            else tail
         )
         length = None
         if tail.strip(" ."):
@@ -5045,16 +5075,25 @@ class LocalAssumptionFiller:
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
         return CallForm(
             a=tokens[m.start("a")],
-            b=tokens[m.start("b")],
+            b=b,
             caller=caller.get(verb),
             missed=verb == "missed",
             length=length,
+            one_account=one_account,
         )
 
     @staticmethod
     def _names_app(m: re.Match[str] | None, app: str) -> bool:
         """True when a call clause's tail "on Telegram" names the call's own app."""
         return m is not None and _words(m.group("app")) == _words(app)
+
+    @staticmethod
+    def _is_app_name(words: str, app: str) -> bool:
+        """True when the words are the call's own app's name or an alias of it ("Instagram")."""
+        if app == NATIVE_CALL_APP:
+            return False
+        names = [app, *APP_ALIASES.get(app.casefold(), ())]
+        return _words(words).strip() in {_words(n).strip() for n in names}
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
@@ -5155,6 +5194,8 @@ class LocalAssumptionFiller:
         if len(phones) > 1:
             return None
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
+        if form.one_account and len({self.data.accounts[x].key for x in accounts}) != 1:
+            return None  # the name and the id beside it are not one account
         if handles and not rt.get("account_ids"):
             # The time range names the other side by its handle ("Marc R."), which
             # the checks resolve; the caller row keeps that handle, not code's own reading,

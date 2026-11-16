@@ -513,3 +513,77 @@ def test_only_a_timed_refer_clause_lends_its_time(words, timed):
     from core.audit.assumption_filler import _times_what_it_refers_to
 
     assert _times_what_it_refers_to(f'PETROV texted REYES: "ok", {words}.') is timed
+
+
+# ---------------------------------------------------------------- filler 11
+
+GARAGE_IG = "acct:item1:Instagram:49800011122"
+JENNA_IG = "acct:item1:Instagram:49800099999"
+IG_AT = "On June 15, 2026, at about 9:00 p.m. EDT,"
+IG_W = W("June 15, 2026", "2026-06-15T20:52", "2026-06-15T21:09")
+
+
+def _add_instagram(c: sqlite3.Connection) -> None:
+    # June 15, 9:00 p.m. EDT: the phone called the Instagram user "Marc Garage" (60 s).
+    c.execute("PRAGMA foreign_keys = OFF")
+    for acc, ident, name in [(GARAGE_IG, "49800011122", "Marc Garage"),
+                             (JENNA_IG, "49800099999", "Jenna Wolfe")]:  # fmt: skip
+        c.execute(
+            "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'Instagram', ?, ?)",
+            (acc, acc, ident, name),
+        )
+    c.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:ig', 'item1', 'c:ig', 'dev:item1', 'Instagram',"
+        " NULL, ?, 'outgoing', '2026-06-16T01:00:00Z', 0, NULL, 60, 0)",
+        (GARAGE_IG,),
+    )
+
+
+def ig_fill(conn, words: str, written: str = "49800011122"):
+    _add_instagram(conn)
+    return fill(conn, f"{IG_AT} {words}", people=["PETROV"],
+                accounts=[{"as_written": written, "app": "Instagram"}],
+                channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the Instagram user "Marc Garage," user ID 49800011122.',
+        'PETROV called the Instagram user "Marc Garage" (user ID 49800011122).',
+        'PETROV called "Marc Garage," user ID 49800011122, on Instagram.',
+    ],
+)
+def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, words):
+    made, f = ig_fill(conn, words)
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.account_ids) == [GARAGE_IG]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(conn):
+    made, _ = ig_fill(conn, 'the Instagram user "Marc Garage," user ID 49800011122, called PETROV.')
+    # a side described by its app is read only after the verb, so no caller is read here
+    assert "caller" not in made
+    made, _ = ig_fill(conn, '"Marc Garage," user ID 49800011122, called PETROV on Instagram.')
+    assert "caller" not in made  # an id beside the first side is not read either
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # the id is another account than the name: two parties, not one side
+        'PETROV called the Instagram user "Marc Garage," user ID 49800099999.',
+        # another app's name describes the side
+        'PETROV called the Telegram user "Marc Garage," user ID 49800011122.',
+        # a person, not an account, described as an app's user
+        "PETROV called the Instagram user REYES.",
+        # other words describe the side
+        'PETROV called the old Instagram user "Marc Garage."',
+    ],
+)
+def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(conn, words):
+    made, _ = ig_fill(conn, words)
+    assert "caller" not in made
