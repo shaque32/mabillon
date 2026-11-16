@@ -95,7 +95,8 @@ def test_the_reader_imports_only_the_standard_library():
 
 
 def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
-    odd = tmp_path / "phone#1 ?x%20"
+    # "?" cannot be in a Windows folder name; "#" and "%" can, and break a URI as well
+    odd = tmp_path / ("phone#1 x%20" if sys.platform == "win32" else "phone#1 ?x%20")
     odd.mkdir()
     for name in (dump_lava.MANIFEST, dump_lava.DATABASE):
         (odd / name).write_bytes((lava / name).read_bytes())
