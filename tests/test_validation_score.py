@@ -266,6 +266,15 @@ def test_r1_measures_count_against_the_right_denominators(scored):
     r1 = s["r1"]
     assert r1["contradicted_without_expert"]["n"] == 2  # gold not contradicted: C01, C03
     assert r1["false_claim_shown_only_as_support"]["n"] == 1  # gold contradicted: C02
+    settled = r1["false_claim_shown_only_as_support_settled"]
+    assert settled["n"] == 1
+    # v5's bar 4 counts a claim only when no core assumption is left open
+    assert settled["k"] <= r1["false_claim_shown_only_as_support"]["k"]
+    c02 = r1["per_claim"]["C02"]
+    assert (settled["k"] == 1) == (
+        c02["supports"] > 0 and not c02["contradicts"] and not c02["failed_checks"]
+        and not c02["open_core"]
+    )  # fmt: skip
     assert r1["contradiction_surfaced"]["n"] == 1
     assert r1["no_r1_verdict"] == []
     # Stand-in components contradict nothing, so nothing is contradicted without an expert.
@@ -605,4 +614,28 @@ def test_bar_8_counts_source_chats_not_merged_threads():
     counts = score_hickman.import_counts(conn, {"chats_with_messages": 2, "messages": 4})
     assert counts["chats_with_messages"] == {"mabillon": 2, "dump": 2}
     assert counts["messages"] == {"mabillon": 4, "dump": 4}
+    conn.close()
+
+
+def test_an_open_core_assumption_is_one_no_check_or_item_settles():
+    from types import SimpleNamespace as NS
+
+    from core.contracts import Stance
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        "CREATE TABLE assumptions (id TEXT, is_core INTEGER);"
+        " CREATE TABLE check_results (id TEXT, assumption_id TEXT, outcome TEXT);"
+        " INSERT INTO assumptions VALUES ('a:pass', 1), ('a:inc', 1), ('a:mixed', 1),"
+        " ('a:none', 1), ('a:item', 1), ('a:context', 0);"
+        " INSERT INTO check_results VALUES ('k1', 'a:pass', 'pass'),"
+        " ('k2', 'a:inc', 'inconclusive'), ('k3', 'a:mixed', 'inconclusive'),"
+        " ('k4', 'a:mixed', 'pass');"
+    )
+    ids = ["a:pass", "a:inc", "a:mixed", "a:none", "a:item", "a:context"]
+    manifest = {"C": {"assumptions": ids, "checks": ["k1", "k2", "k3", "k4"]}}
+    items = [NS(assumption_id="a:item", stance=Stance.SUPPORTS),
+             NS(assumption_id="a:none", stance=Stance.COMPLICATES)]  # fmt: skip
+    # inconclusive only, or no check and no supporting item; a context row never counts
+    assert score_hickman._open_core(conn, manifest, "C", items) == ["a:inc", "a:none"]
     conn.close()
