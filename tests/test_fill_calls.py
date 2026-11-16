@@ -453,6 +453,43 @@ def test_a_claim_that_times_one_act_from_another_gives_no_act_its_stated_time(co
     assert any("times one act from another" in d.reason for d in f.drops)
 
 
+WA_AT = "On June 8, 2026, at about 9:00 p.m. EDT,"
+WA_W = W("June 8, 2026", "2026-06-08T20:52", "2026-06-08T21:09")
+GARAGE = f'{WA_AT} PETROV called "Marc Garage" on WhatsApp.'
+
+
+def test_a_caller_row_keeps_the_clause_s_own_handle(conn):
+    # The time range names the other side by the handle the clause writes: the caller row
+    # keeps that handle, and the checks resolve it.
+    made, _ = fill(conn, GARAGE, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV] and list(a.params.handles) == ["Marc Garage"]
+    assert not a.params.account_ids
+
+
+def test_a_handle_that_is_not_the_clause_s_side_names_no_caller(conn):
+    # A time range whose handle is not the one the clause writes tests another party: the
+    # caller row would inherit it, so code names no caller (Greptile on #261).
+    made, f = fill(conn, GARAGE, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    rt = dict(made["record_time"].params.model_dump(exclude_none=True))
+    assert f._caller_params(claim(GARAGE), rt) is not None
+    for other in (["Jenna"], ["Marc Garage", "Jenna"], ["Marc"]):
+        assert f._caller_params(claim(GARAGE), {**rt, "handles": other}) is None
+
+
+def test_a_message_said_to_refer_to_another_act_gets_no_range(conn):
+    # The time the claim states may be the picture's, not the message's (Greptile on #261):
+    # neither code nor the model's range dates the message by it.
+    text = (f'{WA_AT} PETROV sent REYES a WhatsApp message reading "look at that," which'
+            " was referring to the picture REYES sent at about 8:10 p.m.")  # fmt: skip
+    made, f = fill(conn, text, people=["PETROV"], quoted_text="look at that",
+                   channels=["WhatsApp"], window=WA_W)  # fmt: skip
+    assert "record_time" not in made
+    assert any("refers to" in d.reason for d in f.drops)
+
+
 def test_what_a_message_refers_to_is_another_act():
     from core.audit.assumption_filler import _OTHER_ACT_RE
 
@@ -460,3 +497,19 @@ def test_what_a_message_refers_to_is_another_act():
     # time is the picture's, so code does not date the message by it.
     for words in ("was referring to the picture", "refers to", "referred to the file"):
         assert _OTHER_ACT_RE.search(words)
+
+
+@pytest.mark.parametrize(
+    ("words", "timed"),
+    [
+        ("which was referring to the picture REYES sent at about 8:10 p.m.", True),
+        ("referring to the meeting on March 3, 2026", True),
+        ("which referred to the call the night before", True),
+        ("referring to the search", False),
+        ('referring to "the 9 p.m. drop"', False),  # quoted words are the message's, not a time
+    ],
+)
+def test_only_a_timed_refer_clause_lends_its_time(words, timed):
+    from core.audit.assumption_filler import _times_what_it_refers_to
+
+    assert _times_what_it_refers_to(f'PETROV texted REYES: "ok", {words}.') is timed

@@ -1743,6 +1743,31 @@ _RELATIVE_TIME_RE = re.compile(
     r"\bwithin\s+(?:an?|one|\w+)\s+(?:seconds?|minutes?|hours?|days?)\s+(?:of|after|before)\b",
     re.IGNORECASE,
 )
+# What a message refers to is another act, and when the claim times it ("the message ... was
+# referring to the picture REYES sent at about 8:10 p.m.") the stated time may be that act's.
+_REFERS_RE = re.compile(r"\b(?:refers|referred|referring|refer)\b", re.IGNORECASE)
+
+_DAY_WORD_RE = re.compile(rf"\b(?:{_WD_RE}|noon|midnight|today|yesterday|tonight)\b", re.I)
+
+
+def _times_what_it_refers_to(text: str) -> bool:
+    """Whether the words after a refer word hold a date, a day or a clock time: the claim
+    then times the act a message refers to, and its one stated time may be that act's.
+    "referring to the search" names no time, so the claim's own date stays the message's."""
+    bare = _unquoted(_flat(_nfc(text)))
+    m = _REFERS_RE.search(bare)
+    if m is None:
+        return False
+    tail = bare[m.end() :]
+    return any(
+        r.search(tail)
+        for r in (
+            _DATE_RE, _NUM_DATE_RE, _TIME_RE, _TIME24_RE, _RELATIVE_DAY_RE, _RELATIVE_TIME_RE,
+            _DAY_WORD_RE,
+        )
+    )  # fmt: skip
+
+
 # The word right before an open range's one date: "before May 1", "on or after", "since".
 _OPEN_EDGE_BEFORE_RE = re.compile(r"\b(?:before|prior\s+to|until|after|since)\s+$", re.IGNORECASE)
 _CALL_WORD_RE = re.compile(
@@ -3734,6 +3759,10 @@ class LocalAssumptionFiller:
             raise Reject(
                 "the claim times one act from another, so its stated time is not this one's"
             )
+        if _times_what_it_refers_to(claim.text):
+            raise Reject(
+                "the claim says what a message refers to, so its stated time may be that act's"
+            )
         stated = stated_windows(claim.text, para)
         unread = stated is None
         if stated is None:
@@ -5128,7 +5157,11 @@ class LocalAssumptionFiller:
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
         if handles and not rt.get("account_ids"):
             # The time range names the other side by its handle ("Marc R."), which
-            # the checks resolve; the caller row keeps that handle, not code's own reading.
+            # the checks resolve; the caller row keeps that handle, not code's own reading,
+            # and only when it is the very handle the clause writes for that side.
+            named = {tuple(_words(v).split()) for k, v in (form.a, form.b) if k == "acct"}
+            if len(named) != 1 or {tuple(_words(h).split()) for h in handles} != named:
+                return None
             accounts = []
         if set(people) != set(rt.get("person_ids", [])) or set(accounts) != set(
             rt.get("account_ids", [])
@@ -5608,6 +5641,10 @@ class LocalAssumptionFiller:
         if _RELATIVE_TIME_RE.search(_unquoted(_flat(_nfc(claim_text)))):
             raise Reject(
                 "the claim times one act from another, so its stated time is not this one's"
+            )
+        if _times_what_it_refers_to(claim_text):
+            raise Reject(
+                "the claim says what a message refers to, so its stated time may be that act's"
             )
         try:
             start = datetime.fromisoformat(w.start)
