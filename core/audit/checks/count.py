@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from core.audit.checks._common import (
     CALL_CHANNEL,
     CaseData,
@@ -21,6 +23,26 @@ from core.audit.checks.base import TemplateCheck
 from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 
 _OPS = {"eq": "exactly", "ge": "at least", "le": "at most"}
+
+
+TWIN_S = 2  # seconds within which two rows with one sender and the same words may be one message
+
+
+def look_alike(rows: list[Row]) -> int:
+    """How many of the rows repeat an earlier row's app, sender, direction and words (folded
+    case and spaces, never empty), within TWIN_S seconds: rows a count may hold twice."""
+    seen: dict[tuple[object, ...], list[datetime]] = {}
+    n = 0
+    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
+        words = " ".join((r.text or "").casefold().split())
+        if not words:
+            continue
+        k = (r.app, r.sender, r.direction, words)
+        times = seen.setdefault(k, [])
+        if any(abs((r.ts_utc - t).total_seconds()) <= TWIN_S for t in times):
+            n += 1
+        times.append(r.ts_utc)
+    return n
 
 
 class CountCheck(TemplateCheck):
@@ -45,7 +67,7 @@ class CountCheck(TemplateCheck):
     """
 
     name = "count"
-    version = "1.2.0"
+    version = "1.3.0"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None or p.expected_count is None or p.count_op is None:
@@ -156,6 +178,17 @@ class CountCheck(TemplateCheck):
                 "by the extraction tool as a copy of another row, so the count may hold one "
                 "message twice; an expert must decide which rows are the same message"
             )
+        twins = look_alike(counted)
+        if twins:
+            # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no
+            # copy number, a live row and a recovered one or the SMS store and Google Messages
+            # (Android 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail.
+            lines.append(
+                f"{twins} of the counted messages repeat another one's sender, words and time "
+                f"(within {TWIN_S} seconds), so the count may hold one message twice; an "
+                "expert must decide which rows are the same message"
+            )
+            copies += twins
 
         if copies:
             outcome = CheckOutcome.INCONCLUSIVE

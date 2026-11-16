@@ -198,7 +198,7 @@ MAX_PROPOSALS = 8
 #  11: a call's other side may be described by its app ("called the Instagram user ...") and
 #      given with its id beside its name (', user ID ...'), when both are one account; a
 #      comma inside a quoted name's closing mark is the claim's.
-FILLER_VERSION = "11"
+FILLER_VERSION = "12"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -321,6 +321,15 @@ _CALL_CHANNEL_WORDS = frozenset({"call", "calls"})
 _TEXT_MESSAGE_RE = re.compile(r"\b(?:sms|mms|text[\s-]?messages?|texted|texting)\b", re.I)
 # The words a model may write as an account's app for a phone's text messages.
 _TEXT_CHANNEL_WORDS = frozenset({NATIVE_CALL_APP, *CHANNEL_WORDS["sms"], "text messages"})
+# The rows that pick messages on an app, which `_bind_named_app` binds to the claim's app.
+_APP_ROW_TEMPLATES = frozenset({"sender", "record_time", "message_count", "no_contact"})
+_IMESSAGE_RE = re.compile(r"\bi-?messages?\b", re.IGNORECASE)
+_BY_PHONE_RE = re.compile(r"\b(?:by|over|via)\s+(?:the\s+)?(?:tele)?phone\b", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"\be-?mail(?:s|ed|ing)?\b", re.IGNORECASE)
+# Apps whose names are also plain words ("a second line", "a weak signal"). Written without a
+# capital, the word may name no app, so code reads no count or absence on it. A search for one
+# message may still include it, since searching one more app finds no message the words lack.
+_PLAIN_WORD_APPS = frozenset({"line", "signal", "session", "wire", "element"})
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -603,6 +612,7 @@ _WD_RE = "|".join(_WEEKDAYS)
 _NUM_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _YEAR_RE = re.compile(r"\b(19\d\d|20\d\d)\b")
 _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])", re.IGNORECASE)
+_SECONDS_RE = re.compile(r"\b\d{1,2}:[0-5]\d:[0-5]\d\b")
 _TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:a\.?m|p\.?m))", re.IGNORECASE)
 # The words code reads as "about" a time: 8 minutes either side (ABOUT_MINUTES).
 _ABOUT_W = r"(?:about|approximately|around)"
@@ -1181,6 +1191,11 @@ def check_window(
     """
     if end <= start:
         raise Reject("window ends before it starts")
+    if _SECONDS_RE.search(_unquoted(claim)):
+        # "at 9:21:45 a.m.": a range in whole minutes would pass a message at 9:21:10
+        raise Reject(
+            "the claim states a time to the second, which a range in minutes does not test"
+        )
     if end - start > timedelta(days=MAX_WINDOW_DAYS):
         raise Reject(f"window longer than {MAX_WINDOW_DAYS} days")
     mentions = date_mentions(as_written) + date_mentions(claim)
@@ -2900,6 +2915,92 @@ def coverage_gap(
     return None
 
 
+# ---------------------------------------------------------------- words no check reads
+
+# The words a claim whose checks alone can make it SUPPORTED (communication, timing and count,
+# rules 0.5.0 "checked") may hold outside quoted words, names, numbers, handles, apps and its
+# stated dates and times: the parts its checks read (who wrote or called whom, on which app,
+# when, how long, how many), and words that state nothing. Any other word may state something
+# no check reads ("SUBJECT-2 read the message at 9:21 a.m.", "sent a photo", "the first
+# message that day", "while driving", "SUBJECT-2 never replied"), so code adds a core event
+# assumption beside the checks and only an expert can carry the claim (`unread_words`; the v5
+# failure hunt, 2026-11-16: each of those was a SUPPORTED on its checks alone).
+_PLAIN_WORDS = frozenset(
+    # words that state nothing
+    "a an the of to on at in by and or with from for via over using through into onto as "
+    "is was were are be been being has had have did do does that which who whom whose this "
+    "these those it its it's their his her hers them they he she him its own each other one "
+    "another both either s also then there here what where when"
+    # writing, sending and calling
+    " wrote write writes writing written sent send sends sending texted text texts texting "
+    "messaged message messages messaging told tell tells telling asked ask asks asking said "
+    "say says saying replied reply replies replying responded respond responds answered "
+    "stating stated reading received receive receives receiving exchanged exchange exchanges "
+    "exchanging called call calls calling phoned phoning placed place places placing made "
+    "make dialed dialled rang spoke speak speaks spoken talked talk talks chatted chat chats "
+    "communicated communication communications contact contacted contacting back dm dms "
+    "outgoing incoming conversation user users account accounts id identifier handle username "
+    "name named names display displayed party number numbers telephone phone phones cellular "
+    "cell mobile line app application platform service thread messenger arrived"
+    # the phone's own records
+    " record records recorded log logs logged hold holds held show shows showed contain "
+    "contains contained entry entries"
+    # times and lengths
+    " about approximately approx around roughly nearly almost circa between until till "
+    "during before after since prior am pm a.m p.m noon midnight morning afternoon evening "
+    "night time local eastern central mountain pacific standard daylight zone utc gmt edt est "
+    "cdt cst mdt mst pdt pst et ct mt pt day days date dates hour hours hr hrs minute minutes "
+    "min mins second seconds sec secs half quarter early late lasted lasting lasts last length "
+    "duration long saved "
+    "monday tuesday wednesday thursday friday saturday sunday january february march april "
+    "may june july august september october november december jan feb mar apr jun jul aug "
+    "sep sept oct nov dec"
+    # counts
+    " at least most more fewer less than exactly total over under some dozen dozens hundred "
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+    "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty "
+    "ninety times".split()
+)
+# "last" is a length ("the call lasted"), never "the last message": that one is read below.
+# "a second phone", "another number", "a different account": a party or a phone no check binds.
+# "three minutes after a call", "shortly before": an act timed from another the checks do not
+# read (a kept range's own words, "two days before the RAID", are blanked before this is read).
+_UNPLAIN_PHRASES_RE = re.compile(
+    r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
+    r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
+    r"second(?=\s+(?:phone|call|message|text|number|account|line|device|time|handset|sim)s?\b)|"
+    r"(?<!each\s)other|(?<!one\s)another|different|new|"
+    r"(?:seconds?|minutes?|hours?|days?|moments?|shortly|soon|just|right|immediately)\s+"
+    r"(?:after|before|later|earlier|prior))\b",
+    re.IGNORECASE,
+)
+# A message "reading" or "that read" its quoted words: the words the record holds, not an act
+# of reading it.
+_READ_QUOTE_RE = re.compile(r"\b(?:that|which)?\s*read\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE)
+# "seven text messages, all recorded on the KYOCERA": where the records are, not who sent them.
+_ALL_RECORDED_RE = re.compile(r"\ball\s+(?=(?:recorded|logged|stored|held|found)\b)", re.I)
+_WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
+
+
+def plain_tokens(words: str, phrases: str | None = None) -> list[str]:
+    """The words of `words` that `_PLAIN_WORDS` does not hold, casefolded, in order, once each.
+    A possessive "'s" is read off its word; a phrase of `_UNPLAIN_PHRASES_RE` is never plain,
+    read in `phrases` (the same text before app names were blanked: "a second phone" on a case
+    with an app called "Phone") when given."""
+    out: list[str] = []
+    for m in _UNPLAIN_PHRASES_RE.finditer(words if phrases is None else phrases):
+        w = " ".join(m.group(0).casefold().split())
+        if w not in out:
+            out.append(w)
+    rest = _UNPLAIN_PHRASES_RE.sub(" ", words)
+    for m in _WORD_RE.finditer(rest):
+        w = m.group(0).casefold().replace("’", "'")
+        w = re.sub(r"'s$", "", w).rstrip(".")
+        if w and w not in _PLAIN_WORDS and w not in out:
+            out.append(w)
+    return out
+
+
 # ---------------------------------------------------------------- the filler
 
 
@@ -3105,6 +3206,52 @@ class LocalAssumptionFiller:
                         " assumption tests it"
                     )
         return None
+
+    def unread_words(self, text: str, raws: Iterable[str] = ()) -> list[str]:
+        """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
+        what is left once code blanks the persons, phones, numbers, handles, account names and
+        apps it reads, the time ranges `raws` (a kept proposal's words) and every date and time
+        code reads. Empty when the claim states only what its checks test."""
+        flat = _flat(_nfc(text))
+        flat = _READ_QUOTE_RE.sub(lambda m: " " * len(m.group(0)), flat)
+        flat = _ALL_RECORDED_RE.sub(lambda m: " " * len(m.group(0)), flat)
+        bare = _unquoted(flat)
+        cut: list[tuple[int, int]] = []
+        low = bare.casefold()
+        for raw in raws:
+            r = _flat(_nfc(raw)).casefold().strip()
+            at = low.find(r) if r else -1
+            while at >= 0:
+                cut.append((at, at + len(r)))
+                at = low.find(r, at + 1)
+        try:
+            cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
+        except Reject:
+            pass  # a name in lower case: its words stay, and read as words no check reads
+        cut += [(st, en) for _, st, en in self._phone_spans(bare)]
+        cut += [(st, en) for _, st, en in self._numbers_named(bare)]
+        for rx in (_ADDRESS_RE, _HANDLE_RE, _PHONE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE,
+                   _TIME24_RE, _YEAR_RE):  # fmt: skip
+            cut += [m.span() for m in rx.finditer(bare)]
+        chars = list(bare)
+        for a, b in cut:
+            chars[a:b] = " " * (b - a)
+        phrases = "".join(chars)
+        names = {n for n in self._names(bare) if len(n) > 2}
+        names |= {c.casefold() for c in self.channels()}
+        names |= {a.casefold() for words in APP_ALIASES.values() for a in words}
+        names |= {k for k in APP_ALIASES}
+        for n in sorted(names, key=len, reverse=True):
+            for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", low):
+                cut.append(m.span())
+        chars = list(bare)
+        for a, b in cut:
+            chars[a:b] = " " * (b - a)
+        words = "".join(chars)
+        words = _OTHER_CALL_APPS_RE.sub(" ", words)
+        words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
+        words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
+        return plain_tokens(words, phrases)
 
     def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
         """The phone numbers, handles and names the expert gave a number or an account that
@@ -3986,7 +4133,9 @@ class LocalAssumptionFiller:
             out = self._shaped(claim, self._add_recipient(claim, out), call_id)
             out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
-            return self._add_meaning(claim, out, allowed_ids, call_id)
+            out = self._shaped(claim, self._bind_named_app(claim, out), call_id)
+            out = self._add_meaning(claim, out, allowed_ids, call_id)
+            return self._add_unread_event(claim, out, allowed_ids, call_id)
         except Reject as e:
             self._drop(claim, None, f"code could not read the claim's own words: {e}", call_id)
             return []
@@ -4111,6 +4260,115 @@ class LocalAssumptionFiller:
         except Reject:
             return out  # the call's time stays tested; its count does not
         return [*out, Proposal("message_count", params, is_core=True, code_made=True)]
+
+    def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
+        """A message row searched on no app (channels empty) in a claim that names its app
+        gets that app from code, so the checks never find the words or the parties on an app
+        the claim does not name: "SUBJECT-1 wrote to SUBJECT-2 on Viber" is never SUPPORTED on
+        a WhatsApp message, and "no contact on Signal" or "did not text" is never CONTRADICTED
+        by WhatsApp messages (v5 failure hunt, 2026-11-16). The row gets the one app the claim
+        names, or the apps it names when several ("texted REYES on Telegram" is Telegram); a
+        text message on no named app ("texted", "an SMS", "iMessage") gets the case's one app
+        of a phone's own messages. Raises Reject, so the claim stays unproven, when the claim
+        names an app the case does not hold, an email, or a text message the case has no
+        single app for; for a count or an absence on an app that holds more than the words
+        name (iOS "Native Messages"); and for an absence on no app that names one kind of
+        contact ("never messaged", "by telephone"). Calls keep `_call_app`'s reading."""
+        rows = [
+            i
+            for i, p in enumerate(out)
+            if p.is_core
+            and isinstance(p.params, Mapping)
+            and p.template_id in _APP_ROW_TEMPLATES
+            and not p.params.get("channels")
+        ]
+        if not rows:
+            return out
+        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim.text)))
+        apps = self._named_apps(claim.text)
+        # "his second line": a plain word that may name no app at all
+        plain = [
+            a
+            for a in apps
+            if a.casefold() in _PLAIN_WORD_APPS
+            and not re.search(rf"\b(?:{re.escape(a)}|{re.escape(a.upper())})\b", bare)
+        ]
+        texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
+        if apps:
+            found = apps  # "texted REYES on Telegram": the app the claim names
+        elif texty:
+            found = self._phone_message_apps()
+            if len(found) != 1:
+                raise Reject(
+                    f"the claim names a text message and the case holds {len(found)} apps of"
+                    " a phone's own messages, not one"
+                )
+        elif _names_an_app_off_the_case(bare) or _EMAIL_RE.search(bare):
+            raise Reject("the claim names an app no assumption of it searches")
+        elif any(out[i].template_id == "no_contact" for i in rows) and (
+            _MESSAGE_WORD_RE.search(bare) or _CALL_WORD_RE.search(bare) or _BY_PHONE_RE.search(bare)
+        ):
+            # "SUBJECT-1 did not message SUBJECT-2", "no contact by telephone": one kind of
+            # contact, and the absence check on every app reads messages and calls alike
+            raise Reject(
+                "the claim names one kind of contact, and the absence check reads every kind"
+            )
+        else:
+            return out  # the claim names no app: every app is searched, as it says
+        made = list(out)
+        for i in rows:
+            p = out[i]
+            if p.template_id in WHOLE_APP_TEMPLATES and any(
+                a.casefold() in WIDER_APPS for a in found
+            ):
+                raise Reject(
+                    f"{found[0]!r} holds more than the claim's words name, so no count or"
+                    " absence is read on it"
+                )
+            if p.template_id in WHOLE_APP_TEMPLATES and plain:
+                raise Reject(
+                    f"the claim's {plain[0].casefold()!r} may be a plain word, not the app, so"
+                    " no count or absence is read on it"
+                )
+            made[i] = Proposal(
+                p.template_id, {**p.params, "channels": list(found)}, is_core=True, code_made=True
+            )
+        return made
+
+    def _add_unread_event(
+        self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None
+    ) -> list[Proposal]:
+        """A claim whose checks alone could make it SUPPORTED, and whose words state more than
+        those checks read (`unread_words`: "SUBJECT-2 read it at 9:21 a.m.", "sent a photo",
+        "the first message that day", "while driving"), gets a core event assumption from
+        code beside its checks. The event has no check, so only an expert's acceptance covers
+        it, and the claim is never SUPPORTED on its checks alone (v5 failure hunt,
+        2026-11-16), as with a missed call (`_add_caller`). Raises Reject, so the claim stays
+        unproven, when the event template is not allowed for it."""
+        if claim.claim_type not in _CHECKED_TYPES or not any(p.is_core for p in out):
+            return out
+        if any(p.is_core and p.template_id == "event" for p in out):
+            return out  # an expert already carries a part of it
+        raws = [
+            w.raw
+            for p in out
+            if isinstance(p.params, Mapping)
+            and (w := p.params.get("window")) is not None
+            and getattr(w, "raw", None)
+        ]
+        words = self.unread_words(claim.text, raws)
+        if not words:
+            return out
+        if "event" not in allowed_ids:
+            raise Reject(f"the claim states more than its checks read ({', '.join(words)})")
+        allowed = TEMPLATES["event"].allowed
+        base = next(p for p in out if p.is_core and isinstance(p.params, Mapping))
+        event = {
+            k: v
+            for k, v in base.params.items()
+            if k in allowed and k in (*PARTY_FIELDS, "device_ids", "window", "channels")
+        }
+        return [*out, Proposal("event", event, is_core=True, code_made=True)]
 
     def _add_meaning(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None

@@ -29,7 +29,7 @@ from core.audit.assumption_filler import (
     only_addressed,
     stated_part_day,
 )
-from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder
+from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, is_code_made
 from core.audit.checks import CHECKS
 from core.contracts import CheckOutcome, Claim, ClaimStatus, ClaimType, ModelCallOutcome
 from eval.synthetic.generate import generate
@@ -236,7 +236,13 @@ def build(conn, cid: str, answers: dict[str, list[dict]] | None = None):
 # message ("PETROV texted REYES 'its done'", "PETROV sent the Telegram message 'move it
 # tonight'"), so each gets PETROV's sender assumption too, which passes: PETROV sent it, at
 # another time than the claim says.
-CODE_ADDS = {"C10": [("sender", CheckOutcome.PASS)], "C11": [("sender", CheckOutcome.PASS)]}
+CODE_ADDS: dict[str, list[tuple[str, CheckOutcome | None]]] = {
+    "C10": [("sender", CheckOutcome.PASS)],
+    "C11": [("sender", CheckOutcome.PASS)],
+    # "two days after the seizure" is a part no check reads, so code adds an event only an
+    # expert can carry (filler 12, `unread_words`); it has no check, so no outcome.
+    "C04": [("event", None)],
+}
 
 
 @pytest.mark.parametrize("cid", sorted(GOOD))
@@ -252,7 +258,8 @@ def test_good_answers_become_checkable_assumptions(conn, cid):
         assert a.is_core
         for name in TEMPLATES[a.template_id].checks:  # event, meaning, role: stance only
             outcomes.append(CHECKS[name].run(a, conn).outcome)
-    assert sorted(outcomes) == sorted(EXPECTED[cid] + [o for _, o in CODE_ADDS.get(cid, [])])
+    added = [o for _, o in CODE_ADDS.get(cid, []) if o is not None]
+    assert sorted(outcomes) == sorted(EXPECTED[cid] + added)
 
 
 def test_a_contact_entry_keeps_the_one_account_it_names(conn):
@@ -1975,14 +1982,19 @@ def test_code_made_assumptions_say_so_and_model_ones_do_not(conn):
     # C05's and C16's time ranges name the writer alone; code adds the one each went to
     # (@northstar, REYES), so the time check tests both sides (_add_recipient), and the row
     # says code filled it.
-    recipient = {"C05": "record_time", "C16": "record_time"}
+    # C10's and C11's time ranges and C16's sender are searched on no app, for claims that
+    # say "texted", "the Telegram message" and "on Instagram"; code binds each to the app the
+    # claim names, for "texted" the case's one app of a phone's own messages (filler 12,
+    # `_bind_named_app`).
+    recipient = {"C05": {"record_time"}, "C16": {"record_time", "sender"}}
+    recipient |= {"C10": {"record_time"}, "C11": {"record_time"}}
     for cid in sorted(GOOD):
         model_made, *_ = build(conn, cid)
         whole = [
             a
             for a in model_made
             if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
-            and a.template_id != recipient.get(cid)
+            and a.template_id not in recipient.get(cid, set())
         ]
         assert not any(is_code_made(a.text) for a in whole if a.template_id != "meaning"), cid
     (timed,) = [a for a in build(conn, "C05")[0] if a.template_id == "record_time"]
@@ -3300,3 +3312,128 @@ def test_relative_words_inside_the_quote_date_nothing():
     )
     sender = Proposal("sender", {"quoted_text": "two days before the drop, call me"})
     assert coverage_gap(c, [sender]) is None
+
+
+# ---------------------------------------------------------------- filler 12 (v5 failure hunt)
+
+C05_ANSWER = [
+    P("sender", people=["PETROV"], quoted_text="need 2 more by friday"),
+    P(
+        "record_time",
+        people=["PETROV"],
+        quoted_text="need 2 more by friday",
+        window=W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00"),
+    ),
+]
+C05_TEXT = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+
+
+def test_a_plain_claim_gets_no_event(conn):
+    made, _ = build_text(conn, C05_TEXT, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        ", and @northstar never replied",
+        ", the first message of the day",
+        ", and @northstar read it within a minute",
+        ", a minute after a Telegram call between them",
+        ", while driving",
+        " from a second phone",
+        ", and sent it twice",
+    ],
+)
+def test_words_no_check_reads_add_an_event_only_an_expert_carries(conn, tail):
+    # Each was a SUPPORTED on its checks alone on Android 13 (v5 failure hunt, 2026-11-16).
+    text = C05_TEXT[:-1] + tail + "."
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert event.is_core and is_code_made(event.text)
+    assert {"sender", "record_time"} <= {a.template_id for a in made}
+
+
+def test_a_message_on_no_app_is_bound_to_the_app_the_claim_names(conn):
+    text = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    rows = {a.template_id: a for a in made}
+    assert rows["sender"].params.channels == ("Telegram",)
+    assert rows["record_time"].params.channels == ("Telegram",)
+
+
+@pytest.mark.parametrize("app", ["on Signal", "by email"])
+def test_a_message_on_an_app_the_case_does_not_hold_stays_unproven(conn, app):
+    # Searched on every app, the words were found on another one: a false SUPPORTED.
+    text = f'On March 12, 2026, PETROV wrote to @northstar {app}: "need 2 more by friday".'
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    assert any("names an app no assumption" in d.reason for d in filler.drops)
+
+
+def test_a_time_to_the_second_is_not_tested_by_a_range_in_minutes(conn):
+    text = 'At 9:14:05 p.m. on March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W("At 9:14:05 p.m. on March 12, 2026", "2026-03-12T21:14", "2026-03-12T21:15"),
+        ),
+    ]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "record_time" not in {a.template_id for a in made}
+    assert any("to the second" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "had no contact on Signal",
+        "never emailed each other",
+        "never messaged each other",
+        "had no contact by telephone",
+    ],
+)
+def test_an_absence_of_one_kind_of_contact_is_never_read_on_every_app(conn, words):
+    # The absence check on no app reads every app, messages and calls alike: a Telegram
+    # message then "contradicted" a true "no contact on Signal" (v5 failure hunt, 2026-11-16).
+    text = f"PETROV and REYES {words} between March 20 and March 23, 2026."
+    made, filler = build_text(conn, text, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+    assert any("could not read the claim's own words" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    ("words", "kept"),
+    [("had no contact on his second line", False), ("had no contact on Line", True)],
+)
+def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
+    conn, monkeypatch, words, kept
+):
+    # "his second line" may name no app at all: code reads no absence on Line for it, while
+    # "on Line" names the app (v5 failure hunt, 2026-11-16). The case has no Line, so the
+    # app list is patched.
+    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["Line"])
+    monkeypatch.setattr(
+        LocalAssumptionFiller,
+        "_channels",
+        lambda self, text, names, template_id="": list(names),
+    )
+    text = f"PETROV and REYES {words} between March 20 and March 23, 2026."
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [Proposal("no_contact", {"person_ids": [PETROV, REYES]}, is_core=True)]
+    if kept:
+        (row,) = filler._bind_named_app(c, out)
+        assert row.params["channels"] == ["Line"]
+    else:
+        with pytest.raises(Reject, match="plain word"):
+            filler._bind_named_app(c, out)
