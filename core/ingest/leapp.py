@@ -67,6 +67,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from core import db as db_errors
 from core.contracts import (
     CallDirection,
     ExtractionType,
@@ -236,7 +237,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         db.deserialize(z.read(db_member))
         db.execute("PRAGMA query_only = ON")
         db.execute("SELECT count(*) FROM sqlite_master").fetchone()
-    except sqlite3.DatabaseError as err:
+    except db_errors.DatabaseError as err:
         db.close()
         raise ValueError(f"{db_member} in {file_name} is not a SQLite database") from err
     info = manifest.get("parser_info") if isinstance(manifest.get("parser_info"), dict) else {}
