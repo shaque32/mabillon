@@ -102,3 +102,22 @@ def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
     before = sorted(p.name for p in odd.parent.iterdir())
     assert dump_lava.read(odd, KINDS)["counts"]["call"] == 3
     assert sorted(p.name for p in odd.parent.iterdir()) == before  # no stray file made
+
+
+def test_a_composite_dedupe_key_and_a_skipped_table(lava):
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.executescript(
+        "CREATE TABLE parts (conv INTEGER, ts INTEGER, dir TEXT, body TEXT);"
+        # one message in two parts, a second message, and a part with no timestamp
+        " INSERT INTO parts VALUES (1, 100, 'in', 'a'), (1, 100, 'in', 'b'), (1, 101, 'out', 'c'),"
+        " (2, NULL, 'in', 'd');"
+        " CREATE TABLE combined (body TEXT); INSERT INTO combined VALUES ('hi'), ('pic');"
+    )
+    db.commit()
+    db.close()
+    kinds = {"parts": {"kind": "message", "dedupe": ["conv", "ts", "dir"]},
+             "combined": {"kind": "skip"}}  # fmt: skip
+    r = dump_lava.read(lava, kinds)
+    assert r["tables"]["parts"]["count"] == 2 and r["tables"]["parts"]["null_dedupe_rows"] == 1
+    assert r["tables"]["combined"]["count"] == 2
+    assert r["counts"]["message"] == 2  # the skipped table repeats another and is not counted
