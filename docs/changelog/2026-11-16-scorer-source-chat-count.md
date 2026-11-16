@@ -7,7 +7,7 @@
   lost. The new count still catches a chat whose messages fail to import. Approved by Arsh on
   2026-11-16 for the next held-out run; a run already scored keeps the scorer it was scored
   with.
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #262
 - Verified: `tests/test_validation_score.py` (new: two source chats merged into one thread
   count as two, and a standalone message names no chat); the whole file passes locally (25).
   `make check` runs on GitHub CI.
