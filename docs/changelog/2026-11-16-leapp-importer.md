@@ -28,7 +28,7 @@
   absence check treats every other app, and a search on every channel, as not covered by that
   source, so "no contact" never passes on an app LEAPP read only in part.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (10 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (17 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text

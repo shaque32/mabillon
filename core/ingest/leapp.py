@@ -181,7 +181,13 @@ class Lava:
         }
         if art.table not in tables:
             return
-        cur = self.db.execute(f'SELECT rowid, * FROM "{art.table.replace(chr(34), chr(34) * 2)}"')  # noqa: S608  (a table the manifest names, quoted)
+        quoted = art.table.replace(chr(34), chr(34) * 2)
+        real = {r[1].lower() for r in self.db.execute(f'PRAGMA table_info("{quoted}")')}
+        alias = next((a for a in ("_rowid_", "rowid", "oid") if a not in real), None)
+        if alias is None:
+            # Every name for SQLite's row id is a real column here, so no row could be cited.
+            raise ValueError(f"LEAPP table {art.table} has columns that hide its row ids")
+        cur = self.db.execute(f'SELECT {alias}, * FROM "{quoted}"')  # noqa: S608  (a table the manifest names, quoted)
         cols = [d[0] for d in cur.description][1:]
         names = [art.column_map.get(c, c) for c in cols]
         for row in cur:

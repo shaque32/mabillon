@@ -562,3 +562,15 @@ def test_refuses_changed_bytes_and_a_second_import(tmp_path: Path) -> None:
     LeappImporter(source_id="i").import_source(z, conn)
     with pytest.raises(ValueError, match="already in this case"):
         LeappImporter(source_id="i").import_source(z, conn)
+
+
+def test_a_real_column_named_rowid_never_stands_in_for_the_row_id() -> None:
+    db = sqlite3.connect(":memory:")
+    db.execute('CREATE TABLE t ("rowid" TEXT, body TEXT)')
+    db.execute("INSERT INTO t VALUES ('not-a-row-id', 'hi')")
+    art = leapp.Artifact("SMS", "SMS", "sms", "t", "m", {"body": "Body"}, 1, None)
+    lava = leapp.Lava({}, db, "m", "d", "iLEAPP", None, [art])
+    assert list(lava.rows(art)) == [(1, {"rowid": "not-a-row-id", "Body": "hi"})]
+    db.execute('CREATE TABLE u ("rowid" TEXT, "_rowid_" TEXT, "oid" TEXT)')
+    with pytest.raises(ValueError, match="hide its row ids"):
+        list(lava.rows(leapp.Artifact("SMS", "SMS", "sms", "u", "m", {}, 0, None)))
