@@ -7,56 +7,40 @@ full text is folded under "Exactly what the file holds": every byte stays on the
 """
 
 CSS = """
+/* Help: four ruled sections at a reading width. */
 .pg-help { max-width: 760px; }
-.pg-help h1 { margin-bottom: 8px; }
-.pg-help section.hs { padding: 28px 0 4px; border-top: 1px solid var(--line); }
-.pg-help h1 + section.hs { border-top: 0; padding-top: 12px; }
-.pg-help section.hs h2 { margin: 0 0 10px; }
-.pg-help section.hs h3 { font-size: 13.5px; margin: 20px 0 6px; }
-.pg-help section.hs p, .pg-help section.hs li { max-width: 60ch; text-wrap: pretty; }
-.pg-help section.hs ul { margin: 0 0 12px; padding-left: 20px; }
-.pg-help section.hs li { margin: 0 0 6px; line-height: 1.55; }
+.pg-help section.hs { padding: var(--s5) 0 var(--s1); border-top: 1px solid var(--line); }
+.pg-help h1 + section.hs { border-top: 0; padding-top: 0; }
+.pg-help section.hs h2 { margin: 0 0 var(--s2); }
 .pg-help section.hs li::marker { color: var(--muted); }
-.pg-help section.words dl { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
-  gap: 6px 20px; margin: 0 0 12px; }
-.pg-help section.words dt { font-weight: 500; }
-.pg-help section.words dd { margin: 0; max-width: 60ch; color: var(--ink-2); }
-@media (max-width: 600px) { .pg-help section.words dl { grid-template-columns: minmax(0, 1fr); } }
-.pg-help code { font: 400 12.5px var(--mono); color: var(--ink-2); background: var(--panel);
-  border-radius: 4px; padding: 1px 5px; }
+.pg-help section.words dl { display: grid; gap: var(--s1) var(--s5); margin: 0 0 var(--s3);
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); }
+.pg-help section.words dt { font-weight: 600; }
+.pg-help section.words dd { margin: 0; color: var(--muted); }
 
-/* the three steps, numbered in small rings */
-.pg-help ol.steps { list-style: none; counter-reset: step; margin: 16px 0 8px; padding: 0;
-  display: grid; gap: 10px; }
-.pg-help ol.steps li { counter-increment: step; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 4px 8px; margin: 0; padding-left: 34px; position: relative;
-  min-height: 34px; }
-.pg-help ol.steps li::before { content: counter(step); position: absolute; left: 0; top: 50%;
-  transform: translateY(-50%); display: grid; place-items: center; width: 22px; height: 22px;
-  border-radius: 50%; font: 500 12px/1 var(--sans); color: var(--muted); background: var(--card);
-  box-shadow: inset 0 0 0 1px var(--line-strong); font-variant-numeric: tabular-nums; }
-.pg-help ol.steps a.button { color: var(--fg); background: var(--card);
-  border: 1px solid var(--line-strong); box-shadow: 0 1px 2px rgb(20 20 20 / 0.05);
-  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease); }
-.pg-help ol.steps a.button:hover { background: var(--hover); border-color: var(--line-hover); }
+/* the three steps of sending a bug report, numbered because the order matters */
+.pg-help ol.howto { list-style: none; counter-reset: step; margin: var(--s4) 0 var(--s2);
+  padding: 0; display: grid; gap: var(--s2); }
+.pg-help ol.howto li { counter-increment: step; display: flex; align-items: center;
+  flex-wrap: wrap; gap: var(--s1) var(--s2); margin: 0; min-height: var(--control); }
+.pg-help ol.howto li::before { content: counter(step) "."; width: var(--s4);
+  color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* the report's text, folded */
-.pg-help details.filetext { margin: 8px 0 16px; }
-.pg-help details.filetext > summary { font-size: 13.5px; }
-.pg-help details.filetext[open] > summary { margin-bottom: 10px; }
-.pg-help pre.bugreport { margin: 0; max-height: 480px; overflow: auto; padding: 14px 16px;
-  font: 400 12px/1.6 var(--mono); color: var(--ink-2); background: var(--card);
-  border: 1px solid var(--line); border-radius: var(--radius); scrollbar-width: thin; }
-.pg-help p.flash.err { max-width: 60ch; }
+.pg-help details.filetext { margin: var(--s2) 0 var(--s4); }
+.pg-help pre.bugreport { margin: 0; max-height: 480px; overflow: auto; padding: var(--s3);
+  font: 400 var(--t1)/var(--l1) var(--mono); border: 1px solid var(--line);
+  border-radius: var(--radius); scrollbar-width: thin; }
 
 /* what it does and does not, side by side when there is room */
-.pg-help .dodont { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 0 32px; }
-.pg-help .dodont h3 { margin-top: 12px; }
-.pg-help section.about p.muted { font-size: 12.5px; margin-top: 4px; }
+.pg-help .dodont { display: grid; gap: 0 var(--s6);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.pg-help .dodont h3 { margin-top: var(--s3); }
+.pg-help section.about p.muted { font-size: var(--t1); line-height: var(--l1); }
 
 @media (max-width: 600px) {
-  .pg-help section.hs { padding-top: 22px; }
-  .pg-help pre.bugreport { max-height: 360px; padding: 12px; }
+  .pg-help section.words dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .pg-help section.words dd { margin: 0 0 var(--s2); }
+  .pg-help pre.bugreport { max-height: 360px; }
 }
 """

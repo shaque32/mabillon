@@ -8,86 +8,73 @@ and the record is smaller and muted, so the run ids, versions and hashes stay pr
 """
 
 CSS = """
-/* the notices: quiet lines, each behind the shared notice rule (ui/theme.py), no panel */
-.ov-notices { box-sizing: border-box; max-width: 880px; margin: 0 0 28px; display: grid;
-  gap: 10px; }
-.ov-notices > .banner, main .ov-notices > .banner { max-width: none; margin: 0; }
-.ov-notices .banner details > summary { color: var(--fg); font-weight: 400; }
-.ov-notices .banner details > summary strong { font-weight: 500; }
-.ov-notices .banner details[open] > summary { margin-bottom: 8px; }
-.ov-notices .banner details > p, .ov-notices .banner details > p.format-notice {
-  max-width: 76ch; margin-left: 18px; }
-.ov-notices .banner details > p { color: var(--muted); }
-.ov-notices .banner form { margin: 10px 0 0; }
+/* The case page: its name, what waits on you, then the set-up and the record as ruled rows.
+   The notices above are the shared one-line notices (ui/theme.py). */
+.ov-notices, main:has(> .pg-overview) > .banner { max-width: 880px; }
+.ov-notices { margin: 0 0 var(--s4); }
+.ov-notices .banner details > p { margin-left: var(--s4); }
+.pg-overview { max-width: 880px; }
 
-.pg-overview h1 { max-width: 880px; margin-bottom: 16px; }
-
-/* what waits on you: the one box on the page; the button, then the counts past a thin rule */
-.pg-overview .casestatus { box-sizing: border-box; max-width: 880px; padding: 16px 20px;
-  gap: 12px 24px; margin-bottom: 16px; }
-.pg-overview .casestatus .findings { gap: 8px 20px; padding-left: 24px;
-  border-left: 1px solid var(--line); min-height: 24px; align-items: center; }
-.pg-overview #withheld { box-sizing: border-box; max-width: 880px; margin: 0 0 16px; }
-.pg-overview #withheld ul { margin: 6px 0 0; font-size: 13px; }
-.pg-overview form.box { box-sizing: border-box; max-width: 880px; }
+/* what waits on you: the page's one solid button, then the counts in a row */
+.pg-overview .casestatus { display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--s3) var(--s6); margin: 0 0 var(--s5); }
+.pg-overview .casestatus .findings { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5);
+  list-style: none; padding: 0; margin: 0; }
+.pg-overview .casestatus .findings li { margin: 0; }
+.pg-overview .casestatus .findings a { display: inline-flex; align-items: center;
+  gap: var(--s2); text-decoration: none; }
+.pg-overview .casestatus .findings .name { display: inline-flex; align-items: center;
+  gap: var(--s2); color: var(--muted); }
+.pg-overview .casestatus .findings a:hover .name { color: var(--ink); }
+.pg-overview .casestatus .findings .name::before { content: ""; width: var(--dot);
+  height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
+.pg-overview .casestatus .findings .t-con::before { background: var(--signal);
+  border-color: var(--signal); }
+.pg-overview .casestatus .findings .t-sup::before { background: var(--ink);
+  border-color: var(--ink); }
+.pg-overview .casestatus .findings b { font-variant-numeric: tabular-nums; }
+.pg-overview .casestatus .verdict { margin: 0; }
+.pg-overview #withheld { margin: 0 0 var(--s4); }
+.pg-overview #withheld ul { margin: var(--s1) 0 0; }
 
 /* case setup and the record: hairline rows with the label on the left */
-.pg-overview h2 { margin: 44px 0 10px; }
-.pg-overview ul.setuplist { max-width: 880px; margin: 0 0 10px; background: none; border: 0;
-  border-radius: 0; border-top: 1px solid var(--line); }
 .pg-overview ul.setuplist li { display: grid; grid-template-columns: 240px minmax(0, 1fr);
-  gap: 2px 24px; align-items: baseline; padding: 12px 0; border-top: 0;
-  border-bottom: 1px solid var(--line); }
+  gap: 0 var(--s5); align-items: baseline; }
 .pg-overview .ov-dev { min-width: 0; }
-.pg-overview .ov-dev b { font-weight: 600; }
-.pg-overview .ov-dev .src { display: block; margin-top: 1px; font-size: 12.5px;
-  color: var(--muted); font-weight: 400; }
 .pg-overview .ov-dev:not(:has(b)) { font-weight: 600; }
-.pg-overview .ov-who { min-width: 0; color: var(--ink-2); }
-.pg-overview .ov-none { display: inline-block; font-size: 12px; line-height: 18px;
-  padding: 1px 7px; border-radius: 4px; background: var(--panel); color: var(--muted); }
+.pg-overview .ov-dev .src { display: block; font-size: var(--t1); line-height: var(--l1);
+  color: var(--muted); font-weight: 400; }
+.pg-overview .ov-who { min-width: 0; }
+.pg-overview .ov-none { color: var(--muted); }
 .pg-overview .ov-head { display: flex; align-items: baseline; justify-content: space-between;
-  max-width: 880px; margin: 44px 0 10px; }
+  margin: var(--s7) 0 var(--s3); }
 .pg-overview .ov-head h2 { margin: 0; }
-.pg-overview .ov-head a { font-size: 13px; color: var(--muted); text-decoration: none; }
-.pg-overview .ov-head a:hover { color: var(--fg); }
-
-.pg-overview .ov-record { margin-top: 52px; }
-.pg-overview .ov-record h2 { margin-top: 0; font-size: 14px; }
-.pg-overview dl.record { max-width: 880px; grid-template-columns: 240px minmax(0, 1fr);
-  gap: 0 24px; margin: 0 0 4px; font-size: 13px; border-top: 1px solid var(--line); }
-.pg-overview dl.record dt, .pg-overview dl.record dd { padding: 8px 0;
+.pg-overview dl.record { grid-template-columns: calc(240px + var(--s5)) minmax(0, 1fr); gap: 0;
+  margin: 0; border-top: 1px solid var(--line); }
+.pg-overview dl.record dt, .pg-overview dl.record dd { padding: var(--s2) 0; max-width: none;
   border-bottom: 1px solid var(--line); }
-.pg-overview dl.record dt { color: var(--muted); font-weight: 500; }
-.pg-overview dl.record dd { max-width: none; color: var(--muted); }
-.pg-overview dl.record dd .mono { font-size: 12px; }
 
-/* the folds under the record: chain of custody and the reviewer, small and muted */
-.pg-overview details.custody { max-width: 880px; margin: 0; padding: 10px 0;
+/* the folds under the record: chain of custody and the reviewer */
+.pg-overview details.custody { margin: 0; padding: var(--s2) 0;
   border-bottom: 1px solid var(--line); }
-.pg-overview details.custody[open] { max-width: none; }
-.pg-overview details.custody > summary { font-size: 13px; }
-.pg-overview details.custody h2 { font-size: 13px; color: var(--muted); font-weight: 500;
-  margin: 14px 0 6px; }
-.pg-overview details.custody table { margin: 0 0 6px; font-size: 13px; }
-.pg-overview details.custody th, .pg-overview details.custody td { padding: 8px 12px; }
+.pg-overview details.custody[open] { overflow-x: auto; }
+.pg-overview details.custody h2 { font: 600 var(--t2)/var(--l2) var(--sans);
+  margin: var(--s4) 0 var(--s1); }
+.pg-overview details.custody table { margin: 0 0 var(--s2); font-size: var(--t1);
+  line-height: var(--l1); }
 .pg-overview details.custody td { overflow-wrap: normal; }
 .pg-overview details.custody td:nth-child(2), .pg-overview details.custody td:nth-child(3),
 .pg-overview details.custody td:nth-child(4), .pg-overview details.custody td:nth-child(7) {
   white-space: nowrap; }
-.pg-overview details.custody td:nth-child(7) { color: var(--muted); font-size: 12.5px; }
-.pg-overview details.custody td.mono { font-size: 11.5px; min-width: 16ch;
-  overflow-wrap: anywhere; }
-.pg-overview details.custody form.box { background: none; border: 0; padding: 0;
-  margin: 10px 0 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pg-overview details.custody td.mono { min-width: 16ch; overflow-wrap: anywhere; }
+.pg-overview details.custody form.box { display: flex; flex-wrap: wrap; gap: var(--s2);
+  align-items: center; margin: var(--s2) 0 var(--s1); }
 .pg-overview details.custody form.box input[type=text] { max-width: 280px; }
 
 @media (max-width: 640px) {
-  .pg-overview .casestatus .findings { padding-left: 0; border-left: 0; }
   .pg-overview ul.setuplist li { grid-template-columns: minmax(0, 1fr); }
   .pg-overview dl.record { grid-template-columns: minmax(0, 1fr); }
   .pg-overview dl.record dt { border-bottom: 0; padding-bottom: 0; }
-  .pg-overview dl.record dd { margin: 0; padding-top: 2px; }
-  .pg-overview details.custody { overflow-x: auto; }
+  .pg-overview dl.record dd { margin: 0; padding-top: 0; }
 }
 """

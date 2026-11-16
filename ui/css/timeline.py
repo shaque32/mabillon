@@ -11,94 +11,85 @@ Gaps: one panel per phone, the day strip on top and its quiet stretches below it
 """
 
 CSS = """
-/* Page head: the lede, then the explanation and the settings folded side by side */
-.pg-timeline > .lede, .pg-gaps > .lede, .pg-gaps > .caveat, .pg-timeline > .tl-summary {
-  max-width: 62ch; text-wrap: pretty; }
-.pg-timeline > .lede, .pg-gaps > .lede { margin: 0 0 8px; }
-.pg-gaps > .caveat { margin: 0 0 4px; color: var(--fg); font-weight: 500; }
-.pg-timeline > .tl-summary { margin: 16px 0 0; padding: 12px 16px; font-size: 13.5px;
-  background: var(--panel); border-radius: var(--radius); }
-.tl-folds { display: flex; flex-wrap: wrap; align-items: baseline;
-  gap: 6px 28px; margin: 14px 0 0; }
+/* Timeline and Gaps. The page head is the lede, then the explanation and the settings folded
+   side by side. Both pages show fragments of the report (core/report/timeline.py). */
+.pg-gaps > .caveat { margin: 0 0 var(--s1); font-weight: 600; }
+.pg-timeline > .tl-summary { margin: 0 0 var(--s2); color: var(--muted); }
+.tl-folds { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s5);
+  margin: var(--s2) 0 0; }
 .tl-folds > details, .tl-folds > details.case-settings { margin: 0; }
 .tl-folds > details[open] { flex-basis: 100%; }
-.tl-folds > details > summary { font-size: 13px; font-weight: 500; color: var(--muted);
-  text-wrap: pretty; transition: color 0.15s var(--ease); }
-.tl-folds > details > summary:hover, .tl-folds > details[open] > summary { color: var(--fg); }
-.tl-folds > details[open] > summary { margin-bottom: 10px; }
-.tl-folds > details.more > p { max-width: 62ch; margin: 0 0 6px; font-size: 13.5px;
-  color: var(--muted); text-wrap: pretty; }
-.tl-folds form.settings { max-width: 720px; padding: 18px 20px; }
-.pg-timeline h2 .n, .pg-gaps h2 .n { margin-left: 6px; font-weight: 500; color: var(--muted);
-  font-variant-numeric: tabular-nums; }
+.tl-folds > details > summary { color: var(--muted); }
+.tl-folds > details > summary:hover, .tl-folds > details[open] > summary { color: var(--ink); }
+.tl-folds > details.more > p { margin: 0 0 var(--s1); color: var(--muted); }
+.tl-folds form.settings { max-width: 720px; }
+.pg-timeline h2 .n, .pg-gaps h2 .n { margin-left: var(--s1); font-weight: 400;
+  color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* Timeline: one ledger per section */
-.pg-timeline .tl { margin: 0; background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); overflow: hidden; }
-.pg-timeline .tl > li, .pg-timeline .tl > li.flag { margin: 0; padding: 16px 20px;
-  background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0;
-  box-shadow: none; gap: 8px 32px; scroll-margin-top: 16px;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr) 120px;
-  transition: background-color 0.2s var(--ease); }
-.pg-timeline .tl > li:first-child { border-top: 0; }
-.pg-timeline .tl > li:target { background: var(--accent-bg); }
-.pg-timeline .tl .meta { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.pg-timeline .tl .said { margin: 2px 0 6px; font-size: 15px; font-weight: 500;
-  line-height: 1.4; }
-.pg-timeline .tl details { margin: 0 0 6px; }
-.pg-timeline .tl details > summary { font-size: 12.5px; font-weight: 500; color: var(--muted); }
-.pg-timeline .tl details > summary:hover, .pg-timeline .tl details[open] > summary {
-  color: var(--fg); }
-.pg-timeline .tl details[open] > summary { margin-bottom: 6px; }
-.pg-timeline .tl li > div > details > .q { display: block; max-width: 72ch; padding: 8px 12px;
-  font-size: 13.5px; background: var(--panel); border-radius: 6px; }
-.pg-timeline .tl .recs { display: grid; gap: 6px; align-content: start; font-size: 13.5px;
-  text-wrap: pretty; }
-.pg-timeline .tl .recs ul { list-style: none; margin: 6px 0 0; padding: 0; }
-.pg-timeline .tl .recs li { margin: 0 0 8px; padding: 0 0 0 12px; font-size: 13px;
-  line-height: 1.5; border-left: 1px solid var(--line-strong); }
-.pg-timeline .tl .recs li:last-child { margin-bottom: 0; }
-.pg-timeline .tl .recs details ul { margin-top: 0; }
-.pg-timeline .tl .st { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.pg-timeline .tl .notes { list-style: none; margin: 2px 0 0; padding: 0; font-size: 12.5px;
-  text-wrap: pretty; }
-.pg-timeline .tl .notes li + li { margin-top: 2px; }
+/* Timeline: one ruled row per stated time: what the document says, what the phones hold, and
+   the result at the right */
+.tl { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ink); }
+.tl > li { display: grid; gap: var(--s2) var(--s6); margin: 0; max-width: none;
+  padding: var(--s4) 0; border-bottom: 1px solid var(--line);
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr) 120px; }
+.tl > li:target { outline: 0; background: var(--line); }
+.tl .meta { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tl .said { margin: var(--s1) 0; font-weight: 600; }
+.tl details { margin: 0 0 var(--s1); }
+.tl details > summary { font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
+.tl details > summary:hover, .tl details[open] > summary { color: var(--ink); }
+.tl li > div > details > .q { display: block; max-width: 72ch; padding: 0 0 0 var(--s3);
+  border-left: 1px solid var(--muted); }
+.tl .recs { display: grid; gap: var(--s1); align-content: start; }
+.tl .recs ul { list-style: none; margin: var(--s1) 0 0; padding: 0; }
+.tl .recs li { margin: 0 0 var(--s2); padding: 0 0 0 var(--s3); max-width: none;
+  font-size: var(--t1); line-height: var(--l1); border-left: 1px solid var(--line); }
+.tl .recs li:last-child { margin-bottom: 0; }
+.tl .st { display: flex; flex-direction: column; align-items: flex-end; gap: var(--s1); }
+.tl .notes { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0;
+  font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
+.tl .notes li { max-width: none; }
+.d-ok { color: var(--ink); }
+.d-flag { color: var(--signal); font-weight: 600; }
 
-/* Gaps: one panel per phone; the day strip heads it, its stretches follow under hairlines */
-.pg-gaps .strips { margin: 0 0 12px; padding: 14px 20px; border-color: var(--line); }
-.pg-gaps .strips:has(+ .gap) { margin-bottom: 0; border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0; }
-.pg-gaps .strips > div:first-child { margin: 0 0 8px; font-size: 12.5px; }
+/* Gaps: per phone, the day strip, then its quiet stretches as ruled rows */
+.strips { margin: 0 0 var(--s4); padding: var(--s3) 0; overflow-x: auto;
+  border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line); }
+.strips > div:first-child { margin: 0 0 var(--s2); font-size: var(--t1); line-height: var(--l1);
+  color: var(--muted); }
 /* The phone's name is the heading just above; screen readers still hear it here. */
 .pg-gaps .strips > div:first-child > strong { position: absolute; width: 1px; height: 1px;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.pg-gaps .gap { margin: 0; padding: 16px 20px; border-top: 0; border-radius: 0; }
-.pg-gaps h2 + .gap, .pg-gaps details > summary + .gap { border-top: 1px solid var(--line);
-  border-top-left-radius: var(--radius); border-top-right-radius: var(--radius); }
-.pg-gaps .gap:not(:has(+ .gap)) { margin-bottom: 12px; border-bottom-left-radius: var(--radius);
-  border-bottom-right-radius: var(--radius); }
-.pg-gaps .gap .stmt { margin: 2px 0 10px; font-size: 14.5px; text-wrap: pretty; }
-.pg-gaps .gap dl { grid-template-columns: 104px minmax(0, 1fr); gap: 6px 20px; margin: 0; }
-.pg-gaps .gap dd { max-width: 84ch; text-wrap: pretty; overflow-wrap: anywhere; }
-.pg-gaps .gap dd ul { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 6px 0 2px;
-  padding: 0; list-style: none; }
-.pg-gaps .gap dd li { padding: 1px 8px; font-size: 12.5px; background: var(--panel);
-  border-radius: 4px; }
-.pg-gaps > details { margin: 4px 0 8px; }
-.pg-gaps > details > summary { font-size: 13px; font-weight: 500; }
-.pg-gaps > details[open] > summary { margin-bottom: 10px; }
+.strip { display: grid; grid-template-columns: 112px minmax(0, 1fr) 72px; gap: var(--s3);
+  align-items: end; margin: var(--s1) 0; min-width: 520px; font-size: var(--t1);
+  line-height: var(--l1); }
+.bars { display: flex; align-items: flex-end; gap: 0; height: 40px; }
+.bars span { flex: 1; min-height: 0; background: var(--muted);
+  border-left: 1px solid var(--paper); }
+.bars span.z { background: transparent; }
+.bars span.g { background: var(--line); }
+.axis { display: flex; justify-content: space-between; font-size: var(--t1);
+  line-height: var(--l1); color: var(--muted); }
+.pg-gaps .gap { margin: 0; padding: var(--s4) 0; border-bottom: 1px solid var(--line); }
+.pg-gaps .gap .stmt { margin: var(--s1) 0 var(--s2); font-weight: 600; max-width: 84ch; }
+.pg-gaps .gap dl { display: grid; grid-template-columns: 104px minmax(0, 1fr);
+  gap: var(--s1) var(--s5); margin: 0; }
+.pg-gaps .gap dt { color: var(--muted); }
+.pg-gaps .gap dd { margin: 0; max-width: 84ch; overflow-wrap: anywhere; }
+.pg-gaps .gap dd ul { margin: var(--s1) 0 0; padding-left: var(--s4); font-size: var(--t1);
+  line-height: var(--l1); color: var(--muted); }
+.pg-gaps .gap dd li { margin: 0; }
+/* The page intro states the not-found caveat once; the row keeps its own Searched line. */
+.pg-gaps .gap > .meta:last-child { display: none; }
+.pg-gaps > details { margin: var(--s2) 0; }
+.pg-gaps > details > summary { color: var(--muted); }
 
-@media (prefers-reduced-motion: reduce) {
-  .tl-folds > details > summary, .pg-timeline .tl > li { transition: none; }
-}
 @media (max-width: 760px) {
-  .pg-timeline .tl > li, .pg-timeline .tl > li.flag { grid-template-columns: minmax(0, 1fr);
-    padding: 14px 16px; }
-  .pg-timeline .tl .st { order: -1; flex-direction: row; align-items: baseline; gap: 8px; }
-  .pg-gaps .strips, .pg-gaps .gap { padding: 14px 16px; }
+  .tl > li { grid-template-columns: minmax(0, 1fr); }
+  .tl .st { order: -1; flex-direction: row; align-items: baseline; gap: var(--s2); }
 }
 @media (max-width: 600px) {
-  .pg-gaps .gap dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
-  .pg-gaps .gap dd { margin-bottom: 6px; }
+  .pg-gaps .gap dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .pg-gaps .gap dd { margin-bottom: var(--s2); }
 }
 """
