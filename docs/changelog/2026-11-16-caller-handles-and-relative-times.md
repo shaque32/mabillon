@@ -15,7 +15,7 @@
   - Another act (`_OTHER_ACT_RE`). "refers to", "referred" and "referring" join the acts whose
     stated time code does not give to a quoted message: in "the message ... was referring to
     the picture X sent at about 8:10 p.m.", the time is the picture's.
-- Where: branch claude/project-thread-ds0ify (PR to follow).
+- Where: PR #261
 - Verified: new tests in `tests/test_fill_calls.py` (the app after a call's clause, other
   words or another app, four relative-time wordings, the refer forms). Related filler, window,
   quote, account, caller and validation tests pass locally (1,633). A replay of stored model
