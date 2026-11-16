@@ -274,6 +274,15 @@ def test_refuses_a_zip_without_one_manifest_and_its_database(tmp_path: Path) -> 
         LeappImporter(source_id="x").import_source(two, _db())
 
 
+def test_refuses_a_database_that_unpacks_past_the_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    z = _ios().write_zip(tmp_path / "i.zip")
+    monkeypatch.setattr(leapp, "MAX_DB_BYTES", 1024)
+    with pytest.raises(ValueError, match="more than the 1,024"):
+        LeappImporter(source_id="x").import_source(z, _db())
+
+
 def test_refuses_another_leapp_tool(tmp_path: Path) -> None:
     lv = _ios()
     lv.leapp = "RLEAPP"

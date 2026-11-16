@@ -12,7 +12,13 @@
   a LEAPP manifest here; every other `.zip` stays a UFDR. Contracts and schema 0.9.0 add source
   kind `leapp` (signed by Arsh 2026-11-16, `PROPOSED_CHANGES.md`). Why: the next held-out public
   test (an iOS 17 and Android 14 pair) is published as raw extractions with no Cellebrite or
-  AXIOM export, and LEAPP is the free, open-source way to read them.
+  AXIOM export, and LEAPP is the free, open-source way to read them. The absence check 1.0.2
+  (`core/audit/checks/absence.py`, Greptile on #264) now treats a message or call that records
+  no receiver as unplaced, the way it already treated one with no sender: LEAPP names the other
+  side of a phone's incoming SMS and call but often not the phone's own line, and such a record
+  was silently left out, so "no contact" could pass with an incoming text from the other person
+  inside the window. It now makes the check inconclusive. The zip's manifest and database are
+  refused when they unpack past 256 MB and 8 GB.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
 - Verified: `tests/test_leapp.py` (10 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
@@ -35,12 +41,14 @@
   and time within two seconds, with no message id, so two identical texts sent within two seconds
   would be read as one. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR
   import of the same phone shows them as incoming.
-- Affects: capabilities (a new input format, unverified); customer-facing claims (none until a
-  scored run; framing stays "tested on public forensic images")
+- Affects: capabilities (a new input format, unverified); verdict path (absence check
+  1.0.2 can only turn a PASS into INCONCLUSIVE); customer-facing claims (none until a scored run;
+  framing stays "tested on public forensic images")
 - Status doc: pending: in "Contracts and schema", change 0.8.0 to 0.9.0 and add "0.9.0 adds
   source kind `leapp` (signed by Arsh 2026-11-16, #264)". In "Importers (main)", add "iLEAPP and
   ALEAPP output `leapp` 0.1.0 (`core/ingest/leapp.py`, #264; `FORMAT_SUPPORT = "unverified"`;
   messages, calls and contacts only, every other artifact listed as not imported)". In section 8
   item 1 (Import), add "iLEAPP and ALEAPP LAVA output (unverified; checked against a UFDR on the
-  public Android 13 and iOS 15 test phones, #264)". In "Real-data formats unverified", add LEAPP
-  output to the formats with no real case export imported.
+  public Android 13 and iOS 15 test phones, #264)". In the check versions line, "same_account and absence 1.0.1" becomes
+  "same_account 1.0.1, absence 1.0.2 (#264: a record with no receiver blocks PASS)". In "Real-data formats
+  unverified", add LEAPP output to the formats with no real case export imported.

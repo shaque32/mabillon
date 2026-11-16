@@ -30,7 +30,7 @@ from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 
 class AbsenceCheck(TemplateCheck):
     name = "absence"
-    version = "1.0.1"
+    version = "1.0.2"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None:
@@ -64,8 +64,10 @@ class AbsenceCheck(TemplateCheck):
         found: list[Row] = []
         unplaced: list[Row] = []
         for r in rows:
-            if r.sender is None:
-                # A row with a party on it but no sender: it may be contact, it may not.
+            if r.sender is None or not r.recipients:
+                # A row with a party on it but no sender, or no recorded receiver (an import
+                # that names the other side of a phone's own message or call but not the
+                # phone's line): it may be contact, it may not.
                 if r.ts_utc is None or in_window(r.ts_utc, p.window):
                     unplaced.append(r)
             elif involves_all(r, [a_ids, b_ids]):

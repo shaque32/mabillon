@@ -102,6 +102,11 @@ NATIVE_MESSAGES_APP = "Native Messages"
 FORMAT_SUPPORT = "unverified"
 MANIFEST_NAMES = ("_lava_data.lava", "_lava_data.json")  # LAVA accepts both names
 DEFAULT_DB_NAME = "_lava_artifacts.db"
+# The most the manifest and the database may unpack to. The database is read into memory (never
+# written out unencrypted), so a zip member that claims more is refused before it is expanded.
+# The public iOS 15 test phone's database is 1.4 GB, most of it file system events.
+MAX_MANIFEST_BYTES = 256 * 1024 * 1024
+MAX_DB_BYTES = 8 * 1024 * 1024 * 1024
 LEAPP_NAMES = {"ileapp": "iLEAPP", "aleapp": "ALEAPP"}
 # LEAPP input types that are a phone's file system (fs, tar, zip, gz); an iTunes backup is not.
 FILE_SYSTEM_INPUTS = {"fs", "tar", "zip", "gz", "tgz", "file"}
@@ -183,6 +188,17 @@ def _member(names: list[str], wanted: tuple[str, ...]) -> list[str]:
     return [n for n in names if PurePosixPath(n).name in wanted and not n.startswith("__MACOSX/")]
 
 
+def _check_size(z: zipfile.ZipFile, member: str, limit: int, file_name: str) -> None:
+    """Refuse a member that unpacks to more than `limit` bytes. zipfile reads no more than the
+    size the member's header states, so the header's size bounds what is expanded."""
+    size = z.getinfo(member).file_size
+    if size > limit:
+        raise ValueError(
+            f"{member} in {file_name} unpacks to {size:,} bytes, more than the {limit:,} Mabillon "
+            "reads from a LEAPP output"
+        )
+
+
 def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     """Read the LAVA pair from a zip of a LEAPP output folder. Refuses a zip that holds no
     manifest, more than one, or no database beside it."""
@@ -202,6 +218,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
             f"{file_name} holds {len(found)} LEAPP manifests; zip one LEAPP run's output folder"
         )
     man_member = found[0]
+    _check_size(z, man_member, MAX_MANIFEST_BYTES, file_name)
     try:
         manifest = json.loads(z.read(man_member).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
@@ -213,6 +230,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     db_member = db_name if parent == "." else f"{parent}/{db_name}"
     if db_member not in names:
         raise ValueError(f"{file_name} holds {man_member} but not {db_name} beside it")
+    _check_size(z, db_member, MAX_DB_BYTES, file_name)
     db = sqlite3.connect(":memory:")
     try:
         db.deserialize(z.read(db_member))

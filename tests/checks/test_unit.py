@@ -120,6 +120,20 @@ def test_absence_with_an_unplaceable_row_is_inconclusive() -> None:
     assert r.record_ids == ("msg:p1:5", "msg:p1:7")
 
 
+def test_absence_with_a_row_naming_no_receiver_is_inconclusive() -> None:
+    # A message from B that records no receiver (an import that names the other side of a
+    # phone's own message but not the phone's line): it may be contact with A, so no PASS.
+    conn = without_undated_row(build())
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES ('msg:p1:8', 'p1', 'x', 't1', 'a:p1:b', 'incoming',"
+        " '2026-04-05T12:00:00Z', 'hi')"
+    )
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert r.record_ids == ("msg:p1:8",)
+
+
 def test_absence_fails_on_contact_matching_numbers_across_formats() -> None:
     r = check(build(), "no_contact", person_ids=[A, B], window=MARCH)
     assert r.outcome is CheckOutcome.FAIL
@@ -271,7 +285,7 @@ def test_checks_never_write_to_the_database() -> None:
 def test_run_checks_ids_follow_the_contract() -> None:
     a = instantiate("C1", "no_contact", {"person_ids": [A, B], "window": MARCH})
     (r,) = run_checks(a, build())
-    assert r.id == f"chk:{a.id}|absence@1.0.1"
+    assert r.id == f"chk:{a.id}|absence@1.0.2"
     assert r.assumption_id == a.id and r.searched
 
 
@@ -474,7 +488,9 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     r = check(build(), "sender", quoted_text="see you at noon", person_ids=[B],
               device_ids=["dev:p2"])  # fmt: skip
     assert r.id.endswith("|sender@1.2.0")
-    assert {CHECKS[n].version for n in ("absence", "same_account")} == {"1.0.1"}
+    assert CHECKS["same_account"].version == "1.0.1"
+    # absence 1.0.2: a row with no recorded receiver is unplaced, never "none found" (#264)
+    assert CHECKS["absence"].version == "1.0.2"
     # The checks that match a quote's text record the fold (curly quotes, runs of spaces).
     assert CHECKS["weekday"].version == "1.0.2"
     # The sender check fails only on a record or a confirmed fact (1.1.0), and neither it nor
