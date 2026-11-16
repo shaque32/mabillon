@@ -20,9 +20,12 @@
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text
   messages match on time to the second, direction and text (the other differs by a line break);
   all 108 calls match on time and other party; all 13 phone contacts are in the UFDR. All 123
-  Google Messages messages on that phone repeat an SMS or MMS and were skipped. The public iOS 15
-  phone was checked the same way (see the PR). These phones are development data, not a scored
-  run.
+  Google Messages messages on that phone repeat an SMS or MMS and were skipped. On the public
+  iOS 15 phone (iLEAPP 2026.4.7-dev, same day and machine): all 37 text messages and all 22 calls
+  match the UFDR import, and all 13 contact numbers are in it. Each skipped Google Messages
+  message is listed with the SMS or MMS it matched (`leapp.google_messages_skipped` in the
+  coverage record and the import's audit log entry), so another reader can re-check each pair.
+  These phones are development data, not a scored run.
 - Open: Format support is unverified: no case data has been read with it, and every import says
   so. Third-party chat apps (WhatsApp, Signal, Telegram and others), device model, OS and time
   zone, and forwarded or quoted marks are not read. LEAPP stores whole seconds, so a timing claim

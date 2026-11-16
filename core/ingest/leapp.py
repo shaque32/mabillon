@@ -131,6 +131,7 @@ _ANDROID_CALL_DIR = {
 }
 # ALEAPP writes a media part's path in the MMS Body column when it did not find the file.
 _MMS_PART_PATH_RE = re.compile(r"^/\S*/(?:app_parts|parts)/\S+$")
+OBJECT_REPLACEMENT = "\ufffc"
 # Seconds within which a Google Messages message is the same as an SMS or MMS one.
 SAME_MESSAGE_SECONDS = 2
 
@@ -161,6 +162,8 @@ class Lava:
     leapp_name: str
     leapp_version: str | None
     artifacts: list[Artifact]
+    # Google Messages messages skipped as the same as an SMS or MMS, each with the one it matched
+    dropped: list[dict[str, Any]] = field(default_factory=list)
 
     def rows(self, art: Artifact) -> Iterator[tuple[int, dict[str, Any]]]:
         """(rowid, {header as LEAPP wrote it: value}) for each row of the artifact's table."""
@@ -401,7 +404,9 @@ def _ios_sms(c: _Ctx) -> None:
         chat = _text(r.get("Chat ID"))
         chat_key = f"chat:{chat}" if chat else f"row:{loc}"
         title = _text(r.get("Chat Name")) or _text(r.get("Chat Contact ID"))
-        body = str(r.get("Message") or "")
+        # iOS writes U+FFFC (the object replacement character) where an attachment sits; the
+        # attachment is recorded below, so the character is not part of the text
+        body = str(r.get("Message") or "").replace(OBJECT_REPLACEMENT, "")
         atts = [
             _text(x.get("Attachment Name")) or _text(x.get("Attachment Path")) or ""
             for _, x in rows
@@ -488,9 +493,10 @@ def _norm(body: str) -> str:
     return " ".join(body.split())
 
 
-def _native_keys(c: _Ctx) -> set[tuple[int, str, str]]:
-    """(epoch second, direction, text) of every SMS and MMS in the output, as read above."""
-    keys: set[tuple[int, str, str]] = set()
+def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[str]]:
+    """(epoch second, direction, text) of every SMS and MMS in the output, as read above, to the
+    locators of the messages that have it."""
+    keys: dict[tuple[int, str, str], list[str]] = defaultdict(list)
     probe = _Ctx(c.w, TableCoverage(name="", kind=None), c.art, c.lava)
     for art in c.lava.artifacts:
         if art.key == "get_sms_mms":
@@ -498,18 +504,41 @@ def _native_keys(c: _Ctx) -> set[tuple[int, str, str]]:
                 ts = _time(r.get("Date")).utc
                 d = _android_direction(probe, r.get("Type"), f"rowid={rowid}", count=False)
                 if ts is not None:
-                    keys.add((int(ts.timestamp()), d.value, _norm(str(r.get("Body") or ""))))
+                    keys[(int(ts.timestamp()), d.value, _norm(str(r.get("Body") or "")))].append(
+                        _loc(art.table, "msg_id", r.get("MSG ID"), rowid)
+                    )
         elif art.key == "get_sms_mms_mms":
             groups: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
             for rowid, r in c.lava.rows(art):
                 groups[_text(r.get("MSG ID")) or f"rowid:{rowid}"].append((rowid, r))
             for rows in groups.values():
-                r = rows[0][1]
+                rowid, r = rows[0]
                 ts = _time(r.get("Date")).utc
                 d = _android_direction(probe, r.get("Direction"), "", count=False)
                 if ts is not None:
-                    keys.add((int(ts.timestamp()), d.value, _norm(_mms_parts(probe, rows, "")[0])))
+                    text = _norm(_mms_parts(probe, rows, "")[0])
+                    keys[(int(ts.timestamp()), d.value, text)].append(
+                        _loc(art.table, "msg_id", r.get("MSG ID"), rowid)
+                    )
     return keys
+
+
+def _same_message(
+    native: dict[tuple[int, str, str], list[str]],
+    ts: Timestamp,
+    direction: MessageDirection,
+    body: str,
+) -> tuple[str, int] | None:
+    """(locator, seconds apart) of the nearest SMS or MMS with this direction and text within
+    SAME_MESSAGE_SECONDS, the earliest locator on a tie; None when there is none."""
+    if ts.utc is None:
+        return None
+    sec = int(ts.utc.timestamp())
+    for dt in sorted(range(-SAME_MESSAGE_SECONDS, SAME_MESSAGE_SECONDS + 1), key=abs):
+        locs = native.get((sec + dt, direction.value, _norm(body)))
+        if locs:
+            return locs[0], dt
+    return None
 
 
 def _android_google_messages(c: _Ctx) -> None:
@@ -546,12 +575,14 @@ def _android_google_messages(c: _Ctx) -> None:
             and (mt := _text(x.get("Message Type")) or "")
             and not mt.startswith("text/")
         ]
-        if ts.utc is not None and any(
-            (int(ts.utc.timestamp()) + dt, mdir.value, _norm(body)) in native
-            for dt in range(-SAME_MESSAGE_SECONDS, SAME_MESSAGE_SECONDS + 1)
-        ):
+        match = _same_message(native, ts, mdir, body)
+        if match is not None:
             c.tc.rows_skipped["same_as_an_sms_or_mms_message"] += 1
             _listed(c.tc.skipped_locators, "same_as_an_sms_or_mms_message", loc)
+            c.lava.dropped.append(
+                {"locator": loc, "rows": [i for i, _ in rows], "same_as": match[0],
+                 "seconds_apart": match[1]}
+            )  # fmt: skip
             continue
         sender_ident = _ident(r.get("Message Sender"))
         convo = _text(r.get("Other Participant/Conversation Name"))
@@ -870,6 +901,9 @@ class LeappImporter:
                         for _, a in read
                     ],  # fmt: skip
                     "artifacts_in_manifest": len(lava.artifacts),
+                    # every skipped Google Messages message: its locator, its part rows (LAVA
+                    # rowids), the SMS or MMS it matched and how many seconds apart
+                    "google_messages_skipped": lava.dropped,
                 },
             )
             check = tested.at_import(

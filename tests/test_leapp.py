@@ -54,7 +54,7 @@ def _ios() -> Lava:
                 "Message Timestamp": "2024-02-01T15:06:00Z",
                 "From Me": "1",
                 "Chat Contact ID": ALICE,
-                "Message": "ok",
+                "Message": "ok\ufffc",  # iOS marks where the attachment sits
                 "Chat Participants": ALICE,
                 "Service": "iMessage",
                 "Account": f"P:{OWNER}",
@@ -409,6 +409,15 @@ def test_android_messages_calls_and_contacts(tmp_path: Path) -> None:
     assert tables["SMS Messages"]["flag_counts"]["not_sent_or_received"] == 1
     assert tables["MMS Messages"]["flag_counts"]["rows_grouped_into_one_message"] == 2
     assert tables["GoogleMessages"]["rows_skipped"] == {"same_as_an_sms_or_mms_message": 1}
+    # each skipped Google Messages message names the SMS it matched, for a reader to re-check
+    assert payload["leapp"]["google_messages_skipped"] == [
+        {
+            "locator": "get_googlemessages/rowid=1",
+            "rows": [1],
+            "same_as": "get_sms_mms/msg_id=5",
+            "seconds_apart": -1,
+        }
+    ]
 
 
 def test_artifacts_not_read_are_listed_so_absence_is_never_assumed(tmp_path: Path) -> None:

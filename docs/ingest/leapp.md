@@ -49,7 +49,10 @@ message was stored under another of the phone's own services.
 Google Messages holds most of the phone's SMS and MMS a second time. A Google Messages message
 with the same direction and text as an SMS or MMS within two seconds is skipped and counted
 (`same_as_an_sms_or_mms_message`), so no message is counted twice; the rest (RCS, chiefly) is
-imported. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
+imported. The coverage record and the import's audit log entry list each skipped one under
+`leapp.google_messages_skipped`: its locator, its part rows (LAVA rowids), the SMS or MMS it
+matched (`same_as`, the nearest in time) and `seconds_apart`, so another reader can re-check
+every pair. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
 is recorded as the attachment's name, never as text, and flagged (`media_file_not_in_extraction`).
 
 Every other artifact in the manifest (ALEAPP's combined `SMS and MMS Messages` included, which
@@ -70,6 +73,9 @@ Direction and parties:
   placed it and it was not answered; any other (voicemail, blocked, answered elsewhere) is
   imported with direction unknown and flagged. ALEAPP's `Phone Account Address` is the owner's
   line on the call.
+
+iOS writes U+FFFC (the object replacement character) in a message's text where an attachment
+sits; it is removed from the text, and the attachment is recorded on its own.
 
 Times: LEAPP converts the phone's value to a UTC epoch in whole seconds (the phone's
 milliseconds are dropped), so each time is stored as UTC with offset 0, and the epoch as stored,
@@ -96,6 +102,15 @@ phone's UFDR, on 2026-11-16 in a cloud container (development data, not a scored
   with no duration; LEAPP's import shows them as missed with duration 0. Type 4 is unknown in
   both.
 - Contacts: all 13 phone contacts are in the UFDR, which also lists app contacts.
+
+iLEAPP (commit in the PR) on the public iOS 15 test phone, the same way and day:
+
+- Messages: all 37 text messages match on text, direction and time (to the second, or one second
+  apart where the UFDR's milliseconds cross a second LEAPP drops). The UFDR lists each twice.
+- Calls: all 22 call history rows match on time and other party. The UFDR also holds about 26
+  more call records read from other databases and apps; LEAPP's call history does not have
+  them, and they are listed among the artifacts not imported only where LEAPP parsed them.
+- Contacts: all 13 numbers and addresses are in the UFDR.
 
 ## Not yet done
 
