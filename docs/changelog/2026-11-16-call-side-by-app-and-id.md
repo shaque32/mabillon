@@ -19,7 +19,7 @@
   items, no contradicts item, no failed check, and no core assumption left open (every check
   on it inconclusive, or no check and no supporting item). v4's measure and v4's bars are
   unchanged. Tests in `tests/test_validation_score.py`.
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #263
 - Verified: `tests/test_dump_lava.py` (synthetic LAVA output made in the test). New tests in
   `tests/test_fill_calls.py` (three wordings that get a caller and
   pass its check; four that name no caller; a side described before the verb). Filler,
