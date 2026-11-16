@@ -79,7 +79,8 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
     manifest_path, db_path = lava_dir / MANIFEST, lava_dir / DATABASE
     manifest = json.loads(manifest_path.read_text("utf-8"))
     listed = manifest_tables(manifest)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    # as_uri() escapes '#', '?' and '%' in the path, so mode=ro always applies (Greptile on #263).
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     try:
         in_db = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         tables: dict[str, dict] = {}

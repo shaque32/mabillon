@@ -92,3 +92,13 @@ def test_the_reader_imports_only_the_standard_library():
              for a in n.names}  # fmt: skip
     names |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert names <= set(sys.stdlib_module_names), names
+
+
+def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
+    odd = tmp_path / "phone#1 ?x%20"
+    odd.mkdir()
+    for name in (dump_lava.MANIFEST, dump_lava.DATABASE):
+        (odd / name).write_bytes((lava / name).read_bytes())
+    before = sorted(p.name for p in odd.parent.iterdir())
+    assert dump_lava.read(odd, KINDS)["counts"]["call"] == 3
+    assert sorted(p.name for p in odd.parent.iterdir()) == before  # no stray file made
