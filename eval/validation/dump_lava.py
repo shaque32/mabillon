@@ -10,10 +10,14 @@ column_map, record_count and source_path), and `_lava_artifacts.db`, one SQLite 
 artifact.
 
 Usage: python3 -I -m eval.validation.dump_lava <lava_dir> <kinds.json> <out.json>
-kinds.json maps each table read as a kind to that kind and its dedupe column, if any:
-    {"sms_messages": {"kind": "message", "dedupe": "message_row_id"}, ...}
-A table with a dedupe column is counted by its distinct non-null values of that column (iLEAPP's
-SMS table has one row per attachment); any other table by its rows. The manifest's record_count
+kinds.json maps each table read as a kind to that kind and its dedupe columns, if any:
+    {"sms": {"kind": "message", "dedupe": "message_row_id"},
+     "get_googlemessages": {"kind": "message",
+                            "dedupe": ["conversation_id", "message_timestamp", "direction"]}}
+A table with dedupe columns is counted by its distinct values of those columns, over rows where
+none is null (iLEAPP's SMS table has one row per attachment); any other table by its rows. A
+table may also be listed with "kind": "skip" (one that repeats another, such as ALEAPP's
+get_sms_mms_combined): it is reported and never counted. The manifest's record_count
 is reported beside the live count and never used as the count.
 """
 
@@ -26,6 +30,7 @@ from pathlib import Path
 MANIFEST = "_lava_data.lava"
 DATABASE = "_lava_artifacts.db"
 KINDS = ("message", "call", "contact")
+SKIP = "skip"
 VERSION = "1.0.0"
 
 
@@ -55,23 +60,30 @@ def quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def count(conn: sqlite3.Connection, table: str, dedupe: str | None) -> dict:
+def count(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) -> dict:
     cols = [r[1] for r in conn.execute(f"PRAGMA table_info({quote(table)})")]
     if not cols:
         raise SystemExit(f"dump_lava: table {table!r} is not in {DATABASE}")
     # Names are quoted, and each is one the database itself lists (sqlite_master, table_info).
     rows = conn.execute(f"SELECT COUNT(*) FROM {quote(table)}").fetchone()[0]  # noqa: S608
     out = {"rows": rows, "count": rows}
-    if dedupe is not None:
-        if dedupe not in cols:
-            raise SystemExit(f"dump_lava: table {table!r} has no column {dedupe!r}")
-        c = quote(dedupe)
+    if dedupe:
+        keys = [dedupe] if isinstance(dedupe, str) else list(dedupe)
+        for k in keys:
+            if k not in cols:
+                raise SystemExit(f"dump_lava: table {table!r} has no column {k!r}")
+        names = ", ".join(quote(k) for k in keys)
+        no_null = " AND ".join(f"{quote(k)} IS NOT NULL" for k in keys)
         out["count"] = conn.execute(
-            f"SELECT COUNT(DISTINCT {c}) FROM {quote(table)} WHERE {c} IS NOT NULL"  # noqa: S608
+            f"SELECT COUNT(*) FROM (SELECT DISTINCT {names} FROM {quote(table)}"  # noqa: S608
+            f" WHERE {no_null})"
         ).fetchone()[0]
-        out["null_dedupe_rows"] = conn.execute(
-            f"SELECT COUNT(*) FROM {quote(table)} WHERE {c} IS NULL"  # noqa: S608
-        ).fetchone()[0]
+        out["null_dedupe_rows"] = (
+            rows
+            - conn.execute(
+                f"SELECT COUNT(*) FROM {quote(table)} WHERE {no_null}"  # noqa: S608
+            ).fetchone()[0]
+        )
     return out
 
 
@@ -79,14 +91,15 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
     manifest_path, db_path = lava_dir / MANIFEST, lava_dir / DATABASE
     manifest = json.loads(manifest_path.read_text("utf-8"))
     listed = manifest_tables(manifest)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    # as_uri() escapes '#', '?' and '%' in the path, so mode=ro always applies (Greptile on #263).
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     try:
         in_db = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         tables: dict[str, dict] = {}
         totals = {k: 0 for k in KINDS}
         for table, spec in sorted(kinds.items()):
             kind = spec.get("kind")
-            if kind not in KINDS:
+            if kind not in (*KINDS, SKIP):
                 raise SystemExit(f"dump_lava: {table!r} has kind {kind!r}, not one of {KINDS}")
             if table not in in_db:
                 # A table the importer reads but this run did not write: zero, said so.
@@ -102,7 +115,8 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
                 "in_manifest": table in listed,
                 "source_path": art.get("source_path"),
             }
-            totals[kind] += got["count"]
+            if kind != SKIP:
+                totals[kind] += got["count"]
         unread = sorted((in_db & set(listed)) - set(kinds))
     finally:
         conn.close()
