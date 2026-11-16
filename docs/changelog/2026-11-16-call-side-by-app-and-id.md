@@ -1,4 +1,4 @@
-## 2026-11-16: A call's other side may be described by its app and given with its id
+## 2026-11-16: A call's other side may be described by its app and given with its id; a plain LEAPP reader for validation
 - Changed: filler 11 (`core/audit/assumption_filler.py`, `call_form`, `_caller_params`,
   `_call_parties`). A call's clause may describe its other side by the call's own app ("called
   the Instagram user \"Marc R.,\" user ID 4984...") and give the side's id beside its name (",
@@ -7,8 +7,16 @@
   that is a second account leave the caller unread. A comma inside a quoted name's closing
   mark is the claim's punctuation, so the name is looked up without it. Before, such a claim
   kept only its time row, so a reversed direction never showed.
+- Also: `eval/validation/dump_lava.py` (new, validation tooling only). A plain reader of a LEAPP
+  run's output (`_lava_data.lava` and `_lava_artifacts.db`), standard library only, written from
+  the LAVA format and not from the LEAPP importer's code. It counts the tables named as
+  messages, calls and contacts from the tables themselves (distinct values of a dedupe column
+  where one is given, since iLEAPP's SMS table has one row per attachment), reports the
+  manifest's record_count beside each live count, and opens the database read-only. Validation
+  v5's bar 8 will compare Mabillon's import counts with it.
 - Where: branch claude/project-thread-ds0ify
-- Verified: new tests in `tests/test_fill_calls.py` (three wordings that get a caller and
+- Verified: `tests/test_dump_lava.py` (synthetic LAVA output made in the test). New tests in
+  `tests/test_fill_calls.py` (three wordings that get a caller and
   pass its check; four that name no caller; a side described before the verb). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
