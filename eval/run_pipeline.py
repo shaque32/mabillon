@@ -758,6 +758,7 @@ def both_passes(
         got = dataclasses.replace(
             testability.named(rows),
             parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
+            claim_apps=step.filler.claim_apps(texts.get(cid, "")),
         )
         diff = testability.mismatch(got, want)
         match = not diff and not left_out(rows, wanted.get(cid, ()))

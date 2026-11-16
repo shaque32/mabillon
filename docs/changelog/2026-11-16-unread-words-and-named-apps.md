@@ -28,6 +28,10 @@
     count inconclusive, with a note for the expert. On the Android 13 development phone a chat
     of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and Google
     Messages), so a true "exactly 12" failed.
+  - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`). An app code
+    binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not counted as
+    naming more than the signed sheet, as a party the claim names is not. Without this, "texted"
+    bound to SMS read as a mismatch on case01 C12. Other apps a try names still count.
 - Where: branch claude/project-thread-kpsvpk (PR to come), on top of #263
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, seven
   unread tails, a named app bound, an app or email the case lacks, seconds, four absence

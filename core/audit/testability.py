@@ -286,6 +286,9 @@ class Named:
     # Of `people`, the claim-named parties the sheet check does not count (claim_parties; set
     # only under SHEET_CHECK_PARTIES). Not in the payload: a replay computes it again.
     parties: frozenset[str] = frozenset()
+    # Of `apps`, those code binds from the claim's own words (LocalAssumptionFiller.claim_apps,
+    # filler 12), which the sheet check does not count either. Not in the payload.
+    claim_apps: frozenset[str] = frozenset()
 
     def payload(self) -> dict[str, list[Any]]:
         return {
@@ -393,7 +396,8 @@ def account_copies(conn: sqlite3.Connection) -> Callable[[str], frozenset[str]]:
 def mismatch(repair: Named, sheet: Named) -> list[str]:
     """What the repaired set names that the sheet does not. Empty: the same people, phones,
     windows, accounts, handles, apps, templates and quoted words as the sheet, or fewer. A
-    person in `repair.parties` (a party the claim's own words name) is not counted."""
+    person in `repair.parties` (a party the claim's own words name) is not counted, nor an app
+    in `repair.claim_apps` (one code binds from the claim's own words)."""
     out = []
     for what, got, want in (
         ("person", repair.people - repair.parties, sheet.people),
@@ -401,7 +405,7 @@ def mismatch(repair: Named, sheet: Named) -> list[str]:
         ("time window", repair.windows, sheet.windows),
         ("account", repair.accounts, sheet.accounts),
         ("handle", repair.handles, sheet.handles),
-        ("app", repair.apps, sheet.apps),
+        ("app", repair.apps - repair.claim_apps, sheet.apps),
         ("template", repair.templates, sheet.templates),
         ("quoted words", repair.quotes, sheet.quotes),
     ):
@@ -597,7 +601,7 @@ def check_answer(
         out.setdefault(a.id, a)
     assumptions = list(out.values())
     rows = [(a.template_id, a.params.model_dump()) for a in assumptions if a.is_core]
-    got = named(rows)
+    got = dataclasses.replace(named(rows), claim_apps=filler.claim_apps(claim.text))
     if check == SHEET_CHECK_PARTIES:
         got = dataclasses.replace(got, parties=claim_parties(filler, claim.text, rows))
     outside = outside_claim(filler, claim, got)

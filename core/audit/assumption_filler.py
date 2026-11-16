@@ -4267,6 +4267,18 @@ class LocalAssumptionFiller:
             return out  # the call's time stays tested; its count does not
         return [*out, Proposal("message_count", params, is_core=True, code_made=True)]
 
+    def claim_apps(self, claim_text: str) -> frozenset[str]:
+        """The apps, casefolded, that `_bind_named_app` gives a message row the model left on no
+        app: those the claim names, else for a text message the case's one app of a phone's own
+        messages. Empty when the claim names none. The sheet check does not count them against
+        a sheet that names no app (core/audit/testability.py), as they are the claim's own."""
+        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim_text)))
+        apps = self._named_apps(claim_text)
+        if not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
+            phone = self._phone_message_apps()
+            apps = phone if len(phone) == 1 else []
+        return frozenset(a.casefold() for a in apps)
+
     def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message row searched on no app (channels empty) in a claim that names its app
         gets that app from code, so the checks never find the words or the parties on an app
