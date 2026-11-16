@@ -14,7 +14,7 @@
   where one is given, since iLEAPP's SMS table has one row per attachment), reports the
   manifest's record_count beside each live count, and opens the database read-only. Validation
   v5's bar 8 will compare Mabillon's import counts with it.
-- Also: the validation scorer reports a second bar 4 measure for validation v5 (Arsh's decision
+- Also: validation scorer 1.5.0 reports a second bar 4 measure for validation v5 (Arsh's decision
   card, 2026-11-16): a false claim counts as shown with support only when it has supports
   items, no contradicts item, no failed check, and no core assumption left open (every check
   on it inconclusive, or no check and no supporting item). v4's measure and v4's bars are
@@ -31,4 +31,4 @@
   A call with one call each way in the stated window stays inconclusive, by design.
 - Affects: verdicts (more call claims get a caller check, which fails closed to
   inconclusive); customer-facing claims: none. No privacy or network change.
-- Status doc: pending: header "Other versions": filler 11.
+- Status doc: pending: header "Other versions": filler 11; "validation scorer 1.4.1" becomes "validation scorer 1.5.0".

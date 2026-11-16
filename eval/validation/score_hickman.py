@@ -61,7 +61,9 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.4.0: validation v4's R1 card, repeat comparison and bars.
 # 1.4.1: bar 8 counts the source chats behind the imported messages, not Mabillon's threads,
 # which merge two SMS chats with one counterpart into one thread (signed by Arsh 2026-11-16).
-SCORER_VERSION = "1.4.1"
+# 1.5.0: validation v5's bar 4 measure beside v4's: no core assumption left open (Arsh's
+# card, 2026-11-16).
+SCORER_VERSION = "1.5.0"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30

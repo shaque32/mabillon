@@ -525,7 +525,7 @@ def test_the_r1_card_scores_the_run_before_any_review(scored):
     assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
     assert bars["8_import_counts"]["pass"] is True
     assert "6" not in bars  # no pass 2 given
-    assert s["scorer_version"] == "1.4.1"
+    assert s["scorer_version"] == "1.5.0"
 
 
 def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
