@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import db as db_errors
 from core.contracts import (
@@ -780,6 +781,90 @@ SAME_RECORDS = {
 ORDER = [RecordKind.CONTACTS, RecordKind.CHATS, RecordKind.SMS, RecordKind.CALLS]
 
 
+# ---------------------------------------------------------------- the device
+
+
+# Where LEAPP writes the phone's time zone: (tool, artifact) -> (time header, zone header), or
+# (property header, value header, property) for a property table.
+ZONE_SOURCES: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {
+    ("iLEAPP", "powerlogTimeZone"): ("Timestamp", "Time Zone Name"),
+    ("iLEAPP", "timezone_info"): ("Property", "Property Value", "Last Bootstrap Timezone"),
+    ("ALEAPP", "get_battery_usage_v4"): ("Timestamp", "Timezone"),
+}
+# Where LEAPP writes the phone's OS version: (tool, artifact) -> (property header, value header,
+# properties joined in order).
+OS_SOURCES: dict[tuple[str, str], tuple[str, str, tuple[str, ...]]] = {
+    ("iLEAPP", "last_build"): ("Property", "Property Value", ("ProductName", "ProductVersion")),
+    ("ALEAPP", "usagestatsVersion"): ("Property", "Property Value", ("Android Version",)),
+}
+
+
+def _zone(name: str | None) -> str | None:
+    """An IANA zone name the standard library knows, else None."""
+    if not name or "/" not in name:
+        return None
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    return name
+
+
+def device_facts(lava: Lava) -> dict[str, Any]:
+    """The phone's time zone and OS as LEAPP's device tables state them. The zone is set only
+    when every zone the phone recorded is the same one; a phone that recorded two or more gets
+    none, since no one zone places all its records, and the expert enters it."""
+    zones: dict[str, dict[str, Any]] = {}
+    invalid: Counter[str] = Counter()
+    os_parts: dict[str, str] = {}
+    os_from: str | None = None
+    for art in lava.artifacts:
+        src = ZONE_SOURCES.get((lava.leapp_name, art.key))
+        if src is not None:
+            for _rowid, r in lava.rows(art):
+                if len(src) == 3:
+                    if _text(r.get(src[0])) != src[2]:
+                        continue
+                    raw, when = _text(r.get(src[1])), None
+                else:
+                    raw, when = _text(r.get(src[1])), _time(r.get(src[0])).utc
+                if raw is None:
+                    continue
+                name = _zone(raw)
+                if name is None:
+                    invalid[raw] += 1
+                    continue
+                z = zones.setdefault(
+                    name, {"zone": name, "rows": 0, "first": None, "last": None, "tables": []}
+                )
+                z["rows"] += 1
+                if art.table not in z["tables"]:
+                    z["tables"].append(art.table)
+                if when is not None:
+                    w = _iso(when)
+                    z["first"] = min(filter(None, (z["first"], w)))
+                    z["last"] = max(filter(None, (z["last"], w)))
+        osrc = OS_SOURCES.get((lava.leapp_name, art.key))
+        if osrc is not None:
+            for _rowid, r in lava.rows(art):
+                prop, value = _text(r.get(osrc[0])), _text(r.get(osrc[1]))
+                if prop in osrc[2] and value and prop not in os_parts:
+                    os_parts[prop] = value
+                    os_from = art.table
+    found = sorted(zones)
+    os_props = next((o[2] for k, o in OS_SOURCES.items() if k[0] == lava.leapp_name), ())
+    os_version = " ".join(os_parts[k] for k in os_props if k in os_parts) or None
+    if lava.leapp_name == "ALEAPP" and os_version:
+        os_version = f"Android {os_version}"
+    return {
+        "timezone": found[0] if len(found) == 1 else None,
+        "zones_seen": [zones[n] for n in found],
+        "zones_not_read": dict(invalid),
+        "os_version": os_version,
+        "os_version_table": os_from,
+    }
+
+
 # ---------------------------------------------------------------- importer
 
 
@@ -874,11 +959,13 @@ class LeappImporter:
                  source.tool_name, source.tool_version, _iso(source.extracted_at_utc),
                  _iso(source.imported_at_utc)),
             )  # fmt: skip
+            device = device_facts(lava)
             conn.execute(
                 "INSERT INTO devices (id, source_id, locator, label, model, os_version, timezone)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (dev, src, lava.manifest_member, f"Device in {path.name}", None, None, None),
-            )
+                (dev, src, lava.manifest_member, f"Device in {path.name}", None,
+                 device["os_version"], device["timezone"]),
+            )  # fmt: skip
             for kind in ORDER:
                 for spec, art in read:
                     if spec.kind is not kind:
@@ -923,6 +1010,8 @@ class LeappImporter:
                     # every skipped Google Messages message: its locator, its part rows (LAVA
                     # rowids), the SMS or MMS it matched and how many seconds apart
                     "google_messages_skipped": lava.dropped,
+                    # the device's zone and OS, and every zone its tables recorded
+                    "device": device,
                 },
             )
             check = tested.at_import(

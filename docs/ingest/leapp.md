@@ -82,6 +82,24 @@ milliseconds are dropped), so each time is stored as UTC with offset 0, and the 
 marked `(LEAPP UTC epoch)`, is the raw value. A timing claim closer than a second needs the
 phone's own value, from the source path LEAPP names.
 
+## The phone's time zone and OS
+
+`devices.timezone` is the IANA zone the phone's own tables recorded: iLEAPP's `powerlogTimeZone`
+(Time Zone Name, with its time) and `timezone_info` (the `Last Bootstrap Timezone` property),
+ALEAPP's `get_battery_usage_v4` (Timezone, with its time). It is set only when every zone those
+tables recorded is the same one. A phone that recorded two or more zones, or none, gets no zone
+and an attention item saying so, and a claim with a time window is not tested until the expert
+sets the zone (case screen, or `mabillon set-device-zone`). A zone name the standard library does
+not know is counted (`zones_not_read`) and not used. The coverage record keeps every zone seen,
+with its record count, tables and first and last time (`leapp.device.zones_seen`), and the item
+says the zone places every record, including any from times the phone did not record its zone.
+
+`devices.os_version` is iLEAPP's `last_build` ProductName and ProductVersion ("iPhone OS
+15.3.1") or ALEAPP's `usagestatsVersion` Android Version ("Android 13").
+
+On the two public development phones both read `America/New_York`, the zone their UFDRs give
+(the Android 13 UFDR gives none).
+
 ## Coverage and absence
 
 `fidelity` is `full_extraction` when LEAPP read a file system extraction (`param_type` fs, tar,
@@ -117,5 +135,5 @@ iLEAPP (commit in the PR) on the public iOS 15 test phone, the same way and day:
 - No case data has been read with it. The public test phones are the only real LEAPP output it
   has read (`/mnt/project-files/baker/plans/public-image-benchmark.md`).
 - Third-party chat apps (WhatsApp, Signal, Telegram and others) are not read yet.
-- The device's model, OS and time zone are not read from LEAPP's device-info artifacts.
+- The device's model is not read.
 - Forwarded and quoted messages are not marked; iLEAPP's SMS table does not state them.

@@ -15,7 +15,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from core.contracts import SourceCoverage
 
@@ -209,6 +209,58 @@ READERS: dict[str, tuple[str, str, str]] = {
 
 def reader_words(importer: str) -> tuple[str, str, str]:
     return READERS.get(importer, READERS["ufdr"])
+
+
+def _leapp_device_items(device: dict[str, Any]) -> list[CoverageItem]:
+    """What a LEAPP import read of the phone's time zone (core/ingest/leapp.device_facts)."""
+    seen = device.get("zones_seen") or []
+    fix = (
+        " A claim with a time window is not tested until the phone's zone is set on the case "
+        "screen (or with mabillon set-device-zone)."
+    )
+
+    def span(z: dict[str, Any]) -> str:
+        tables = ", ".join(z.get("tables") or [])
+        when = f", {z['first']} to {z['last']}" if z.get("first") and z.get("last") else ""
+        return f"{z['zone']} ({_n(int(z.get('rows') or 0), 'records')} in {tables}{when})"
+
+    if device.get("timezone") and len(seen) == 1:
+        return [
+            CoverageItem(
+                "info",
+                "leapp_timezone",
+                (
+                    _t(
+                        "The phone's time zone was read from the LEAPP output: "
+                        + span(seen[0])
+                        + ". It places every record from this phone, including any from times "
+                        "the phone did not record its zone."
+                    ),
+                ),
+            )
+        ]
+    if len(seen) > 1:
+        return [
+            CoverageItem(
+                "attention",
+                "leapp_timezones_differ",
+                (
+                    _t(
+                        f"The phone recorded {len(seen)} time zones, so none was set: "
+                        + "; ".join(span(z) for z in seen)
+                        + "."
+                        + fix
+                    ),
+                ),
+            )
+        ]
+    return [
+        CoverageItem(
+            "attention",
+            "leapp_no_timezone",
+            (_t("No time zone for the phone was found in the LEAPP output." + fix),),
+        )
+    ]
 
 
 # Record flags a UFDR import lists by locator: (level, words). {n} is the count with its noun;
@@ -723,6 +775,8 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
         items.append(CoverageItem("attention", "format_unverified", (_t(notice),)))
     tables = [t for t in p.get("tables", []) if isinstance(t, dict)]
     not_imported = [e for e in p.get("not_imported", []) or [] if isinstance(e, dict)]
+    if p.get("importer") == "leapp":
+        items += _leapp_device_items((p.get("leapp") or {}).get("device") or {})
     if p.get("importer") == "leapp" and not_imported:
         # LEAPP parses hundreds of artifacts; one line names every one Mabillon did not read.
         with_rows = [e for e in not_imported if (e.get("records") or 0) > 0]

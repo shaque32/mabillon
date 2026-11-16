@@ -114,6 +114,14 @@ def _ios() -> Lava:
         },
     )
     lv.add("wifiNetworks", **{"SSID": "home"})
+    for t in ("2024-01-10T12:00:00Z", "2024-02-05T12:00:00Z"):
+        lv.add("powerlogTimeZone", **{"Timestamp": t, "Time Zone Name": "America/New_York"})
+    lv.add(
+        "timezone_info",
+        **{"Property": "Last Bootstrap Timezone", "Property Value": "America/New_York"},
+    )
+    lv.add("last_build", **{"Property": "ProductName", "Property Value": "iPhone OS"})
+    lv.add("last_build", **{"Property": "ProductVersion", "Property Value": "17.1"})
     return lv
 
 
@@ -429,11 +437,53 @@ def test_android_messages_calls_and_contacts(tmp_path: Path) -> None:
     ]
 
 
+def test_the_phones_zone_and_os_are_read_when_it_recorded_one_zone(tmp_path: Path) -> None:
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(_ios().write_zip(tmp_path / "i.zip"), conn)
+    assert conn.execute("SELECT os_version, timezone FROM devices").fetchall() == [
+        ("iPhone OS 17.1", "America/New_York")
+    ]
+    device = coverage.load(conn, "ios").payload["leapp"]["device"]
+    assert device["zones_seen"][0]["rows"] == 3
+    assert device["zones_seen"][0]["tables"] == ["powerlogtimezone", "timezone_info"]
+    s = coverage.summary(conn, "ios")
+    assert s is not None and "leapp_timezone" in {i.code for i in s.items}
+
+
+def test_a_phone_that_recorded_two_zones_gets_none(tmp_path: Path) -> None:
+    lv = _android()
+    for t, z in (("2024-03-01T00:00:00Z", "America/New_York"),
+                 ("2024-03-05T00:00:00Z", "America/Chicago"),
+                 ("2024-03-06T00:00:00Z", "Not/AZone")):  # fmt: skip
+        lv.add("get_battery_usage_v4", **{"Timestamp": t, "Timezone": z})
+    lv.add("usagestatsVersion", **{"Property": "Android Version", "Property Value": "14"})
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT os_version, timezone FROM devices").fetchall() == [
+        ("Android 14", None)
+    ]
+    device = coverage.load(conn, "and").payload["leapp"]["device"]
+    assert [z["zone"] for z in device["zones_seen"]] == ["America/Chicago", "America/New_York"]
+    assert device["zones_not_read"] == {"Not/AZone": 1}
+    s = coverage.summary(conn, "and")
+    item = next(i for i in s.items if i.code == "leapp_timezones_differ")
+    assert item.level == "attention"
+    assert "set-device-zone" in "".join(t for t, _q in item.parts)
+
+
+def test_a_phone_with_no_zone_says_so(tmp_path: Path) -> None:
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_android().write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT timezone FROM devices").fetchall() == [(None,)]
+    s = coverage.summary(conn, "and")
+    assert "leapp_no_timezone" in {i.code for i in s.items}
+
+
 def test_artifacts_not_read_are_listed_so_absence_is_never_assumed(tmp_path: Path) -> None:
     conn = _db()
     LeappImporter(source_id="ios").import_source(_ios().write_zip(tmp_path / "i.zip"), conn)
     payload = coverage.load(conn, "ios").payload
-    assert [e["name"] for e in payload["not_imported"]] == ["Wifi Networks"]
+    assert "Wifi Networks" in [e["name"] for e in payload["not_imported"]]
     s = coverage.summary(conn, "ios")
     item = next(i for i in s.items if i.code == "not_imported")
     text = "".join(t for t, _q in item.parts)

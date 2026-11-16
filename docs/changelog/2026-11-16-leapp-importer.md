@@ -18,7 +18,9 @@
   side of a phone's incoming SMS and call but often not the phone's own line, and such a record
   was silently left out, so "no contact" could pass with an incoming text from the other person
   inside the window. It now makes the check inconclusive. The zip's manifest and database are
-  refused when they unpack past 256 MB and 8 GB.
+  refused when they unpack past 256 MB and 8 GB. The device row takes the phone's time zone
+  (only when every zone its tables recorded is the same one; otherwise none, with an attention
+  item) and OS version from LEAPP's device tables.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
 - Verified: `tests/test_leapp.py` (10 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
@@ -33,8 +35,8 @@
   coverage record and the import's audit log entry), so another reader can re-check each pair.
   These phones are development data, not a scored run.
 - Open: Format support is unverified: no case data has been read with it, and every import says
-  so. Third-party chat apps (WhatsApp, Signal, Telegram and others), device model, OS and time
-  zone, and forwarded or quoted marks are not read. LEAPP stores whole seconds, so a timing claim
+  so. Third-party chat apps (WhatsApp, Signal, Telegram and others), the device model, and
+  forwarded or quoted marks are not read. LEAPP stores whole seconds, so a timing claim
   closer than a second needs the phone's own value. A file system run with no profile is
   `full_extraction` for the tables LEAPP parsed; whether that is the right fidelity for an absence
   check on LEAPP output is a judgment for review. The Google Messages match is by direction, text

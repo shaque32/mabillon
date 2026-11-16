@@ -66,6 +66,21 @@ HEADERS: dict[str, tuple[Header, ...]] = {
         "Mimetype", "Data 1", "Display Name", "Phone Number", "Email Address", "Source File",
     ),
     "wifiNetworks": (("Last Joined", "datetime"), "SSID", "BSSID"),
+    # device tables Mabillon reads the phone's zone and OS from
+    "powerlogTimeZone": (
+        ("Timestamp", "datetime"), "Time Zone Name", "Seconds From GMT (as stored)",
+        "Is In DST (as stored)", "Country Code", "Locale ID", "Trigger",
+        "Time Offset (seconds)", "Source File",
+    ),
+    "timezone_info": ("Property", "Property Value"),
+    "last_build": ("Property", "Property Value"),
+    "get_battery_usage_v4": (
+        ("Timestamp", "datetime"), "Application", "Package Name", "Hidden",
+        ("Boot Timestamp", "datetime"), "Timezone", "Total Power", "Consumed Power",
+        "% Of Consumed", "Foreground Usage (Seconds)", "Background Usage (Seconds)",
+        "Battery Level (%)", "Battery Status",
+    ),
+    "usagestatsVersion": ("Property", "Property Value"),
 }  # fmt: skip
 NAMES = {
     "sms": ("SMS & iMessage", "SMS"),
@@ -77,6 +92,11 @@ NAMES = {
     "get_calllog": ("Call Logs", "Call logs "),
     "contacts": ("Contacts", "Contacts"),
     "wifiNetworks": ("WiFi", "Wifi Networks"),
+    "powerlogTimeZone": ("PowerLog", "PowerLog - Time Zone"),
+    "timezone_info": ("Identifiers", "App Store Preferences"),
+    "last_build": ("IOS Build", "iOS Information"),
+    "get_battery_usage_v4": ("Settings Services", "battery_usage_v4"),
+    "usagestatsVersion": ("Device Information", "OS Version"),
 }
 
 
