@@ -1,0 +1,42 @@
+## 2026-11-16: App look rebuilt on one design system: 5 colors, one spacing scale, one type scale (#266)
+- Changed: Arsh asked (2026-11-16) for the app to be run on a case with claims, every page
+  screenshotted, the 5 biggest hierarchy and density problems listed, and the UI rebuilt on a
+  spacing scale, a type scale and at most 5 color tokens with no gradients, checked at 1440 and
+  390 px. `ui/theme.py` and every stylesheet in `ui/css/` are rewritten on one token block
+  (`TOKENS_CSS`): spacing 4, 8, 12, 16, 24, 32, 48, 64; type 12/16, 14/20, 16/24, 20/28, 28/36
+  in weights 400 and 600; colors ink #141414, muted #5f5a51, paper #f7f5f0, line #dedad0,
+  signal #9a3a2c; one 4px radius; no gradients, shadows or opacity shades; hairlines instead of
+  cards. Counted in the stylesheet before and after: font sizes 17 to 5, spacing values 35 to 8,
+  colors about 28 to 5, radii 12 to 1, shadows 52 to 0, gradients 2 to 0.
+  What the examiner sees: a claim's verdict is the 20px line directly under the claim text (the
+  "Paragraph as printed" fold moves below it); verdicts are the signed words plus a mark (solid
+  for the supported kinds, hollow ring for unproven, dashed ring for not tested, signal red for
+  contradicted), so Supported no longer has a green and red means only "against the claim as
+  stated" and errors; stance, tier and review tags are plain small text and the one filled tag
+  is "Needs you"; a frame means a warning; one solid button per page. At 390 px the Set up
+  tables and the Exhibits list stack, the claim counts sit two by two, and no app page scrolls
+  sideways (before, Add a claim ran 487 px wide and the Files table broke to one word per line).
+  App pages no longer load the report's stylesheets (core/report/*); the exported report keeps
+  its own look and REPORT_VERSION, and the /report preview in the app still shows it that way.
+  Fix: Set up read "This case was audited on True." because a local variable shadowed the audit
+  date; it shows the date again.
+  Kept on purpose: every verdict word, review-state name, provenance tier and source line; the
+  demo and untested-format notices; the picked-message and "This record" outlines.
+- Where: PR #266
+- Verified: new `tests/test_design_system.py` (fails on any color, spacing, type size, radius,
+  gradient, shadow or inline style from outside the tokens); ruff on `ui/` and the test; in the
+  cloud container on 2026-11-16 the 41 test files that import `ui` ran 1158 passed, 2 skipped,
+  25 failed, all 25 being encryption tests that need `sqlcipher3`, which that container lacks;
+  full `make check` on GitHub CI (numbers in the PR). Looked at by hand on the synthetic demo
+  case (case01, scripted labels, no model call): all 19 app pages at 1440 and 390 px, plus the
+  agent-proposal claim, a claim with alternatives, an evidence item, both context pages and the
+  error page. Contrast computed for the token pairs: muted on paper 6.28, signal on paper 6.39,
+  ink on line 13.2. Screenshots in the project files, baker/app-design-system/.
+- Open: Safari and Windows browsers were not looked at by hand (CI jobs only); the screens of an
+  encrypted case were not looked at (no sqlcipher3 in the container); the exported report is
+  not on these tokens (optional follow-up, needs a REPORT_VERSION bump); with five colors,
+  Supported and Unproven differ by mark shape and words, not hue, which no examiner has tried.
+- Affects: none (look of the local screen and one wrong date line; no verdict, rule, label,
+  report or privacy change)
+- Status doc: pending: in section 8 ("Implemented features"), in the list of merged PRs that
+  reads "app look (#222, #226)", add "app design system on one token block (#266)" after it.
