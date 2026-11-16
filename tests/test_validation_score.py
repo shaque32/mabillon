@@ -516,7 +516,7 @@ def test_the_r1_card_scores_the_run_before_any_review(scored):
     assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
     assert bars["8_import_counts"]["pass"] is True
     assert "6" not in bars  # no pass 2 given
-    assert s["scorer_version"] == "1.4.0"
+    assert s["scorer_version"] == "1.4.1"
 
 
 def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
@@ -589,3 +589,20 @@ def test_a_key_folder_without_gold_jsonl_is_refused(tmp_path):
     (tmp_path / "gold_b2.jsonl").write_text("", "utf-8")
     with pytest.raises(SystemExit, match="no gold.jsonl"):
         score_hickman.load_keys(tmp_path)
+
+
+def test_bar_8_counts_source_chats_not_merged_threads():
+    # The importer keys SMS threads by the counterpart, so two source chats with one number
+    # become one thread. Bar 8 counts the source chats behind the messages, like the dump.
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        "CREATE TABLE messages (locator TEXT); CREATE TABLE calls (id TEXT);"
+        " CREATE TABLE contacts (locator TEXT); CREATE TABLE threads (locator TEXT);"
+        " INSERT INTO messages VALUES ('Chat[1]/Messages[1]'), ('Chat[1]/Messages[2]'),"
+        " ('Chat[12]/Messages[1]'), ('InstantMessages[4]');"
+        " INSERT INTO threads VALUES ('Chat[1]/Messages[1]'), ('InstantMessages[4]');"
+    )
+    counts = score_hickman.import_counts(conn, {"chats_with_messages": 2, "messages": 4})
+    assert counts["chats_with_messages"] == {"mabillon": 2, "dump": 2}
+    assert counts["messages"] == {"mabillon": 4, "dump": 4}
+    conn.close()

@@ -59,7 +59,9 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.3.0: run 3's tiers (code-checked, check unsettled or expert only) and measure 7, a false
 # Contradicted from a failed check.
 # 1.4.0: validation v4's R1 card, repeat comparison and bars.
-SCORER_VERSION = "1.4.0"
+# 1.4.1: bar 8 counts the source chats behind the imported messages, not Mabillon's threads,
+# which merge two SMS chats with one counterpart into one thread (signed by Arsh 2026-11-16).
+SCORER_VERSION = "1.4.1"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
@@ -591,15 +593,25 @@ def label_counts(conn: sqlite3.Connection, run: dict, gold: list[GoldClaim]) -> 
     }
 
 
+_SOURCE_CHAT_RE = re.compile(r"^Chat\[\d+\]")
+
+
 def import_counts(conn: sqlite3.Connection, dump_counts: dict[str, int]) -> dict[str, Any]:
-    """Like for like: a thread whose first message came from a source chat stands for that
-    chat (standalone messages make threads of their own, which are not counted here)."""
+    """Like for like: the source chats that Mabillon's imported messages came from, read from
+    each message's locator ("Chat[12]/Messages[3]"). Mabillon's threads are not counted: the
+    importer keys SMS and MMS threads by the counterpart, so two source chats with one number
+    become one thread with every message kept. Standalone messages name no chat."""
     one = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
+    chats = {
+        m.group(0)
+        for (loc,) in conn.execute("SELECT locator FROM messages WHERE locator LIKE 'Chat[%'")
+        if (m := _SOURCE_CHAT_RE.match(loc))
+    }
     ours = {
         "messages": one("SELECT COUNT(*) FROM messages"),
         "calls": one("SELECT COUNT(*) FROM calls"),
         "contacts": one("SELECT COUNT(DISTINCT locator) FROM contacts"),
-        "chats_with_messages": one("SELECT COUNT(*) FROM threads WHERE locator LIKE 'Chat[%'"),
+        "chats_with_messages": len(chats),
     }
     return {k: {"mabillon": ours[k], "dump": dump_counts.get(k)} for k in ours}
 
