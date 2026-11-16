@@ -191,7 +191,11 @@ MAX_PROPOSALS = 8
 #      words and a time range's words) bound to a core assumption, the one a quoted message
 #      went to included, and a day dated from another ("two days before ...") needs a time
 #      range; code adds the one recipient the claim writes to a message's time row.
-FILLER_VERSION = "9"
+#  10: a call's clause may end with the app it was on ("called X on Telegram"); a claim that
+#      times one act from another ("six minutes later", "within a minute of") gives no act a
+#      range from its stated time; a claim about what a message refers to does not date the
+#      message by the time it states (found on a development phone, 2026-11-16).
+FILLER_VERSION = "10"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1682,6 +1686,13 @@ _CALL_FORM_RE = re.compile(
 # direction word its verb allows, and a word for a phone call.
 _CALL_ARTICLES = frozenset({"a", "an", "another"})
 _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
+# The app a call was on, right after the clause: "called X on Telegram", "via WhatsApp". Only
+# the call's own app is taken (`_names_app`); any other words leave the tail as it was.
+_CALL_APP_TAIL_RE = re.compile(
+    r"^\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
+    r"(?=\s*(?:,|\.|$|that\s+lasted|lasting|for\s))",
+    re.IGNORECASE,
+)
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
 _CALL_LENGTH_TAIL_RE = re.compile(
     r"^\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
@@ -1720,7 +1731,16 @@ _ONE_DIRECTION_RE = re.compile(
 _OTHER_ACT_RE = re.compile(
     r"\b(?:deleted|deletes|deleting|forwarded|forwards|forwarding|read|viewed|opened|saved|"
     r"edited|copied|shared|archived|starred|pinned|screenshotted|replied|responded|reacted|"
-    r"recovered|found|located|retrieved|extracted|reviewed|discovered)\b",
+    r"recovered|found|located|retrieved|extracted|reviewed|discovered|refers|referred|"
+    r"referring|refer)\b",
+    re.IGNORECASE,
+)
+# One act timed from another: "about six minutes later", "an hour earlier", "afterward",
+# "within a minute of receiving it". The one time the claim states is then another act's, or
+# an edge code does not widen, so no range is read from it.
+_RELATIVE_TIME_RE = re.compile(
+    r"\b(?:later|earlier|afterwards?|thereafter|beforehand)\b|"
+    r"\bwithin\s+(?:an?|one|\w+)\s+(?:seconds?|minutes?|hours?|days?)\s+(?:of|after|before)\b",
     re.IGNORECASE,
 )
 # The word right before an open range's one date: "before May 1", "on or after", "since".
@@ -3710,6 +3730,10 @@ class LocalAssumptionFiller:
         ):
             # "first made contact on March 12" means none before it, not none that day.
             raise Reject("the claim's range for no contact is not a plain stated range")
+        if _RELATIVE_TIME_RE.search(_unquoted(_flat(_nfc(claim.text)))):
+            raise Reject(
+                "the claim times one act from another, so its stated time is not this one's"
+            )
         stated = stated_windows(claim.text, para)
         unread = stated is None
         if stated is None:
@@ -4974,7 +4998,11 @@ class LocalAssumptionFiller:
         np = m.group("np_to") or m.group("np_from") or m.group("np_with") or ""
         if not self._plain_call_noun(np, verb, app):
             return None
-        tail = m.group("tail")
+        tail = (
+            _CALL_APP_TAIL_RE.sub("", m.group("tail"), count=1)
+            if self._names_app(_CALL_APP_TAIL_RE.match(m.group("tail")), app)
+            else m.group("tail")
+        )
         length = None
         if tail.strip(" ."):
             at = _CALL_LENGTH_TAIL_RE.match(tail)
@@ -4993,6 +5021,11 @@ class LocalAssumptionFiller:
             missed=verb == "missed",
             length=length,
         )
+
+    @staticmethod
+    def _names_app(m: re.Match[str] | None, app: str) -> bool:
+        """True when a call clause's tail "on Telegram" names the call's own app."""
+        return m is not None and _words(m.group("app")) == _words(app)
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
@@ -5082,8 +5115,7 @@ class LocalAssumptionFiller:
         """The caller assumption's parameters and whether the call was missed, from the claim's
         plain form and its call's time range `rt`; None when the claim says no caller. Raises
         Reject where the form's sides are not the time range's parties."""
-        if rt.get("handles"):
-            return None  # a handle is resolved by the checks; code never names it as a side
+        handles = list(rt.get("handles", []))
         channels = [c for c in rt.get("channels", []) if c != CALL_CHANNEL]
         app = self._call_app(claim.text, channels)
         form = self.call_form(claim, app)
@@ -5094,6 +5126,10 @@ class LocalAssumptionFiller:
         if len(phones) > 1:
             return None
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
+        if handles and not rt.get("account_ids"):
+            # The time range names the other side by its handle ("Marc R."), which
+            # the checks resolve; the caller row keeps that handle, not code's own reading.
+            accounts = []
         if set(people) != set(rt.get("person_ids", [])) or set(accounts) != set(
             rt.get("account_ids", [])
         ):
@@ -5111,19 +5147,23 @@ class LocalAssumptionFiller:
             elif kind == "person":
                 sides[name] = value
             else:
-                if not accounts:
+                if not accounts and not handles:
                     return None
                 sides[name] = "accounts"
         if sides["a"] == sides["b"]:
             return None
         persons = sorted({v for v in sides.values() if v != "accounts"})
         if set(rt.get("person_ids", [])) - set(persons) or (
-            accounts and "accounts" not in sides.values()
+            (accounts or handles) and "accounts" not in sides.values()
         ):
             return None  # a party of the time range is not a side of the clause
-        if len(persons) + bool(accounts) != 2:
+        if len(persons) + bool(accounts or handles) != 2:
             return None
         caller = sides[form.caller]
+        if caller == "accounts" and handles:
+            # sent_by names persons or accounts only; a handle side is resolved by the checks,
+            # so code names a caller only when the caller is the other side, a person.
+            return None
         if bool(form.length) != bool(rt.get("duration_s")):
             return None  # a length the time range does not test, or one the claim does not state
         if form.length and duration_range(form.length, claim.text) != tuple(rt["duration_s"]):
@@ -5138,6 +5178,8 @@ class LocalAssumptionFiller:
         }
         if accounts:
             params["account_ids"] = sorted(accounts)
+        if handles:
+            params["handles"] = handles
         if device_ids:
             params["device_ids"] = device_ids
         if rt.get("duration_s"):
@@ -5563,6 +5605,10 @@ class LocalAssumptionFiller:
     ) -> Any:
         if not _verbatim(w.as_written, claim_text):
             raise Reject("the window's words are not written in the claim")
+        if _RELATIVE_TIME_RE.search(_unquoted(_flat(_nfc(claim_text)))):
+            raise Reject(
+                "the claim times one act from another, so its stated time is not this one's"
+            )
         try:
             start = datetime.fromisoformat(w.start)
             end = datetime.fromisoformat(w.end)

@@ -400,3 +400,63 @@ def test_a_person_beside_a_phone_in_the_lead_is_still_one_side(conn):
     count = {**item.model_dump(), "template_id": "message_count"}
     made, _ = fill(conn, text, ClaimType.COUNT, items=[count])
     assert "message_count" not in made
+
+
+# ---------------------------------------------------------------- filler 10
+
+
+@pytest.mark.parametrize(
+    ("words", "by"),
+    [
+        ("Marcus Reyes called PETROV on WhatsApp.", REYES),
+        ("Marcus Reyes called PETROV via WhatsApp.", REYES),
+        ("PETROV called Marcus Reyes on the WhatsApp app.", PETROV),
+    ],
+)
+def test_the_call_s_own_app_may_follow_the_clause(conn, words, by):
+    text = f"On June 8, 2026, at about 9:00 p.m. EDT, {words}"
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [by]
+    assert list(made["caller"].params.channels) == ["WhatsApp", "call"]
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "Marcus Reyes called PETROV on WhatsApp after dinner.",
+        "Marcus Reyes called PETROV on Telegram.",
+    ],
+)
+def test_other_words_after_the_app_or_another_app_name_no_caller(conn, words):
+    text = f"On June 8, 2026, at about 9:00 p.m. EDT, {words}"
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert "caller" not in made
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "Item 1 called (212) 555-0199, and about six minutes later (212) 555-0199 called back.",
+        "Item 1 called (212) 555-0199 and texted it an hour earlier.",
+        "Item 1 called (212) 555-0199 within a minute of receiving its text.",
+        "Item 1 called (212) 555-0199 and afterward deleted the call.",
+    ],
+)
+def test_a_claim_that_times_one_act_from_another_gives_no_act_its_stated_time(conn, words):
+    # The one time the claim states may be another act's, or an edge code does not widen,
+    # so no range is read from it: the claim goes untested rather than tested in a borrowed
+    # window.
+    made, f = fill(conn, f"{AT} {words}")
+    assert "record_time" not in made and "caller" not in made
+    assert any("times one act from another" in d.reason for d in f.drops)
+
+
+def test_what_a_message_refers_to_is_another_act():
+    from core.audit.assumption_filler import _OTHER_ACT_RE
+
+    # "the message ... was referring to the picture REYES sent at about 8:10 p.m.": the
+    # time is the picture's, so code does not date the message by it.
+    for words in ("was referring to the picture", "refers to", "referred to the file"):
+        assert _OTHER_ACT_RE.search(words)
