@@ -42,7 +42,7 @@
   label, as in "username lena"; a short id of another account beside the name; an identifier
   that begins with "id"; an id touching its label's colon; a length after the id; an app's
   alias after "on"; a written id with a username label; an id that only begins with a known
-  one). Filler,
+  one, as in "lena.2" or "lena..2"). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way
