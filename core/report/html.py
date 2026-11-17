@@ -241,7 +241,9 @@ from core.zones import given_zones
 # in single quotes, so a claim that says "deleted" no longer stops the report (14B Mac baseline).
 # 0.40.0: a time zone the expert gave a phone whose extraction records none is listed as an
 #   expert statement
-REPORT_VERSION = "0.40.0"
+# 0.41.0: the Timeline cites the source text it repeats: a "Differs" or "Order differs" row's
+#   tied message words or call party, and the raw time a note says the report printed.
+REPORT_VERSION = "0.41.0"
 
 # what each provenance tier means, in the report's Limitations and on the Help page
 TIER_WORDS = (

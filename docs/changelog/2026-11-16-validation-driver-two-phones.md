@@ -15,7 +15,9 @@
   SUBJECT-<n> on two phones would be two people of one name. A phone's own zone in `phones`
   that differs from the zone given for every phone is refused, as is a given zone that differs
   from the one zone a LEAPP phone's tables name when the importer left it unrecorded because
-  some zone values could not be read. Each phone's name, zone and user are set right after its
+  some zone values could not be read; with no zone given, that phone stops the build and the
+  message names the zone to give. Zones are compared as resolved names, and a recorded zone no
+  tool can read is refused even when the same text is given. Each phone's name, zone and user are set right after its
   import, so a zone the run cannot use stops it before the next import. `--phone-sha256` takes
   hex in either case, and a resume may name the phones in any order. A resume always hashes
   each package, so two packages of one file name swapped between phones, or a package changed
@@ -27,8 +29,8 @@
 - Verified: `tests/test_validation_run.py` (two synthetic case01 phones: names, owners, people,
   hash refusal, resume refusal, header refusals, flag mixes; a two-phone LEAPP case where one
   phone records its zone, one takes the given zone, and one with two zones stops the build; a
-  LEAPP phone with one unrecorded zone refuses another; a resume in another flag order; two same-named packages swapped; a resume after run.json was lost).
-  With #264 on main the LEAPP test always runs (its skip guard is gone); the file's 36 tests
+  LEAPP phone with one unrecorded zone refuses another; a resume in another flag order; two same-named packages swapped; a resume after run.json was lost; a refused build closes case.db; zone spellings).
+  With #264 on main the LEAPP test always runs (its skip guard is gone); the file's 38 tests
   pass locally on main c93e97d plus this change, cloud container, 2026-11-17. `make check` runs
   on GitHub CI.
 - Open: run end to end on development LEAPP output (Android 13 and iOS 15, stand-in

@@ -523,6 +523,27 @@ def test_a_phone_package_with_other_bytes_is_refused(pair, tmp_path):
     assert not (tmp_path / "out" / "built.ok").exists()
 
 
+def test_one_zone_written_two_ways_is_not_a_conflict(pair, tmp_path):
+    phones = {
+        **PHONES,
+        "item2": {**PHONES["item2"], "zone": "(UTC-05:00) Eastern Time (US & Canada)"},
+    }
+    defs = {"phones": phones, "phone_time_zone": "America/New_York"}
+    assert hickman_run.main(_two(pair, tmp_path, defs)) == 0
+
+
+def test_a_recorded_zone_no_tool_can_read_is_refused_even_when_the_same_is_given(
+    ufdr, tmp_path, monkeypatch
+):
+    import core.timeline.records as records
+
+    monkeypatch.setattr(records, "zone", lambda name: None)  # the package's zone text reads as none
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match="names no time zone this tool can read"):
+        hickman_run.main(args)
+
+
 def test_phone_flags_do_not_mix(pair, tmp_path):
     claims = str(_claims(tmp_path, TWO))
     base = ["--claims", claims, "--out", str(tmp_path / "out"), "--fake"]
@@ -627,6 +648,12 @@ def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp
     with pytest.raises(SystemExit, match="half's own tables name the zone America/Chicago"):
         run("America/New_York", "out")
     assert run("America/Chicago", "out2") == 0
+    # with no zone given the run stops and names the zone to give, as with two zones
+    with pytest.raises(SystemExit, match="half's tables name the zone America/Chicago but"):
+        hickman_run.main(
+            ["--phone", f"half={pkg}", "--claims", claims, "--out", str(tmp_path / "out3"),
+             "--fake", "--definitions", str(_defs(tmp_path, {"phones": {"half": PHONES["item1"]}}))]
+        )  # fmt: skip
 
 
 def test_two_packages_of_one_name_swapped_between_phones_are_refused(pair, tmp_path):

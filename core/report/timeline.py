@@ -22,7 +22,7 @@ from core.timeline.check import (
     Link,
     TimelineRow,
     fmt_delta,
-    link_label,
+    joined,
     timeline,
     window_utc,
     zoneless_note,
@@ -181,32 +181,17 @@ def _link_block(lk: Link, data: CaseRecords) -> str:
     return f"<div>{head}{e(rel)}: {lk.total} found<ul>{items}</ul>{more}</div>"
 
 
-def _cite_in(html: str, plain: str, cited: str) -> str:
-    """`html` with the escaped `plain` replaced by its `cited` form. A text that drifted from
-    the words it should cite raises rather than leave source words as the tool's own."""
-    if e(plain) not in html:
-        raise ValueError(f"the timeline text no longer holds {plain!r} to cite")
-    return html.replace(e(plain), cited, 1)
-
-
 def _summary_html(row: TimelineRow) -> str:
-    """The row's summary, with the tied record it names cited (`link_label`): a message's words
-    are the evidence's, not the tool's."""
-    out = e(row.summary)
-    if row.named is not None:
-        out = _cite_in(out, link_label(row.named), link_label(row.named, q))
-    return out
+    """The row's summary, with the source text it repeats (a tied message's words) cited."""
+    return joined(row.summary_parts, q, e) if row.summary_parts else e(row.summary)
 
 
-def _note_html(note: str, row: TimelineRow) -> str:
-    """A row note, with the raw time the source printed cited (core/timeline/check
-    printed_note): it is the source's text, not the tool's (Claude review on #267)."""
-    out = e(note)
-    for lk in row.links:
-        for c in lk.shown:
-            if c.printed_note == note and c.record.ts_raw:
-                return _cite_in(out, c.record.ts_raw, q(c.record.ts_raw))
-    return out
+def _notes_html(row: TimelineRow) -> str:
+    """The row's notes, with the raw time a report printed cited (Claude review on #267)."""
+    parts = row.note_parts if len(row.note_parts) == len(row.notes) else ()
+    return "".join(
+        f"<li>{joined(parts[i], q, e) if parts else e(n)}</li>" for i, n in enumerate(row.notes)
+    )
 
 
 def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
@@ -231,7 +216,7 @@ def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
                 f"<details><summary>Records the phones hold in this time</summary><ul>{items}"
                 "</ul></details>"
             )
-        notes = "".join(f"<li>{_note_html(n, row)}</li>" for n in row.notes)
+        notes = _notes_html(row)
         if row.zoneless:  # each phone label is source text: cited, never the tool's own words
             notes += f"<li>{zoneless_note(row.zoneless, q)}</li>"
         flag = " class='flag'" if row.status in FLAGGED else ""

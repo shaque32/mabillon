@@ -274,6 +274,17 @@ def test_a_quoted_message_s_own_words_never_stop_the_report(conn):
     check_report_text(html)
 
 
+def test_a_raw_time_that_matches_the_note_s_own_words_is_cited_where_it_stands(conn):
+    # The raw time is cited as a segment of the note, never found by searching the note's text:
+    # a raw value "time" must not cite the word in "The stated time" (Claude review on #267).
+    conn.execute("UPDATE messages SET ts_raw = 'time' WHERE body LIKE '%its done%'")
+    conn.commit()
+    html = render_report(conn)
+    assert 'clock the report printed (<span class="q">time</span>, UTC' in html
+    assert 'The stated <span class="q">time</span>' not in html
+    check_report_text(html)
+
+
 def test_render_report_takes_default_settings(conn):
     html = render_report(conn)
     assert "Tolerance 5 min" in html

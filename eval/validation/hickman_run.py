@@ -248,9 +248,11 @@ def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
         raise SystemExit(
             f"--definitions: {PHONES_KEY} names {sorted(specs)}, the packages are {sorted(paths)}"
         )
+    from core.zones import resolve_zone
+
     for sid in sorted(specs):
         own = specs[sid].get("zone")
-        if own and zone_all and own != zone_all:
+        if own and zone_all and resolve_zone(own) != resolve_zone(zone_all):
             # Neither silently wins: a phone's zone sets how every stated window on it is read
             # (Claude review on #267).
             raise SystemExit(
@@ -292,6 +294,7 @@ def build(  # noqa: ANN001
     from core.ingest.pick import report_importer
     from core.ingest.source_file import InputChanged
     from core.review import actions
+    from core.timeline.records import zone as zone_info
     from core.zones import resolve_zone
 
     db = out / "case.db"
@@ -332,7 +335,13 @@ def build(  # noqa: ANN001
             rec["zone_set_by_examiner"] = False  # True only when the given zone is the case's
             if recorded and ph.zone:
                 # The source's own zone is kept; the examiner's must say the same, or the claims'
-                # times and the phone's would be read in two zones.
+                # times and the phone's would be read in two zones. Two equal texts that name no
+                # zone this tool reads say nothing, so they are refused too (Claude review).
+                if zone_info(resolve_zone(recorded)) is None:
+                    raise SystemExit(
+                        f"--phone-zone: the extraction records {ph.source_id}'s zone as"
+                        f" {recorded!r}, which names no time zone this tool can read"
+                    )
                 if resolve_zone(recorded) != resolve_zone(ph.zone):
                     raise SystemExit(
                         f"--phone-zone: the extraction records {ph.source_id}'s zone ({recorded}),"
@@ -363,6 +372,14 @@ def build(  # noqa: ANN001
                     raise SystemExit(f"--phone-zone: {e}") from None
                 rec["zone_set_by_examiner"] = True
                 log(f"{ph.source_id}: the phone's zone, as the examiner gives it: {ph.zone}")
+            elif seen and not recorded:
+                # One zone in the phone's tables, unrecorded only because some zone values could
+                # not be read, and none given: every stated window on it would be refused, as
+                # with two zones, so the run stops and names the zone to give (Claude review).
+                raise SystemExit(
+                    f"--phone-zone: {ph.source_id}'s tables name the zone {seen[0]} but the"
+                    f" importer did not record it; give it with --phone-zone or in the header"
+                )
             elif not recorded:
                 log(
                     f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated"
@@ -719,27 +736,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"{a.out} was built from report.xml {was.get('report_xml_sha256')}; use a new --out"
             )
 
-        def zoneless(phones: list[dict]) -> list[dict]:
-            # by source id, so a resume may name the phones in any order (Claude review)
-            return sorted(
-                ({k: v for k, v in p.items() if k != "zone_given"} for p in phones),
-                key=_sid,
-            )
-
-        if any(was.get(k) != v for k, v in setup.items() if k != "phones") or zoneless(
-            was["phones"]
-        ) != zoneless(setup["phones"]):
+        # Phones by source id, so a resume may name them in any order (Claude review on #267).
+        was_p, now_p = sorted(was["phones"], key=_sid), sorted(setup["phones"], key=_sid)
+        same_rest = all(was.get(k) == v for k, v in setup.items() if k != "phones")
+        if was_p != now_p or not same_rest:
+            was_zones = [p.get("zone_given") for p in was_p]
+            unzoned = [{**p, "zone_given": z} for p, z in zip(now_p, was_zones, strict=False)]
+            if same_rest and unzoned == was_p:
+                raise SystemExit(  # the zone given at the command line is all that changed
+                    f"--phone-zone: {a.out} was built with "
+                    + (f"the zones {was_zones}" if any(was_zones) else "no zone given")
+                    + "; resume with the same zones, or use a new --out"
+                )
             raise SystemExit(
                 f"{a.out} was built with another source id or definitions, or other phones;"
                 " use a new --out"
-            )
-        was_zones = [p.get("zone_given") for p in sorted(was["phones"], key=_sid)]
-        now_zones = [p.get("zone_given") for p in sorted(setup["phones"], key=_sid)]
-        if was_zones != now_zones:
-            raise SystemExit(
-                f"--phone-zone: {a.out} was built with "
-                + (f"the zones {was_zones}" if any(was_zones) else "no zone given")
-                + "; resume with the same zones, or use a new --out"
             )
         # Each package's bytes, not just its file name: two packages of one name swapped
         # between phones must not resume a case built from the other (CodeRabbit on #267).
