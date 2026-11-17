@@ -1,0 +1,57 @@
+{
+  "id": "carrier-cdr",
+  "version": "0.1.0-reference",
+  "evidence_type": "Carrier call detail records, voice rows (synthetic layouts Carrier A and Carrier B)",
+  "status": "reference",
+  "drafted_by": "ai:claude-code session (hand-built reference for the harness tests, not a drafted pack)",
+  "layouts": [
+    {
+      "id": "carrier-a",
+      "headers": ["Date", "Time (UTC)", "Originating", "Terminating", "Direction", "Duration (s)", "Type"],
+      "date_col": "Date",
+      "time_col": "Time (UTC)",
+      "datetime_format": "%Y-%m-%d %H:%M:%S",
+      "zone": "UTC",
+      "zone_evidence": "UTC",
+      "from_col": "Originating",
+      "to_col": "Terminating",
+      "direction_col": "Direction",
+      "direction_values": {"OUT": "outgoing", "IN": "incoming"},
+      "duration_col": "Duration (s)",
+      "type_col": "Type",
+      "type_values": {"VOICE": "voice", "SMS": "sms", "VM": "voicemail", "CFWD": "forwarded"}
+    },
+    {
+      "id": "carrier-b",
+      "headers": ["Call Date", "Call Time (CT)", "Calling Number", "Called Number", "MO/MT", "Seconds", "Call Type"],
+      "date_col": "Call Date",
+      "time_col": "Call Time (CT)",
+      "datetime_format": "%m/%d/%Y %H:%M:%S",
+      "zone": "America/Chicago",
+      "zone_evidence": "(CT)",
+      "from_col": "Calling Number",
+      "to_col": "Called Number",
+      "direction_col": "MO/MT",
+      "direction_values": {"MO": "outgoing", "MT": "incoming"},
+      "duration_col": "Seconds",
+      "type_col": "Call Type",
+      "type_values": {"V": "voice", "S": "sms", "VM": "voicemail", "FW": "forwarded"}
+    }
+  ],
+  "templates": ["caller", "record_time", "message_count"],
+  "guards": [
+    {
+      "id": "voicemail-leg",
+      "text": "A call that went to voicemail shows the line rang through to the voicemail system, not that two people spoke.",
+      "record_types": ["voicemail"],
+      "blocks": ["t-voicemail", "t-count-voicemail"]
+    },
+    {
+      "id": "forwarded-leg",
+      "text": "A forwarded call leg shows the carrier routed the call onward; the handset on the line may never have rung.",
+      "record_types": ["forwarded"],
+      "blocks": ["t-forwarded"]
+    }
+  ],
+  "signatures": []
+}
