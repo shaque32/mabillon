@@ -1,4 +1,4 @@
-## 2026-11-17: LEAPP importer reads app calls, Telegram and iLEAPP Snapchat, and fails closed on new table shapes (#PRNUM)
+## 2026-11-17: LEAPP importer reads app calls, Telegram and iLEAPP Snapchat, and fails closed on new table shapes (#268)
 - Changed: Importer `leapp` 0.2.0 (`core/ingest/leapp.py`, doc `docs/ingest/leapp.md`).
   (1) App calls: ALEAPP `get_whatsapp_call_logs`, `get_Viber` and `get_line_calls`, and iLEAPP
   `whatsAppCallHistory` and `lineCalls`, are read as calls (`CALL_SPECS`). A group call, a
@@ -16,7 +16,7 @@
   from the phone's own call records (CallKit) that iLEAPP lists under no app. Why: the plan for
   the next held-out public test (`/mnt/project-files/baker/plans/leapp-chat-apps.md`); each
   table was added only after it matched Mabillon's UFDR import of the same development phone.
-- Where: PR #PRNUM
+- Where: PR #268
 - Verified: `tests/test_leapp.py` 62 tests (8 new: app calls on each platform, Telegram recovered
   rows, iLEAPP Snapchat, a missing column on a phone, chat and call table). On the public
   development phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development
@@ -35,7 +35,7 @@
 - Affects: capabilities (more apps' calls and messages read from LEAPP output; fewer apps can
   show absence on iOS)
 - Status doc: pending: in "Importers (main)", the LEAPP line becomes "iLEAPP and ALEAPP output
-  `leapp` 0.2.0 (`core/ingest/leapp.py`, #264, #PRNUM; `FORMAT_SUPPORT = "unverified"`; phone
+  `leapp` 0.2.0 (`core/ingest/leapp.py`, #264, #268; `FORMAT_SUPPORT = "unverified"`; phone
   messages, calls and contacts, the chat and app call tables that matched a UFDR of the same
   public phone, every other artifact listed as not imported; a table missing a column it reads is
   not read)". If the #264 edit is not applied yet, apply it with this wording.
