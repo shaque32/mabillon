@@ -21,7 +21,7 @@
   one phone as before. run.json lists each phone's importer, file hash, recorded zone, and
   whether the given zone was set on the case (`zone_set_by_examiner`). Why: validation v5 is a two-phone case
   read through LEAPP, and without a zone every stated window on a LEAPP phone is refused.
-- Where: PR from branch claude/project-thread-ds0ify, on main after #263 and #264
+- Where: PR #267 (branch claude/project-thread-ds0ify), on main after #263 and #264
 - Verified: `tests/test_validation_run.py` (two synthetic case01 phones: names, owners, people,
   hash refusal, resume refusal, header refusals, flag mixes; a two-phone LEAPP case where one
   phone records its zone, one takes the given zone, and one with two zones stops the build; a
