@@ -866,3 +866,13 @@ def test_at_most_and_exactly_need_every_app_counted_to_be_read_in_full() -> None
         assert "only some apps" in r.detail
     r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
     assert r.outcome is CheckOutcome.PASS
+
+
+def test_a_count_that_fails_cites_only_the_rows_it_counted() -> None:
+    # CodeRabbit on #264: too many counted is a FAIL that rests on the counted rows alone, so a
+    # row that names no receiver is not cited.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=1, count_op="le", **common)
+    assert r.outcome is CheckOutcome.FAIL and "msg:p1:c9" not in r.record_ids

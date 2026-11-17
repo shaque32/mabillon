@@ -36,9 +36,11 @@ What the tables say, and how it is read:
   as its path in the Body column; that path is read as the attachment, never as text.
 - Google Messages (bugle_db) holds most of the same SMS and MMS a second time. ALEAPP writes one
   row per part with no message id, so parts are grouped by conversation, time, direction and
-  sender. A message that matches an SMS or MMS already imported (the same direction and text,
-  within two seconds) is skipped and counted, so a message is never counted twice; the others
-  (RCS, chiefly) are imported.
+  sender. A message that matches an SMS or MMS already imported (the same direction, text,
+  number of attachments and other party, within two seconds, each SMS or MMS matched once) is
+  skipped and counted; the others (RCS, chiefly) are imported. One that may be a copy but cannot
+  be told for sure is imported, flagged and listed as a possible copy, so a count over it is
+  inconclusive.
 - Direction is read from what the table states (iLEAPP's `From Me`, ALEAPP's `Type` and
   `Direction`); a draft, queued, outbox or failed message is imported with direction unknown and
   flagged, never as sent. An iLEAPP incoming call not answered is a missed call, and so is an
@@ -1151,20 +1153,19 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     a chat app when no artifact LEAPP wrote for it (by its category's first word) holds records
     Mabillon did not read. Every other app, and a search on every channel, is not covered by
     this source (the absence and count checks read this list)."""
+    # By manifest entry, not by key: two entries can share a key, and one read through must not
+    # hide another that was not (CodeRabbit on #264).
+    done = {id(a) for _, a in read}
     keys = {a.key for _, a in read}
-    held = {a.key for a in lava.artifacts if (a.record_count or 0) > 0}
+    unread = [a for a in lava.artifacts if id(a) not in done and (a.record_count or 0) > 0]
+    unread_keys = {a.key for a in unread}
     apps: set[str] = set()
-    if keys & _NATIVE_MESSAGE_KEYS and not (held & _NATIVE_MESSAGE_KEYS) - keys:
+    if keys & _NATIVE_MESSAGE_KEYS and not unread_keys & _NATIVE_MESSAGE_KEYS:
         apps.add(NATIVE_MESSAGES_APP)
-    if keys & _NATIVE_CALL_KEYS and not (held & _NATIVE_CALL_KEYS) - keys:
+    if keys & _NATIVE_CALL_KEYS and not unread_keys & _NATIVE_CALL_KEYS:
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
-    unread_words = {
-        a.category.split()[0].lower()
-        for a in lava.artifacts
-        if (lava.leapp_name, a.key) not in read_keys and (a.record_count or 0) > 0
-        and a.category.split()
-    }  # fmt: skip
+    unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
     for k in read_keys & set(CHAT_SPECS):
         app = CHAT_SPECS[k].app
         if app.split()[0].lower() not in unread_words:

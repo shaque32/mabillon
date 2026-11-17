@@ -212,7 +212,9 @@ class CountCheck(TemplateCheck):
         if outcome is CheckOutcome.INCONCLUSIVE and n < want:
             lines.append("Finding fewer than claimed does not mean the others never existed")
         # The outcome rests on the rows that may be among them too (CodeRabbit on #264).
-        held_open = (unplaced or unknown_sender) and op != "ge"
+        # ...but not when too many were counted: that FAIL rests on the counted rows alone.
+        held_open = outcome is CheckOutcome.INCONCLUSIVE and (unplaced or unknown_sender)
+        held_open = held_open and op != "ge"
         ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
         return self.done(
             assumption_id,
@@ -318,7 +320,8 @@ class CountCheck(TemplateCheck):
                 "A call count never fails: the log keeps calls that did not connect, and one call"
                 " can be stored twice"
             )
-        ids = [r.id for r in counted + no_time + (unplaced if op != "ge" else [])]
+        held_open = outcome is CheckOutcome.INCONCLUSIVE and unplaced and op != "ge"
+        ids = [r.id for r in counted + no_time + (unplaced if held_open else [])]
         return self.done(
             assumption_id,
             outcome,

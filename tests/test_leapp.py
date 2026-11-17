@@ -738,7 +738,9 @@ def test_a_table_not_read_through_leaves_its_app_unread(tmp_path: Path, broken: 
     def change(m: dict) -> None:
         a = _artifact(m, "instagramDirectMessages")
         if broken == "view":
-            a["data_views"]["conversation"].pop("textColumn")
+            # a copy: the synthetic manifest shares its view with every build
+            view = {k: v for k, v in a["data_views"]["conversation"].items() if k != "textColumn"}
+            a["data_views"] = {"conversation": view}
         else:
             a["tablename"] = "not_there"
 
@@ -821,3 +823,21 @@ def test_photos_that_cannot_be_told_apart_are_kept_and_flagged(tmp_path: Path) -
     LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "b" / "a.zip"), conn)
     locs = [r[0] for r in conn.execute("SELECT locator FROM messages ORDER BY 1")]
     assert locs == ["get_sms_mms_mms/msg_id=50"]
+
+
+def test_one_table_read_through_never_hides_another_with_the_same_key(tmp_path: Path) -> None:
+    # CodeRabbit on #264: two manifest entries can share a key; a missing Instagram table must
+    # leave Instagram unread even when another entry with that key was read.
+    lv = _android()
+    row = {"Timestamp": "2024-03-04T10:00:00Z", "Direction": "Incoming", "Sender ID": "9"}
+    lv.add("instagramDirectMessages", **row, Message="hey", Thread="t1")
+
+    def change(m: dict) -> None:
+        a = _artifact(m, "instagramDirectMessages")
+        m["artifacts"].setdefault("Instagram", []).append({**a, "tablename": "not_there"})
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_zip_with(tmp_path, lv, change), conn)
+    payload = coverage.load(conn, "and").payload
+    assert "Instagram" not in payload["apps_read_in_full"]
+    assert [e["table"] for e in payload["not_imported"] if e.get("read_failed")] == ["not_there"]

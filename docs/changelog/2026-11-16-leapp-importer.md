@@ -5,7 +5,9 @@
   `get_sms_mms_mms`, `get_googleMessages`, `get_calllog` and `contacts`. Every phone message takes
   the app `Native Messages`, as a UFDR does. Google Messages rows that repeat an SMS or MMS
   (same direction, text, number of attachments and other party within two seconds; each SMS or
-  MMS matched at most once) are skipped and counted, so no message is counted twice. Every other artifact is listed, with its record count, in one attention item saying a
+  MMS matched at most once) are skipped and counted, so a repeat is not counted twice (one that
+  cannot be told for sure is kept and listed as a possible copy, so a count over it is
+  inconclusive). Every other artifact is listed, with its record count, in one attention item saying a
   claim on it is not tested and a record missing from it is not shown to be absent. A draft,
   queued or failed message, and a call type other than incoming, outgoing, missed or rejected,
   is imported with direction unknown and flagged. `core/ingest/pick.py` routes a `.zip` holding
@@ -59,7 +61,7 @@
   are inconclusive. (8) The report's limitations name the LEAPP reader for a LEAPP import, not
   the UFDR reader.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (31 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (33 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text
