@@ -392,6 +392,23 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "account (two people can share one), so no sender was recorded and a claim about who "
         "sent {them} is not tested from {them}.",
     ),
+    "recovered_record_may_repeat_another": (
+        "attention",
+        "{n} {be} recovered from the app database's free space or journal, not read from its "
+        "live records, so each may repeat a live message; a count over {them} is inconclusive.",
+    ),
+    "group_call_parties_not_read": (
+        "attention",
+        "{n} {be} group calls; their parties are not read, so {them} {be} imported with "
+        "direction unknown and neither side recorded, and the app's calls are not treated as "
+        "read in full.",
+    ),
+    "call_not_incoming_outgoing_or_missed": (
+        "attention",
+        "{n} {have} a direction or result other than the incoming, outgoing or missed calls "
+        "checked against a UFDR, so {them} {be} imported with direction unknown and neither "
+        "side recorded; the app's calls are not treated as read in full.",
+    ),
     "may_be_several_messages": (
         "attention",
         "{n} {be} grouped from parts with more than one text in the same second; LEAPP gives no "
