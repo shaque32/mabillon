@@ -11,23 +11,27 @@
     sender and time checks alone and was SUPPORTED with no human. Now such a claim stays
     UNPROVEN until an expert accepts the event. A time range's own words are skipped only when they hold
     nothing more than dates and times ("On March 12, 2026, while driving" kept as a range is
-    still read, Greptile on #265).
-  - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets
-    the app the claim names from code ("on Viber", "texted" is the phone's own messages app).
-    A claim naming an app the case does not hold, or an email, gets no such row and stays
-    unproven. An absence that names one kind of contact ("did not text", "never messaged on
-    Telegram", "by telephone") is refused whatever its app, since the absence check reads
-    messages and calls alike. Before, "wrote on Viber" passed on a WhatsApp message, and "no contact on Signal" was
-    CONTRADICTED by WhatsApp messages. An app whose name is also a plain word ("his second
-    line") gets no count or absence unless the claim writes it with a capital, whether code or
-    the model chose it (Greptile on #265).
+    still read, Greptile on #265), and "PETROV read: ..." is a person's act, not a message's
+    words (CodeRabbit on #265).
+  - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
+    app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
+    naming an app the case does not hold, or an email, gets no such row and stays unproven, also
+    beside an app it holds ("on Telegram and Signal", CodeRabbit on #265). An absence that names
+    one kind of contact ("did not text", "never messaged on Telegram", "by telephone") is refused
+    whatever its app, since the absence check reads messages and calls alike. Before, "wrote on
+    Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
+    messages. An app whose name is also a plain word ("his second line") gets no count or absence
+    unless the claim writes it with a capital, whether code or the model chose it (Greptile on
+    #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04")
     gets no minute range, so it is no longer tested by one wider than it states.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0). Rows
-    that repeat an earlier row's app, sender, direction and words within 2 seconds make the
-    count inconclusive, with a note for the expert. On the Android 13 development phone a chat
-    of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and Google
-    Messages), so a true "exactly 12" failed.
+    that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
+    the count inconclusive, with a note for the expert. On the Android 13 development phone a
+    chat of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and
+    Google Messages), one copy often with the number written another way or no sender, so a
+    true "exactly 12" failed. App, sender and direction are left out of the match on purpose
+    (CodeRabbit on #265): a look-alike only holds a count open.
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`). An app code
     binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not counted as
     naming more than the signed sheet, as a party the claim names is not. Without this, "texted"

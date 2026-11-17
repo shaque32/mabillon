@@ -2976,7 +2976,9 @@ _UNPLAIN_PHRASES_RE = re.compile(
 )
 # A message "reading" or "that read" its quoted words: the words the record holds, not an act
 # of reading it.
-_READ_QUOTE_RE = re.compile(r"\b(?:that|which)?\s*read\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE)
+# "a message that read: ..." names the words, not anyone reading them; "PETROV read: ..." is
+# a person's act and stays a word no check reads (CodeRabbit on #265).
+_READ_QUOTE_RE = re.compile(r"\b(?:that|which)\s+read\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE)
 # "seven text messages, all recorded on the KYOCERA": where the records are, not who sent them.
 _ALL_RECORDED_RE = re.compile(r"\ball\s+(?=(?:recorded|logged|stored|held|found)\b)", re.I)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
@@ -4338,6 +4340,13 @@ class LocalAssumptionFiller:
         texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
         if apps:
             found = apps  # "texted REYES on Telegram": the app the claim names
+            rest = bare
+            for c in sorted(self.channels(), key=len, reverse=True):
+                rest = re.sub(rf"(?i)(?<!\w){re.escape(c)}(?!\w)", " ", rest)
+            if _names_an_app_off_the_case(rest) or _EMAIL_RE.search(rest):
+                # "on Telegram and Signal" on a case with no Signal: Telegram alone is not the
+                # whole of what the claim names (CodeRabbit on #265)
+                raise Reject("the claim also names an app no assumption of it searches")
         elif texty:
             found = self._phone_message_apps()
             if len(found) != 1:

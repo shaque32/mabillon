@@ -29,19 +29,22 @@ TWIN_S = 2  # seconds within which two rows with one sender and the same words m
 
 
 def look_alike(rows: list[Row]) -> int:
-    """How many of the rows repeat an earlier row's app, sender, direction and words (folded
-    case and spaces, never empty), within TWIN_S seconds: rows a count may hold twice."""
-    seen: dict[tuple[object, ...], list[datetime]] = {}
+    """How many of the rows repeat an earlier row's words (folded case and spaces, never
+    empty) within TWIN_S seconds: rows a count may hold twice. The app, sender and direction
+    are left out on purpose: one message's copies in two stores can carry different labels
+    ("Native Messages" in one, a number written "9198887386" or no sender at all in the other,
+    as on the Android 13 development phone), and a look-alike only makes a count inconclusive,
+    never passes or fails it (CodeRabbit on #265)."""
+    last: dict[str, datetime] = {}
     n = 0
     for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
         words = " ".join((r.text or "").casefold().split())
         if not words:
             continue
-        k = (r.app, r.sender, r.direction, words)
-        times = seen.setdefault(k, [])
-        if any(abs((r.ts_utc - t).total_seconds()) <= TWIN_S for t in times):
-            n += 1
-        times.append(r.ts_utc)
+        seen = last.get(words)
+        if seen is not None and (r.ts_utc - seen).total_seconds() <= TWIN_S:
+            n += 1  # rows are in time order, so the latest copy is the nearest
+        last[words] = r.ts_utc
     return n
 
 
@@ -184,7 +187,7 @@ class CountCheck(TemplateCheck):
             # copy number, a live row and a recovered one or the SMS store and Google Messages
             # (Android 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail.
             lines.append(
-                f"{twins} of the counted messages repeat another one's sender, words and time "
+                f"{twins} of the counted messages repeat another one's words and time "
                 f"(within {TWIN_S} seconds), so the count may hold one message twice; an "
                 "expert must decide which rows are the same message"
             )

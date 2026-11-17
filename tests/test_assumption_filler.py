@@ -3417,6 +3417,8 @@ def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
     # "on Line" names the app (v5 failure hunt, 2026-11-16). The case has no Line, so the
     # app list is patched.
     monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["Line"])
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line"])
     monkeypatch.setattr(
         LocalAssumptionFiller,
         "_channels",
@@ -3488,3 +3490,23 @@ def test_a_model_chosen_plain_word_app_gets_no_absence(conn, monkeypatch):
     ]
     with pytest.raises(Reject, match="plain word"):
         filler._bind_named_app(c, out)
+
+
+def test_a_person_reading_a_message_is_a_word_no_check_reads(conn):
+    # "PETROV read: ..." is an act; only "a message that read: ..." names the words
+    # (CodeRabbit on #265).
+    text = 'On March 12, 2026, PETROV read: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
+def test_an_app_the_case_lacks_beside_one_it_holds_stays_unproven(conn):
+    # "on Telegram and Signal" on a case with no Signal: binding Telegram alone would test
+    # less than the claim says (CodeRabbit on #265).
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Signal: "need 2 more by'
+        ' friday".'
+    )
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    assert any("also names an app" in d.reason for d in filler.drops)

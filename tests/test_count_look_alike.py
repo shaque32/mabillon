@@ -2,8 +2,8 @@
 
 On Android 13 a TikTok chat of 12 messages is 17 rows: five live messages also stored as a
 recovered copy, with the same sender, words and time and no copy number. "Exactly 12" then
-failed, a false contradiction. Rows that repeat another's app, sender, direction and words
-within TWIN_S seconds keep the count from passing or failing."""
+failed, a false contradiction. Rows that repeat another's words within TWIN_S seconds, on any
+app and from any sender, keep the count from passing or failing."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -28,11 +28,27 @@ def test_the_sms_store_and_google_messages_a_millisecond_apart_are_look_alikes()
     assert look_alike(rows) == 1
 
 
-def test_the_same_words_sent_again_later_or_by_the_other_side_are_two_messages() -> None:
+def test_the_same_words_sent_again_later_are_two_messages() -> None:
     later = T0 + timedelta(seconds=TWIN_S + 1)
     assert look_alike([row(1, "ok", T0), row(2, "ok", later)]) == 0
-    assert look_alike([row(1, "ok", T0), row(2, "ok", T0, sender="acct:b")]) == 0
-    assert look_alike([row(1, "ok", T0), row(2, "ok", T0, app="WhatsApp")]) == 0
+
+
+def test_copies_with_other_labels_are_still_look_alikes() -> None:
+    # Android 13: one text is "+19198887386" in one store and "9198887386" in the other, or
+    # has no sender at all; another export may name the app another way (CodeRabbit on #265).
+    # A look-alike only holds a count open, so a rare true pair costs a pass, never a verdict.
+    near = T0 + timedelta(milliseconds=12)
+    assert look_alike([row(1, "ok", T0), row(2, "ok", near, sender="acct:9198887386")]) == 1
+    assert look_alike([row(1, "ok", T0), row(2, "ok", near, sender=None)]) == 1
+    assert look_alike([row(1, "ok", T0), row(2, "ok", near, app="SMS")]) == 1
+    assert look_alike([row(1, "ok", T0), row(2, "ok", near, direction="unknown")]) == 1
+
+
+def test_three_copies_count_twice_and_far_apart_ones_never() -> None:
+    rows = [row(i, "ok", T0 + timedelta(milliseconds=i)) for i in range(3)]
+    assert look_alike(rows) == 2
+    spread = [row(i, "ok", T0 + timedelta(seconds=i * (TWIN_S + 1))) for i in range(4)]
+    assert look_alike(spread) == 0
 
 
 def test_rows_with_no_words_or_no_time_are_never_look_alikes() -> None:
