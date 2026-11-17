@@ -186,8 +186,9 @@ does not read its participants, so it reads as a call with the caller alone. Wha
 therefore never read in full from ALEAPP output. An app can also place calls through Android's telecom service, which
 writes them to the phone's call log, where they are stored under the call log, not the app. So
 when an ALEAPP call log row names a `Phone Account Package` other than `com.android.phone`
-(flagged `call_placed_by_another_app`), or the call log was not read, no chat app counts as read
-in full. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
+(flagged `call_placed_by_another_app`), or the call log was not read or is not in the run, no
+chat app counts as read in full. Calls stored from a chat table's call notices count among the
+kinds the import read. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
 WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
 
 Other app call tables did not match a UFDR's calls one to one, so they stay not imported: ALEAPP

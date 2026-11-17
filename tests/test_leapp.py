@@ -1322,3 +1322,18 @@ def test_an_outgoing_whatsapp_call_with_an_unchecked_missed_value_has_no_sides(
     assert sorted(directions) == [
         ("outgoing", None, "c1"), ("unknown", None, None), ("unknown", None, None)
     ]  # fmt: skip
+
+
+def test_a_telegram_only_run_holds_calls_and_no_chat_app_in_full(tmp_path: Path) -> None:
+    # CodeRabbit on #268: with no call log in the run, Telegram was read in full, and the calls
+    # stored from its call notices were not named among the kinds read.
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_telegramMessages", **{"Timestamp": "2024-03-06T10:00:00Z", "Direction": "Outgoing",
+           "Sender ID": "111", "Dialog ID": "42", "Record Origin": "Live",
+           "Message": "[Phone call (call id 1, outcome hung up, duration seconds 5)]"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    payload = coverage.load(conn, "and").payload
+    assert payload["apps_read_in_full"] == []
+    assert "calls" in payload["categories_read"]
+    assert "calls" not in payload["categories_not_found"]

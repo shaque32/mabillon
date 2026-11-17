@@ -190,6 +190,8 @@ class Lava:
     calls_without_sides: Counter[str] = field(default_factory=Counter)
     # ALEAPP call log rows written by a package other than the phone's own telephony
     calls_from_other_packages: int = 0
+    # record kinds stored from a table read as another kind (a chat table's call notices)
+    extra_kinds: set[RecordKind] = field(default_factory=set)
 
     def has_table(self, art: Artifact) -> bool:
         return bool(
@@ -1112,6 +1114,7 @@ def _call_notice(
     c.flag("call_notice_read_as_call", loc)
     length = int(m.group(1)) if m else None
     _add_call(c, app, loc, frm, None, kind, _time(raw_time), length, None)
+    c.lava.extra_kinds.add(RecordKind.CALLS)
 
 
 # A conversation name that is a phone number or an address, so it names the other party.
@@ -1638,10 +1641,11 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
         # phone's own call records (CallKit) that iLEAPP lists under no app, so no table read
         # here holds every call of a chat app: none counts as read in full.
         return sorted(apps)
-    if lava.calls_from_other_packages or "get_calllog" in unread_keys:
+    if lava.calls_from_other_packages or "get_calllog" not in keys:
         # A VoIP app can write its calls to Android's call log too, where they are stored under
         # the call log, not the app (Claude review on #268): when the call log holds a row from
-        # another package, or was not read, no chat app counts as read in full.
+        # another package, or was not read (absent included; CodeRabbit on #268), no chat app
+        # counts as read in full.
         return sorted(apps)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
     unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
@@ -1796,7 +1800,12 @@ class LeappImporter:
                         )
             w.flush()
             payload = coverage_payload(
-                source, IMPORTER_NAME, None, None, cov, sorted({s.kind for s, _ in done})
+                source,
+                IMPORTER_NAME,
+                None,
+                None,
+                cov,
+                sorted({s.kind for s, _ in done} | lava.extra_kinds),
             )
             payload.update(
                 importer_version=IMPORTER_VERSION,

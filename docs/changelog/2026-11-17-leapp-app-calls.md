@@ -22,12 +22,13 @@
   the next held-out public test (`/mnt/project-files/baker/plans/leapp-chat-apps.md`); each
   table was added only after it matched Mabillon's UFDR import of the same development phone.
 - Where: PR #268
-- Verified: `tests/test_leapp.py` 68 tests (14 new: app calls on each platform, Telegram recovered
+- Verified: `tests/test_leapp.py` 69 tests (15 new: app calls on each platform, Telegram recovered
   rows and call notices, iLEAPP Snapchat with a recovered row, a call log row from another app, a
   length that is not a finite number, ALEAPP WhatsApp never read in full, an outgoing call with an
-  unchecked Missed value, a refused SMS table never standing for a Google Messages copy, a
-  missing column on a phone, chat and call table). On the public development phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development
-  data, not a scored run): Android 13 WhatsApp, Viber and Line calls 4 of 4 each match the UFDR
+  unchecked Missed value, a refused SMS table never standing for a Google Messages copy, a run
+  with no call log, a missing column on a phone, chat and call table). On the public development
+  phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development data, not a
+  scored run): Android 13 WhatsApp, Viber and Line calls 4 of 4 each match the UFDR
   on time, direction and length, and on other party where LEAPP names one; iOS 15 WhatsApp calls
   4 of 4, and Line calls 4 of 4 on time, direction and length; Telegram's 4 call notices match
   the UFDR's 4 Telegram calls on time, direction, caller and length, and 23 of its other 25 rows
