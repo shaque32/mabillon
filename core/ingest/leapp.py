@@ -619,35 +619,79 @@ def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[_Native]]:
     return keys
 
 
-def _same_message(
-    native: dict[tuple[int, str, str], list[_Native]],
-    used: set[str],
-    ts: Timestamp,
-    direction: MessageDirection,
-    body: str,
-    party: str | None,
-    media: int,
-) -> tuple[tuple[str, int] | None, str | None]:
-    """(match, possible). match is (locator, seconds apart) of the nearest SMS or MMS not yet
-    matched with this direction, text, other party and number of attachments within
-    SAME_MESSAGE_SECONDS, the earliest in table order on a tie. possible is the locator of the
-    nearest one that has the same direction, text and attachments but whose other party cannot be
-    compared (either side names none, or several), when there is no match. A match is marked
-    used, so one SMS or MMS stands for at most one Google Messages message (CodeRabbit on #264)."""
-    if ts.utc is None:
-        return None, None
-    sec = int(ts.utc.timestamp())
-    possible: str | None = None
-    for dt in sorted(range(-SAME_MESSAGE_SECONDS, SAME_MESSAGE_SECONDS + 1), key=abs):
-        for n in native.get((sec + dt, direction.value, _norm(body)), []):
-            if n.locator in used or n.media != media:
-                continue
-            if party is None or n.party is None:
-                possible = possible or n.locator
-            elif _same_party(party, n.party):
-                used.add(n.locator)
-                return (n.locator, dt), None
-    return None, possible
+@dataclass(frozen=True)
+class _GmMessage:
+    """A Google Messages message as compared with the SMS and MMS tables."""
+
+    ts: Timestamp
+    direction: MessageDirection
+    body: str
+    party: str | None  # its other party (_party_key); None when it cannot be told
+    media: int  # attachments
+
+
+def _match_copies(
+    msgs: list[_GmMessage], native: dict[tuple[int, str, str], list[_Native]]
+) -> list[tuple[tuple[str, int] | None, str | None]]:
+    """For each Google Messages message, (match, possible).
+
+    A candidate is an SMS or MMS within SAME_MESSAGE_SECONDS with the same direction, text and
+    number of attachments. It is a copy when both name their other party and the two are the
+    same (`_same_party`). Copies are paired nearest in time first (then in table order), each
+    SMS or MMS and each Google Messages message at most once (CodeRabbit on #264). The two
+    stores name an attachment's file differently (a Google Messages cache path, an MMS part
+    file), so attachments cannot be compared one to one: a message with attachments is paired
+    only when it has one copy and that SMS or MMS is a copy of no other Google Messages message.
+
+    match is (locator, seconds apart) of its pair. possible, when it has no pair, is the
+    locator of the nearest candidate it may be a copy of: one whose other party cannot be
+    compared, or a copy left unpaired because attachments could not tell which is which."""
+    cands: list[list[tuple[int, int, _Native]]] = []
+    for m in msgs:
+        out: list[tuple[int, int, _Native]] = []
+        if m.ts.utc is not None:
+            sec = int(m.ts.utc.timestamp())
+            for dt in range(-SAME_MESSAGE_SECONDS, SAME_MESSAGE_SECONDS + 1):
+                for n in native.get((sec + dt, m.direction.value, _norm(m.body)), []):
+                    if n.media == m.media:
+                        out.append((abs(dt), dt, n))
+        cands.append(sorted(out, key=lambda x: (x[0], x[1])))
+
+    def copy(m: _GmMessage, n: _Native) -> bool:
+        return m.party is not None and n.party is not None and _same_party(m.party, n.party)
+
+    copies = [[x for x in cs if copy(m, x[2])] for m, cs in zip(msgs, cands, strict=True)]
+    claimants = Counter(x[2].locator for cs in copies for x in cs)
+    result: list[tuple[tuple[str, int] | None, str | None]] = [(None, None)] * len(msgs)
+    used: set[str] = set()
+    paired: set[int] = set()
+    for _a, i, j in sorted((x[0], i, j) for i, cs in enumerate(copies) for j, x in enumerate(cs)):
+        _, dt, n = copies[i][j]
+        if i in paired or n.locator in used:
+            continue
+        if msgs[i].media and (len(copies[i]) > 1 or claimants[n.locator] > 1):
+            continue
+        paired.add(i)
+        used.add(n.locator)
+        result[i] = ((n.locator, dt), None)
+    for i, (m, cs) in enumerate(zip(msgs, cands, strict=True)):
+        if i in paired:
+            continue
+        possible = next(
+            (
+                n.locator
+                for _a, _dt, n in cs
+                if (
+                    not copy(m, n)
+                    and n.locator not in used
+                    and (m.party is None or n.party is None)
+                )
+                or (copy(m, n) and m.media)
+            ),
+            None,
+        )
+        result[i] = (None, possible)
+    return result
 
 
 def _android_google_messages(c: _Ctx) -> None:
@@ -664,16 +708,16 @@ def _android_google_messages(c: _Ctx) -> None:
         )
         groups[key].append((rowid, r))
     native = _native_keys(c)
-    used: set[str] = set()
     # A sent message names the phone as its sender and the chat by display name, so its other
     # party is the one sender of the chat's received messages, when the chat has exactly one.
     heard: dict[str, set[str]] = defaultdict(set)
     for (cid, _t, d, who), _rows in groups.items():
         if d.lower() == "incoming" and (k := _party_key(who)):
             heard[cid].add(k)
+    msgs: list[_GmMessage] = []
+    medias: list[list[str]] = []
     for rows in groups.values():
-        rowid, r = rows[0]
-        loc = f"{c.art.table}/rowid={rowid}"
+        r = rows[0][1]
         ts = _time(r.get("Message Timestamp"))
         d = (_text(r.get("Direction")) or "").lower()
         direction = {"incoming": MessageDirection.INCOMING, "outgoing": MessageDirection.OUTGOING}
@@ -701,7 +745,15 @@ def _android_google_messages(c: _Ctx) -> None:
             )
         else:
             party = None
-        match, possible = _same_message(native, used, ts, mdir, body, party, len(media))
+        msgs.append(_GmMessage(ts, mdir, body, party, len(media)))
+        medias.append(media)
+    matches = _match_copies(msgs, native)
+    for rows, m, media, (match, possible) in zip(
+        groups.values(), msgs, medias, matches, strict=True
+    ):
+        rowid, r = rows[0]
+        loc = f"{c.art.table}/rowid={rowid}"
+        ts, mdir, body = m.ts, m.direction, m.body
         if possible is not None:
             c.flag("may_be_same_as_an_sms_or_mms_message", loc)
             # Both may be one message, so a count over them never passes (count check).

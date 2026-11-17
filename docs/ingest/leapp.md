@@ -49,8 +49,12 @@ message was stored under another of the phone's own services.
 Google Messages holds most of the phone's SMS and MMS a second time. A Google Messages message
 is skipped and counted (`same_as_an_sms_or_mms_message`) when an SMS or MMS within two seconds
 has the same direction, text, number of attachments and other party, so no message is counted
-twice; the rest (RCS, chiefly) is imported. Each SMS or MMS stands for at most one Google
-Messages message. The other party is the sender of a received message, and for a sent one the
+twice; the rest (RCS, chiefly) is imported. Pairs are made nearest in time first, and each SMS
+or MMS stands for at most one Google Messages message. The two stores name an attachment's file
+differently (a Google Messages cache path, an MMS part file), so attachments are compared by
+number only, and a message with attachments is paired only when it has one such SMS or MMS and
+that SMS or MMS has no other such Google Messages message; otherwise all of them are kept and
+listed as possible copies. The other party is the sender of a received message, and for a sent one the
 receiver: `Other Participant/Conversation Name` when it is a number or email, else the one
 sender of the chat's received messages when the chat has exactly one. An SMS or MMS names its
 other party in `Address`, `From Address` (received) or `To Address`, `Cc` and `Bcc` (sent), and

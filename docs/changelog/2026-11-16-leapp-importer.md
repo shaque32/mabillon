@@ -40,7 +40,9 @@
   fixed. (1) The Google Messages copy match now compares the other party too (numbers by their
   digits, with or without a country code; emails without case), so "OK" from Bob is never taken
   for a copy of "OK" from Alice, and each SMS or MMS stands for at most one Google Messages
-  message. When the other party cannot be compared (a sent message whose chat has no single
+  message, paired nearest in time first. Attachments cannot be compared one to one across the
+  two stores (their file names differ), so a message with attachments is paired only when the
+  pairing is unambiguous; otherwise every row involved is kept and listed as a possible copy. When the other party cannot be compared (a sent message whose chat has no single
   sender, or a group MMS), the message is kept, flagged `may_be_same_as_an_sms_or_mms_message`,
   and both rows are listed as possible copies, so a count over them is inconclusive. The count
   check's wording for such rows now says "listed by the import as a possible copy". (2) The
@@ -79,7 +81,9 @@
   check on LEAPP output is a judgment for review. The Google Messages match is by direction, text,
   attachments, other party and time within two seconds, with no message id, so two identical
   texts to the same person within two seconds, one of them only in Google Messages, would be read
-  as one. A number written with a national trunk prefix ("07911...") does not match the same
+  as one. A photo only in Google Messages, sent by the same person with the same text within two
+  seconds of an MMS photo whose own Google Messages copy is missing, would be read as that MMS.
+  A number written with a national trunk prefix ("07911...") does not match the same
   number with a country code, so such a copy is kept and may be counted twice. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR
   import of the same phone shows them as incoming.
 - Affects: capabilities (a new input format, unverified); verdict path (absence 1.0.2, count

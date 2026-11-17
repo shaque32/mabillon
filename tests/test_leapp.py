@@ -789,3 +789,35 @@ def test_the_report_names_the_leapp_reader_not_the_ufdr_reader(tmp_path: Path) -
     text = _limitations(conn, sources(conn))
     assert "iLEAPP and ALEAPP reader, which is not yet verified" in text
     assert "UFDR reader" not in text and "Cellebrite Reader" not in text
+
+
+def test_photos_that_cannot_be_told_apart_are_kept_and_flagged(tmp_path: Path) -> None:
+    # CodeRabbit on #264: the two stores name a photo's file differently, so attachments are
+    # compared by number only. Alice's MMS photo has two Google Messages messages with one photo
+    # each a second apart: which one is the copy cannot be told, so both are kept, and the three
+    # rows are listed as possible copies (a count over them is inconclusive).
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_sms_mms_mms", **{"Date": "2024-03-01T12:00:00Z", "Direction": "Received",
+           "From Address": ALICE, "To Address": OWNER, "Media": "PART_1_a.jpg", "MSG ID": "50",
+           "Thread ID": "2"})  # fmt: skip
+    for s, f in ((0, "a"), (1, "b")):
+        lv.add("get_googleMessages", **{"Message Timestamp": f"2024-03-01T12:00:0{s}Z",
+               "Direction": "Incoming", "Message Sender": ALICE, "Message Type": "image/jpeg",
+               "Attachment Location": f"/cache/part_{f}.bin", "Conversation ID": "9"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    locs = [r[0] for r in conn.execute("SELECT locator FROM messages ORDER BY 1")]
+    assert locs == [
+        "get_googlemessages/rowid=1",
+        "get_googlemessages/rowid=2",
+        "get_sms_mms_mms/msg_id=50",
+    ]
+    copies = set(coverage.load(conn, "and").payload["numbered_copy_records"])
+    assert copies == {f"msg:and:{loc}" for loc in locs}
+    # With one Google Messages message for it, the photo's copy is skipped as before.
+    (tmp_path / "b").mkdir()
+    lv.tables["get_googleMessages"].pop()
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "b" / "a.zip"), conn)
+    locs = [r[0] for r in conn.execute("SELECT locator FROM messages ORDER BY 1")]
+    assert locs == ["get_sms_mms_mms/msg_id=50"]
