@@ -134,8 +134,9 @@ phone's own value, from the source path LEAPP names.
 ALEAPP's `get_battery_usage_v4` (Timezone, with its time). It is set only when every zone those
 tables recorded is the same one. A phone that recorded two or more zones, or none, gets no zone
 and an attention item saying so, and a claim with a time window is not tested until the expert
-sets the zone (case screen, or `mabillon set-device-zone`). A zone name the standard library does
-not know is counted (`zones_not_read`) and not used. The coverage record keeps every zone seen,
+sets the zone (case screen, or `mabillon set-device-zone`). Any name the standard library knows
+counts, `UTC` included. A value it does not know is counted (`zones_not_read`), and the phone then
+gets no zone either, with its own attention item, since that value may be a second zone. The coverage record keeps every zone seen,
 with its record count, tables and first and last time (`leapp.device.zones_seen`), and the item
 says the zone places every record, including any from times the phone did not record its zone.
 

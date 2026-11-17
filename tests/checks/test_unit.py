@@ -202,8 +202,20 @@ def test_confirmed_identity_link_adds_an_account() -> None:
 
 
 def test_count_and_its_limits() -> None:
-    conn = build()
     common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    # msg:p1:5 went to A with no sender and no time: it may be a third message from B in
+    # March, so "exactly 2" and "at most 2" cannot pass while it is there (count 1.2.1), as
+    # "no contact" cannot (absence). "At least 2" still passes, and too many still fails.
+    with_row = build()
+    for op in ("eq", "le"):
+        r = check(with_row, "message_count", expected_count=2, count_op=op, **common)
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, op
+        assert "name no sender or no receiver" in r.detail and "msg:p1:5" in r.detail
+    r = check(with_row, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS
+    r = check(with_row, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL
+    conn = without_undated_row(build())
     assert check(conn, "message_count", expected_count=2, count_op="eq", **common).outcome is (
         CheckOutcome.PASS
     )
@@ -512,12 +524,14 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     # absence 1.0.2: a row with no recorded receiver is unplaced, never "none found" (#264)
     assert CHECKS["absence"].version == "1.0.2"
     # The checks that match a quote's text record the fold (curly quotes, runs of spaces).
-    assert CHECKS["weekday"].version == "1.0.2"
+    # weekday 1.0.3, time 1.1.1 and count 1.2.1: a row that names no sender or no receiver
+    # keeps them from passing or failing as if it were not there (#264).
+    assert CHECKS["weekday"].version == "1.0.3"
     # The sender check fails only on a record or a confirmed fact (1.1.0), and neither it nor
     # the time check rests on words found only inside a longer sentence (1.2.0, 1.1.0).
     assert CHECKS["sender"].version == "1.2.0"
-    assert CHECKS["time"].version == "1.1.0"  # and a call is on the app named beside "call"
-    assert CHECKS["count"].version == "1.2.0"  # and counts calls (validation fill f)
+    assert CHECKS["time"].version == "1.1.1"  # and a call is on the app named beside "call"
+    assert CHECKS["count"].version == "1.2.1"  # and counts calls (validation fill f)
 
 
 def _typed(conn: sqlite3.Connection, body: str) -> sqlite3.Connection:
@@ -722,3 +736,72 @@ def test_sides_that_share_an_account_give_no_direction(direction) -> None:
               **direction)  # fmt: skip
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
     assert "share an account" in r.detail
+
+
+def _chat_row(conn: sqlite3.Connection, mid: str, sender: str | None, ts: str, body: str) -> None:
+    # A LEAPP chat row: a sender (or none, for the phone's own message) and no receiver.
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES (?, 'p1', 'x', 't1', ?, 'unknown', ?, ?)",
+        (mid, sender, ts, body),
+    )
+
+
+def test_a_count_over_chat_rows_that_name_no_receiver_never_passes() -> None:
+    # Greptile on #264: five LEAPP chat messages from Bee, none naming a receiver, counted
+    # zero, and "at most one" passed. Now they hold "at most" and "exactly" open (count 1.2.1).
+    conn = without_undated_row(build())
+    for i in range(5):
+        _chat_row(conn, f"msg:p1:c{i}", "a:p1:b", f"2026-03-20T15:0{i}:00Z", "hey")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    for op, want in (("le", 2), ("eq", 2)):
+        r = check(conn, "message_count", expected_count=want, count_op=op, **common)
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, (op, r.detail)
+        assert "5 messages name no sender or no receiver" in r.detail
+    # The phone's own message in that chat names neither side, and holds the count open too.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:c9" in r.detail
+    # A row from someone else entirely is no message between them.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c8", "a:p1:c", "2026-03-20T15:00:00Z", "unrelated")
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_a_call_count_over_calls_that_name_no_other_side_never_passes() -> None:
+    conn = _with_calls(without_undated_row(build()), ["2026-03-10T15:00:00Z"])
+    conn.execute(
+        "INSERT INTO calls (id, source_id, locator, device_id, app, from_account_id,"
+        " to_account_id, direction, ts_utc, duration_s) VALUES ('call:p1:x', 'p1', 'x', 'dev:p1',"
+        " 'SMS', 'a:p1:b', NULL, 'incoming', '2026-03-12T15:00:00Z', 60)"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, channels=["call"])
+    r = check(conn, "message_count", expected_count=1, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "call:p1:x" in r.detail
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_absence_reads_the_phones_own_message_in_a_chat_with_a_party() -> None:
+    # A LEAPP chat with Bee holds the phone's own message with no sender and no receiver: it
+    # may be contact with Bee, so "no contact" cannot pass.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-04-05T12:00:00Z", "on my way")
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert r.record_ids == ("msg:p1:c9",)
+
+
+def test_a_message_with_the_words_that_names_no_receiver_keeps_time_from_failing() -> None:
+    # The quoted words are on a message Bee sent at 15:00Z on March 10 (outside this window),
+    # and on a chat row from Bee that names no receiver: that row may be the one described.
+    w = window(D(2026, 3, 20, 11), D(2026, 3, 20, 12), "11 a.m. on March 20")
+    conn = without_undated_row(build())
+    common = dict(quoted_text="see you at noon", person_ids=[B, A], device_ids=["dev:p1"])
+    assert check(conn, "record_time", window=w, **common).outcome is CheckOutcome.FAIL
+    _chat_row(conn, "msg:p1:c7", "a:p1:b", "2026-03-20T15:30:00Z", "see you at noon")
+    r = check(conn, "record_time", window=w, **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "name no sender or no receiver" in r.detail

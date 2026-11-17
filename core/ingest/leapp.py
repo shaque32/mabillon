@@ -489,7 +489,9 @@ def _android_mms(c: _Ctx) -> None:
         loc = _loc(c.art.table, "msg_id", r.get("MSG ID"), rowid)
         direction = _android_direction(c, r.get("Direction"), loc)
         frm = _ident(r.get("From Address"))
-        to = [_party(p) for p in _split(r.get("To Address"))]
+        # Every receiver the MMS names: To, Cc and Bcc (Greptile on #264).
+        named = [p for k in ("To Address", "Cc", "Bcc") for p in _split(r.get(k))]
+        to = [_party(p) for p in dict.fromkeys(named)]
         sender = _party(frm) if frm and frm.lower() != "insert-address-token" else None
         thread = _text(r.get("Thread ID"))
         chat_key = f"thread:{thread}" if thread else f"row:{loc}"
@@ -912,8 +914,8 @@ OS_SOURCES: dict[tuple[str, str], tuple[str, str, tuple[str, ...]]] = {
 
 
 def _zone(name: str | None) -> str | None:
-    """An IANA zone name the standard library knows, else None."""
-    if not name or "/" not in name:
+    """A zone name the standard library knows ("America/New_York", "UTC"), else None."""
+    if not name or not name.strip() or name != name.strip():
         return None
     try:
         ZoneInfo(name)
@@ -925,7 +927,9 @@ def _zone(name: str | None) -> str | None:
 def device_facts(lava: Lava) -> dict[str, Any]:
     """The phone's time zone and OS as LEAPP's device tables state them. The zone is set only
     when every zone the phone recorded is the same one; a phone that recorded two or more gets
-    none, since no one zone places all its records, and the expert enters it."""
+    none, since no one zone places all its records, and the expert enters it. So does a phone
+    that recorded a zone value this reader cannot read beside the one it can (Greptile on
+    #264): that value may be another zone."""
     zones: dict[str, dict[str, Any]] = {}
     invalid: Counter[str] = Counter()
     os_parts: dict[str, str] = {}
@@ -969,7 +973,7 @@ def device_facts(lava: Lava) -> dict[str, Any]:
     if lava.leapp_name == "ALEAPP" and os_version:
         os_version = f"Android {os_version}"
     return {
-        "timezone": found[0] if len(found) == 1 else None,
+        "timezone": found[0] if len(found) == 1 and not invalid else None,
         "zones_seen": [zones[n] for n in found],
         "zones_not_read": dict(invalid),
         "os_version": os_version,

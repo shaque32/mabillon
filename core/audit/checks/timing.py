@@ -16,6 +16,7 @@ from core.audit.checks._common import (
     calls_for_accounts,
     channel_ok,
     in_window,
+    incomplete,
     involves_all,
     local_str,
     messages_with_text,
@@ -41,7 +42,9 @@ class TimeCheck(TemplateCheck):
     # 1.0.2: a call is on the app named beside "call". 1.0.3: the text match folds (TEXT_MATCH).
     # 1.1.0: a message that holds the words only inside a longer sentence (sentence_aligned)
     # neither passes nor fails it.
-    version = "1.1.0"
+    # 1.1.1: a message with the words that names no sender or no receiver keeps it from failing
+    # (Greptile on #264).
+    version = "1.1.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None:
@@ -70,8 +73,16 @@ class TimeCheck(TemplateCheck):
             if r.source_id in sources
             and channel_ok(r, p.channels)
             and (by_text or not apps or r.app.strip().lower() in apps)
-            and (not party_ids or involves_all(r, party_ids))
         ]
+        everyone = set().union(*party_ids) if party_ids else set()
+        # A message with the words that names no sender or no receiver (a LEAPP chat names a
+        # sender only) may be the one the claim describes, so it keeps the check from failing.
+        unplaced = [
+            r
+            for r in rows
+            if party_ids and incomplete(r) and (r.sender is None or r.sender in everyone)
+        ]
+        rows = [r for r in rows if not party_ids or involves_all(r, party_ids)]
         searched = f"{what.capitalize()} in {', '.join(sources)}; window {window_str(p.window)}."
         notes = [n for x in found for n in x.notes] + zone_notes(data, p.window, sources)
         if not rows:
@@ -118,10 +129,15 @@ class TimeCheck(TemplateCheck):
         ids = [r.id for r in inside + outside + unknown + partial]
         if inside:
             outcome, ids = CheckOutcome.PASS, [r.id for r in inside]
-        elif outside and not unknown and not partial and by_text:
+        elif outside and not unknown and not partial and by_text and not unplaced:
             outcome = CheckOutcome.FAIL
         else:
             outcome = CheckOutcome.INCONCLUSIVE
+            if outside and unplaced:
+                lines.append(
+                    f"{len(unplaced)} messages with the words name no sender or no receiver, so "
+                    f"one may be the message described: {', '.join(r.id for r in unplaced)}"
+                )
             if outside and not by_text:
                 lines.append("Calls are matched by their parties only, so these may be other calls")
         return self.done(assumption_id, outcome, searched, sentences(lines, notes), ids, sources)

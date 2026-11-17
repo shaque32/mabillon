@@ -254,6 +254,22 @@ def _leapp_device_items(device: dict[str, Any]) -> list[CoverageItem]:
                 ),
             )
         ]
+    unread = device.get("zones_not_read") or {}
+    if unread:
+        values = "; ".join(f"{v!r} ({_n(int(n), 'records')})" for v, n in sorted(unread.items()))
+        read = f" Beside them it recorded {'; '.join(span(z) for z in seen)}." if seen else ""
+        return [
+            CoverageItem(
+                "attention",
+                "leapp_timezone_not_read",
+                (
+                    _t(
+                        "The phone recorded time zone values that are not zone names this "
+                        f"reader knows, so no zone was set: {values}.{read}{fix}"
+                    ),
+                ),
+            )
+        ]
     return [
         CoverageItem(
             "attention",

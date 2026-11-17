@@ -427,6 +427,45 @@ def messages_for_accounts(data: CaseData, account_ids: set[str]) -> list[Row]:
     return [_message_row(r) for r in rows]
 
 
+def incomplete(row: Row) -> bool:
+    """True when the row records no sender or no receiver: it may be contact between any two
+    parties, so a check never treats it as no contact (LEAPP names the other side of a phone's
+    message or call but often not the phone's own line, and a chat app's rows name a sender
+    only)."""
+    return row.sender is None or not row.recipients
+
+
+def may_be_between(row: Row, a: set[str], b: set[str]) -> bool:
+    """True when a row that names no sender or no receiver (`incomplete`) may still be a
+    message or call between a side in `a` and one in `b`: its known sender is on one side, or
+    it has none and its known receivers, if any, include a side."""
+    if row.sender is not None:
+        return row.sender in a or row.sender in b
+    recips = set(row.recipients)
+    return not recips or bool(recips & (a | b))
+
+
+def incomplete_beside(data: CaseData, account_ids: set[str]) -> list[Row]:
+    """Every message with no sender or no receiver in a chat that holds a message an account in
+    the set sent or received: a phone's own message in that chat often names neither side."""
+    if not account_ids:
+        return []
+    ids = json.dumps(sorted(account_ids))
+    rows = data.conn.execute(
+        _MSG_SQL  # noqa: S608  (constant SQL; values are bound)
+        + " WHERE m.thread_id IN"  # noqa: S608  (constant SQL; values are bound)
+        " (SELECT x.thread_id FROM messages x"
+        "  WHERE x.sender_account_id IN (SELECT value FROM json_each(?))"
+        "  OR x.id IN (SELECT r.message_id FROM message_recipients r"
+        "   WHERE r.account_id IN (SELECT value FROM json_each(?))))"
+        " AND (m.sender_account_id IS NULL"
+        "  OR NOT EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = m.id))"
+        f" AND {NOT_COPY} ORDER BY m.id",
+        (ids, ids),
+    )
+    return [_message_row(r) for r in rows]
+
+
 # A claim types I'm where the phone stored I’m, and one space where the export kept two. The
 # checks' text match reads curly quotes as straight ones and any run of spaces as one space;
 # every other character must match exactly. Quote verification (core/audit/quotes.py) stays

@@ -574,3 +574,53 @@ def test_a_real_column_named_rowid_never_stands_in_for_the_row_id() -> None:
     db.execute('CREATE TABLE u ("rowid" TEXT, "_rowid_" TEXT, "oid" TEXT)')
     with pytest.raises(ValueError, match="hide its row ids"):
         list(lava.rows(leapp.Artifact("SMS", "SMS", "sms", "u", "m", {}, 0, None)))
+
+
+def test_an_mms_keeps_every_receiver_it_names(tmp_path: Path) -> None:
+    # Greptile on #264: an MMS to Carol with Bob in Cc lost Bob, so "no contact" with Bob
+    # could pass. To, Cc and Bcc are all receivers.
+    lv = _android()
+    lv.add(
+        "get_sms_mms_mms",
+        **{"Date": "2024-03-02T10:00:00Z", "MSG ID": "77", "Thread ID": "9", "Direction": "Sent",
+           "From Address": "insert-address-token", "To Address": "+15550000003",
+           "Cc": "+15550000004", "Bcc": "+15550000005", "Body": "group pic"},
+    )  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    got = conn.execute(
+        "SELECT a.identifier FROM message_recipients r JOIN messages m ON m.id = r.message_id"
+        " JOIN accounts a ON a.id = r.account_id WHERE m.locator LIKE '%msg_id=77' ORDER BY 1"
+    ).fetchall()
+    assert [g[0][-4:] for g in got] == ["0003", "0004", "0005"]
+
+
+@pytest.mark.parametrize(
+    ("values", "zone"), [(["UTC"], "UTC"), (["UTC", "America/New_York"], None)]
+)
+def test_utc_is_a_zone_and_counts_against_another(tmp_path: Path, values, zone) -> None:
+    # Greptile on #264: "UTC" was dropped as no zone, so a phone that recorded UTC and New York
+    # was set to New York.
+    lv = _android()
+    for i, z in enumerate(values):
+        lv.add(
+            "get_battery_usage_v4", **{"Timestamp": f"2024-03-0{i + 1}T00:00:00Z", "Timezone": z}
+        )
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT timezone FROM devices").fetchall() == [(zone,)]
+
+
+def test_a_zone_value_that_cannot_be_read_sets_no_zone(tmp_path: Path) -> None:
+    lv = _android()
+    for i, z in enumerate(("America/New_York", "-0500")):
+        lv.add(
+            "get_battery_usage_v4", **{"Timestamp": f"2024-03-0{i + 1}T00:00:00Z", "Timezone": z}
+        )
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT timezone FROM devices").fetchall() == [(None,)]
+    s = coverage.summary(conn, "and")
+    item = next(i for i in s.items if i.code == "leapp_timezone_not_read")
+    text = "".join(t for t, _q in item.parts)
+    assert item.level == "attention" and "'-0500'" in text and "America/New_York" in text

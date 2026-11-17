@@ -26,7 +26,17 @@
   the same public phone record by record; senders come only from id columns that matched, never
   from display names. The import lists the apps it read in full (`apps_read_in_full`), and the
   absence check treats every other app, and a search on every channel, as not covered by that
-  source, so "no contact" never passes on an app LEAPP read only in part.
+  source, so "no contact" never passes on an app LEAPP read only in part. Greptile's second
+  review on #264 found three more ways an import with a missing side could pass a check, all
+  fixed. (1) A LEAPP chat row names a sender only, and the phone's own message in a chat often
+  names neither side, so a count over such rows counted zero and "at most one" passed. Count
+  1.2.1, time 1.1.1 and weekday 1.0.3 now treat a message or call that names no sender or no
+  receiver, with a party on it or in a chat with one, as possibly between the parties. It keeps
+  a count's "at most" and "exactly" from passing, a time check from failing and a weekday check
+  from passing. The absence check reads the same chat rows as unplaced. (2) An MMS's Cc and Bcc
+  are receivers too, so a person copied on one is no longer lost. (3) "UTC" is a zone, and a
+  phone that recorded a zone value the reader cannot read gets no zone, with an attention item,
+  so a second zone is never silently dropped.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
 - Verified: `tests/test_leapp.py` (17 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
@@ -49,8 +59,9 @@
   and time within two seconds, with no message id, so two identical texts sent within two seconds
   would be read as one. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR
   import of the same phone shows them as incoming.
-- Affects: capabilities (a new input format, unverified); verdict path (absence check
-  1.0.2 can only turn a PASS into INCONCLUSIVE); customer-facing claims (none until a scored run;
+- Affects: capabilities (a new input format, unverified); verdict path (absence 1.0.2, count
+  1.2.1, time 1.1.1 and weekday 1.0.3 can only turn a PASS or a FAIL into INCONCLUSIVE; case01
+  model-free verdicts unchanged); customer-facing claims (none until a scored run;
   framing stays "tested on public forensic images")
 - Status doc: pending: in "Contracts and schema", change 0.8.0 to 0.9.0 and add "0.9.0 adds
   source kind `leapp` (signed by Arsh 2026-11-16, #264)". In "Importers (main)", add "iLEAPP and
@@ -58,5 +69,5 @@
   messages, calls and contacts only, every other artifact listed as not imported)". In section 8
   item 1 (Import), add "iLEAPP and ALEAPP LAVA output (unverified; checked against a UFDR on the
   public Android 13 and iOS 15 test phones, #264)". In the check versions line, "same_account and absence 1.0.1" becomes
-  "same_account 1.0.1, absence 1.0.2 (#264: a record with no receiver, or a source that read only some apps, blocks PASS)". In "Real-data formats
+  "same_account 1.0.1, absence 1.0.2 (#264: a record with no receiver, or a source that read only some apps, blocks PASS)", and count, time and weekday become 1.2.1, 1.1.1 and 1.0.3 ("#264: a message or call that names no sender or no receiver holds them open"). In "Real-data formats
   unverified", add LEAPP output to the formats with no real case export imported.

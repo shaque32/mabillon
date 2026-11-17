@@ -16,6 +16,8 @@ from core.audit.checks._common import (
     calls_for_accounts,
     channel_ok,
     in_window,
+    incomplete,
+    incomplete_beside,
     involves_all,
     local_str,
     messages_for_accounts,
@@ -63,8 +65,16 @@ class AbsenceCheck(TemplateCheck):
         rows = [r for r in rows if r.source_id in sources and channel_ok(r, p.channels)]
         found: list[Row] = []
         unplaced: list[Row] = []
+        # A message in a chat with a party that names neither side, such as the phone's own
+        # message in a LEAPP chat (Greptile on #264): it may be contact too.
+        seen = {r.id for r in rows}
+        rows += [
+            r
+            for r in incomplete_beside(data, everyone)
+            if r.id not in seen and r.source_id in sources and channel_ok(r, p.channels)
+        ]
         for r in rows:
-            if r.sender is None or not r.recipients:
+            if incomplete(r):
                 # A row with a party on it but no sender, or no recorded receiver (an import
                 # that names the other side of a phone's own message or call but not the
                 # phone's line): it may be contact, it may not.

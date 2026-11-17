@@ -10,7 +10,10 @@ from core.audit.checks._common import (
     calls_for_accounts,
     channel_ok,
     in_window,
+    incomplete,
+    incomplete_beside,
     involves_all,
+    may_be_between,
     messages_for_accounts,
     parties,
     sentences,
@@ -45,7 +48,9 @@ class CountCheck(TemplateCheck):
     """
 
     name = "count"
-    version = "1.2.0"
+    # 1.2.1: a message or call that names no sender or no receiver, with a party on it or in a
+    # chat with one, keeps "at most" and "exactly" from passing (Greptile on #264).
+    version = "1.2.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None or p.expected_count is None or p.count_op is None:
@@ -85,6 +90,21 @@ class CountCheck(TemplateCheck):
             if r.source_id == source_id and channel_ok(r, p.channels)
         ]
         rows = [r for r in pool if involves_all(r, [a_ids, b_ids])]
+        seen = {r.id for r in pool}
+        beside = [
+            r
+            for r in incomplete_beside(data, a_ids | b_ids)
+            if r.id not in seen and r.source_id == source_id and channel_ok(r, p.channels)
+        ]
+        # Rows that may be messages between the two sides but name no sender or no receiver
+        # (a LEAPP chat names a sender only, and a phone's own message often neither side).
+        unplaced = [
+            r
+            for r in pool + beside
+            if incomplete(r)
+            and may_be_between(r, a_ids, b_ids)
+            and (r.ts_utc is None or in_window(r.ts_utc, p.window))
+        ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
@@ -124,6 +144,13 @@ class CountCheck(TemplateCheck):
                 and (r.ts_utc is None or in_window(r.ts_utc, p.window))
             ]
             counted = [r for r in counted if r.sender in mine]
+            # Only a row the sending side may have sent can be one of its messages.
+            unplaced = [
+                r
+                for r in unplaced
+                if (r.sender is None and (not r.recipients or set(r.recipients) & theirs))
+                or r.sender in mine
+            ]
             no_time = [r for r in no_time if r.sender in mine]
             searched += f" Only messages {side.describe()} sent."
             if unknown_sender:
@@ -145,6 +172,12 @@ class CountCheck(TemplateCheck):
             lines.append(f"{deleted} of them carry the source's deletion flag")
         if no_time:
             lines.append(f"{len(no_time)} matching messages have no usable time")
+        extra = [r for r in unplaced if r not in unknown_sender]
+        if extra:
+            lines.append(
+                f"{len(extra)} messages name no sender or no receiver, so they may be among "
+                f"them: {', '.join(r.id for r in extra)}"
+            )
         full = source.fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit messages")
@@ -161,7 +194,7 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op in ("eq", "le") and n > want:
             outcome = CheckOutcome.FAIL
-        elif no_time or one_side_silent or (unknown_sender and op != "ge"):
+        elif no_time or one_side_silent or ((unknown_sender or unplaced) and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -207,12 +240,20 @@ class CountCheck(TemplateCheck):
                 sources,
             )
         (source_id,) = sources
-        rows = [
+        pool = [
             r
             for r in calls_for_accounts(data, a_ids | b_ids)
-            if r.source_id == source_id
-            and (not apps or r.app.strip().lower() in apps)
-            and involves_all(r, [a_ids, b_ids])
+            if r.source_id == source_id and (not apps or r.app.strip().lower() in apps)
+        ]
+        rows = [r for r in pool if involves_all(r, [a_ids, b_ids])]
+        # A call with a party on it that names no other side (LEAPP names the other side of a
+        # phone's call but not the phone's own line) may be a call between them.
+        unplaced = [
+            r
+            for r in pool
+            if incomplete(r)
+            and may_be_between(r, a_ids, b_ids)
+            and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
         no_time = [r for r in rows if r.ts_utc is None]
@@ -228,6 +269,11 @@ class CountCheck(TemplateCheck):
             )
         if no_time:
             lines.append(f"{len(no_time)} matching calls have no usable time")
+        if unplaced:
+            lines.append(
+                f"{len(unplaced)} calls with a party on them name no other side, so they may "
+                f"be among them: {', '.join(r.id for r in unplaced)}"
+            )
         # A row with no length, or a zero length, may be a call that never connected, so it
         # cannot count toward "spoke N times".
         unconnected = sum(1 for r in counted if not r.duration_s)
@@ -242,7 +288,7 @@ class CountCheck(TemplateCheck):
         full = data.sources[source_id].fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit calls")
-        if twins or no_time or unconnected:
+        if twins or no_time or unconnected or (unplaced and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
