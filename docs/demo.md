@@ -19,7 +19,7 @@ demo with Ctrl+C in its window.
 
 ## What is real and what is scripted
 
-Say this if asked; the yellow banner on every page of the case says the same.
+Say this if asked; the banner at the top of every page of the case says the same.
 
 | Real (Mabillon's own code) | Scripted (so the demo opens in seconds) |
 |---|---|

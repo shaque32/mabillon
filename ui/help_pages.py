@@ -67,7 +67,7 @@ def help_page(page: Page, report_text: str | None, withheld: str | None, case_op
         )
     else:
         body = (
-            "<ol class='steps'><li><a class='button' href='/help/bug-report.json' download>"
+            "<ol class='howto'><li><a class='button' href='/help/bug-report.json' download>"
             "Save the bug report</a></li>"
             "<li>Read it. It is the text below.</li>"
             f"<li>Attach it to an email to {e(SUPPORT_EMAIL)}.</li></ol>"
