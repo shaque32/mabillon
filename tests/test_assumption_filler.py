@@ -3512,6 +3512,25 @@ def test_an_app_the_case_lacks_beside_one_it_holds_stays_unproven(conn):
     assert any("also names an app" in d.reason for d in filler.drops)
 
 
+def test_a_short_name_of_an_app_the_case_holds_is_that_app(tmp_path):
+    # "on Wickr" on a case whose app is "Wickr Pro": rows left on no app get Wickr Pro, and
+    # "Wickr" is not read as an app the case lacks (CodeRabbit on #265).
+    db = tmp_path / "case01.db"
+    generate(tmp_path, db)
+    c = sqlite3.connect(db)
+    stipulate(c, PETROV, "Daniel Petrov", "dev:item1")
+    c.execute("PRAGMA foreign_keys = OFF")
+    c.execute(
+        "INSERT INTO threads VALUES ('thr:wickr', 'item1', 'x', 'dev:item1', 'Wickr Pro', NULL)"
+    )
+    text = 'On March 12, 2026, PETROV wrote to @northstar on Wickr: "need 2 more by friday".'
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted((a.template_id, a.params.channels) for a in made) == [
+        ("record_time", ("Wickr Pro",)),
+        ("sender", ("Wickr Pro",)),
+    ], filler.drops
+
+
 def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
     # The model already put both rows on Telegram: Signal, which the case lacks, is still read
     # (CodeRabbit on #265). A claim naming Signal alone already drops the model's Telegram, as
