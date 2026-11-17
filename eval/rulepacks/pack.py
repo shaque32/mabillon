@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -78,7 +79,10 @@ class Layout(_Strict):
         missing = [c for c in cols if c not in self.headers]
         if missing:
             raise ValueError(f"layout {self.id}: columns not in headers: {missing}")
-        if not self.zone_evidence or self.zone_evidence not in self.time_col:
+        # the zone word must stand alone: "Time (UTC-05:00)" states an offset, not UTC
+        # (CodeRabbit on #260)
+        standalone = rf"(?<![A-Za-z0-9+\-]){re.escape(self.zone_evidence)}(?![A-Za-z0-9+\-:])"
+        if not self.zone_evidence or not re.search(standalone, self.time_col):
             raise ValueError(
                 f"layout {self.id}: zone_evidence {self.zone_evidence!r} is not in the time "
                 f"column's header {self.time_col!r}; a zone must be stated by the file"
@@ -150,7 +154,13 @@ class RulePack(_Strict):
 
     def sha256(self) -> str:
         """Hash of the pack's content, signatures and status left out, so signing does not
-        change what is signed."""
+        change what is signed.
+
+        The canonical bytes are exactly this json.dumps call (keys sorted by code point, no
+        spaces, UTF-8, non-ASCII kept), not RFC 8785: JCS sorts keys by UTF-16 code unit, which
+        differs only for keys outside the Basic Multilingual Plane, and formats numbers its own
+        way (a pack holds only strings, ints, lists and dicts). A signing tool must reproduce
+        this call."""
         body = self.model_dump(mode="json", exclude={"signatures", "status"})
         canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(canon.encode("utf-8")).hexdigest()

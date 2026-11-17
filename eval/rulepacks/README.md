@@ -32,6 +32,8 @@ python -m eval.rulepacks.harness <pack.json> --json   # the full report
 
 A pack is dropped (exit code 1, `DROP`) unless all of these hold:
 
+0. **Every synthetic layout is covered:** the pack has a layout for each synthetic file and no
+   layout without one.
 1. **Zero false supported** on every claim, in every layout.
 2. **Rule-kill:** removing each guard in turn lets at least one trap it names through as a
    false supported, and every trap it names must get through. A guard that blocks nothing, or

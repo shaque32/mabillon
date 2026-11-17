@@ -7,7 +7,7 @@
   a supported claim that survives mutation of its records. First step of
   `baker/plans/rule-drafting.md` (AI-drafted rule packs per evidence type).
 - Where: PR #260 (branch claude/project-thread-zweeky)
-- Verified: `pytest tests/test_rulepacks.py` (13 tests) on the cloud container, 2026-11-15.
+- Verified: `pytest tests/test_rulepacks.py` (15 tests) on the cloud container, 2026-11-15.
   Harness on the reference pack: 10/10 claims as expected in both layouts, 0 false supported,
   each guard blocks its named traps, no insensitive supported claim. Reading a UTC or Central
   time as Eastern lets one trap through as a false supported, so the traps catch it.

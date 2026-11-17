@@ -152,3 +152,23 @@ def test_a_layout_mistake_lists_only_claims_it_changes(pack: RulePack) -> None:
     flipped = rep.trap_strength["carrier-a: direction map flipped"]
     assert "t-count-voicemail" not in flipped["changed"]
     assert "t-count-voicemail" in flipped["false_supported"]
+
+
+def test_a_zone_word_followed_by_an_offset_is_refused(pack: RulePack) -> None:
+    # CodeRabbit on #260: "Time (UTC-05:00)" states an offset, so it is not evidence of UTC.
+    body = pack.model_dump(mode="json")
+    lay = body["layouts"][0]
+    lay["headers"] = [("Time (UTC-05:00)" if h == "Time (UTC)" else h) for h in lay["headers"]]
+    lay["time_col"] = "Time (UTC-05:00)"
+    with pytest.raises(ValidationError, match="zone_evidence"):
+        RulePack.model_validate(body)
+
+
+def test_a_pack_must_read_every_synthetic_layout_and_no_other(pack: RulePack) -> None:
+    # CodeRabbit on #260: a pack with one layout must not pass untested on the other.
+    one = pack.model_copy(update={"layouts": pack.layouts[:1]})
+    rep = harness.evaluate(one)
+    assert not rep.passed and rep.layout_errors == ["missing:carrier-b"]
+    extra = pack.layouts[1].model_copy(update={"id": "carrier-c"})
+    rep = harness.evaluate(pack.model_copy(update={"layouts": (*pack.layouts, extra)}))
+    assert not rep.passed and rep.layout_errors == ["unknown:carrier-c"]

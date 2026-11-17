@@ -127,6 +127,7 @@ class Report:
     unearned_guards: list[str] = field(default_factory=list)
     unblocked_named_traps: list[str] = field(default_factory=list)
     unknown_traps: list[str] = field(default_factory=list)  # guard:name that is no claim's
+    layout_errors: list[str] = field(default_factory=list)  # missing:<id> or unknown:<id>
     insensitive: list[str] = field(default_factory=list)
     # layout mistake -> claims whose verdict it changes, and those it makes false supported
     trap_strength: dict[str, dict[str, list[str]]] = field(default_factory=dict)
@@ -139,6 +140,7 @@ class Report:
             or self.unearned_guards
             or self.unblocked_named_traps
             or self.unknown_traps
+            or self.layout_errors
             or self.insensitive
         )
 
@@ -149,6 +151,14 @@ def _fs(outcomes: list[Outcome]) -> set[str]:
 
 def evaluate(pack: RulePack) -> Report:
     rep = Report(pack.ref, pack.sha256(), RULE_VERSION)
+    # every synthetic layout must be read, and no other: a pack that skips one is not tested
+    # on it, and an id with no synthetic file cannot be run (CodeRabbit on #260)
+    have = {x.id for x in pack.layouts}
+    rep.layout_errors = [f"missing:{i}" for i in sorted(set(carrier.LAYOUTS) - have)] + [
+        f"unknown:{i}" for i in sorted(have - set(carrier.LAYOUTS))
+    ]
+    if rep.layout_errors:
+        return rep
     by_layout = {x.id: run_case(pack, x.id) for x in pack.layouts}
     for lid, outs in by_layout.items():
         rep.layouts[lid] = [
@@ -234,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({**rep.__dict__, "passed": rep.passed}, indent=2, sort_keys=True))
     else:
         print(f"pack {rep.pack} sha256 {rep.pack_sha256[:12]} rules {rep.rule_version}")
+        if rep.layout_errors:
+            print(f"  layouts not matching the synthetic files: {rep.layout_errors}")
         for lid, rows in rep.layouts.items():
             right = sum(r["expected"] == r["got"] for r in rows)
             print(f"  {lid}: {right}/{len(rows)} claims as expected")
