@@ -115,7 +115,10 @@ from core.review.device_names import logged_names, name_key
 
 # 0.2.0: the claim-only check (outcome "outside"), the checks each try ran ("check"), the
 # proposed assumptions' texts in each entry, and the examiner's decisions from the claim page.
-VERSION = "0.2.0"
+# 0.3.0: tries run through filler 12 (an event for words no check reads, the app a claim names)
+# and the sheet check leaves out the apps code binds from the claim's words (`claim_apps`), so a
+# 0.2.0 try is noted as not re-run rather than failing verify-bundle (CodeRabbit on #265).
+VERSION = "0.3.0"
 PROMPT_FILE = "agent_testability.md"  # signed copy only; the eval may name the draft
 PLACEHOLDERS = frozenset({"claim", "paragraph", "templates", "channels", "lookups", "refused"})
 REPAIR_ACTION = "testability.repair"
