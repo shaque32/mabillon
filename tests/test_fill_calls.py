@@ -691,3 +691,16 @@ def test_a_short_username_without_its_label_names_no_caller(
     assert "caller" not in made
     _, tokens = f._party_tokens(f"{IG_AT} {words}", "Instagram")
     assert ("acct", "lena") not in tokens.values()  # an unlabelled short word is no party
+
+
+def test_a_short_username_of_another_account_names_no_caller(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO accounts VALUES ('acct:item1:Instagram:zoe1', 'item1',"
+        " 'acct:item1:Instagram:zoe1', NULL, 'Instagram', 'zoe1', 'Zoe Brandt')"
+    )
+    # the name is Lena's account and the id is Zoe's: two accounts, so no caller is read
+    words = 'PETROV called the Instagram user "Lena Okafor" username zoe1.'
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made

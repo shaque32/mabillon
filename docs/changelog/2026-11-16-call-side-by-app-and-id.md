@@ -5,7 +5,9 @@
   user ID ...", "(user ID ...)"). The caller row is made only when the name and the id are one
   account; another app's name, other words, a person described as an app's user, or an id
   that is a second account leave the caller unread. An app identifier under six characters is
-  read as a party only right after an id label ("username lena"), never as a plain word. A comma inside a quoted name's closing
+  read as a party only right after an id label ("username lena"), never as a plain word; the
+  tokenizer and the party lookup share that one reading, so a short id of another account
+  beside a name ("Lena Okafor" username zoe1) is two accounts and names no caller. A comma inside a quoted name's closing
   mark is the claim's punctuation, so the name is looked up without it. Before, such a claim
   kept only its time row, so a reversed direction never showed.
 - Also: `eval/validation/dump_lava.py` (new, validation tooling only). A plain reader of a LEAPP
@@ -28,7 +30,7 @@
   pass its check; five that name no caller, each reaching the caller step with its time row
   made, and the parser's reading of each checked directly; a side described before the verb;
   an id in unbalanced brackets; a username under six characters, read only right after its
-  label, as in "username lena"). Filler,
+  label, as in "username lena"; a short id of another account beside the name). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way

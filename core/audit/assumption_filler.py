@@ -4848,6 +4848,24 @@ class LocalAssumptionFiller:
             raise Reject(f"the proposal's channels are not the claim's {app!r} call")
         return app
 
+    def _identifier_spans(self, bare: str, app: str) -> list[tuple[str, int, int]]:
+        """Each identifier of an account on `app` that the words outside quotes write, with its
+        span. An identifier of six or more characters is read wherever it stands; a shorter one
+        ("lena") only right after an id label ("username lena"), so an ordinary word of the
+        claim never becomes a party. `_call_parties` and `_party_tokens` read the same ones, so
+        an id the clause holds is always looked up (CodeRabbit on #263)."""
+        ids = {
+            a.identifier.strip()
+            for a in self.data.accounts.values()
+            if a.app == app and a.identifier.strip() and not re.search(r"\s", a.identifier.strip())
+        }
+        out: list[tuple[str, int, int]] = []
+        for i in sorted(ids):
+            lead = "" if len(i) >= 6 else rf"(?i:\b{_ID_LABEL})"
+            for m in re.finditer(rf"{lead}(?<![\w.:@-])({re.escape(i)})(?![\w@-])", bare):
+                out.append((i, *m.span(1)))
+        return out
+
     def _call_parties(
         self, claim: Claim, device_ids: list[str], app: str, *, phone_is_side: bool = False
     ) -> tuple[list[str], list[str], list[str]]:
@@ -4889,17 +4907,9 @@ class LocalAssumptionFiller:
                 # claim's punctuation, not the name's.
                 written.append(m.group(0)[1:-1].strip().removesuffix(",").strip())
                 spans.append(m.span())
-        ids = {
-            a.identifier.strip()
-            for a in self.data.accounts.values()
-            if a.app == app
-            and len(a.identifier.strip()) >= 6
-            and not re.search(r"\s", a.identifier)
-        }
-        for i in sorted(ids):
-            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
-                written.append(i)
-                spans.append(m.span())
+        for i, start, end in self._identifier_spans(bare, app):
+            written.append(i)
+            spans.append((start, end))
         for start, end in spans:
             if _NOT_A_PARTY_AFTER.match(bare, end) or _NOT_A_PARTY_BEFORE.search(bare[:start]):
                 raise Reject(f"{text[start:end]!r} may not be a party to the call")
@@ -4985,15 +4995,7 @@ class LocalAssumptionFiller:
         for m in _QUOTE_SPAN_RE.finditer(text):
             if m.group(0)[1:-1].strip():
                 spans.append((*m.span(), "acct", m.group(0)[1:-1].strip()))
-        for a in self.data.accounts.values():
-            i = a.identifier.strip()
-            if a.app != app or not i or re.search(r"\s", i):
-                continue
-            # A short identifier ("marc") is read only right after an id label ("username
-            # marc"), so an ordinary word of the claim never becomes a party (CodeRabbit on #263).
-            lead = "" if len(i) >= 6 else rf"(?i:\b{_ID_LABEL})"
-            for m in re.finditer(rf"{lead}(?<![\w.:@-])({re.escape(i)})(?![\w@-])", bare):
-                spans.append((*m.span(1), "acct", i))
+        spans += [(st, en, "acct", i) for i, st, en in self._identifier_spans(bare, app)]
         tokens: dict[int, tuple[str, str]] = {}
         kinds: dict[tuple[int, int], set[str]] = {}
         for st, en, kind, value in spans:
