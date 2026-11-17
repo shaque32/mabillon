@@ -3054,6 +3054,11 @@ _RECORDS_SAY_RE = re.compile(
 # "seven text messages, all recorded on the KYOCERA": where the records are, not who sent them.
 _ALL_RECORDED_RE = re.compile(r"\ball\s+(?=(?:recorded|logged|stored|held|found)\b)", re.I)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
+# A number written in digits that no date, time, phone or year took: "one of 2 messages" is a
+# count and "over 2 hours" a length, each plain only beside a kept row that tests it, as their
+# spoken forms are (CodeRabbit on #265).
+_NUMERAL_RE = re.compile(r"(?<![\w.,:/])\d+(?:[.,]\d+)?(?![\w:/]|[.,]\d)")
+_UNIT_AFTER_RE = re.compile(r"\s*-?\s*(?:seconds?|minutes?|hours?|secs?|mins?|hrs?)\b", re.I)
 
 
 def _blank(text: str, spans: Iterable[tuple[int, int]]) -> str:
@@ -3070,6 +3075,7 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     its word; a phrase of `_UNPLAIN_PHRASES_RE` is never plain, read in `phrases` (the same
     text before app names were blanked: "a second phone" on a case with an app called "Phone")
     when given."""
+    tests = frozenset(tests)
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
     for m in _UNPLAIN_PHRASES_RE.finditer(words if phrases is None else phrases):
@@ -3077,6 +3083,10 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
         if w not in out:
             out.append(w)
     rest = _UNPLAIN_PHRASES_RE.sub(" ", words)
+    for m in _NUMERAL_RE.finditer(rest):
+        gate = "length" if _UNIT_AFTER_RE.match(rest, m.end()) else "count"
+        if gate not in tests and m.group(0) not in out:
+            out.append(m.group(0))
     for m in _WORD_RE.finditer(rest):
         w = m.group(0).casefold().replace("’", "'")
         w = re.sub(r"'s$", "", w).rstrip(".")
@@ -3326,6 +3336,10 @@ class LocalAssumptionFiller:
         for rx in (_ADDRESS_RE, _HANDLE_RE, _PHONE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE,
                    _TIME24_RE, _YEAR_RE):  # fmt: skip
             cut += [m.span() for m in rx.finditer(bare)]
+        for m in _TIME_RE.finditer(bare):
+            # "between 10 and 11 a.m.": the bare first hour is a time code reads
+            if (h := _BARE_HOUR_RE.search(bare[: m.start()])) is not None:
+                cut.append((h.start(1), h.end(2) if h.group(2) else h.end(1)))
         if "length" in tests:
             cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
         phrases = _blank(bare, cut)
@@ -4433,10 +4447,23 @@ class LocalAssumptionFiller:
                 if not apps
                 else "the claim also names an app no assumption of it searches"
             )
+        texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
+        if texty and not apps:
+            # A count or an absence of text messages, on rows the model scoped too: it reads
+            # one app, so it is refused when the case holds several apps of a phone's own
+            # messages ("2 text messages" counted on SMS alone beside iMessage; CodeRabbit on
+            # #265). An app the claim does not name is refused when the row is read.
+            phone_apps = self._phone_message_apps()
+            if len(phone_apps) > 1 and any(
+                out[i].template_id in WHOLE_APP_TEMPLATES for i in app_rows
+            ):
+                raise Reject(
+                    f"the claim names a text message and the case holds {len(phone_apps)} apps"
+                    " of a phone's own messages, so no count or absence is read on one"
+                )
         rows = [i for i in app_rows if not out[i].params.get("channels")]
         if not rows:
             return out
-        texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
         if apps:
             found = apps  # "texted REYES on Telegram": the app the claim names
         elif texty:
@@ -4446,11 +4473,6 @@ class LocalAssumptionFiller:
             found = self._phone_message_apps()
             if not found:
                 raise Reject("the claim names a text message and the case holds no such app")
-            if len(found) > 1 and any(out[i].template_id in WHOLE_APP_TEMPLATES for i in rows):
-                raise Reject(
-                    f"the claim names a text message and the case holds {len(found)} apps of"
-                    " a phone's own messages, so no count or absence is read on one"
-                )
         else:
             return out  # the claim names no app: every app is searched, as it says
         made = list(out)
@@ -5236,7 +5258,8 @@ class LocalAssumptionFiller:
         app is never picked by the words). An app's name inside an address names no app
         ("thisisdfirtwo@gmail.com"), and neither does one inside a quoted message ('texted
         "use Telegram"'; Codex on #164)."""
-        words = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
+        # a handle ("to @viber on Telegram") names an account, not an app (CodeRabbit on #265)
+        words = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(claim_text)))
         named = []
         for app in self.channels():
             if app == CALL_CHANNEL or namespace(app) == "tel":

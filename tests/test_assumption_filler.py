@@ -3424,6 +3424,55 @@ def test_a_text_on_a_case_with_two_phone_message_apps_searches_both(tmp_path):
     assert made == []
 
 
+def test_a_count_of_text_messages_on_one_app_the_model_chose_is_refused(tmp_path, conn):
+    # The model scoped the count to SMS: on a case with SMS and iMessage, "2 text messages"
+    # counted on SMS alone is refused like an unscoped count (CodeRabbit on #265). A count the
+    # model put on Telegram was refused already, as the claim does not name it.
+    text = "On March 21, 2026, on dev:item1, PETROV sent REYES exactly 2 text messages."
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    phone = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)._phone_message_apps()
+    assert len(phone) == 2
+    made, filler = _count(c, text, 2, channels=["SMS"], phones=["dev:item1"])
+    assert made == []
+    assert any("apps of a phone's own messages" in d.reason for d in filler.drops)
+    made, filler = _count(conn, text, 2, phones=["dev:item1"])
+    assert made == []
+
+
+def test_a_handle_named_like_an_app_picks_no_app(tmp_path):
+    # On a case holding Telegram and Viber, "to @viber on Telegram" names Telegram only: the
+    # handle never adds Viber to the rows or to the claim's apps (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV wrote to @viber on Telegram: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert "Viber" in filler.channels()
+    assert filler._named_apps(text) == ["Telegram"]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {("Telegram",)}
+
+
+@pytest.mark.parametrize(
+    ("tail", "tests"),
+    [(", one of 2 messages that day", {"count"}), (", over 2 hours", {"length"})],
+)
+def test_a_count_or_length_in_digits_is_read_like_one_in_words(conn, tail, tests):
+    # "2" passed where "two" was read: digits were never tokens (CodeRabbit on #265).
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more".'
+    assert filler.unread_words(text) == ["2"]
+    assert filler.unread_words(text, (), tests) == []
+    # the bare first hour of a range is a time, not a count
+    ranged = text.replace("On March 12, 2026", "Between 10 and 11 a.m. on March 12, 2026")
+    assert filler.unread_words(ranged, (), tests) == []
+
+
 def test_an_account_named_like_a_plain_word_hides_no_word(tmp_path):
     # An account shown as "Photo" no longer blanks "sent a photo" (Claude review on #265).
     c = _case_with(

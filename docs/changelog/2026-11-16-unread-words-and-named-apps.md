@@ -18,7 +18,8 @@
     a count or a call's length, and "saved as" only beside a contact entry; "reading",
     "showed" and "displayed" are a person's acts except in "a message reading \"...\"", "the
     records show" and "displayed as"; an account named like a plain word ("Photo") hides that
-    word only where the claim writes it as a name.
+    word only where the claim writes it as a name. A count or a length written in digits ("one of
+    2 messages", "over 2 hours") is read as its spoken form is (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -27,9 +28,11 @@
     whatever its app, since the absence check reads messages and calls alike. The missing-app
     guard runs on every app row, also those the model scoped; it knows messaging, social and
     mail apps beyond the calling apps ("no contact on TikTok"), reads a short name of a held
-    app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app. "Texted" on a
+    app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
+    picks the claim's apps (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
-    as a code-made sender does, and reads no count or absence (Claude review on #265). Before, "wrote on
+    as a code-made sender does, and reads no count or absence, also one the model put on SMS
+    alone (Claude review and CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
@@ -57,7 +60,7 @@
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,123), and
+  its fix. The filler, fill, replay, override and check suites pass locally (1,778), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
