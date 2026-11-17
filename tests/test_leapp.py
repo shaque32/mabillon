@@ -624,3 +624,168 @@ def test_a_zone_value_that_cannot_be_read_sets_no_zone(tmp_path: Path) -> None:
     item = next(i for i in s.items if i.code == "leapp_timezone_not_read")
     text = "".join(t for t, _q in item.parts)
     assert item.level == "attention" and "'-0500'" in text and "America/New_York" in text
+
+
+def _gm_lava(native: list[dict[str, str]], gm: list[dict[str, str]]) -> Lava:
+    lv = Lava(leapp="ALEAPP")
+    for i, r in enumerate(native):
+        lv.add("get_sms_mms", **{"MSG ID": str(100 + i), "Thread ID": "2", **r})
+    for r in gm:
+        lv.add("get_googleMessages", **{"Message Type": "text/plain", **r})
+    return lv
+
+
+def _gm_imported(tmp_path: Path, lv: Lava) -> tuple[list[str], dict[str, int], set[str]]:
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    locs = [
+        r[0]
+        for r in conn.execute(
+            "SELECT locator FROM messages WHERE locator LIKE 'get_googlemessages%' ORDER BY 1"
+        )
+    ]
+    tables = {t["name"]: t for t in coverage.load(conn, "and").payload["tables"]}
+    s = coverage.summary(conn, "and")
+    assert s is not None
+    flags = tables["GoogleMessages"].get("flag_counts") or {}
+    return locs, flags, {i.code for i in s.items}
+
+
+def test_a_google_messages_message_from_another_sender_is_never_taken_for_a_copy(
+    tmp_path: Path,
+) -> None:
+    # CodeRabbit on #264: "OK" from Alice by SMS hid "OK" from Bob in Google Messages a second
+    # later. The other party is now compared too ("+1919..." and "(919) ..." are one number).
+    lv = _gm_lava(
+        [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": ALICE, "Body": "OK"}],
+        [
+            {"Message Timestamp": "2024-03-01T12:00:01Z", "Direction": "Incoming",
+             "Message Sender": "(919) 555-0122", "Message": "OK", "Conversation ID": "8"},
+            {"Message Timestamp": "2024-03-01T12:00:01Z", "Direction": "Incoming",
+             "Message Sender": "(919) 555-0111", "Message": "OK", "Conversation ID": "9"},
+        ],
+    )  # fmt: skip
+    locs, _, _ = _gm_imported(tmp_path, lv)
+    assert locs == ["get_googlemessages/rowid=1"]  # Bob's is kept; Alice's copy is skipped
+
+
+def test_one_sms_stands_for_at_most_one_google_messages_message(tmp_path: Path) -> None:
+    # CodeRabbit on #264: one SMS at 12:00:00 hid two Google Messages messages, at :00 and :01.
+    gm = {"Direction": "Incoming", "Message Sender": ALICE, "Message": "OK", "Conversation ID": "9"}
+    lv = _gm_lava(
+        [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": ALICE, "Body": "OK"}],
+        [{"Message Timestamp": f"2024-03-01T12:00:0{s}Z", **gm} for s in (0, 1)],
+    )
+    locs, _, _ = _gm_imported(tmp_path, lv)
+    assert locs == ["get_googlemessages/rowid=2"]
+
+
+def test_a_sent_google_messages_message_takes_its_chats_one_sender_as_the_other_party(
+    tmp_path: Path,
+) -> None:
+    # A sent message names the chat by display name. With Alice the chat's one sender, it is
+    # compared as sent to Alice; with no sender in the chat it cannot be compared, so it is kept
+    # and flagged.
+    sent = {"Message Timestamp": "2024-03-01T12:00:00Z", "Direction": "Outgoing",
+            "Message Sender": OWNER, "Other Participant/Conversation Name": "Alice Ames",
+            "Message": "on my way"}  # fmt: skip
+    native = [{"Date": "2024-03-01T12:00:00Z", "Type": "Sent", "Address": ALICE,
+               "Body": "on my way"}]  # fmt: skip
+    heard = {"Message Timestamp": "2024-03-01T11:00:00Z", "Direction": "Incoming",
+             "Message Sender": ALICE, "Message": "where", "Conversation ID": "9"}  # fmt: skip
+    possible = "may_be_same_as_an_sms_or_mms_message"
+    locs, flags, _ = _gm_imported(
+        tmp_path, _gm_lava(native, [heard, {**sent, "Conversation ID": "9"}])
+    )
+    assert locs == ["get_googlemessages/rowid=1"] and possible not in flags
+    (tmp_path / "b").mkdir()
+    lv = _gm_lava(native, [{**sent, "Conversation ID": "7"}])
+    locs, flags, codes = _gm_imported(tmp_path / "b", lv)
+    assert locs == ["get_googlemessages/rowid=1"]
+    assert flags[possible] == 1 and possible in codes
+
+
+def _zip_with(tmp_path: Path, lv: Lava, change) -> Path:
+    """lv's LAVA pair with its manifest changed by `change(manifest)`."""
+    import io
+    import json
+
+    manifest, data = lv.build()
+    change(manifest)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    path = tmp_path / "a.zip"
+    path.write_bytes(buf.getvalue())
+    return path
+
+
+def _artifact(manifest: dict, key: str) -> dict:
+    return next(
+        a for arts in manifest["artifacts"].values() for a in arts if a["artifact_key"] == key
+    )
+
+
+@pytest.mark.parametrize("broken", ["view", "table"])
+def test_a_table_not_read_through_leaves_its_app_unread(tmp_path: Path, broken: str) -> None:
+    # CodeRabbit on #264: an Instagram table with no usable conversation view, or one missing
+    # from the database, counted as read, so Instagram was read in full.
+    lv = _android()
+    row = {"Timestamp": "2024-03-04T10:00:00Z", "Direction": "Incoming", "Sender ID": "9"}
+    lv.add("instagramDirectMessages", **row, Message="hey", Thread="t1")
+
+    def change(m: dict) -> None:
+        a = _artifact(m, "instagramDirectMessages")
+        if broken == "view":
+            a["data_views"]["conversation"].pop("textColumn")
+        else:
+            a["tablename"] = "not_there"
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_zip_with(tmp_path, lv, change), conn)
+    payload = coverage.load(conn, "and").payload
+    assert "Instagram" not in payload["apps_read_in_full"]
+    assert "Native Messages" in payload["apps_read_in_full"]
+    failed = [e for e in payload["not_imported"] if e.get("read_failed")]
+    assert [e["name"] for e in failed] == ["Instagram - Direct Messages"]
+    assert all(a["key"] != "instagramDirectMessages" for a in payload["leapp"]["artifacts_read"])
+    s = coverage.summary(conn, "and")
+    item = next(i for i in s.items if i.code == "leapp_artifact_not_read")
+    assert item.level == "attention" and "could not be read" in item.plain
+
+
+def test_a_missing_sms_table_leaves_the_phones_messages_unread(tmp_path: Path) -> None:
+    def change(m: dict) -> None:
+        _artifact(m, "get_sms_mms_mms")["tablename"] = "not_there"
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_zip_with(tmp_path, _android(), change), conn)
+    assert "Native Messages" not in coverage.load(conn, "and").payload["apps_read_in_full"]
+
+
+@pytest.mark.parametrize(
+    ("status", "fidelity"),
+    [("Complete", "full_extraction"), ("In Progress", "unknown"), (None, "unknown")],
+)
+def test_a_run_that_did_not_complete_is_no_full_extraction(
+    tmp_path: Path, status: str | None, fidelity: str
+) -> None:
+    # CodeRabbit on #264: LEAPP writes "In Progress" when a run starts and "Complete" when it
+    # ends, so a stopped run's tables may be cut short.
+    lv = _android()
+    lv.status = status  # type: ignore[assignment]
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT fidelity FROM sources").fetchone() == (fidelity,)
+
+
+def test_the_report_names_the_leapp_reader_not_the_ufdr_reader(tmp_path: Path) -> None:
+    # CodeRabbit on #264: a LEAPP import's limitation said "UFDR reader" and "Cellebrite Reader".
+    from core.report.html import _limitations, sources
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_android().write_zip(tmp_path / "a.zip"), conn)
+    text = _limitations(conn, sources(conn))
+    assert "iLEAPP and ALEAPP reader, which is not yet verified" in text
+    assert "UFDR reader" not in text and "Cellebrite Reader" not in text

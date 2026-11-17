@@ -445,6 +445,26 @@ def may_be_between(row: Row, a: set[str], b: set[str]) -> bool:
     return not recips or bool(recips & (a | b))
 
 
+def apps_not_read(data: CaseData, source_id: str, apps: set[str]) -> str | None:
+    """Why the source cannot hold every record on the named apps (lowercase; every app when
+    empty), when it read only some apps in full (APPS_READ_KEY); None when it can."""
+    read = data.apps_read.get(source_id)
+    if read is None:
+        return None
+    if not apps:
+        return (
+            f"{source_id} holds the records of only some apps ({', '.join(sorted(read)) or 'none'}"
+            "), so records on any other app were not counted"
+        )
+    missing = sorted(apps - read)
+    if missing:
+        return (
+            f"{source_id} did not read every {', '.join(missing)} record (only some apps' "
+            "records were imported from it), so some may not have been counted"
+        )
+    return None
+
+
 def incomplete_beside(data: CaseData, account_ids: set[str]) -> list[Row]:
     """Every message with no sender or no receiver in a chat that holds a message an account in
     the set sent or received: a phone's own message in that chat often names neither side."""

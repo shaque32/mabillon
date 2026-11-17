@@ -20,6 +20,7 @@ from core.audit.checks._common import (
     incomplete_beside,
     involves_all,
     local_str,
+    may_be_between,
     messages_for_accounts,
     parties,
     sentences,
@@ -77,7 +78,10 @@ class AbsenceCheck(TemplateCheck):
             if incomplete(r):
                 # A row with a party on it but no sender, or no recorded receiver (an import
                 # that names the other side of a phone's own message or call but not the
-                # phone's line): it may be contact, it may not.
+                # phone's line): it may be contact, it may not. One a third party sent is not
+                # (CodeRabbit on #264).
+                if not may_be_between(r, a_ids, b_ids):
+                    continue
                 if r.ts_utc is None or in_window(r.ts_utc, p.window):
                     unplaced.append(r)
             elif involves_all(r, [a_ids, b_ids]):

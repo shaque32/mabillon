@@ -119,6 +119,11 @@ FIDELITY_REASON = (
     "whole for the databases it parsed. It cannot show that something is absent from an app it "
     "did not parse, and those apps are listed as not imported."
 )
+FIDELITY_REASON_INCOMPLETE = (
+    "LEAPP's manifest does not say the run completed, so any table may have been cut short and "
+    "it cannot support a claim that something is absent from the phone."
+)
+RUN_COMPLETE = "Complete"  # processing_status LEAPP's lavafuncs.py writes when a run ends
 FIDELITY_REASON_PROFILE = (
     "LEAPP ran only the modules a profile selected, or read an input that is not a file system "
     "extraction, so it cannot support a claim that something is absent from the phone."
@@ -174,12 +179,17 @@ class Lava:
     # Google Messages messages skipped as the same as an SMS or MMS, each with the one it matched
     dropped: list[dict[str, Any]] = field(default_factory=list)
 
+    def has_table(self, art: Artifact) -> bool:
+        return bool(
+            self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (art.table,)
+            ).fetchone()
+        )
+
     def rows(self, art: Artifact) -> Iterator[tuple[int, dict[str, Any]]]:
-        """(rowid, {header as LEAPP wrote it: value}) for each row of the artifact's table."""
-        tables = {
-            r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        if art.table not in tables:
+        """(rowid, {header as LEAPP wrote it: value}) for each row of the artifact's table; none
+        when the table is missing (the importer lists such an artifact as not read)."""
+        if not self.has_table(art):
             return
         quoted = art.table.replace(chr(34), chr(34) * 2)
         real = {r[1].lower() for r in self.db.execute(f'PRAGMA table_info("{quoted}")')}
@@ -352,6 +362,7 @@ class _Ctx:
     art: Artifact
     lava: Lava
     flags: Counter[str] = field(default_factory=Counter)
+    failed: str | None = None  # why the table could not be read; set by its mapper
 
     def flag(self, reason: str, locator: str) -> None:
         self.tc.flag_counts[reason] += 1
@@ -524,10 +535,47 @@ def _norm(body: str) -> str:
     return " ".join(body.split())
 
 
-def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[str]]:
+def _party_key(v: object) -> str | None:
+    """A handle as compared across message stores: an email casefolded, a number as its digits;
+    None for a display name or nothing."""
+    s = _ident(v)
+    if s is None or not _IDENT_RE.match(s):
+        return None
+    if "@" in s:
+        return s.casefold()
+    return re.sub(r"\D", "", s) or None
+
+
+def _same_party(a: str, b: str) -> bool:
+    """True when two party keys name one handle: equal, or one number is the other with a
+    country code of up to three digits in front of at least ten digits ("+19195550111" and
+    "(919) 555-0111")."""
+    if a == b:
+        return True
+    if "@" in a or "@" in b:
+        return False
+    short, long = sorted((a, b), key=len)
+    return len(short) >= 10 and long.endswith(short) and len(long) - len(short) <= 3
+
+
+@dataclass(frozen=True)
+class _Native:
+    """An SMS or MMS as the Google Messages reader compares it."""
+
+    locator: str
+    party: str | None  # the one other party it names; None when it names none or several
+    media: int  # attachments
+
+
+def _one_party(idents: list[str]) -> str | None:
+    keys = {k for k in (_party_key(i) for i in idents) if k}
+    return next(iter(keys)) if len(keys) == 1 and len(idents) == 1 else None
+
+
+def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[_Native]]:
     """(epoch second, direction, text) of every SMS and MMS in the output, as read above, to the
-    locators of the messages that have it."""
-    keys: dict[tuple[int, str, str], list[str]] = defaultdict(list)
+    messages that have it, in table order."""
+    keys: dict[tuple[int, str, str], list[_Native]] = defaultdict(list)
     probe = _Ctx(c.w, TableCoverage(name="", kind=None), c.art, c.lava)
     for art in c.lava.artifacts:
         if art.key == "get_sms_mms":
@@ -536,7 +584,11 @@ def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[str]]:
                 d = _android_direction(probe, r.get("Type"), f"rowid={rowid}", count=False)
                 if ts is not None:
                     keys[(int(ts.timestamp()), d.value, _norm(str(r.get("Body") or "")))].append(
-                        _loc(art.table, "msg_id", r.get("MSG ID"), rowid)
+                        _Native(
+                            _loc(art.table, "msg_id", r.get("MSG ID"), rowid),
+                            _one_party(_split(r.get("Address"))),
+                            0,
+                        )
                     )
         elif art.key == "get_sms_mms_mms":
             groups: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
@@ -546,36 +598,63 @@ def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[str]]:
                 rowid, r = rows[0]
                 ts = _time(r.get("Date")).utc
                 d = _android_direction(probe, r.get("Direction"), "", count=False)
-                if ts is not None:
-                    text = _norm(_mms_parts(probe, rows, "")[0])
-                    keys[(int(ts.timestamp()), d.value, text)].append(
-                        _loc(art.table, "msg_id", r.get("MSG ID"), rowid)
+                if ts is None:
+                    continue
+                text, media = _mms_parts(probe, rows, "")
+                if d is MessageDirection.INCOMING:
+                    frm = _ident(r.get("From Address"))
+                    named = [frm] if frm and frm.lower() != "insert-address-token" else []
+                elif d is MessageDirection.OUTGOING:
+                    cols = ("To Address", "Cc", "Bcc")
+                    named = list(dict.fromkeys(p for k in cols for p in _split(r.get(k))))
+                else:
+                    named = []
+                keys[(int(ts.timestamp()), d.value, _norm(text))].append(
+                    _Native(
+                        _loc(art.table, "msg_id", r.get("MSG ID"), rowid),
+                        _one_party(named),
+                        len(media),
                     )
+                )
     return keys
 
 
 def _same_message(
-    native: dict[tuple[int, str, str], list[str]],
+    native: dict[tuple[int, str, str], list[_Native]],
+    used: set[str],
     ts: Timestamp,
     direction: MessageDirection,
     body: str,
-) -> tuple[str, int] | None:
-    """(locator, seconds apart) of the nearest SMS or MMS with this direction and text within
-    SAME_MESSAGE_SECONDS, the earliest locator on a tie; None when there is none."""
+    party: str | None,
+    media: int,
+) -> tuple[tuple[str, int] | None, str | None]:
+    """(match, possible). match is (locator, seconds apart) of the nearest SMS or MMS not yet
+    matched with this direction, text, other party and number of attachments within
+    SAME_MESSAGE_SECONDS, the earliest in table order on a tie. possible is the locator of the
+    nearest one that has the same direction, text and attachments but whose other party cannot be
+    compared (either side names none, or several), when there is no match. A match is marked
+    used, so one SMS or MMS stands for at most one Google Messages message (CodeRabbit on #264)."""
     if ts.utc is None:
-        return None
+        return None, None
     sec = int(ts.utc.timestamp())
+    possible: str | None = None
     for dt in sorted(range(-SAME_MESSAGE_SECONDS, SAME_MESSAGE_SECONDS + 1), key=abs):
-        locs = native.get((sec + dt, direction.value, _norm(body)))
-        if locs:
-            return locs[0], dt
-    return None
+        for n in native.get((sec + dt, direction.value, _norm(body)), []):
+            if n.locator in used or n.media != media:
+                continue
+            if party is None or n.party is None:
+                possible = possible or n.locator
+            elif _same_party(party, n.party):
+                used.add(n.locator)
+                return (n.locator, dt), None
+    return None, possible
 
 
 def _android_google_messages(c: _Ctx) -> None:
     """ALEAPP `get_googleMessages` (bugle_db): one row per part, no message id. Parts are grouped
     by conversation, time, direction and sender; a message the SMS and MMS tables already hold is
-    skipped and counted."""
+    skipped and counted. One that may be such a message, but whose other party cannot be compared,
+    is kept and flagged."""
     groups: dict[tuple[str, ...], list[tuple[int, dict[str, Any]]]] = defaultdict(list)
     for rowid, r in c.lava.rows(c.art):
         c.tc.rows_read += 1
@@ -585,6 +664,13 @@ def _android_google_messages(c: _Ctx) -> None:
         )
         groups[key].append((rowid, r))
     native = _native_keys(c)
+    used: set[str] = set()
+    # A sent message names the phone as its sender and the chat by display name, so its other
+    # party is the one sender of the chat's received messages, when the chat has exactly one.
+    heard: dict[str, set[str]] = defaultdict(set)
+    for (cid, _t, d, who), _rows in groups.items():
+        if d.lower() == "incoming" and (k := _party_key(who)):
+            heard[cid].add(k)
     for rows in groups.values():
         rowid, r = rows[0]
         loc = f"{c.art.table}/rowid={rowid}"
@@ -606,7 +692,20 @@ def _android_google_messages(c: _Ctx) -> None:
             and (mt := _text(x.get("Message Type")) or "")
             and not mt.startswith("text/")
         ]
-        match = _same_message(native, ts, mdir, body)
+        if mdir is MessageDirection.INCOMING:
+            party = _party_key(r.get("Message Sender"))
+        elif mdir is MessageDirection.OUTGOING:
+            cid = _text(r.get("Conversation ID")) or ""
+            party = _party_key(r.get("Other Participant/Conversation Name")) or (
+                next(iter(heard[cid])) if len(heard[cid]) == 1 else None
+            )
+        else:
+            party = None
+        match, possible = _same_message(native, used, ts, mdir, body, party, len(media))
+        if possible is not None:
+            c.flag("may_be_same_as_an_sms_or_mms_message", loc)
+            # Both may be one message, so a count over them never passes (count check).
+            c.w.cov.numbered_copy_records += [f"msg:{c.w.src}:{loc}", f"msg:{c.w.src}:{possible}"]
         if match is not None:
             c.tc.rows_skipped["same_as_an_sms_or_mms_message"] += 1
             _listed(c.tc.skipped_locators, "same_as_an_sms_or_mms_message", loc)
@@ -709,6 +808,7 @@ def _chat_messages(c: _Ctx) -> None:
     if not (h_text and h_dir and h_time):
         c.tc.header_notes.append("LEAPP's conversation view for this table names no text, "
                                  "direction or time column, so nothing was read.")  # fmt: skip
+        c.failed = "LEAPP's conversation view for it names no text, direction or time column"
         return
     for rowid, r in c.lava.rows(c.art):
         c.tc.rows_read += 1
@@ -984,16 +1084,27 @@ def device_facts(lava: Lava) -> dict[str, Any]:
 # ---------------------------------------------------------------- importer
 
 
+def _not_read(art: Artifact, why: str) -> dict[str, Any]:
+    return {"name": art.name, "category": art.category, "table": art.table,
+            "records": art.record_count, "reason": why, "read_failed": True}  # fmt: skip
+
+
+_NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
+_NATIVE_CALL_KEYS = {"callHistory", "get_calllog"}
+
+
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
-    """The apps whose records this import holds in full: the phone's own messages and calls
-    when their tables were read, and a chat app when no artifact LEAPP wrote for it (by its
-    category's first word) holds records Mabillon did not read. Every other app, and a search
-    on every channel, is not covered by this source (the absence check reads this list)."""
+    """The apps whose records this import holds in full, from the artifacts read through: the
+    phone's own messages, and its calls, when every such table that holds records was read, and
+    a chat app when no artifact LEAPP wrote for it (by its category's first word) holds records
+    Mabillon did not read. Every other app, and a search on every channel, is not covered by
+    this source (the absence and count checks read this list)."""
     keys = {a.key for _, a in read}
+    held = {a.key for a in lava.artifacts if (a.record_count or 0) > 0}
     apps: set[str] = set()
-    if keys & {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}:
+    if keys & _NATIVE_MESSAGE_KEYS and not (held & _NATIVE_MESSAGE_KEYS) - keys:
         apps.add(NATIVE_MESSAGES_APP)
-    if keys & {"callHistory", "get_calllog"}:
+    if keys & _NATIVE_CALL_KEYS and not (held & _NATIVE_CALL_KEYS) - keys:
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
     unread_words = {
@@ -1011,6 +1122,11 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
 
 def _fidelity(m: dict[str, Any]) -> tuple[Fidelity, ExtractionType, str]:
     kind = str(m.get("param_type") or "").strip().lower()
+    if m.get("processing_status") != RUN_COMPLETE:
+        # LEAPP writes "In Progress" when a run starts and "Complete" when it ends, so any other
+        # value is a run that stopped part way, whose tables may be cut short (CodeRabbit on #264).
+        ext = ExtractionType.FILE_SYSTEM if kind in FILE_SYSTEM_INPUTS else ExtractionType.UNKNOWN
+        return Fidelity.UNKNOWN, ext, FIDELITY_REASON_INCOMPLETE
     if kind == "itunes":
         return Fidelity.UNKNOWN, ExtractionType.LOGICAL, FIDELITY_REASON_PROFILE
     if kind in FILE_SYSTEM_INPUTS and not m.get("profile_used"):
@@ -1109,14 +1225,26 @@ class LeappImporter:
                 (dev, src, lava.manifest_member, f"Device in {path.name}", None,
                  device["os_version"], device["timezone"]),
             )  # fmt: skip
+            # Only a table read through counts as read (CodeRabbit on #264): a missing table, or
+            # a chat view that names no text, direction or time, is listed as not read and its
+            # app is not read in full.
+            done: list[tuple[Spec, Artifact]] = []
             for kind in ORDER:
                 for spec, art in read:
                     if spec.kind is not kind:
                         continue
+                    if not lava.has_table(art):
+                        cov.not_imported.append(_not_read(art, "its table is not in the database"))
+                        continue
                     tc = TableCoverage(name=art.name, kind=kind.value)
                     tc.header_locator = art.table
                     cov.tables.append(tc)
-                    spec.read(_Ctx(w, tc, art, lava))
+                    ctx = _Ctx(w, tc, art, lava)
+                    spec.read(ctx)
+                    if ctx.failed:
+                        cov.not_imported.append(_not_read(art, ctx.failed))
+                        continue
+                    done.append((spec, art))
                     if art.record_count is not None and art.record_count != tc.rows_read:
                         tc.header_notes.append(
                             f"The manifest states {art.record_count} records; the table holds "
@@ -1124,13 +1252,13 @@ class LeappImporter:
                         )
             w.flush()
             payload = coverage_payload(
-                source, IMPORTER_NAME, None, None, cov, sorted({s.kind for s, _ in read})
+                source, IMPORTER_NAME, None, None, cov, sorted({s.kind for s, _ in done})
             )
             payload.update(
                 importer_version=IMPORTER_VERSION,
                 fidelity_reason=reason,
                 format_support=FORMAT_SUPPORT,
-                **{APPS_READ_KEY: apps_read_in_full(lava, read)},
+                **{APPS_READ_KEY: apps_read_in_full(lava, done)},
                 leapp={
                     "leapp_name": lava.leapp_name,
                     "leapp_version": lava.leapp_version,
@@ -1148,7 +1276,7 @@ class LeappImporter:
                             "records": a.record_count,
                             "source_path": a.source_path,
                         }
-                        for _, a in read
+                        for _, a in done
                     ],  # fmt: skip
                     "artifacts_in_manifest": len(lava.artifacts),
                     # every skipped Google Messages message: its locator, its part rows (LAVA

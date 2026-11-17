@@ -150,6 +150,7 @@ class Lava:
     version: str = "2026.4.7-dev"
     input_type: str = "tar"
     profile_used: bool = False
+    status: str = "Complete"  # processing_status; LEAPP writes "In Progress" until a run ends
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # key -> rows by header
 
     def add(self, key: str, **values: Any) -> None:
@@ -210,7 +211,7 @@ class Lava:
             "param_profile": None,
             "profile_used": self.profile_used,
             "case_data": {},
-            "processing_status": "Complete",
+            "processing_status": self.status,
             "lava_db_name": "_lava_artifacts.db",
             "modules": [],
             "artifacts": artifacts,

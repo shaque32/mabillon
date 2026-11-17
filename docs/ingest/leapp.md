@@ -47,9 +47,20 @@ SMS, MMS and RCS together, so a claim about texts or iMessages is searched acros
 message was stored under another of the phone's own services.
 
 Google Messages holds most of the phone's SMS and MMS a second time. A Google Messages message
-with the same direction and text as an SMS or MMS within two seconds is skipped and counted
-(`same_as_an_sms_or_mms_message`), so no message is counted twice; the rest (RCS, chiefly) is
-imported. The coverage record and the import's audit log entry list each skipped one under
+is skipped and counted (`same_as_an_sms_or_mms_message`) when an SMS or MMS within two seconds
+has the same direction, text, number of attachments and other party, so no message is counted
+twice; the rest (RCS, chiefly) is imported. Each SMS or MMS stands for at most one Google
+Messages message. The other party is the sender of a received message, and for a sent one the
+receiver: `Other Participant/Conversation Name` when it is a number or email, else the one
+sender of the chat's received messages when the chat has exactly one. An SMS or MMS names its
+other party in `Address`, `From Address` (received) or `To Address`, `Cc` and `Bcc` (sent), and
+counts only when it names exactly one. Numbers compare by their digits, and one with a country
+code of up to three digits in front of at least ten digits matches the same number without it
+(`+19195550111` and `(919) 555-0111`); emails compare without case. When the direction and text
+match but either side names no other party, or several, the Google Messages message is kept and
+flagged (`may_be_same_as_an_sms_or_mms_message`), so a count over it may hold one message twice.
+On the public Android 13 phone all 123 copies found by direction and text alone still match
+under this rule, and the same pairs. The coverage record and the import's audit log entry list each skipped one under
 `leapp.google_messages_skipped`: its locator, its part rows (LAVA rowids), the SMS or MMS it
 matched (`same_as`, the nearest in time) and `seconds_apart`, so another reader can re-check
 every pair. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
@@ -149,9 +160,21 @@ On the two public development phones both read `America/New_York`, the zone thei
 ## Coverage and absence
 
 `fidelity` is `full_extraction` when LEAPP read a file system extraction (`param_type` fs, tar,
-zip or gz) with no profile; then the tables it read are whole for the databases it parsed, and
-the absence check still needs records on the named app in the source. A profile run is a
-`curated_report`, and an iTunes backup is `unknown`; neither can show absence.
+zip or gz) with no profile and its manifest says the run completed (`processing_status`
+`Complete`, which LEAPP's lavafuncs.py writes when a run ends; it writes `In Progress` when one
+starts). Then the tables it read are whole for the databases it parsed, and the absence check
+still needs records on the named app in the source. A run whose manifest gives any other status
+is `unknown`, since a table may have been cut short. A profile run is a `curated_report`, and an
+iTunes backup is `unknown`; none of these can show absence.
+
+A table Mabillon reads counts as read only when it was read through. If the manifest lists it
+but its table is missing from the database, or a chat app's conversation view names no text,
+direction or time column, it is listed in `not_imported` with `read_failed` and its reason, the
+coverage summary raises `leapp_artifact_not_read`, and its app is not in `apps_read_in_full`.
+The phone's own messages, or its calls, count as read in full only when every one of their
+tables that holds records was read. The absence check and the count check's "at most" and
+"exactly" read that list: an app not on it cannot show that something is absent or that a count
+is complete.
 
 ## Checked against a UFDR of the same phone
 

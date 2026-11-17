@@ -240,7 +240,7 @@ def test_count_over_rows_the_tool_numbered_as_copies_neither_passes_nor_fails() 
     for want in (1, 2):
         r = check(conn, "message_count", expected_count=want, count_op="eq", **common)
         assert r.outcome is CheckOutcome.INCONCLUSIVE
-        assert "1 of the matching messages is numbered by the extraction tool" in r.detail
+        assert "1 of the matching messages is listed by the import as a possible copy" in r.detail
         assert not FORBIDDEN_WORDS.search(r.detail), r.detail
 
 
@@ -805,3 +805,64 @@ def test_a_message_with_the_words_that_names_no_receiver_keeps_time_from_failing
     r = check(conn, "record_time", window=w, **common)
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
     assert "name no sender or no receiver" in r.detail
+
+
+def test_absence_is_not_held_open_by_a_third_partys_message_in_the_chat() -> None:
+    # CodeRabbit on #264: Cee's message naming no receiver, in a chat that also holds Bee's,
+    # cannot be contact between Ay and Bee.
+    conn = without_undated_row(build())
+    assert check(conn, "no_contact", person_ids=[A, B], window=APRIL).outcome is CheckOutcome.PASS
+    _chat_row(conn, "msg:p1:c8", "a:p1:c", "2026-04-05T12:00:00Z", "hi all")
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_with_one_party_a_message_from_anyone_naming_no_receiver_holds_the_check_open() -> None:
+    # CodeRabbit on #264: with only Bee named, Cee's message with no receiver may be to Bee.
+    conn = build()
+    _chat_row(conn, "msg:p1:c6", "a:p1:c", "2026-03-07T02:00:00Z", "brunch saturday")
+    day = window(D(2026, 3, 7), D(2026, 3, 8), "Saturday, March 7")
+    r = check(conn, "weekday_date", quoted_text="brunch saturday", person_ids=[B], window=day)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and r.record_ids == ("msg:p1:c6",)
+    w = window(D(2026, 3, 20, 11), D(2026, 3, 20, 12), "11 a.m. on March 20")
+    conn = without_undated_row(build())
+    common = dict(quoted_text="see you at noon", person_ids=[B], device_ids=["dev:p1"])
+    assert check(conn, "record_time", window=w, **common).outcome is CheckOutcome.FAIL
+    _chat_row(conn, "msg:p1:c7", "a:p1:c", "2026-03-20T15:30:00Z", "see you at noon")
+    r = check(conn, "record_time", window=w, **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:c7" in r.record_ids  # the outcome rests on it
+
+
+def test_a_count_held_open_cites_the_rows_that_hold_it_open() -> None:
+    # CodeRabbit on #264: record_ids name every record the outcome rests on.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:c9" in r.record_ids
+    assert len(r.record_ids) == len(set(r.record_ids))
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS and "msg:p1:c9" not in r.record_ids
+
+
+def test_at_most_and_exactly_need_every_app_counted_to_be_read_in_full() -> None:
+    # CodeRabbit on #264: a source that read only some apps in full may hold more messages.
+    import json
+
+    conn = without_undated_row(build())
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    assert check(conn, "message_count", expected_count=2, count_op="le", **common).outcome is (
+        CheckOutcome.PASS
+    )
+    conn.execute(
+        "INSERT INTO source_coverage VALUES ('p1', 'leapp', '0', ?)",
+        (json.dumps({"apps_read_in_full": ["Native Messages"]}),),
+    )
+    for op, channels in (("le", []), ("eq", []), ("le", ["SMS"])):
+        r = check(conn, "message_count", expected_count=2, count_op=op, channels=channels,
+                  **common)  # fmt: skip
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, (op, channels, r.detail)
+        assert "only some apps" in r.detail
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS

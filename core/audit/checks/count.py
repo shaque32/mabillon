@@ -7,6 +7,7 @@ from core.audit.checks._common import (
     CaseData,
     Party,
     Row,
+    apps_not_read,
     calls_for_accounts,
     channel_ok,
     in_window,
@@ -181,20 +182,26 @@ class CountCheck(TemplateCheck):
         full = source.fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit messages")
+        # "At most" and "exactly" need every record on the apps counted (CodeRabbit on #264).
+        unread = apps_not_read(data, source_id, {c.strip().lower() for c in p.channels})
+        if unread and op != "ge":
+            lines.append(unread)
 
         copies = sum(1 for r in counted + no_time if r.id in data.numbered_copies)
         if copies:
             lines.append(
-                f"{copies} of the matching messages {'is' if copies == 1 else 'are'} numbered "
-                "by the extraction tool as a copy of another row, so the count may hold one "
-                "message twice; an expert must decide which rows are the same message"
+                f"{copies} of the matching messages {'is' if copies == 1 else 'are'} listed "
+                "by the import as a possible copy of another row (numbered as a copy by the "
+                "extraction tool, or with the same direction, time and text as another), so the "
+                "count may hold one message twice; an expert must decide which rows are the same "
+                "message"
             )
 
         if copies:
             outcome = CheckOutcome.INCONCLUSIVE
         elif op in ("eq", "le") and n > want:
             outcome = CheckOutcome.FAIL
-        elif no_time or one_side_silent or ((unknown_sender or unplaced) and op != "ge"):
+        elif no_time or one_side_silent or ((unknown_sender or unplaced or unread) and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -204,9 +211,16 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.PASS if full else CheckOutcome.INCONCLUSIVE
         if outcome is CheckOutcome.INCONCLUSIVE and n < want:
             lines.append("Finding fewer than claimed does not mean the others never existed")
-        ids = [r.id for r in counted + no_time]
+        # The outcome rests on the rows that may be among them too (CodeRabbit on #264).
+        held_open = (unplaced or unknown_sender) and op != "ge"
+        ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
         return self.done(
-            assumption_id, outcome, searched, sentences(lines, notes), ids, [source_id]
+            assumption_id,
+            outcome,
+            searched,
+            sentences(lines, notes),
+            list(dict.fromkeys(ids)),
+            [source_id],
         )
 
     def _calls(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
@@ -288,7 +302,10 @@ class CountCheck(TemplateCheck):
         full = data.sources[source_id].fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit calls")
-        if twins or no_time or unconnected or (unplaced and op != "ge"):
+        unread = apps_not_read(data, source_id, apps)
+        if unread and op != "ge":
+            lines.append(unread)
+        if twins or no_time or unconnected or ((unplaced or unread) and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -301,9 +318,14 @@ class CountCheck(TemplateCheck):
                 "A call count never fails: the log keeps calls that did not connect, and one call"
                 " can be stored twice"
             )
-        ids = [r.id for r in counted + no_time]
+        ids = [r.id for r in counted + no_time + (unplaced if op != "ge" else [])]
         return self.done(
-            assumption_id, outcome, searched, sentences(lines, notes), ids, [source_id]
+            assumption_id,
+            outcome,
+            searched,
+            sentences(lines, notes),
+            list(dict.fromkeys(ids)),
+            [source_id],
         )
 
 

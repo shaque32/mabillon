@@ -85,7 +85,11 @@ class WeekdayCheck(TemplateCheck):
         unplaced = [
             r.id
             for r in rows
-            if party_ids and incomplete(r) and (r.sender is None or r.sender in everyone)
+            if party_ids
+            and incomplete(r)
+            # With one party named, a message from anyone may be to that party (CodeRabbit on
+            # #264); with two, a known sender must be one of them.
+            and (len(party_ids) == 1 or r.sender is None or r.sender in everyone)
         ]
         if unplaced:
             # A LEAPP chat names a sender only: such a message may be the one meant, on

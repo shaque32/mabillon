@@ -80,7 +80,11 @@ class TimeCheck(TemplateCheck):
         unplaced = [
             r
             for r in rows
-            if party_ids and incomplete(r) and (r.sender is None or r.sender in everyone)
+            if party_ids
+            and incomplete(r)
+            # With one party named, a message from anyone may be to that party (CodeRabbit on
+            # #264); with two, a known sender must be one of them.
+            and (len(party_ids) == 1 or r.sender is None or r.sender in everyone)
         ]
         rows = [r for r in rows if not party_ids or involves_all(r, party_ids)]
         searched = f"{what.capitalize()} in {', '.join(sources)}; window {window_str(p.window)}."
@@ -138,6 +142,8 @@ class TimeCheck(TemplateCheck):
                     f"{len(unplaced)} messages with the words name no sender or no receiver, so "
                     f"one may be the message described: {', '.join(r.id for r in unplaced)}"
                 )
+                # The outcome rests on them too (CodeRabbit on #264).
+                ids = list(dict.fromkeys(ids + [r.id for r in unplaced]))
             if outside and not by_text:
                 lines.append("Calls are matched by their parties only, so these may be other calls")
         return self.done(assumption_id, outcome, searched, sentences(lines, notes), ids, sources)

@@ -55,7 +55,8 @@ _SKIP_REASON_WORDS = {
     ),
     "same_as_an_sms_or_mms_message": (
         "are the same messages as SMS or MMS messages already imported from the phone's message "
-        "store (the same direction and text within two seconds), so each was imported once"
+        "store (the same direction, text, other party and number of attachments within two "
+        "seconds, each SMS or MMS matched once), so each was imported once"
     ),
 }
 _TIME_PROBLEM_WORDS = {
@@ -383,6 +384,12 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "{n} name{s0} the sender by display name only. A display name is not taken as an "
         "account (two people can share one), so no sender was recorded and a claim about who "
         "sent {them} is not tested from {them}.",
+    ),
+    "may_be_same_as_an_sms_or_mms_message": (
+        "attention",
+        "{n} {have} the same direction and text as an SMS or MMS within two seconds, but the "
+        "other party of one of them is not named or is a group, so it cannot be compared; {them} "
+        "{be} imported, and a count over them may count one message twice.",
     ),
     "media_file_not_in_extraction": (
         "attention",
@@ -799,6 +806,25 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
     not_imported = [e for e in p.get("not_imported", []) or [] if isinstance(e, dict)]
     if p.get("importer") == "leapp":
         items += _leapp_device_items((p.get("leapp") or {}).get("device") or {})
+    if p.get("importer") == "leapp":
+        # A table Mabillon reads that could not be read through: its app is not read in full.
+        failed = [e for e in not_imported if e.get("read_failed")]
+        not_imported = [e for e in not_imported if not e.get("read_failed")]
+        for e in failed:
+            items.append(
+                CoverageItem(
+                    "attention",
+                    "leapp_artifact_not_read",
+                    (
+                        _q(e.get("name")),
+                        _t(
+                            f" could not be read: {e.get('reason')}. None of its records were "
+                            "imported, so a claim resting on its app is not tested from this "
+                            "source, and an absence there is not shown."
+                        ),
+                    ),
+                )
+            )
     if p.get("importer") == "leapp" and not_imported:
         # LEAPP parses hundreds of artifacts; one line names every one Mabillon did not read.
         with_rows = [e for e in not_imported if (e.get("records") or 0) > 0]
