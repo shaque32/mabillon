@@ -115,7 +115,9 @@ a { color: var(--ink); text-decoration: underline 1px var(--muted);
 a:hover { text-decoration-color: var(--ink); }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 blockquote { margin: var(--s2) 0; padding: 0 0 0 var(--s3); border-left: 1px solid var(--muted); }
-mark { background: var(--line); color: inherit; }
+/* a quoted span: a fill and an ink underline, so it still shows on a --line surface
+   (an incoming message bubble) */
+mark { background: var(--line); color: inherit; border-bottom: 1px solid var(--ink); }
 hr { border: 0; border-top: 1px solid var(--line); margin: var(--s5) 0; }
 
 /* ---- sidebar: the wordmark, the open case, the pages in groups; the footer holds where the
