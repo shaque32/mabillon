@@ -249,6 +249,26 @@ def test_screen_pages_and_report(db):
     assert refused.status == 403
 
 
+def test_a_quoted_message_s_own_words_never_stop_the_report(conn):
+    # The summary names the nearest message by the document's quoted words: those are cited
+    # text, so a forbidden word in them is not the tool's (a development LEAPP dry run, whose
+    # nearest message read "I deleted it.", lost its report this way).
+    for old, new in (("its done", "i deleted"), ("move it", "i deleted it")):
+        for table, col in (("messages", "body"), ("govdoc_paragraphs", "text")):
+            conn.execute(
+                f"UPDATE {table} SET {col} = replace({col}, ?, ?) WHERE {col} LIKE ?",  # noqa: S608
+                (old, new, f"%{old}%"),
+            )
+    conn.commit()
+    rows = rows_for(conn)
+    assert row(rows, "8", "At 2:31 a.m.").status == "differs"
+    assert row(rows, "9", "At 10:05 p.m.").status == "order"
+    html = render_report(conn)
+    assert '<span class="q">&quot;i deleted&quot;</span>' in html
+    assert '<span class="q">&quot;i deleted it tonight&quot;</span>' in html
+    check_report_text(html)
+
+
 def test_render_report_takes_default_settings(conn):
     html = render_report(conn)
     assert "Tolerance 5 min" in html

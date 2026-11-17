@@ -22,6 +22,7 @@ from core.timeline.check import (
     Link,
     TimelineRow,
     fmt_delta,
+    link_label,
     timeline,
     window_utc,
     zoneless_note,
@@ -180,6 +181,15 @@ def _link_block(lk: Link, data: CaseRecords) -> str:
     return f"<div>{head}{e(rel)}: {lk.total} found<ul>{items}</ul>{more}</div>"
 
 
+def _summary_html(row: TimelineRow) -> str:
+    """The row's summary, with the tied record it names cited (`link_label`): a message's words
+    are the evidence's, not the tool's."""
+    out = e(row.summary)
+    if row.named is not None:
+        out = out.replace(e(link_label(row.named)), link_label(row.named, q), 1)
+    return out
+
+
 def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
     out = ["<ol class='tl'>"]
     for row in rows:
@@ -212,7 +222,7 @@ def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
             f"<details><summary>The sentence</summary>{q(' '.join(st.sentence.split()))}"
             f"</details><div class='meta'>{e(_read_as(st, data)) or e(row.zone_label)}</div>"
             f"</div><div class='recs'><div class='meta'>Phone records</div>"
-            f"<div>{e(row.summary)}</div>{recs}</div>"
+            f"<div>{_summary_html(row)}</div>{recs}</div>"
             f"<div class='st'>{_status_chip(row)}<div class='meta'>derived</div></div>"
             + (f"<ul class='notes'>{notes}</ul>" if notes else "")
             + "</li>"

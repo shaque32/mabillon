@@ -88,6 +88,9 @@ class TimelineRow:
     # phones whose own zone is missing or unusable, by label: source text, so the renderer cites
     # each one (zoneless_note) rather than printing it inside a note in the tool's own words
     zoneless: tuple[str, ...] = ()
+    # the tied record the summary names (`link_label`): its words are source text, so the
+    # renderer cites them rather than printing a message's words as the tool's own
+    named: Link | None = None
 
 
 def zoneless_note(labels: tuple[str, ...], cite: Callable[[str], str]) -> str:
@@ -388,22 +391,26 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
     differs = [lk for lk in at_links if lk.total and not lk.ok and _timed(lk)]
     weekday_bad = st.weekday_ok is False
 
+    named: Link | None = None
     if differs:
         lk = differs[0]
         best = next(c for c in lk.shown if c.delta_s is not None)
         side = "before" if (best.delta_s or 0) < 0 else "after"
         summary = (
             f"No record the sentence names is within {tol} of the stated time. The nearest, "
-            f"{_label(lk)}, is {fmt_delta(best.delta_s or 0)} {side} it ({best.record.when()})."
+            f"{link_label(lk)}, is {fmt_delta(best.delta_s or 0)} {side} it"
+            f" ({best.record.when()})."
         )
+        named = lk
         status: RowStatus = "differs"
     elif flagged:
         c = flagged[0]
         lk = next(x for x in links if c in x.shown)
         want = "after" if lk.relation == "after" else "before"
         side = "before" if (c.delta_s or 0) < 0 else "after"
+        named = lk
         summary = (
-            f"The document places {_label(lk)} {want} the stated time; the record is "
+            f"The document places {link_label(lk)} {want} the stated time; the record is "
             f"{fmt_delta(c.delta_s or 0)} {side} it ({c.record.when()})."
         )
         status = "order"
@@ -448,7 +455,7 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
                 notes.append(c.printed_note)
     return TimelineRow(
         st, status, summary, zone_label, key, tuple(links), tuple(nearby), nearby_total,
-        tuple(counts), tuple(notes), zoneless,
+        tuple(counts), tuple(notes), zoneless, named,
     )  # fmt: skip
 
 
@@ -456,8 +463,13 @@ def _timed(lk: Link) -> bool:
     return any(c.delta_s is not None for c in lk.shown)
 
 
-def _label(lk: Link) -> str:
-    return f'the message "{lk.words}"' if lk.how == "quote" else f"the call with {lk.words}"
+def link_label(lk: Link, cite: Callable[[str], str] = str) -> str:
+    """How a row's summary names a tied record. Its words (a message's text, a call's party)
+    are source text: the renderer passes `cite` (core/report/fmt.q) so the forbidden-word check
+    reads them as cited, never as the tool's own (a message "I deleted it." stopped a report)."""
+    if lk.how == "quote":
+        return f"the message {cite(chr(34) + lk.words + chr(34))}"
+    return f"the call with {cite(lk.words)}"
 
 
 def timeline(data: CaseRecords, stated: list[StatedTime], s: Settings) -> list[TimelineRow]:
