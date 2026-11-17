@@ -1,0 +1,214 @@
+"""Independent count of a LEAPP run's output (json and sqlite3 only, never Mabillon's importer).
+
+Validation v5 reads its held-out phones through the LEAPP importer, so bar 8 compares Mabillon's
+import counts with this reader's. Like dump_ufdr.py, it imports nothing from core/ on purpose,
+and it was written from the LAVA format, not from the importer's code.
+
+A LEAPP run (iLEAPP, ALEAPP) writes `_lava_data.lava`, a JSON manifest (parser_info,
+lava_schema_version, profile_used, and artifacts by category, each with name, tablename, module,
+column_map, record_count and source_path), and `_lava_artifacts.db`, one SQLite table per
+artifact.
+
+Usage: python3 -I eval/validation/dump_lava.py <lava_dir> <kinds.json> <out.json>
+(by path: -I keeps the working directory off sys.path, so `-m eval...` would not be found)
+kinds.json maps each table read as a kind to that kind and its dedupe columns, if any:
+    {"sms": {"kind": "message", "dedupe": "message_row_id"},
+     "get_googlemessages": {"kind": "message",
+                            "dedupe": ["conversation_id", "message_timestamp", "direction"]}}
+A table with dedupe columns is counted by its distinct values of those columns, over rows where
+none is null (iLEAPP's SMS table has one row per attachment); any other table by its rows. A
+table may also be listed with "kind": "skip" (one that repeats another, such as ALEAPP's
+get_sms_mms_combined): its rows are reported, it is never counted, and its dedupe columns, if
+any, are never read. A kinds file that names one table twice, in any spelling, stops the
+reader. The manifest's record_count
+is reported beside the live count and never used as the count.
+"""
+
+import hashlib
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+MANIFEST = "_lava_data.lava"
+DATABASE = "_lava_artifacts.db"
+KINDS = ("message", "call", "contact")
+SKIP = "skip"
+VERSION = "1.0.1"
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def manifest_tables(manifest: dict) -> dict[str, dict]:
+    """Each artifact the manifest lists, by its table name as SQLite compares it (`fold`)."""
+    out: dict[str, dict] = {}
+    for category, artifacts in (manifest.get("artifacts") or {}).items():
+        for art in artifacts if isinstance(artifacts, list) else artifacts.values():
+            table = art.get("tablename")
+            if not table:
+                continue
+            if fold(table) in out:
+                raise SystemExit(f"dump_lava: the manifest lists table {table!r} twice")
+            out[fold(table)] = {**art, "category": category}
+    return out
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    """json.loads keeps only the last of two equal keys; a kinds file that names a table twice
+    must stop the reader instead (Claude review on #263)."""
+    out: dict = {}
+    for k, v in pairs:
+        if k in out:
+            raise SystemExit(f"dump_lava: kinds names table {k!r} twice")
+        out[k] = v
+    return out
+
+
+def fold(name: str) -> str:
+    """A table or column name as SQLite compares it: only A-Z fold, so "SMS" is "sms" but "Ä"
+    and "ä" stay two names (CodeRabbit on #263)."""
+    return name.translate(_ASCII_LOWER)
+
+
+def quote(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def count(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) -> dict:
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({quote(table)})")]
+    if not cols:
+        raise SystemExit(f"dump_lava: table {table!r} is not in {DATABASE}")
+    # Names are quoted, and each is one the database itself lists (sqlite_master, table_info).
+    rows = conn.execute(f"SELECT COUNT(*) FROM {quote(table)}").fetchone()[0]  # noqa: S608
+    out = {"rows": rows, "count": rows}
+    if dedupe:
+        keys = [dedupe] if isinstance(dedupe, str) else list(dedupe)
+        by_case = {fold(c): c for c in cols}  # SQLite column names are case-insensitive
+        for k in keys:
+            if fold(k) not in by_case:
+                raise SystemExit(f"dump_lava: table {table!r} has no column {k!r}")
+        keys = [by_case[fold(k)] for k in keys]
+        if len(set(keys)) != len(keys):
+            raise SystemExit(f"dump_lava: table {table!r} names one dedupe column twice")
+        names = ", ".join(quote(k) for k in keys)
+        no_null = " AND ".join(f"{quote(k)} IS NOT NULL" for k in keys)
+        out["count"] = conn.execute(
+            f"SELECT COUNT(*) FROM (SELECT DISTINCT {names} FROM {quote(table)}"  # noqa: S608
+            f" WHERE {no_null})"
+        ).fetchone()[0]
+        out["null_dedupe_rows"] = (
+            rows
+            - conn.execute(
+                f"SELECT COUNT(*) FROM {quote(table)} WHERE {no_null}"  # noqa: S608
+            ).fetchone()[0]
+        )
+    return out
+
+
+def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
+    manifest_path, db_path = lava_dir / MANIFEST, lava_dir / DATABASE
+    manifest = json.loads(manifest_path.read_text("utf-8"))
+    listed = manifest_tables(manifest)
+    # as_uri() escapes '#', '?' and '%' in the path, so mode=ro always applies (Greptile on #263).
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        # SQLite table names are case-insensitive, so a kinds entry "SMS" names table "sms".
+        in_db = {
+            fold(r[0]): r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            if not fold(r[0]).startswith("sqlite_")
+        }
+        # Two entries for one table would count it twice (CodeRabbit on #263).
+        named: dict[str, str] = {}
+        for table in kinds:
+            if fold(table) in named:
+                raise SystemExit(
+                    f"dump_lava: kinds names table {table!r} twice ({named[fold(table)]!r})"
+                )
+            named[fold(table)] = table
+        tables: dict[str, dict] = {}
+        totals = {k: 0 for k in KINDS}
+        for table, spec in sorted(kinds.items()):
+            kind = spec.get("kind")
+            if kind not in (*KINDS, SKIP):
+                raise SystemExit(f"dump_lava: {table!r} has kind {kind!r}, not one of {KINDS}")
+            name = in_db.get(fold(table))
+            art = listed.get(fold(table), {})
+            if name is None:
+                # A table the importer reads but this run did not write: zero, said so, with
+                # what the manifest says of it (a listed table with records is flagged below).
+                tables[table] = {
+                    "kind": kind,
+                    "present": False,
+                    "count": 0,
+                    "manifest_record_count": art.get("record_count"),
+                    "in_manifest": fold(table) in listed,
+                }
+                continue
+            # A skipped table is never counted, so its dedupe columns are never checked.
+            got = count(conn, name, None if kind == SKIP else spec.get("dedupe"))
+            tables[table] = {
+                "kind": kind,
+                "present": True,
+                **got,
+                "manifest_record_count": art.get("record_count"),
+                "in_manifest": fold(table) in listed,
+                "source_path": art.get("source_path"),
+            }
+            if kind != SKIP:
+                totals[kind] += got["count"]
+        # Every written table no kind names, listed in the manifest or not: none is left out
+        # of the count without being reported.
+        unread = sorted(in_db[t] for t in in_db.keys() - named)
+        unlisted = sorted(in_db[t] for t in in_db.keys() - listed.keys())
+        # Every table the manifest lists that the database does not hold, with its record_count.
+        unwritten = {
+            listed[t]["tablename"]: listed[t].get("record_count")
+            for t in sorted(listed.keys() - in_db.keys())
+        }
+    finally:
+        conn.close()
+    parser = manifest.get("parser_info") or {}
+    return {
+        "dump_lava_version": VERSION,
+        "manifest_sha256": sha256(manifest_path),
+        "database_sha256": sha256(db_path),
+        "leapp_name": parser.get("leapp_name"),
+        "leapp_version": parser.get("leapp_version"),
+        "lava_schema_version": manifest.get("lava_schema_version"),
+        "profile_used": manifest.get("profile_used"),
+        "counts": totals,
+        "tables": tables,
+        "tables_not_counted": unread,  # written, read as no kind
+        "tables_not_in_manifest": unlisted,  # written, but the manifest lists no artifact
+        "tables_not_in_database": unwritten,  # listed but not written: {name: record_count}
+        "manifest_count_differs": sorted(
+            t
+            for t, v in tables.items()
+            if v.get("manifest_record_count") not in (None, v["rows"] if v["present"] else 0)
+        ),
+    }
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) != 3:
+        raise SystemExit(__doc__)
+    lava_dir, kinds_path, out = Path(args[0]), Path(args[1]), Path(args[2])
+    kinds = json.loads(kinds_path.read_text("utf-8"), object_pairs_hook=no_duplicate_keys)
+    result = read(lava_dir, kinds)
+    out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", "utf-8")
+    print(json.dumps(result["counts"]))
+
+
+if __name__ == "__main__":
+    main()

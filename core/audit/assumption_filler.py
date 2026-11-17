@@ -96,6 +96,7 @@ Proposals then go through TemplateAssumptionBuilder, which validates them again.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
@@ -195,7 +196,10 @@ MAX_PROPOSALS = 8
 #      times one act from another ("six minutes later", "within a minute of") gives no act a
 #      range from its stated time; a claim about what a message refers to does not date the
 #      message by the time it states (found on a development phone, 2026-11-16).
-FILLER_VERSION = "10"
+#  11: a call's other side may be described by its app ("called the Instagram user ...") and
+#      given with its id beside its name (', user ID ...'), when both are one account; a
+#      comma inside a quoted name's closing mark is the claim's.
+FILLER_VERSION = "11"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -525,10 +529,22 @@ def _name_spans(text: str, name: str) -> list[tuple[int, int]]:
     return [m.span() for f in found for m in re.finditer(f, text, re.IGNORECASE)]
 
 
+@functools.lru_cache(maxsize=4096)
+def _identifier_patterns(ident: str) -> tuple[re.Pattern[str], ...]:
+    """How `_identifier_spans` finds one identifier: whole, as `_ident_spans` reads it ("lena"
+    is not in "lena.2", "lena..2" or "lena:x"); after an id label, whose colon may touch it
+    ("user ID:4984911", "id:lena"); and, at six characters or more, anywhere."""
+    tail = rf"({re.escape(ident)})(?![\w@-]|[.:]+[\w@-])"
+    out = [re.compile(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}")]
+    if len(ident) >= 6:
+        out.append(re.compile(rf"(?<![\w.:@-]){tail}"))
+    return tuple(out)
+
+
 def _ident_spans(text: str, ident: str) -> list[tuple[int, int]]:
     """Where the text writes this identifier whole, in any case: not inside a longer one
     ("7001002" is not in "70010023" or "dp_garage" in "dp_garage2")."""
-    pattern = rf"(?<![\w.:@-]){re.escape(ident.strip())}(?![\w@-]|[.:]\w)"
+    pattern = rf"(?<![\w.:@-]){re.escape(ident.strip())}(?![\w@-]|[.:]+[\w@-])"
     return [m.span() for m in re.finditer(pattern, text, re.IGNORECASE)]
 
 
@@ -1679,7 +1695,27 @@ _CALL_FORM_RE = re.compile(
     rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
-    rf")\s+(?:the\s+)?(?P<b>{_TOKEN})(?P<tail>[^\x01]*)$",
+    rf")\s+(?:the\s+)?(?:(?P<desc>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*)*?)\s+(?:user|account)\s+)?"
+    rf"(?P<b>{_TOKEN})(?P<tail>[^\x01]*(?:{_TOKEN}[^\x01]*)?)$",
+    re.IGNORECASE,
+)
+# A label before a written identifier, taken off only where something parts it from the
+# identifier: "ID 42", "id: 42" and "username lena" are 42 and lena, but "id42" and "idris_m"
+# are written so (CodeRabbit on #263). It takes off every label `_ID_LABEL` reads ("user ID
+# number 42"; Claude review on #263) and a few more; a label the id tail does not read leaves
+# the clause unread, so no caller is made.
+_WRITTEN_ID_LABEL_RE = re.compile(
+    r"(?i)^(?:(?:user\s*id|account\s*id|user\s*name|id|number)(?:\s+number)?(?:\s*[:#]\s*|\s+)"
+    r"|no\.\s*)"
+)
+_ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
+# The other side's id set beside its name, right after the clause: '"Marc R.," user ID
+# 4984911', "(account ID 4984911)". The id never adds a party: the caller is read only when
+# the name and the id are one account (`CallForm.one_account`). It does not pick between
+# accounts: a name that two accounts carry is refused before the id is read.
+_CALL_ID_TAIL_RE = re.compile(
+    rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
+    rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
     re.IGNORECASE,
 )
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
@@ -1689,13 +1725,13 @@ _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # The app a call was on, right after the clause: "called X on Telegram", "via WhatsApp". Only
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
 _CALL_APP_TAIL_RE = re.compile(
-    r"^\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
+    r"^\s*,?\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
     r"(?=\s*(?:,|\.|$|that\s+lasted|lasting|for\s))",
     re.IGNORECASE,
 )
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
 _CALL_LENGTH_TAIL_RE = re.compile(
-    r"^\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+    r"^\s*,?\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
 )
 
 
@@ -1710,6 +1746,7 @@ class CallForm:
     caller: str | None
     missed: bool
     length: str | None
+    one_account: bool = False  # the clause names b by a name and its id: one account
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -4728,7 +4765,7 @@ class LocalAssumptionFiller:
         entry (`one_number` False), which names the one account written exactly so, or else the
         only one that holds the number."""
         app = acc.app.strip().casefold()
-        ident = re.sub(r"(?i)^(user\s*id|id|number|no\.)\s*", "", acc.as_written.strip())
+        ident = _WRITTEN_ID_LABEL_RE.sub("", acc.as_written.strip())
         # A name the expert gave a number or id ("the BURNER") is that identifier, and the
         # rules below still apply to it: a number alone never picks the app.
         named_ident = account_names.designated(self.conn, acc.as_written)
@@ -4834,6 +4871,25 @@ class LocalAssumptionFiller:
             raise Reject(f"the proposal's channels are not the claim's {app!r} call")
         return app
 
+    def _identifier_spans(self, bare: str, app: str) -> list[tuple[str, int, int]]:
+        """Each identifier of an account on `app` that the words outside quotes write, with its
+        span. An identifier of six or more characters is read wherever it stands; a shorter one
+        ("lena") only right after an id label ("username lena"), so an ordinary word of the
+        claim never becomes a party. `_call_parties` and `_party_tokens` read the same ones, so
+        an id the clause holds is always looked up (CodeRabbit on #263)."""
+        ids = {
+            a.identifier.strip()
+            for a in self.data.accounts.values()
+            if a.app == app and a.identifier.strip() and not re.search(r"\s", a.identifier.strip())
+        }
+        out: set[tuple[str, int, int]] = set()
+        # Only an id the words hold, as written (its case kept), is searched for, with patterns
+        # compiled once per id: a case may hold thousands (Claude review on #263).
+        for i in sorted(x for x in ids if x in bare):
+            for pattern in _identifier_patterns(i):
+                out.update((i, *m.span(1)) for m in pattern.finditer(bare))
+        return sorted(out, key=lambda t: (t[0], t[1]))  # by identifier, then place
+
     def _call_parties(
         self, claim: Claim, device_ids: list[str], app: str, *, phone_is_side: bool = False
     ) -> tuple[list[str], list[str], list[str]]:
@@ -4871,19 +4927,13 @@ class LocalAssumptionFiller:
             spans.append((start, end))
         for m in _QUOTE_SPAN_RE.finditer(_flat(text)):
             if m.group(0)[1:-1].strip():
-                written.append(m.group(0)[1:-1].strip())
+                # '"This Is DFIRTwo," user ID ...': a comma before the closing mark is the
+                # claim's punctuation, not the name's.
+                written.append(m.group(0)[1:-1].strip().removesuffix(",").strip())
                 spans.append(m.span())
-        ids = {
-            a.identifier.strip()
-            for a in self.data.accounts.values()
-            if a.app == app
-            and len(a.identifier.strip()) >= 6
-            and not re.search(r"\s", a.identifier)
-        }
-        for i in sorted(ids):
-            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
-                written.append(i)
-                spans.append(m.span())
+        for i, start, end in self._identifier_spans(bare, app):
+            written.append(i)
+            spans.append((start, end))
         for start, end in spans:
             if _NOT_A_PARTY_AFTER.match(bare, end) or _NOT_A_PARTY_BEFORE.search(bare[:start]):
                 raise Reject(f"{text[start:end]!r} may not be a party to the call")
@@ -4969,12 +5019,7 @@ class LocalAssumptionFiller:
         for m in _QUOTE_SPAN_RE.finditer(text):
             if m.group(0)[1:-1].strip():
                 spans.append((*m.span(), "acct", m.group(0)[1:-1].strip()))
-        for a in self.data.accounts.values():
-            i = a.identifier.strip()
-            if a.app != app or len(i) < 6 or re.search(r"\s", i):
-                continue
-            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
-                spans.append((*m.span(), "acct", i))
+        spans += [(st, en, "acct", i) for i, st, en in self._identifier_spans(bare, app)]
         tokens: dict[int, tuple[str, str]] = {}
         kinds: dict[tuple[int, int], set[str]] = {}
         for st, en, kind, value in spans:
@@ -5027,10 +5072,27 @@ class LocalAssumptionFiller:
         np = m.group("np_to") or m.group("np_from") or m.group("np_with") or ""
         if not self._plain_call_noun(np, verb, app):
             return None
+        b = tokens[m.start("b")]
+        if m.group("desc") is not None:
+            # "called the Instagram user ...": only the call's own app may name the side
+            # (`_plain_call_noun`), and only for an account side, never a person.
+            if b[0] != "acct" or not self._is_app_name(m.group("desc"), app):
+                return None
+        tail = m.group("tail")
+        one_account = False
+        at_id = _CALL_ID_TAIL_RE.match(tail)
+        if at_id is not None:
+            if b[0] != "acct" or tokens[m.start("tail") + at_id.start("tok")][0] != "acct":
+                return None
+            tail, one_account = tail[at_id.end() :], True
+            if "(" in tail or ")" in tail:
+                return None  # an unbalanced bracket around the id: the clause is not plain
+        if "\x01" in tail:
+            return None  # another party after the clause
         tail = (
-            _CALL_APP_TAIL_RE.sub("", m.group("tail"), count=1)
-            if self._names_app(_CALL_APP_TAIL_RE.match(m.group("tail")), app)
-            else m.group("tail")
+            _CALL_APP_TAIL_RE.sub("", tail, count=1)
+            if self._names_app(_CALL_APP_TAIL_RE.match(tail), app)
+            else tail
         )
         length = None
         if tail.strip(" ."):
@@ -5045,16 +5107,28 @@ class LocalAssumptionFiller:
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
         return CallForm(
             a=tokens[m.start("a")],
-            b=tokens[m.start("b")],
+            b=b,
             caller=caller.get(verb),
             missed=verb == "missed",
             length=length,
+            one_account=one_account,
         )
 
     @staticmethod
     def _names_app(m: re.Match[str] | None, app: str) -> bool:
         """True when a call clause's tail "on Telegram" names the call's own app."""
-        return m is not None and _words(m.group("app")) == _words(app)
+        return m is not None and (
+            _words(m.group("app")) == _words(app)
+            or LocalAssumptionFiller._is_app_name(m.group("app"), app)
+        )
+
+    @staticmethod
+    def _is_app_name(words: str, app: str) -> bool:
+        """True when the words are the call's own app's name or an alias of it ("Instagram")."""
+        if app == NATIVE_CALL_APP:
+            return False
+        names = [app, *APP_ALIASES.get(app.casefold(), ())]
+        return _words(words).strip() in {_words(n).strip() for n in names}
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
@@ -5081,8 +5155,7 @@ class LocalAssumptionFiller:
             words.pop()
         if not words:
             return True
-        names = [] if app == NATIVE_CALL_APP else [app, *APP_ALIASES.get(app.casefold(), ())]
-        return " ".join(words) in {_words(n).strip() for n in names}
+        return LocalAssumptionFiller._is_app_name(" ".join(words), app)
 
     def _phone_is_a_side(self, claim: Claim, app: str, device_ids: list[str]) -> bool:
         """True when the claim's call is in a plain form (`call_form`) with a phone as one side
@@ -5138,6 +5211,20 @@ class LocalAssumptionFiller:
             out.append(Proposal("event", event, is_core=True, code_made=True))
         return out
 
+    def _one_party(self, accounts: list[str]) -> bool:
+        """The accounts are one party, as `_call_parties` reads one: one key, or one phone
+        number held under several keys (ruling R6; Claude review on #263)."""
+        accs = [self.data.accounts[x] for x in accounts]
+        if len({a.key for a in accs}) == 1:
+            return True
+        for acc in accs:
+            ident = acc.identifier.strip()
+            jid = re.fullmatch(r"(\d{8,15})@s\.whatsapp\.net", ident)
+            number = jid.group(1) if jid is not None else phone_digits(ident)
+            if number is not None and all(_same_number(number, a) for a in accs):
+                return True
+        return False
+
     def _caller_params(
         self, claim: Claim, rt: dict[str, Any]
     ) -> tuple[dict[str, Any], bool] | None:
@@ -5155,6 +5242,11 @@ class LocalAssumptionFiller:
         if len(phones) > 1:
             return None
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
+        if form.one_account and not self._one_party(accounts):
+            # The name and the id beside it are not one account. `_call_parties` already
+            # refuses two accounts written as one side; this keeps the rule beside the caller
+            # row too, so a change there cannot let one through.
+            return None
         if handles and not rt.get("account_ids"):
             # The time range names the other side by its handle ("Marc R."), which
             # the checks resolve; the caller row keeps that handle, not code's own reading,

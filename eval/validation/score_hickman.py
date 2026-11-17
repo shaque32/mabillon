@@ -61,7 +61,9 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.4.0: validation v4's R1 card, repeat comparison and bars.
 # 1.4.1: bar 8 counts the source chats behind the imported messages, not Mabillon's threads,
 # which merge two SMS chats with one counterpart into one thread (signed by Arsh 2026-11-16).
-SCORER_VERSION = "1.4.1"
+# 1.5.0: validation v5's bar 4 measure beside v4's: no core assumption left open (Arsh's
+# card, 2026-11-16).
+SCORER_VERSION = "1.5.0"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
@@ -331,6 +333,31 @@ def _failed_checks(conn: sqlite3.Connection, manifest: dict, claim_id: str) -> l
     return out
 
 
+def _open_core(conn: sqlite3.Connection, manifest: dict, claim_id: str, items: list) -> list[str]:
+    """The claim's core assumptions left open: every check on it came back inconclusive, or no
+    check covers it and no item supports it. Validation v5's bar 4 (Arsh, 2026-11-16) does not
+    count a false claim as shown with support only while one is open: the report shows it as
+    unresolved, not as supported."""
+    entry = manifest.get(claim_id, {})
+    outcomes: dict[str, set[str]] = {}
+    for cid in entry.get("checks", []):
+        row = conn.execute(
+            "SELECT assumption_id, outcome FROM check_results WHERE id = ?", (cid,)
+        ).fetchone()
+        if row:
+            outcomes.setdefault(row[0], set()).add(row[1])
+    supported = {e.assumption_id for e in items if e.stance is Stance.SUPPORTS}
+    out = []
+    for aid in entry.get("assumptions", []):
+        row = conn.execute("SELECT is_core FROM assumptions WHERE id = ?", (aid,)).fetchone()
+        if not row or not row[0]:
+            continue
+        got = outcomes.get(aid)
+        if (got and got <= {"inconclusive"}) or (not got and aid not in supported):
+            out.append(aid)
+    return out
+
+
 CODE_CHECKED = "code_checked"
 CHECK_UNSETTLED = "check_unsettled"
 EXPERT_ONLY = "expert_only"
@@ -442,6 +469,20 @@ def _measures(per_claim: dict[str, dict[str, Any]]) -> dict[str, Any]:
             lambda r: r["gold"] == contra,
             lambda r: r["supports"] > 0 and r["contradicts"] == 0 and not r["failed_checks"],
         ),
+        # Validation v5's bar 4 (Arsh's card, 2026-11-16): as above, and no core assumption
+        # left open. Looser than v4's wording, which v4_bars keeps.
+        "false_claim_shown_only_as_support_settled": _measure(
+            per_claim,
+            "gold contradicted; supports items, no contradicts item, no failed check,"
+            " no core assumption left open",
+            lambda r: r["gold"] == contra,
+            lambda r: (
+                r["supports"] > 0
+                and r["contradicts"] == 0
+                and not r["failed_checks"]
+                and not r.get("open_core")
+            ),
+        ),
         "contradiction_surfaced": _measure(
             per_claim,
             "gold contradicted; a failed check or a contradicts item on a key record",
@@ -483,6 +524,7 @@ def r1_measures(conn: sqlite3.Connection, run: dict, gold: list[GoldClaim]) -> d
                 if c in failed
             ],
             "check_tier": _check_tier(conn, manifest, g.claim_id),
+            "open_core": _open_core(conn, manifest, g.claim_id, items),
             "supports": sum(e.stance is Stance.SUPPORTS for e in items),
             "contradicts": sum(e.stance is Stance.CONTRADICTS for e in items),
             "contradicts_on_key": sum(
