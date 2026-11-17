@@ -453,8 +453,17 @@ def test_two_phones_each_take_their_name_and_user(pair, tmp_path):
     with pytest.raises(SystemExit, match="other phones"):
         hickman_run.main(swapped)
     plain = [a for a in args if not a.startswith("--phone-sha256")]
-    with pytest.raises(SystemExit, match="was built from item1.ufdr"):
+    with pytest.raises(SystemExit, match="--phone-sha256: .*item1.ufdr has SHA-256"):
         hickman_run.main([*plain, "--phone-sha256", "item1=" + "0" * 64])
+    # a package changed since the build is refused even with its original digest given, since
+    # a resume hashes the bytes (CodeRabbit on #267)
+    original = pair[0].read_bytes()
+    try:
+        pair[0].write_bytes(original + b"\0")
+        with pytest.raises(SystemExit, match="was built from item1.ufdr"):
+            hickman_run.main(args)
+    finally:
+        pair[0].write_bytes(original)
 
 
 @pytest.mark.parametrize(

@@ -738,11 +738,13 @@ def main(argv: list[str] | None = None) -> int:
         given = {ph.source_id: ph for ph in phones}
         for p in was["imported"]:
             ph = given[p["source_id"]]
-            h = ph.sha256 or sha256_file(ph.path)
+            h = sha256_file(ph.path)  # always the bytes now, never only the digest given
             if p["sha256"] != h:
                 raise SystemExit(
                     f"{a.out} was built from {p['file']} {p['sha256']}; use a new --out"
                 )
+            if ph.sha256 and ph.sha256 != h:
+                raise SystemExit(f"--phone-sha256: {ph.path} has SHA-256 {h}, not {ph.sha256}")
         imported, report_sha = was["imported"], was.get("report_xml_sha256")
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(

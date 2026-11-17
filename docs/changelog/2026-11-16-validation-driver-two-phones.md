@@ -17,9 +17,9 @@
   from the one zone a LEAPP phone's tables name when the importer left it unrecorded because
   some zone values could not be read. Each phone's name, zone and user are set right after its
   import, so a zone the run cannot use stops it before the next import. `--phone-sha256` takes
-  hex in either case, and a resume may name the phones in any order. A resume hashes each
-  package even without `--phone-sha256`, so two packages of one file name swapped between phones
-  are refused, and it restores the build's fields in run.json if the run stopped before writing it. `--ufdr` keeps working for
+  hex in either case, and a resume may name the phones in any order. A resume always hashes
+  each package, so two packages of one file name swapped between phones, or a package changed
+  since the build even when its original digest is given, are refused, and it restores the build's fields in run.json if the run stopped before writing it. `--ufdr` keeps working for
   one phone as before. run.json lists each phone's importer, file hash, recorded zone, and
   whether the given zone was set on the case (`zone_set_by_examiner`). Why: validation v5 is a two-phone case
   read through LEAPP, and without a zone every stated window on a LEAPP phone is refused.
