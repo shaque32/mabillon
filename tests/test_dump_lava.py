@@ -123,3 +123,22 @@ def test_a_composite_dedupe_key_and_a_skipped_table(lava: Path) -> None:
     assert r["tables"]["parts"]["count"] == 2 and r["tables"]["parts"]["null_dedupe_rows"] == 1
     assert r["tables"]["combined"]["count"] == 2
     assert r["counts"]["message"] == 2  # the skipped table repeats another and is not counted
+
+
+def test_table_names_match_whatever_their_case_and_no_written_table_goes_unreported(
+    lava: Path,
+) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.execute("CREATE TABLE stray_chats (body TEXT)")  # written, but no manifest entry
+    db.execute("INSERT INTO stray_chats VALUES ('x')")
+    db.commit()
+    db.close()
+    kinds = {
+        "SMS": {"kind": "message", "dedupe": "MESSAGE_ROW_ID"},
+        "Call_History": {"kind": "call"},
+    }
+    r = dump_lava.read(lava, kinds)
+    assert r["counts"] == {"message": 2, "call": 3, "contact": 0}
+    assert r["tables"]["SMS"]["present"] and r["tables"]["SMS"]["in_manifest"]
+    assert r["tables_not_counted"] == ["contacts", "stray_chats", "whatsapp_messages", "wifi"]
+    assert r["tables_not_in_manifest"] == ["stray_chats"]

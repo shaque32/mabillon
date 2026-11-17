@@ -267,18 +267,24 @@ def test_r1_measures_count_against_the_right_denominators(scored):
     assert r1["contradicted_without_expert"]["n"] == 2  # gold not contradicted: C01, C03
     assert r1["false_claim_shown_only_as_support"]["n"] == 1  # gold contradicted: C02
     settled = r1["false_claim_shown_only_as_support_settled"]
-    assert settled["n"] == 1
-    # v5's bar 4 counts a claim only when no core assumption is left open
-    assert settled["k"] <= r1["false_claim_shown_only_as_support"]["k"]
+    assert (settled["n"], settled["k"]) == (1, 0)
+    # stand-in components label nothing as support, and C02's core assumption stays open
     c02 = r1["per_claim"]["C02"]
-    assert (settled["k"] == 1) == (
-        c02["supports"] > 0 and not c02["contradicts"] and not c02["failed_checks"]
-        and not c02["open_core"]
-    )  # fmt: skip
+    assert (c02["supports"], len(c02["open_core"])) == (0, 1)
     assert r1["contradiction_surfaced"]["n"] == 1
     assert r1["no_r1_verdict"] == []
     # Stand-in components contradict nothing, so nothing is contradicted without an expert.
     assert r1["contradicted_without_expert"]["k"] == 0
+
+
+def test_v5_bar_4_leaves_out_a_supported_false_claim_whose_core_is_open() -> None:
+    row = {"gold": "contradicted", "supports": 2, "contradicts": 0, "failed_checks": [],
+           "contradicts_on_key": 0, "r1": "unproven", "verdict_failed_checks": [],
+           "type": "communication"}  # fmt: skip
+    rows = {"OPEN": {**row, "open_core": ["asm:OPEN:1"]}, "SETTLED": {**row, "open_core": []}}
+    m = score_hickman._measures(rows)
+    assert m["false_claim_shown_only_as_support"]["claims"] == ["OPEN", "SETTLED"]
+    assert m["false_claim_shown_only_as_support_settled"]["claims"] == ["SETTLED"]
 
 
 def test_r2_runs_the_simulated_expert_then_the_rules_on_a_copy(scored):

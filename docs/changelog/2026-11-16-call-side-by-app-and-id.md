@@ -1,4 +1,4 @@
-## 2026-11-16: A call's other side may be described by its app and given with its id; a plain LEAPP reader and v5's bar 4 measure for validation
+## 2026-11-16: A call's other side may be described by its app and given with its id; a plain LEAPP reader and v5's bar 4 measure for validation (#263)
 - Changed: filler 11 (`core/audit/assumption_filler.py`, `call_form`, `_caller_params`,
   `_call_parties`). A call's clause may describe its other side by the call's own app ("called
   the Instagram user \"Marc R.,\" user ID 4984...") and give the side's id beside its name (",
@@ -22,7 +22,9 @@
 - Where: PR #263
 - Verified: `tests/test_dump_lava.py` (synthetic LAVA output made in the test). New tests in
   `tests/test_fill_calls.py` (three wordings that get a caller and
-  pass its check; four that name no caller; a side described before the verb). Filler,
+  pass its check; five that name no caller, each reaching the caller step with its time row
+  made, and the parser's reading of each checked directly; a side described before the verb;
+  an id in unbalanced brackets). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way

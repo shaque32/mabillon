@@ -1690,8 +1690,8 @@ _CALL_FORM_RE = re.compile(
 # 4984911', "(account ID 4984911)". The id must be the same one account as the name
 # (`CallForm.one_account`), so it narrows the side, never adds a party.
 _CALL_ID_TAIL_RE = re.compile(
-    rf"^\s*,?\s*\(?\s*(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
-    rf"(?P<tok>{_TOKEN})\s*\)?",
+    rf"^\s*,?\s*(?P<open>\()?\s*(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
+    rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
     re.IGNORECASE,
 )
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
@@ -5055,6 +5055,8 @@ class LocalAssumptionFiller:
             if b[0] != "acct" or tokens[m.start("tail") + at_id.start("tok")][0] != "acct":
                 return None
             tail, one_account = tail[at_id.end() :], True
+            if "(" in tail or ")" in tail:
+                return None  # an unbalanced bracket around the id: the clause is not plain
         if "\x01" in tail:
             return None  # another party after the clause
         tail = (
@@ -5120,8 +5122,7 @@ class LocalAssumptionFiller:
             words.pop()
         if not words:
             return True
-        names = [] if app == NATIVE_CALL_APP else [app, *APP_ALIASES.get(app.casefold(), ())]
-        return " ".join(words) in {_words(n).strip() for n in names}
+        return LocalAssumptionFiller._is_app_name(" ".join(words), app)
 
     def _phone_is_a_side(self, claim: Claim, app: str, device_ids: list[str]) -> bool:
         """True when the claim's call is in a plain form (`call_form`) with a phone as one side
@@ -5195,7 +5196,10 @@ class LocalAssumptionFiller:
             return None
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
         if form.one_account and len({self.data.accounts[x].key for x in accounts}) != 1:
-            return None  # the name and the id beside it are not one account
+            # The name and the id beside it are not one account. `_call_parties` already
+            # refuses two accounts written as one side; this keeps the rule beside the caller
+            # row too, so a change there cannot let one through.
+            return None
         if handles and not rt.get("account_ids"):
             # The time range names the other side by its handle ("Marc R."), which
             # the checks resolve; the caller row keeps that handle, not code's own reading,

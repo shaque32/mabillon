@@ -69,9 +69,11 @@ def count(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) 
     out = {"rows": rows, "count": rows}
     if dedupe:
         keys = [dedupe] if isinstance(dedupe, str) else list(dedupe)
+        by_case = {c.casefold(): c for c in cols}  # SQLite column names are case-insensitive
         for k in keys:
-            if k not in cols:
+            if k.casefold() not in by_case:
                 raise SystemExit(f"dump_lava: table {table!r} has no column {k!r}")
+        keys = [by_case[k.casefold()] for k in keys]
         names = ", ".join(quote(k) for k in keys)
         no_null = " AND ".join(f"{quote(k)} IS NOT NULL" for k in keys)
         out["count"] = conn.execute(
@@ -94,30 +96,41 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
     # as_uri() escapes '#', '?' and '%' in the path, so mode=ro always applies (Greptile on #263).
     conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        in_db = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        # SQLite table names are case-insensitive, so a kinds entry "SMS" names table "sms".
+        in_db = {
+            r[0].casefold(): r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            if not r[0].casefold().startswith("sqlite_")
+        }
+        listed = {k.casefold(): v for k, v in listed.items()}
         tables: dict[str, dict] = {}
         totals = {k: 0 for k in KINDS}
         for table, spec in sorted(kinds.items()):
             kind = spec.get("kind")
             if kind not in (*KINDS, SKIP):
                 raise SystemExit(f"dump_lava: {table!r} has kind {kind!r}, not one of {KINDS}")
-            if table not in in_db:
+            name = in_db.get(table.casefold())
+            if name is None:
                 # A table the importer reads but this run did not write: zero, said so.
                 tables[table] = {"kind": kind, "present": False, "count": 0}
                 continue
-            got = count(conn, table, spec.get("dedupe"))
-            art = listed.get(table, {})
+            got = count(conn, name, spec.get("dedupe"))
+            art = listed.get(table.casefold(), {})
             tables[table] = {
                 "kind": kind,
                 "present": True,
                 **got,
                 "manifest_record_count": art.get("record_count"),
-                "in_manifest": table in listed,
+                "in_manifest": table.casefold() in listed,
                 "source_path": art.get("source_path"),
             }
             if kind != SKIP:
                 totals[kind] += got["count"]
-        unread = sorted((in_db & set(listed)) - set(kinds))
+        named = {t.casefold() for t in kinds}
+        # Every written table no kind names, listed in the manifest or not: none is left out
+        # of the count without being reported.
+        unread = sorted(in_db[t] for t in in_db.keys() - named)
+        unlisted = sorted(in_db[t] for t in in_db.keys() - listed.keys())
     finally:
         conn.close()
     parser = manifest.get("parser_info") or {}
@@ -131,7 +144,8 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
         "profile_used": manifest.get("profile_used"),
         "counts": totals,
         "tables": tables,
-        "tables_not_counted": unread,  # listed and written, read as no kind
+        "tables_not_counted": unread,  # written, read as no kind
+        "tables_not_in_manifest": unlisted,  # written, but the manifest lists no artifact
         "manifest_count_differs": sorted(
             t
             for t, v in tables.items()

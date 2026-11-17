@@ -621,3 +621,17 @@ def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(
     # the proposal itself is kept (its time is checked), so only the caller guard is tested
     assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called "Marc Garage," user ID 49800011122) on Instagram.',
+        'PETROV called "Marc Garage" (user ID 49800011122 on Instagram.',
+        'PETROV called the Instagram user "Marc Garage" (user ID 49800011122.',
+    ],
+)
+def test_an_id_in_unbalanced_brackets_names_no_caller(conn: sqlite3.Connection, words: str) -> None:
+    made, f = ig_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made
