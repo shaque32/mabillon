@@ -760,12 +760,12 @@ def test_an_id_touching_its_label_s_colon_gets_a_caller(conn: sqlite3.Connection
 
 def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection) -> None:
     short_fill(conn, 'PETROV called the Instagram user "Lena Okafor" username lena.')
+    _add_instagram(conn)  # before the filler reads its accounts
     f = LocalAssumptionFiller(FakeModel("{}"), conn,
                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
     for written in ("username lena", "user name: lena"):
         acc = _Account(as_written=written, app="Instagram")
         assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
-    _add_instagram(conn)
     for written in ("user ID number 49800011122", "ID number: 49800011122"):
         # every label the id tail reads (`_ID_LABEL`), "number" after it included
         acc = _Account(as_written=written, app="Instagram")
