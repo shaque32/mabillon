@@ -3510,3 +3510,17 @@ def test_an_app_the_case_lacks_beside_one_it_holds_stays_unproven(conn):
     made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert made == []
     assert any("also names an app" in d.reason for d in filler.drops)
+
+
+def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
+    # The model already put both rows on Telegram: Signal, which the case lacks, is still read
+    # (CodeRabbit on #265). A claim naming Signal alone already drops the model's Telegram, as
+    # the claim does not name it.
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Signal: "need 2 more by'
+        ' friday".'
+    )
+    scoped = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, scoped)
+    assert made == []
+    assert any("also names an app" in d.reason for d in filler.drops)

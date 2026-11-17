@@ -4334,19 +4334,22 @@ class LocalAssumptionFiller:
                     f"the claim's {bad[0].casefold()!r} may be a plain word, not the app, so"
                     " no count or absence is read on it"
                 )
+        # An app or email the case does not hold, beside one it holds or alone, whether code or
+        # the model chose the rows' apps: "on Telegram and Signal" on a case with no Signal is
+        # never read on Telegram alone, nor "on Signal" on the model's Telegram (CodeRabbit on
+        # #265).
+        if self._names_an_app_the_case_lacks(bare) or _EMAIL_RE.search(bare):
+            raise Reject(
+                "the claim names an app no assumption of it searches"
+                if not apps
+                else "the claim also names an app no assumption of it searches"
+            )
         rows = [i for i in app_rows if not out[i].params.get("channels")]
         if not rows:
             return out
         texty = bool(_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare))
         if apps:
             found = apps  # "texted REYES on Telegram": the app the claim names
-            rest = bare
-            for c in sorted(self.channels(), key=len, reverse=True):
-                rest = re.sub(rf"(?i)(?<!\w){re.escape(c)}(?!\w)", " ", rest)
-            if _names_an_app_off_the_case(rest) or _EMAIL_RE.search(rest):
-                # "on Telegram and Signal" on a case with no Signal: Telegram alone is not the
-                # whole of what the claim names (CodeRabbit on #265)
-                raise Reject("the claim also names an app no assumption of it searches")
         elif texty:
             found = self._phone_message_apps()
             if len(found) != 1:
@@ -4354,8 +4357,6 @@ class LocalAssumptionFiller:
                     f"the claim names a text message and the case holds {len(found)} apps of"
                     " a phone's own messages, not one"
                 )
-        elif _names_an_app_off_the_case(bare) or _EMAIL_RE.search(bare):
-            raise Reject("the claim names an app no assumption of it searches")
         else:
             return out  # the claim names no app: every app is searched, as it says
         made = list(out)
@@ -5100,6 +5101,22 @@ class LocalAssumptionFiller:
         ):
             return d
         return None
+
+    def _names_an_app_the_case_lacks(self, bare: str) -> bool:
+        """True when the words name an app (`_names_an_app_off_the_case`) that is none of the
+        case's apps the claim names: "Signal" beside "Telegram" on a case with no Signal, but
+        not "Facebook" or "Messenger" inside a named "Facebook Messenger", nor "Wickr" for a
+        case's "Wickr Pro". "video" is a kind of message or call, not an app (`_CALL_KIND_RE`
+        reads it for calls, `unread_words` for messages)."""
+        held = [" ".join(a.casefold().split()) for a in self._named_apps(bare)]
+        for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE):
+            for m in rx.finditer(bare):
+                word = " ".join(m.group(0).casefold().split())
+                if word == "video":
+                    continue
+                if not any(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", a) for a in held):
+                    return True
+        return False
 
     def _named_apps(self, claim_text: str) -> list[str]:
         """The apps the claim names the way `_channels` requires, phone apps aside (a phone
