@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import sqlite3
 import zipfile
@@ -187,6 +188,8 @@ class Lava:
     # calls stored with neither side, by app: no check finds them, so that app's calls are not
     # held in full
     calls_without_sides: Counter[str] = field(default_factory=Counter)
+    # ALEAPP call log rows written by a package other than the phone's own telephony
+    calls_from_other_packages: int = 0
 
     def has_table(self, art: Artifact) -> bool:
         return bool(
@@ -645,6 +648,13 @@ def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[_Native]]:
     keys: dict[tuple[int, str, str], list[_Native]] = defaultdict(list)
     probe = _Ctx(c.w, TableCoverage(name="", kind=None), c.art, c.lava)
     for art in c.lava.artifacts:
+        spec = SPECS.get((c.lava.leapp_name, art.key))
+        if spec is None or not c.lava.has_table(art):
+            continue
+        if not set(spec.required) <= c.lava.headers(art):
+            # a table refused for its columns is not imported, so it never stands for a copy
+            # (CodeRabbit on #268)
+            continue
         if art.key == "get_sms_mms":
             for rowid, r in c.lava.rows(art):
                 ts = _time(r.get("Date")).utc
@@ -936,6 +946,9 @@ class ChatSpec:
     # (header, value) a live row shows; any other row was recovered from free space and may
     # repeat a live one, so it is flagged and listed as a possible copy
     live: tuple[str, str] | None = None
+    # True when the table writes the app's calls as rows whose text is a call notice (ALEAPP
+    # Telegram's "[Phone call (call id ...)]"): such a row is read as a call, not a message
+    call_notices: bool = False
 
 
 CHAT_SPECS: dict[tuple[str, str], ChatSpec] = {
@@ -970,8 +983,11 @@ CHAT_SPECS: dict[tuple[str, str], ChatSpec] = {
             "mediaColumn": "Recorded Media Path",
         },
         live=("Record Origin", "Live"),
+        call_notices=True,
     ),
-    ("iLEAPP", "snapchatMessages"): ChatSpec("Snapchat", "Sender Username", True),
+    ("iLEAPP", "snapchatMessages"): ChatSpec(
+        "Snapchat", "Sender Username", True, live=("Record Origin", "Live")
+    ),
 }
 # Direction values that mean received, beside the view's own sent value.
 _CHAT_IN = {"incoming", "received", "inbound", "in"}
@@ -1038,20 +1054,64 @@ def _chat_messages(c: _Ctx) -> None:
                 c.flag("sender_name_only" if name else "received_without_sender", loc)
         else:
             sender = None
+        recovered = bool(spec.live) and _text(r.get(spec.live[0])) != spec.live[1]
+        text = str(r.get(h_text) or "")
+        if spec.call_notices and text.startswith(_CALL_NOTICE_PREFIX):
+            _call_notice(c, spec.app, loc, text, direction, sender, recovered, r.get(h_time))
+            continue
         convo = _text(r.get(h_convo)) if h_convo else None
         chat_key = f"chat:{convo}" if convo else f"row:{loc}"
         title = (_text(r.get(h_label)) if h_label else None) or convo
         media = _text(r.get(h_media)) if h_media else None
         _add_message(
             c, spec.app, loc, chat_key, title, sender, [], direction,
-            _time(r.get(h_time)), str(r.get(h_text) or ""),
+            _time(r.get(h_time)), text,
             [PurePosixPath(media).name if "/" in media else media] if media else [],
         )  # fmt: skip
-        if spec.live and _text(r.get(spec.live[0])) != spec.live[1]:
+        if recovered:
             # A row recovered from the database's free space or journal can repeat a live
             # one (Telegram on the public Android 13 phone): a count over it never passes.
             c.flag("recovered_record_may_repeat_another", loc)
             c.w.cov.numbered_copy_records.append(f"msg:{c.w.src}:{loc}")
+
+
+_CALL_NOTICE_PREFIX = "[Phone call"
+# ALEAPP Telegram's call notice; on the public Android 13 phone each one matched a UFDR Telegram
+# call on time, direction, caller and length.
+_CALL_NOTICE_RE = re.compile(
+    r"^\[Phone call \(call id -?\d+, outcome hung up, duration seconds (\d+)\)\]$"
+)
+
+
+def _call_notice(
+    c: _Ctx,
+    app: str,
+    loc: str,
+    text: str,
+    direction: MessageDirection,
+    sender: Party | None,
+    recovered: bool,
+    raw_time: object,
+) -> None:
+    """A chat row that records a call: stored as a call of the app, never as a message. Only a
+    live notice of a call that was answered and hung up, in a stated direction, keeps its sides:
+    the sender places the call. Any other notice is stored with no sides and flagged, so the
+    app's calls are not held in full."""
+    m = _CALL_NOTICE_RE.match(text)
+    kind = {MessageDirection.OUTGOING: CallDirection.OUTGOING,
+            MessageDirection.INCOMING: CallDirection.INCOMING}.get(direction)  # fmt: skip
+    frm: Party | None = sender
+    if recovered:
+        c.flag("recovered_record_may_repeat_another", loc)
+    if m is None or kind is None or recovered or sender is None:
+        if m is None or kind is None:
+            c.flag("call_not_incoming_outgoing_or_missed", loc)
+        if sender is not None and sender.identifier:
+            c.w.account(app, sender, loc, f"row:{loc}")
+        kind, frm = CallDirection.UNKNOWN, None
+    c.flag("call_notice_read_as_call", loc)
+    length = int(m.group(1)) if m else None
+    _add_call(c, app, loc, frm, None, kind, _time(raw_time), length, None)
 
 
 # A conversation name that is a phone number or an address, so it names the other party.
@@ -1113,6 +1173,29 @@ def _ios_calls(c: _Ctx) -> None:
         )  # fmt: skip
 
 
+_ANDROID_TELEPHONY = "com.android.phone"
+
+
+def _call_sides(
+    c: _Ctx,
+    app: str,
+    loc: str,
+    direction: CallDirection,
+    other: Party | None,
+    owner: Party | None,
+) -> tuple[Party | None, Party | None]:
+    """(from, to) of a call. A call of unknown direction stores neither side, since either may
+    have placed it, but both accounts are still recorded."""
+    if direction is CallDirection.OUTGOING:
+        return owner, other
+    if direction is CallDirection.UNKNOWN:
+        for p in (other, owner):
+            if p and p.identifier:
+                c.w.account(app, p, loc, f"row:{loc}")
+        return None, None
+    return other, owner
+
+
 def _android_calls(c: _Ctx) -> None:
     """ALEAPP `get_calllog`: one row per call."""
     for rowid, r in c.lava.rows(c.art):
@@ -1123,17 +1206,16 @@ def _android_calls(c: _Ctx) -> None:
         owner = _party(own, owner=True) if own else None
         raw_type = _text(r.get("Raw Call Type (as stored)"))
         direction = _ANDROID_CALL_DIR.get(raw_type or "", CallDirection.UNKNOWN)
-        if direction is CallDirection.OUTGOING:
-            frm, to = owner, other
-        elif direction is CallDirection.UNKNOWN:
-            frm, to = None, None
+        if direction is CallDirection.UNKNOWN:
             c.flag("call_type_not_incoming_outgoing_or_missed", loc)
             c.w.cov.unmapped_direction_values[str(raw_type)] += 1
-            for p in (other, owner):
-                if p and p.identifier:
-                    c.w.account("unknown", p, loc, f"row:{loc}")
-        else:
-            frm, to = other, owner
+        if _text(r.get("Phone Account Package")) != _ANDROID_TELEPHONY:
+            # An app that places calls through Android's telecom service (a VoIP app) can write
+            # them here; they are stored under the call log, not the app, so no app's own call
+            # table holds every call it made.
+            c.lava.calls_from_other_packages += 1
+            c.flag("call_placed_by_another_app", loc)
+        frm, to = _call_sides(c, "unknown", loc, direction, other, owner)
         dur = _text(r.get("Duration in Secs"))
         deleted = _text(r.get("Deleted"))
         _add_call(
@@ -1160,6 +1242,9 @@ class CallSpec:
     # (header, value) every call must show to be read; another value is a shape not checked
     expect: tuple[tuple[str, str], ...] = ()
     empty: tuple[str, ...] = ()  # headers empty on every checked call; a value is not read
+    # False when a call with more than one other party cannot be told from a two-party call, so
+    # the table never holds every party of the app's calls and the app is never read in full
+    all_parties: bool = True
 
     def columns(self) -> list[str]:
         named = [self.time, self.direction, self.other, self.duration, self.end, self.owner,
@@ -1175,6 +1260,10 @@ CALL_SPECS: dict[tuple[str, str], CallSpec] = {
         "Caller JID",
         duration="Call Duration",
         group="Group Name",
+        # Group Name is the subject of the group chat a call was placed from; a group call
+        # started outside a group chat has none, and ALEAPP does not read its participants
+        # (Claude review on #268), so it reads as a call with the caller alone.
+        all_parties=False,
     ),  # fmt: skip
     ("ALEAPP", "get_Viber"): CallSpec(
         "Viber",
@@ -1226,7 +1315,7 @@ def _seconds(v: object) -> int | None:
         f = float(t)
     except ValueError:
         return None
-    return int(f) if f >= 0 else None
+    return int(f) if math.isfinite(f) and f >= 0 else None
 
 
 def _app_calls(c: _Ctx) -> None:
@@ -1243,9 +1332,10 @@ def _app_calls(c: _Ctx) -> None:
         direction = {"incoming": CallDirection.INCOMING, "outgoing": CallDirection.OUTGOING}.get(
             d, CallDirection.UNKNOWN
         )
-        if direction is CallDirection.INCOMING and spec.missed:
+        if spec.missed:
+            # only "No", and "Yes" on an incoming call, were checked (CodeRabbit on #268)
             missed = (_text(r.get(spec.missed)) or "").lower()
-            if missed == "yes":
+            if missed == "yes" and direction is CallDirection.INCOMING:
                 direction = CallDirection.MISSED
             elif missed != "no":
                 direction = CallDirection.UNKNOWN
@@ -1260,15 +1350,7 @@ def _app_calls(c: _Ctx) -> None:
         other = _party(_ident(r.get(spec.other)))
         own = _ident(r.get(spec.owner)) if spec.owner else None
         owner = _party(own, owner=True) if own else None
-        if direction is CallDirection.OUTGOING:
-            frm, to = owner, other
-        elif direction is CallDirection.UNKNOWN:
-            frm, to = None, None
-            for p in (other, owner):
-                if p and p.identifier:
-                    c.w.account(spec.app, p, loc, f"row:{loc}")
-        else:
-            frm, to = other, owner
+        frm, to = _call_sides(c, spec.app, loc, direction, other, owner)
         start = _time(r.get(spec.time))
         length = _seconds(r.get(spec.duration)) if spec.duration else None
         if spec.end and start.utc is not None:
@@ -1348,6 +1430,7 @@ SPECS: dict[tuple[str, str], Spec] = {
             "Chat Participants",
             "Destination Caller ID",
             "Account",
+            "Attachment Name",
         ),
     ),
     ("iLEAPP", "callHistory"): Spec(
@@ -1377,6 +1460,7 @@ SPECS: dict[tuple[str, str], Spec] = {
             "Cc",
             "Bcc",
             "Body",
+            "Media",
             "MSG ID",
             "Thread ID",
         ),
@@ -1403,6 +1487,7 @@ SPECS: dict[tuple[str, str], Spec] = {
             "Raw Call Type (as stored)",
             "Partner",
             "Phone Account Address",
+            "Phone Account Package",
             "Duration in Secs",
         ),
     ),
@@ -1553,12 +1638,22 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
         # phone's own call records (CallKit) that iLEAPP lists under no app, so no table read
         # here holds every call of a chat app: none counts as read in full.
         return sorted(apps)
+    if lava.calls_from_other_packages or "get_calllog" in unread_keys:
+        # A VoIP app can write its calls to Android's call log too, where they are stored under
+        # the call log, not the app (Claude review on #268): when the call log holds a row from
+        # another package, or was not read, no chat app counts as read in full.
+        return sorted(apps)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
     unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
     specs = {k: v.app for k, v in CHAT_SPECS.items()} | {k: v.app for k, v in CALL_SPECS.items()}
+    partial = {v.app for k, v in CALL_SPECS.items() if k in read_keys and not v.all_parties}
     for k in read_keys & set(specs):
         app = specs[k]
-        if app.split()[0].lower() not in unread_words and not lava.calls_without_sides.get(app):
+        if (
+            app.split()[0].lower() not in unread_words
+            and not lava.calls_without_sides.get(app)
+            and app not in partial
+        ):
             apps.add(app)
     return sorted(apps)
 
@@ -1689,6 +1784,8 @@ class LeappImporter:
                     if _has_columns(ctx, list(spec.required)):
                         spec.read(ctx)
                     if ctx.failed:
+                        # listed only as not read, never as a table read with 0 rows
+                        cov.tables.remove(tc)
                         cov.not_imported.append(_not_read(art, ctx.failed))
                         continue
                     done.append((spec, art))

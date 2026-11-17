@@ -211,6 +211,7 @@ def _android() -> Lava:
         **{
             "Call Date": "2024-03-01T13:00:00Z",
             "Phone Account Address": OWNER,
+            "Phone Account Package": "com.android.phone",
             "Partner": ALICE,
             "Raw Call Type (as stored)": "1",
             "Type": "Incoming<i>icon</i>",
@@ -223,6 +224,7 @@ def _android() -> Lava:
         **{
             "Call Date": "2024-03-01T14:00:00Z",
             "Phone Account Address": OWNER,
+            "Phone Account Package": "com.android.phone",
             "Partner": ALICE,
             "Raw Call Type (as stored)": "5",  # rejected on the phone
             "Duration in Secs": "0",
@@ -234,6 +236,7 @@ def _android() -> Lava:
         **{
             "Call Date": "2024-03-01T15:00:00Z",
             "Phone Account Address": OWNER,
+            "Phone Account Package": "com.android.phone",
             "Partner": ALICE,
             "Raw Call Type (as stored)": "6",  # blocked
             "Duration in Secs": "0",
@@ -1163,11 +1166,74 @@ def test_telegram_recovered_rows_are_possible_copies(tmp_path: Path) -> None:
     assert "Telegram" in payload["apps_read_in_full"]
 
 
+def test_telegram_call_notices_are_calls_not_messages(tmp_path: Path) -> None:
+    # Claude review on #268: ALEAPP writes Telegram calls as chat rows; on the Android 13 phone
+    # each one matched a UFDR Telegram call on time, direction, caller and length.
+    lv = _android()
+    for t, d, sid, text in (
+        ("2024-03-06T10:00:00Z", "Outgoing", "111",
+         "[Phone call (call id 638, outcome hung up, duration seconds 105)]"),
+        ("2024-03-06T10:05:00Z", "Incoming", "777",
+         "[Phone call (call id 585, outcome hung up, duration seconds 9)]"),
+        ("2024-03-06T10:10:00Z", "Incoming", "777",
+         "[Phone call (call id 586, outcome missed, duration seconds 0)]"),
+        ("2024-03-06T10:15:00Z", "Incoming", "777", "hi"),
+    ):  # fmt: skip
+        lv.add("get_telegramMessages", **{"Timestamp": t, "Direction": d, "Sender ID": sid,
+               "Message": text, "Dialog ID": "42", "Record Origin": "Live"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    tg = "get_telegrammessages/rowid="
+    assert _calls(conn, "Telegram") == [
+        (f"{tg}1", "outgoing", "111", None, 105),
+        (f"{tg}2", "incoming", "777", None, 9),
+        (f"{tg}3", "unknown", None, None, None),  # only answered calls were checked
+    ]
+    bodies = conn.execute(
+        "SELECT m.body FROM messages m JOIN threads t ON t.id = m.thread_id"
+        " WHERE t.app = 'Telegram'"
+    ).fetchall()
+    assert bodies == [("hi",)]
+    payload = coverage.load(conn, "and").payload
+    assert "Telegram" not in payload["apps_read_in_full"]  # a call with no sides
+    flags = {t["name"]: t for t in payload["tables"]}["Telegram - Messages"]["flag_counts"]
+    assert flags["call_notice_read_as_call"] == 3
+
+
+def test_a_call_log_row_from_another_app_keeps_every_chat_app_partial(tmp_path: Path) -> None:
+    # Claude review on #268: a VoIP app can write its calls to Android's call log, where they
+    # are stored under the call log, not the app.
+    lv = _android()
+    lv.add("get_telegramMessages", **{"Timestamp": "2024-03-06T10:00:00Z", "Message": "hi",
+           "Direction": "Incoming", "Sender ID": "777", "Dialog ID": "42",
+           "Record Origin": "Live"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert "Telegram" in coverage.load(conn, "and").payload["apps_read_in_full"]
+    lv.tables["get_calllog"][0] = {
+        **lv.tables["get_calllog"][0],
+        "Phone Account Package": "org.telegram.messenger",
+    }
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "b.zip"), conn)
+    payload = coverage.load(conn, "and").payload
+    assert "Telegram" not in payload["apps_read_in_full"]
+    flags = {t["name"]: t for t in payload["tables"]}["Call logs "]["flag_counts"]
+    assert flags["call_placed_by_another_app"] == 1
+
+
+def test_a_length_that_is_not_a_finite_number_is_no_length() -> None:
+    assert leapp._seconds("inf") is None and leapp._seconds("1e999") is None
+    assert leapp._seconds("00:01:05") == 65 and leapp._seconds("83.0") == 83
+
+
 def test_ios_snapchat_messages_are_read_by_username(tmp_path: Path) -> None:
     lv = _ios()
-    lv.add("snapchatMessages", **{"Creation Timestamp": "2024-02-06T10:00:00Z",
-           "Message Direction": "Incoming", "Sender Username": "al.snap",
-           "Message Text": "yo", "Conversation ID": "c1"})  # fmt: skip
+    for origin in ("Live", "Recovered"):
+        lv.add("snapchatMessages", **{"Creation Timestamp": "2024-02-06T10:00:00Z",
+               "Message Direction": "Incoming", "Sender Username": "al.snap",
+               "Message Text": "yo", "Conversation ID": "c1",
+               "Record Origin": origin})  # fmt: skip
     conn = _db()
     LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
     rows = conn.execute(
@@ -1175,7 +1241,10 @@ def test_ios_snapchat_messages_are_read_by_username(tmp_path: Path) -> None:
         " JOIN threads t ON t.id = m.thread_id LEFT JOIN accounts a ON a.id = m.sender_account_id"
         " WHERE t.app = 'Snapchat'"
     ).fetchall()
-    assert rows == [("incoming", "yo", "al.snap")]
+    assert rows == [("incoming", "yo", "al.snap")] * 2
+    # iLEAPP writes recovered rows here too (3 of 21 on the iOS 15 phone; Claude review on #268)
+    copies = coverage.load(conn, "ios").payload["numbered_copy_records"]
+    assert copies == ["msg:ios:snapchatmessages/rowid=2"]
 
 
 @pytest.mark.parametrize(
@@ -1206,4 +1275,50 @@ def test_a_table_missing_a_column_is_not_read_at_all(
     assert [e["name"] for e in failed] == [synth.NAMES[key][1]]
     assert app not in payload["apps_read_in_full"]
     tables = {t["name"]: t for t in payload["tables"]}
-    assert tables.get(synth.NAMES[key][1], {}).get("rows_read", 0) == 0
+    # listed only as not read, never as a table read with no rows (Claude review on #268)
+    assert synth.NAMES[key][1] not in tables
+
+
+def test_aleapp_whatsapp_calls_never_make_whatsapp_read_in_full(tmp_path: Path) -> None:
+    # Claude review on #268: a group call started outside a group chat has no Group Name, and
+    # ALEAPP does not read its participants, so it cannot be told from a two-party call.
+    lv = _android()
+    lv.add("get_whatsapp_call_logs", **{"Call Start Timestamp": "2024-03-05T10:00:00Z",
+           "Call Direction": "Incoming", "Caller JID": f"{ALICE[1:]}@s.whatsapp.net"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert coverage.load(conn, "and").payload["apps_read_in_full"] == ["Native Messages"]
+
+
+def test_an_sms_table_refused_for_its_columns_never_stands_for_a_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit on #268: the SMS table was refused, yet its row still made the Google Messages
+    # copy of it be skipped, so the message was in neither table.
+    from eval.synthetic import leapp as synth
+
+    lv = _gm_lava(
+        [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": ALICE, "Body": "OK"}],
+        [{"Message Timestamp": "2024-03-01T12:00:01Z", "Direction": "Incoming",
+          "Message Sender": ALICE, "Message": "OK", "Conversation ID": "9"}],
+    )  # fmt: skip
+    assert _gm_imported(tmp_path, lv)[0] == []  # a copy of the SMS, skipped
+    headers = tuple(h for h in synth.HEADERS["get_sms_mms"] if h != "Thread ID")
+    monkeypatch.setitem(synth.HEADERS, "get_sms_mms", headers)
+    assert _gm_imported(tmp_path, lv)[0] == ["get_googlemessages/rowid=1"]
+
+
+def test_an_outgoing_whatsapp_call_with_an_unchecked_missed_value_has_no_sides(
+    tmp_path: Path,
+) -> None:
+    # CodeRabbit on #268: only "No", and "Yes" on an incoming call, were checked.
+    lv = _ios()
+    for missed in ("No", "Maybe", "Yes"):
+        lv.add("whatsAppCallHistory", **{"Starting Timestamp": "2024-02-05T10:15:00Z",
+               "Direction": "Outgoing", "Missed": missed, "Contact ID": "c1"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
+    directions = [r[1:4] for r in _calls(conn, "WhatsApp")]
+    assert sorted(directions) == [
+        ("outgoing", None, "c1"), ("unknown", None, None), ("unknown", None, None)
+    ]  # fmt: skip

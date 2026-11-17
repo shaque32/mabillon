@@ -6,25 +6,34 @@
   checked (iLEAPP Line `Result` other than NORMAL, ALEAPP Line with a `To ID`) are imported with
   direction unknown and no sides, and flagged. (2) Two more chat tables: ALEAPP
   `get_telegramMessages` (no LEAPP conversation view, so Mabillon names its columns) and iLEAPP
-  `snapchatMessages`. A Telegram row recovered from the database's free space or journal is
-  flagged and listed as a possible copy, so a count over it is inconclusive. (3) Fail closed: a
+  `snapchatMessages`. A row of either recovered from the database's free space or journal is
+  flagged and listed as a possible copy, so a count over it is inconclusive. A Telegram row that
+  is a call notice is stored as a Telegram call, not a message. (3) Fail closed: a
   table missing any column its reader uses (phone messages, calls, chat and call tables) is not
   read at all and is listed as not read, so a LEAPP version that renames a column is never read
   with that column empty. (4) Apps read in full: a call stored with neither side keeps its own
-  app (not only the phone's call log) from being read in full, and on iLEAPP no chat app counts
+  app (not only the phone's call log) from being read in full; on ALEAPP a call log row written
+  by another app's package (a VoIP call) keeps every chat app from being read in full; ALEAPP
+  WhatsApp is never read in full (a group call started outside a group chat cannot be told from
+  a two-party call); and on
+  iLEAPP no chat app counts
   as read in full, because the iOS 15 phone's UFDR holds WhatsApp, Viber and other app calls
   from the phone's own call records (CallKit) that iLEAPP lists under no app. Why: the plan for
   the next held-out public test (`/mnt/project-files/baker/plans/leapp-chat-apps.md`); each
   table was added only after it matched Mabillon's UFDR import of the same development phone.
 - Where: PR #268
-- Verified: `tests/test_leapp.py` 62 tests (8 new: app calls on each platform, Telegram recovered
-  rows, iLEAPP Snapchat, a missing column on a phone, chat and call table). On the public
-  development phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development
+- Verified: `tests/test_leapp.py` 68 tests (14 new: app calls on each platform, Telegram recovered
+  rows and call notices, iLEAPP Snapchat with a recovered row, a call log row from another app, a
+  length that is not a finite number, ALEAPP WhatsApp never read in full, an outgoing call with an
+  unchecked Missed value, a refused SMS table never standing for a Google Messages copy, a
+  missing column on a phone, chat and call table). On the public development phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development
   data, not a scored run): Android 13 WhatsApp, Viber and Line calls 4 of 4 each match the UFDR
   on time, direction and length, and on other party where LEAPP names one; iOS 15 WhatsApp calls
-  4 of 4, and Line calls 4 of 4 on time, direction and length; Telegram 23 of 29 rows match with
-  their sender (2 recovered rows flagged, 4 call notices, 2 rows with no text); iOS Snapchat 19
-  of 21 match with their sender (2 have no text). Google Messages pairs unchanged (the same 123).
+  4 of 4, and Line calls 4 of 4 on time, direction and length; Telegram's 4 call notices match
+  the UFDR's 4 Telegram calls on time, direction, caller and length, and 23 of its other 25 rows
+  match with their sender (2 recovered rows flagged, 2 rows with no text); iOS Snapchat 19 of 21
+  match with their sender (2 have no text; 3 recovered rows flagged). Every Android 13 call log
+  row is `com.android.phone`. Google Messages pairs unchanged (the same 123).
   No table failed its column check on either phone. Eval numbers in the PR.
 - Open: The plan's per-app list of tables that hold no messages or calls was not made, so an app
   with any other LEAPP table holding records is still never read in full; on iLEAPP the CallKit

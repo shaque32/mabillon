@@ -397,6 +397,17 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "{n} {be} recovered from the app database's free space or journal, not read from its "
         "live records, so each may repeat a live message; a count over {them} is inconclusive.",
     ),
+    "call_notice_read_as_call": (
+        "info",
+        "{n} {be} call notices in the app's chat (\"[Phone call ...]\"), imported as the app's "
+        "calls, not as messages.",
+    ),
+    "call_placed_by_another_app": (
+        "attention",
+        "{n} {be} written to the phone's call log by an app other than the phone's own "
+        "telephony, so {them} may be that app's calls; they are kept in the call log, and no "
+        "chat app's calls are treated as read in full.",
+    ),
     "group_call_parties_not_read": (
         "attention",
         "{n} {be} group calls; their parties are not read, so {them} {be} imported with "

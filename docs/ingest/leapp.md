@@ -116,7 +116,7 @@ sender id read matched the UFDR's.
 | iLEAPP | `instagram_threads` | Instagram | Sender ID (sent and received) |
 | iLEAPP | `kikMessages` | Kik Messenger | none |
 | iLEAPP | `get_signalIOSMessages` | Signal | Author (received only) |
-| iLEAPP | `snapchatMessages` | Snapchat | Sender Username (sent and received) |
+| iLEAPP | `snapchatMessages` | Snapchat | Sender Username (sent and received; recovered rows are possible copies, below) |
 | iLEAPP | `telegramMessages` | Telegram | none |
 | iLEAPP | `tiktok_messages` | TikTok | Sender (sent and received) |
 | iLEAPP | `viber_chats` | Viber | Sender (Phone) (received only) |
@@ -135,15 +135,24 @@ ALEAPP's `get_telegramMessages` has no conversation view, so Mabillon names its 
 also writes rows recovered from the database's free space or journal (`Record Origin` other than
 `Live`); such a row can repeat a live one, so it is imported, flagged
 (`recovered_record_may_repeat_another`) and listed as a possible copy (`numbered_copy_records`):
-a count over it is inconclusive. On the Android 13 phone 2 of its 29 rows are recovered, and 23
-matched the UFDR with their sender; the other 6 are 4 call notices and 2 rows with no text.
+a count over it is inconclusive. iLEAPP's `snapchatMessages` writes such rows too and is read
+the same way (3 of 21 on the iOS 15 phone). ALEAPP's Telegram table also writes each call as a
+row whose text is a call notice (`[Phone call (call id ..., outcome hung up, duration seconds
+N)]`); such a row is stored as a Telegram call, never as a message (`call_notice_read_as_call`),
+from its sender, with that length. Only a live notice of a call that was answered and hung up,
+in a stated direction, keeps its side; any other is stored with no sides and flagged, so
+Telegram's calls are not read in full. On the Android 13 phone 2 of its 29 rows are recovered;
+its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, caller and length; 23
+of the other 25 matched the UFDR with their sender, and 2 have no text.
 
 A table is read only when it has every column its reader uses: the conversation view's columns
 and the sender id for a chat table, the columns below for a call table, and the columns each
 phone table's reader uses. A table missing any of them is not read at all, never in part: it is
 listed in `not_imported` with `read_failed` (`its table has no column ...`), and its app is not
 read in full. A LEAPP version that renames or drops a column is caught this way rather than read
-with that column empty.
+with that column empty. A phone message table refused this way is not used to find Google
+Messages copies either, so a Google Messages message is never skipped as a copy of an SMS or MMS
+that was not imported.
 
 ### App calls
 
@@ -168,10 +177,17 @@ other party; the owner's own id is stated only by iLEAPP Line. iLEAPP WhatsApp's
 makes an incoming call missed. A call the checks were not shown on is imported with direction
 unknown and no sides, and flagged: a group call (`group_call_parties_not_read`, since only one
 party is named), and a direction other than incoming or outgoing, a `Missed` value other than
-Yes or No, an iLEAPP Line `Result` other than NORMAL or an ALEAPP Line call that names a `To ID`
+No (or Yes on an incoming call), an iLEAPP Line `Result` other than NORMAL or an ALEAPP Line call that names a `To ID`
 (`call_not_incoming_outgoing_or_missed`). A call stored with neither side, for these reasons or
 because the row names no other party, keeps its app from being read in full, as it does the
-phone's own call log. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
+phone's own call log. ALEAPP's WhatsApp call log names a group call only by the subject of the
+group chat it was placed from; a group call started outside a group chat has none, and ALEAPP
+does not read its participants, so it reads as a call with the caller alone. WhatsApp is
+therefore never read in full from ALEAPP output. An app can also place calls through Android's telecom service, which
+writes them to the phone's call log, where they are stored under the call log, not the app. So
+when an ALEAPP call log row names a `Phone Account Package` other than `com.android.phone`
+(flagged `call_placed_by_another_app`), or the call log was not read, no chat app counts as read
+in full. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
 WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
 
 Other app call tables did not match a UFDR's calls one to one, so they stay not imported: ALEAPP
@@ -185,8 +201,9 @@ for 4 calls, no party id) and `instagramDirectCalls` (17 call events for 9 calls
 
 The coverage record lists `apps_read_in_full`: the phone's own messages (`Native Messages`) and
 call log (`unknown`) when their tables were read, and, on ALEAPP only, a chat app when no other
-artifact in its LEAPP category holds records Mabillon did not read and none of its calls was
-stored with neither side. On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
+artifact in its LEAPP category holds records Mabillon did not read, none of its calls was
+stored with neither side, and the phone's call log was read and holds no row from another app
+(above). On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
 holds WhatsApp, Viber and other app calls from the phone's own call records (CallKit) that
 iLEAPP lists under no app, so no iLEAPP table holds every call of an app. The absence check (1.0.2) treats any other
 app, a search on every channel at once, and calls on every app as not covered by a LEAPP source,
