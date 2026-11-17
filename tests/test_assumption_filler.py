@@ -3464,6 +3464,36 @@ def test_an_absence_on_one_of_the_apps_the_claim_names_is_refused(tmp_path):
     assert [a.params.channels for a in made] == [("Telegram", "Viber")], filler.drops
 
 
+def test_a_phone_named_after_an_app_names_no_app(tmp_path):
+    # "the WHATSAPP PHONE" is a phone: a Telegram absence on it is kept on Telegram, not
+    # refused for leaving out WhatsApp, and WhatsApp is none of the claim's apps (CodeRabbit on
+    # #265; `_absence_parties` reads it so).
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["WHATSAPP PHONE"], "expert:Test Expert", lambda: at)
+    text = (
+        "On the WHATSAPP PHONE, PETROV and REYES had no contact on Telegram between March 20"
+        " and March 23, 2026."
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler.claim_apps(text) == frozenset({"telegram"})
+    (prop,) = GOOD["C14"]
+    row = {**prop, "channels": ["Telegram"], "phones": ["the WHATSAPP PHONE"]}
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [row])
+    assert [a.params.channels for a in made] == [("Telegram",)], filler.drops
+
+
+def test_a_video_is_a_word_no_check_reads(conn):
+    # "video" was blanked as a calling app's name, so "sent a video" passed on the sender and
+    # time checks alone (CodeRabbit on #265).
+    text = 'On March 12, 2026, PETROV sent @northstar a video on Telegram: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["event", "record_time", "sender"]
+
+
 def test_a_handle_named_like_an_app_picks_no_app(tmp_path):
     # On a case holding Telegram and Viber, "to @viber on Telegram" names Telegram only: the
     # handle never adds Viber to the rows or to the claim's apps (CodeRabbit on #265).

@@ -3360,7 +3360,10 @@ class LocalAssumptionFiller:
                 m.span() for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
             ]
         words = _blank(bare, cut)
-        words = _OTHER_CALL_APPS_RE.sub(" ", words)
+        # "sent a video": a kind of message no check reads, not an app (CodeRabbit on #265)
+        words = _OTHER_CALL_APPS_RE.sub(
+            lambda m: m.group(0) if m.group(0).casefold() == "video" else " ", words
+        )
         words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
         words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
         return plain_tokens(words, phrases, tests)
@@ -4378,11 +4381,21 @@ class LocalAssumptionFiller:
         app: those the claim names, else for a text message the case's apps of a phone's own
         messages. Empty when the claim names none. The sheet check does not count them against
         a sheet that names no app (core/audit/testability.py), as they are the claim's own."""
-        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim_text)))
+        claim_text = self._without_phone_names(_nfc(claim_text))
+        bare = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
         apps = self._named_apps(claim_text)
         if not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
             apps = self._phone_message_apps()
         return frozenset(a.casefold() for a in apps)
+
+    def _without_phone_names(self, text: str) -> str:
+        """The text with each phone's name the expert gave written as spaces: "the WHATSAPP
+        PHONE" says nothing of WhatsApp."""
+        try:
+            spans = self._phone_spans(text)
+        except Reject:
+            return text  # a phone's name in lower case: its words stay, and may name an app
+        return _blank(text, [(st, en) for _, st, en in spans])
 
     def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message row searched on no app (channels empty) in a claim that names its app
@@ -4406,8 +4419,11 @@ class LocalAssumptionFiller:
         ]
         if not app_rows:
             return out
-        bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim.text)))
-        apps = self._named_apps(claim.text)
+        # "the TELEGRAM PHONE" names a phone, not an app (`_absence_parties`; CodeRabbit on
+        # #265)
+        text = self._without_phone_names(_nfc(claim.text))
+        bare = _ADDRESS_RE.sub(" ", _unquoted(text))
+        apps = self._named_apps(text)
 
         def plain_word(app: str) -> bool:
             # "his second line": a plain word that may name no app at all

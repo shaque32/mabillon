@@ -19,7 +19,8 @@
     "showed" and "displayed" are a person's acts except in "a message reading \"...\"", "the
     records show" and "displayed as"; an account named like a plain word ("Photo") hides that
     word only where the claim writes it as a name. A count or a length written in digits ("one of
-    2 messages", "over 2 hours") is read as its spoken form is (CodeRabbit on #265).
+    2 messages", "over 2 hours") is read as its spoken form is, and "video" ("sent a video",
+    "a video call") is a word no check reads, not an app's name (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -31,7 +32,8 @@
     guard runs on every app row, also those the model scoped; it knows messaging, social and
     mail apps beyond the calling apps ("no contact on TikTok"), reads a short name of a held
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
-    picks the claim's apps (CodeRabbit on #265). "Texted" on a
+    picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app (CodeRabbit on
+    #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
     alone (Claude review and CodeRabbit on #265). Before, "wrote on
@@ -64,14 +66,15 @@
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,781), and
+  its fix. The filler, fill, replay, override and check suites pass locally (1,783), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only) leaves
-  every check outcome unchanged and adds the expert-only event to 18 claims (4 of them false
+  every check outcome unchanged and adds the expert-only event to 19 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
-  Claude review); one message-only absence that was inconclusive is now refused.
+  Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:
+  the call log keeps no kind of call, so it now waits for an expert); one message-only absence that was inconclusive is now refused.
   On case01, C11 (gold contradicted, its time check fails) also gains the event. `make check` runs on GitHub CI.
 - Open: the plain-word list is blunt in both directions. A true claim with an unlisted word
   loses the code-checked path and waits for an expert; a word on the list that carries meaning
