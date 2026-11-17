@@ -653,6 +653,25 @@ def test_exchanged_messages_pass_only_with_one_each_way_and_never_fail_on_silenc
     assert not FORBIDDEN_WORDS.search(r.detail), r.detail
 
 
+def test_a_message_each_way_resting_on_look_alike_rows_is_held_open() -> None:
+    # Bee's only message repeats Ay's "ok" a second earlier: the two rows may be one message
+    # from Ay with Bee's label, so "exchanged at least 2" waits for an expert even though 2 or
+    # 3 messages give the same count (CodeRabbit on #265).
+    conn = build()
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    _march_message(conn, "msg:p1:7", "a:p1:own", "a:p1:b")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, each_way=True)
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "an expert must decide" in r.detail
+    # Bee's message in its own words: a message each way stands
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
 @pytest.mark.parametrize(
     "extra",
     [

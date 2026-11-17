@@ -48,7 +48,9 @@
     true "exactly 12" failed. App, sender and direction are left out of the match on purpose
     (CodeRabbit on #265): a look-alike only holds a count open, and only when merging the
     look-alikes could change the answer ("at least 5" over 10 rows with 2 look-alikes still
-    passes; `look_alikes_matter`, Claude review on #265).
+    passes; `look_alikes_matter`, Claude review on #265). A message each way ("exchanged") that
+    rests on a look-alike pair alone is held open too (`each_way_rests_on_look_alikes`,
+    CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
@@ -60,7 +62,7 @@
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,778), and
+  its fix. The filler, fill, replay, override and check suites pass locally (1,780), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

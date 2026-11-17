@@ -10,7 +10,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from core.audit.checks._common import Row
-from core.audit.checks.count import TWIN_S, look_alike, look_alikes_matter
+from core.audit.checks.count import (
+    TWIN_S,
+    each_way_rests_on_look_alikes,
+    look_alike,
+    look_alikes_matter,
+)
 
 T0 = datetime(2021, 12, 13, 0, 14, 17, tzinfo=UTC)
 
@@ -75,3 +80,17 @@ def test_look_alikes_hold_a_count_open_only_when_merging_them_could_change_it(
     n: int, twins: int, want: int, op: str, matters: bool
 ) -> None:
     assert look_alikes_matter(n, twins, want, op) is matters
+
+
+def test_a_message_each_way_on_a_look_alike_pair_alone_is_held_open() -> None:
+    # "A to B 'ok'" and "B to A 'ok'" a second apart may be one message from A with the other
+    # label: B's only message is one of the pair (CodeRabbit on #265).
+    a, b = {"acct:a"}, {"acct:b"}
+    later = T0 + timedelta(seconds=10)
+    pair = [row(1, "ok", T0), row(2, "ok", T0 + timedelta(seconds=1), sender="acct:b")]
+    assert each_way_rests_on_look_alikes([*pair, row(3, "other", later)], a, b)
+    # B also sent a message of its own: a message each way stands
+    own = row(4, "sure", later, sender="acct:b")
+    assert not each_way_rests_on_look_alikes([*pair, row(3, "other", later), own], a, b)
+    # no look-alikes at all
+    assert not each_way_rests_on_look_alikes([row(1, "ok", T0), own], a, b)

@@ -63,6 +63,34 @@ def look_alike(rows: list[Row]) -> int:
     return n
 
 
+def look_alike_ids(rows: list[Row]) -> set[str]:
+    """The ids of the rows in any look-alike pair (`look_alike`), the earlier row and the
+    later one alike: either may be the one message both rows hold."""
+    last: dict[str, Row] = {}
+    ids: set[str] = set()
+    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
+        words = " ".join((r.text or "").casefold().split())
+        if not words:
+            continue
+        seen = last.get(words)
+        if seen is not None and seen.ts_utc is not None:
+            if (r.ts_utc - seen.ts_utc).total_seconds() <= TWIN_S:
+                ids |= {seen.id, r.id}
+        last[words] = r
+    return ids
+
+
+def each_way_rests_on_look_alikes(rows: list[Row], a_ids: set[str], b_ids: set[str]) -> bool:
+    """True when a message each way may rest on a look-alike row: a side whose every message
+    is one of a look-alike pair may have sent none, as the pair's other row may be the one
+    message, labelled with the other side (CodeRabbit on #265: "A to B 'ok'" and "B to A 'ok'"
+    a second apart)."""
+    paired = look_alike_ids(rows)
+    return not all(
+        any(r.sender in ids and r.id not in paired for r in rows) for ids in (a_ids, b_ids)
+    )
+
+
 class CountCheck(TemplateCheck):
     """Parties are matched by account identifier, so a renamed handle is still one party.
 
@@ -144,6 +172,7 @@ class CountCheck(TemplateCheck):
         lines: list[str] = []
         unknown_sender: list[Row] = []
         one_side_silent = False
+        each_way_open = False
         if p.sent_by:
             side = _sending_side(p, a, b)
             if side is None:
@@ -178,6 +207,13 @@ class CountCheck(TemplateCheck):
             one_side_silent = not (by_a and by_b)
             if one_side_silent:
                 lines.append("Not finding a message each way does not mean one was never sent")
+            elif each_way_rests_on_look_alikes(counted, a_ids, b_ids):
+                each_way_open = True
+                lines.append(
+                    "A message each way rests on rows that repeat another's words and time, "
+                    "which may be one message; an expert must decide which rows are the same "
+                    "message"
+                )
         n, want, op = len(counted), p.expected_count, p.count_op
         lines.insert(0, f"Counted {n}; the claim says {_OPS[op]} {want}")
         deleted = sum(1 for r in counted if r.deleted)
@@ -212,7 +248,7 @@ class CountCheck(TemplateCheck):
                 + (
                     "; an expert must decide which rows are the same message"
                     if held_open
-                    else f", and {lo} to {n} messages all give the same answer"
+                    else f", and {lo} to {n} messages all give the same count answer"
                 )
             )
 
@@ -220,7 +256,7 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op in ("eq", "le") and lo > want:
             outcome = CheckOutcome.FAIL
-        elif no_time or one_side_silent or (unknown_sender and op != "ge"):
+        elif no_time or one_side_silent or each_way_open or (unknown_sender and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
