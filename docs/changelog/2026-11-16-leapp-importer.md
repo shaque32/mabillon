@@ -65,7 +65,7 @@
   are inconclusive. (8) The report's limitations name the LEAPP reader for a LEAPP import, not
   the UFDR reader.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (40 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (45 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text
@@ -89,8 +89,9 @@
   texts to the same person within two seconds, one of them only in Google Messages, would be read
   as one. A photo only in Google Messages, sent by the same person with the same text within two
   seconds of an MMS photo whose own Google Messages copy is missing, would be read as that MMS.
-  A number written with a national trunk prefix ("07911...") does not match the same
-  number with a country code, so such a copy is kept and may be counted twice. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR
+  A number written with a national trunk prefix ("07911...") never matches the same number
+  with a country code; such a copy is kept and listed as a possible copy, so a count over it is
+  inconclusive rather than double. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR
   import of the same phone shows them as incoming.
 - Affects: capabilities (a new input format, unverified); verdict path (absence 1.0.2, count
   1.2.1, time 1.1.1 and weekday 1.0.3 can only turn a PASS or a FAIL into INCONCLUSIVE against

@@ -55,7 +55,9 @@ or MMS stands for at most one Google Messages message. The two stores name an at
 differently (a Google Messages cache path, an MMS part file), so attachments are compared by
 number only, and a message with attachments is paired only when it has one such SMS or MMS and
 that SMS or MMS has no other such Google Messages message; otherwise all of them are kept and
-listed as possible copies. The other party is the sender of a received message, and for a sent one the
+listed as possible copies. A unique match is taken to be the same message: a different photo
+sent to the same person with the same text within two seconds, held only in Google Messages,
+would be skipped as that MMS. The other party is the sender of a received message, and for a sent one the
 receiver: `Other Participant/Conversation Name` when it is a number or email; when it is a
 display name, the one number the phone's contacts (ALEAPP `contacts`) give that name, if every
 sender of the chat's received messages is that number too. Failing both, the chat's one sender
@@ -64,9 +66,12 @@ may have had one sender so far. An SMS or MMS names its other party in `Address`
 (received) or `To Address`, `Cc` and `Bcc` (sent), and counts only when it names exactly one.
 Numbers compare by their digits, and one with a country code of up to three digits in front of
 at least ten digits matches the same number without it (`+19195550111` and `(919) 555-0111`);
-two numbers that both carry a country code (`+` or `00`) match only when equal. Emails compare
-without case. When the direction and text match but either side names no other party, or
-several, or the party was only inferred, the Google Messages message is kept, flagged
+two numbers that both carry a country code (`+` or `00`) match only when equal. A national
+number written with its trunk 0 (`07911 123456`) never matches the same number with its country
+code (`+44 7911 123456`), but when its other seven or more digits follow a country code of up to
+three digits it makes a possible copy (below). Emails compare without case. When the direction
+and text match but either side names no other party, or several, or the party was only inferred,
+or the two numbers may be one number written two ways, the Google Messages message is kept, flagged
 (`may_be_same_as_an_sms_or_mms_message`) and listed with the SMS or MMS as possible copies
 (`numbered_copy_records`), so a count over them is inconclusive. On the public Android 13 phone
 all 123 copies found by direction and text alone still match under this rule, with the same

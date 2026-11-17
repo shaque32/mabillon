@@ -570,6 +570,26 @@ def _same_party(a: str, b: str) -> bool:
     return len(short) >= 10 and long.endswith(short) and len(long) - len(short) <= 3
 
 
+def _maybe_same_party(a: str, b: str) -> bool:
+    """True when two numbers that `_same_party` keeps apart may still be one handle: a national
+    number written with its trunk 0 ("07911 123456") whose rest of at least seven digits is
+    the other number after a country code of up to three digits ("+44 7911 123456"). Never
+    enough for a copy, only for a possible copy (CodeRabbit on #264)."""
+    if "@" in a or "@" in b:
+        return False
+    for nat, intl in ((a, b), (b, a)):
+        rest, full = nat[1:], intl.lstrip("+")
+        if (
+            nat.startswith("0")
+            and not nat.startswith("00")
+            and len(rest) >= 7
+            and full.endswith(rest)
+            and 1 <= len(full) - len(rest) <= 3
+        ):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class _Native:
     """An SMS or MMS as the Google Messages reader compares it."""
@@ -658,7 +678,8 @@ def _match_copies(
 
     match is (locator, seconds apart) of its pair. possible, when it has no pair, is the
     locator of the nearest candidate it may be a copy of: one whose other party cannot be
-    compared, or a copy left unpaired because attachments could not tell which is which."""
+    compared or may be the same number written another way (`_maybe_same_party`), or a copy
+    left unpaired because attachments could not tell which is which."""
     cands: list[list[tuple[int, int, _Native]]] = []
     for m in msgs:
         out: list[tuple[int, int, _Native]] = []
@@ -702,7 +723,7 @@ def _match_copies(
                 if (
                     not copy(m, n)
                     and n.locator not in used
-                    and (m.party is None or n.party is None)
+                    and (m.party is None or n.party is None or _maybe_same_party(m.party, n.party))
                 )
                 or (copy(m, n) and (m.media or m.inferred))
             ),

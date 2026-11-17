@@ -680,6 +680,36 @@ def test_one_sms_stands_for_at_most_one_google_messages_message(tmp_path: Path) 
     assert locs == ["get_googlemessages/rowid=2"]
 
 
+@pytest.mark.parametrize(
+    ("native", "gm", "possible"),
+    [
+        ("07911 123456", "+44 7911 123456", True),  # trunk 0 against the country code
+        ("+44 7911 123456", "07911 123456", True),
+        ("06 12 34 56 78", "+33 6 12 34 56 78", True),
+        ("07911 123456", "+44 7911 654321", False),  # another number
+        ("+44 7911 123456", "+44 7911 123456", False),  # the same number: a copy, skipped
+    ],
+)
+def test_a_number_with_its_trunk_0_is_a_possible_copy_of_one_with_its_country_code(
+    tmp_path: Path, native: str, gm: str, possible: bool
+) -> None:
+    # CodeRabbit on #264: "07911 123456" in the SMS table and "+44 7911 123456" in Google
+    # Messages may be one person. That is never enough to skip the message as a copy, but it
+    # is flagged as a possible copy so a count over it is inconclusive.
+    lv = _gm_lava(
+        [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": native, "Body": "OK"}],
+        [{"Message Timestamp": "2024-03-01T12:00:01Z", "Direction": "Incoming",
+          "Message Sender": gm, "Message": "OK", "Conversation ID": "9"}],
+    )  # fmt: skip
+    locs, flags, codes = _gm_imported(tmp_path, lv)
+    flag = "may_be_same_as_an_sms_or_mms_message"
+    if native == gm:
+        assert locs == []
+    else:
+        assert locs == ["get_googlemessages/rowid=1"]
+        assert (flags.get(flag) == 1 and flag in codes) is possible
+
+
 def test_a_sent_google_messages_message_is_a_copy_only_when_its_party_is_known(
     tmp_path: Path,
 ) -> None:
