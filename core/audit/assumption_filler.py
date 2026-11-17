@@ -531,7 +531,7 @@ def _name_spans(text: str, name: str) -> list[tuple[int, int]]:
 def _ident_spans(text: str, ident: str) -> list[tuple[int, int]]:
     """Where the text writes this identifier whole, in any case: not inside a longer one
     ("7001002" is not in "70010023" or "dp_garage" in "dp_garage2")."""
-    pattern = rf"(?<![\w.:@-]){re.escape(ident.strip())}(?![\w@-]|[.:]\w)"
+    pattern = rf"(?<![\w.:@-]){re.escape(ident.strip())}(?![\w@-]|[.:]+[\w@-])"
     return [m.span() for m in re.finditer(pattern, text, re.IGNORECASE)]
 
 
@@ -4869,7 +4869,7 @@ class LocalAssumptionFiller:
         out: set[tuple[str, int, int]] = set()
         for i in sorted(ids):
             # the whole id, as `_ident_spans` reads it: "lena" is not in "lena.2" or "lena:x"
-            tail = rf"({re.escape(i)})(?![\w@-]|[.:]\w)"
+            tail = rf"({re.escape(i)})(?![\w@-]|[.:]+[\w@-])"
             # after a label its colon may touch the id ("user ID:4984911", "id:lena")
             found = list(re.finditer(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}", bare))
             if len(i) >= 6:

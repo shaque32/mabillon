@@ -8,7 +8,8 @@
   read as a party only right after an id label ("username lena"), never as a plain word; the
   tokenizer and the party lookup share that one reading, so a short id of another account
   beside a name ("Lena Okafor" username zoe1) is two accounts and names no caller. An id is
-  read only whole: "lena" is not read in "lena.2". An account
+  read only whole: "lena" is not read in "lena.2" or "lena..2", in the caller reading and in
+  every other place the filler looks for an identifier. An account
   lookup takes a label ("ID", "username", "number") off a written identifier only where a
   space, colon or "#" parts them, so "id42" is looked up as id42, never as 42. An id may touch
   its label's colon ("user ID:4984..."), a stated length may follow the id after a comma, and

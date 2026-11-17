@@ -767,7 +767,16 @@ def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection)
         assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
 
 
-@pytest.mark.parametrize("ident", ["username:lena.2", "username lena.2", "username lena:x"])
+@pytest.mark.parametrize(
+    "ident",
+    [
+        "username:lena.2",
+        "username lena.2",
+        "username lena:x",
+        "username lena..2",
+        "username lena.-x",
+    ],
+)
 def test_an_id_that_only_begins_with_a_known_id_names_no_caller(
     conn: sqlite3.Connection, ident: str
 ) -> None:
