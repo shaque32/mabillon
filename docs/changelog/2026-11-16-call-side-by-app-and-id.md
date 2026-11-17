@@ -7,7 +7,8 @@
   that is a second account leave the caller unread. An app identifier under six characters is
   read as a party only right after an id label ("username lena"), never as a plain word; the
   tokenizer and the party lookup share that one reading, so a short id of another account
-  beside a name ("Lena Okafor" username zoe1) is two accounts and names no caller. An account
+  beside a name ("Lena Okafor" username zoe1) is two accounts and names no caller. An id is
+  read only whole: "lena" is not read in "lena.2". An account
   lookup takes a label ("ID", "username", "number") off a written identifier only where a
   space, colon or "#" parts them, so "id42" is looked up as id42, never as 42. An id may touch
   its label's colon ("user ID:4984..."), a stated length may follow the id after a comma, and
@@ -39,7 +40,8 @@
   an id in unbalanced brackets; a username under six characters, read only right after its
   label, as in "username lena"; a short id of another account beside the name; an identifier
   that begins with "id"; an id touching its label's colon; a length after the id; an app's
-  alias after "on"; a written id with a username label). Filler,
+  alias after "on"; a written id with a username label; an id that only begins with a known
+  one). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way

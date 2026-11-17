@@ -765,3 +765,12 @@ def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection)
     for written in ("username lena", "user name: lena"):
         acc = _Account(as_written=written, app="Instagram")
         assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
+
+
+@pytest.mark.parametrize("ident", ["username:lena.2", "username lena.2", "username lena:x"])
+def test_an_id_that_only_begins_with_a_known_id_names_no_caller(
+    conn: sqlite3.Connection, ident: str
+) -> None:
+    made, f = short_fill(conn, f'PETROV called the Instagram user "Lena Okafor" {ident}.')
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made  # lena.2 is not lena

@@ -4868,7 +4868,8 @@ class LocalAssumptionFiller:
         }
         out: set[tuple[str, int, int]] = set()
         for i in sorted(ids):
-            tail = rf"({re.escape(i)})(?![\w@-])"
+            # the whole id, as `_ident_spans` reads it: "lena" is not in "lena.2" or "lena:x"
+            tail = rf"({re.escape(i)})(?![\w@-]|[.:]\w)"
             # after a label its colon may touch the id ("user ID:4984911", "id:lena")
             found = list(re.finditer(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}", bare))
             if len(i) >= 6:
