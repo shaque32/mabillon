@@ -252,6 +252,12 @@ def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
     names = [" ".join(p.name.split()).casefold() for p in phones]
     if len(set(names)) != len(names):
         raise SystemExit("--definitions: two phones have the same name")
+    owners = [p.owner for p in phones]
+    if len(set(owners)) != len(owners):
+        # A device-owner stipulation records a person per phone (core/review/actions), so one
+        # SUBJECT-<n> on two phones would be two people of one name, and every claim naming
+        # them would be refused (CodeRabbit on #267).
+        raise SystemExit("--definitions: two phones have the same user; give each its own")
     return phones
 
 
@@ -316,12 +322,14 @@ def build(  # noqa: ANN001
                     f" not {ph.zone}"
                 )
             log(f"{ph.source_id}: the package records the zone given ({recorded})")
-        elif ph.zone and len(seen := zones_seen(conn, ph.source_id)) > 1:
+        elif len(seen := zones_seen(conn, ph.source_id)) > 1:
             # The package records no zone because the phone kept more than one (LEAPP's
-            # leapp.device.zones_seen): one given zone would misread part of its times.
+            # leapp.device.zones_seen): one given zone would misread part of its times, and
+            # with none every stated window on it would be refused, so the run stops here
+            # rather than score a phone it cannot read (CodeRabbit on #267).
             raise SystemExit(
                 f"--phone-zone: {ph.source_id} recorded {len(seen)} zones"
-                f" ({', '.join(seen)}), so no one zone is given for it"
+                f" ({', '.join(seen)}), so no one zone can be given for it"
             )
         elif ph.zone:
             # The examiner's statement of the zone, for a package that records none.

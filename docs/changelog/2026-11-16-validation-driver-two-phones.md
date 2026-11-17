@@ -9,7 +9,10 @@
   zone the header gives is used only when the package records none. A package that records
   another zone stops the build, and so does a LEAPP phone whose tables hold more than one zone,
   since one given zone would misread part of its times. The same zone as the package's is
-  accepted and not given again. `--ufdr` keeps working for one phone as before. run.json lists
+  accepted and not given again. A LEAPP phone with more than one zone stops the build whether or
+  not a zone is given, since with none every stated window on it would be refused. Two phones
+  with the same user are refused: a device-owner stipulation records a person per phone, so one
+  SUBJECT-<n> on two phones would be two people of one name. `--ufdr` keeps working for one phone as before. run.json lists
   each phone's importer, file hash and recorded zone. Why: validation v5 is a two-phone case
   read through LEAPP, and without a zone every stated window on a LEAPP phone is refused.
 - Where: PR from branch claude/project-thread-ds0ify, on main after #263 and #264

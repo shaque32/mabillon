@@ -459,6 +459,10 @@ def test_two_phones_each_take_their_name_and_user(pair, tmp_path):
         ),
         ({"phones": {**PHONES, "item2": {"name": "SECOND PHONE"}}}, "needs a name and an owner"),
         (
+            {"phones": {**PHONES, "item2": {"name": "SECOND PHONE", "owner": "SUBJECT-1"}}},
+            "same user",
+        ),
+        (
             {"phones": {**PHONES, "item2": {"name": "SECOND PHONE", "owner": "Jo"}}},
             "owner is not a SUBJECT",
         ),
@@ -538,5 +542,11 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
     args = ["--phone", f"kept={kept}", "--phone", f"moved={moved}", "--claims", claims,
             "--out", str(tmp_path / "out2"), "--fake",
             "--definitions", str(_defs(tmp_path, defs))]  # fmt: skip
+    with pytest.raises(SystemExit, match="moved recorded 2 zones"):
+        hickman_run.main(args)
+    # ...and with no zone given the run stops too: none of its stated windows could be read
+    del defs["phone_time_zone"]
+    args[-1] = str(_defs(tmp_path, defs))
+    args[args.index("--out") + 1] = str(tmp_path / "out3")
     with pytest.raises(SystemExit, match="moved recorded 2 zones"):
         hickman_run.main(args)
