@@ -1689,8 +1689,9 @@ _CALL_FORM_RE = re.compile(
 # The other side's id set beside its name, right after the clause: '"Marc R.," user ID
 # 4984911', "(account ID 4984911)". The id must be the same one account as the name
 # (`CallForm.one_account`), so it narrows the side, never adds a party.
+_ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
 _CALL_ID_TAIL_RE = re.compile(
-    rf"^\s*,?\s*(?P<open>\()?\s*(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
+    rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
     rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
     re.IGNORECASE,
 )
@@ -4986,10 +4987,13 @@ class LocalAssumptionFiller:
                 spans.append((*m.span(), "acct", m.group(0)[1:-1].strip()))
         for a in self.data.accounts.values():
             i = a.identifier.strip()
-            if a.app != app or len(i) < 6 or re.search(r"\s", i):
+            if a.app != app or not i or re.search(r"\s", i):
                 continue
-            for m in re.finditer(rf"(?<![\w.:@-]){re.escape(i)}(?![\w@-])", bare):
-                spans.append((*m.span(), "acct", i))
+            # A short identifier ("marc") is read only right after an id label ("username
+            # marc"), so an ordinary word of the claim never becomes a party (CodeRabbit on #263).
+            lead = "" if len(i) >= 6 else rf"(?i:\b{_ID_LABEL})"
+            for m in re.finditer(rf"{lead}(?<![\w.:@-])({re.escape(i)})(?![\w@-])", bare):
+                spans.append((*m.span(1), "acct", i))
         tokens: dict[int, tuple[str, str]] = {}
         kinds: dict[tuple[int, int], set[str]] = {}
         for st, en, kind, value in spans:

@@ -4,7 +4,8 @@
   the Instagram user \"Marc R.,\" user ID 4984...") and give the side's id beside its name (",
   user ID ...", "(user ID ...)"). The caller row is made only when the name and the id are one
   account; another app's name, other words, a person described as an app's user, or an id
-  that is a second account leave the caller unread. A comma inside a quoted name's closing
+  that is a second account leave the caller unread. An app identifier under six characters is
+  read as a party only right after an id label ("username lena"), never as a plain word. A comma inside a quoted name's closing
   mark is the claim's punctuation, so the name is looked up without it. Before, such a claim
   kept only its time row, so a reversed direction never showed.
 - Also: `eval/validation/dump_lava.py` (new, validation tooling only). A plain reader of a LEAPP
@@ -26,15 +27,14 @@
   `tests/test_fill_calls.py` (three wordings that get a caller and
   pass its check; five that name no caller, each reaching the caller step with its time row
   made, and the parser's reading of each checked directly; a side described before the verb;
-  an id in unbalanced brackets). Filler,
+  an id in unbalanced brackets; a username under six characters, read only right after its
+  label, as in "username lena"). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way
   in its window) instead of only a passing time check.
 - Open: a side described before the verb ("the Instagram user ... called X") is not read.
   A call with one call each way in the stated window stays inconclusive, by design.
-- Open: an app username shorter than six characters after an id label ("username marc") is
-  not read, so that claim gets no caller (fails closed, no caller check).
 - Affects: verdicts (more call claims get a caller check, which fails closed to
   inconclusive); customer-facing claims: none. No privacy or network change.
 - Status doc: pending: header "Other versions": filler 11; "validation scorer 1.4.1" becomes "validation scorer 1.5.0".

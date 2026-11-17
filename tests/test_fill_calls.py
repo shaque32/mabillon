@@ -635,3 +635,59 @@ def test_an_id_in_unbalanced_brackets_names_no_caller(conn: sqlite3.Connection, 
     made, f = ig_fill(conn, words)
     assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made
+
+
+SHORT_IG = "acct:item1:Instagram:lena"
+LENA = [{"as_written": "Lena Okafor", "app": "Instagram"}]
+
+
+def short_fill(conn: sqlite3.Connection, words: str) -> tuple[dict, LocalAssumptionFiller]:
+    # "Lena Okafor" holds the short username lena; the phone called her at 9:00 p.m. as well.
+    c = conn
+    c.execute("PRAGMA foreign_keys = OFF")
+    c.execute(
+        "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'Instagram', 'lena',"
+        " 'Lena Okafor')",
+        (SHORT_IG, SHORT_IG),
+    )
+    c.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:ig:lena', 'item1', 'c:ig:lena', 'dev:item1',"
+        " 'Instagram', NULL, ?, 'outgoing', '2026-06-16T01:00:00Z', 0, NULL, 60, 0)",
+        (SHORT_IG,),
+    )
+    return fill(conn, f"{IG_AT} {words}", people=["PETROV"], accounts=LENA,
+                channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the Instagram user "Lena Okafor" username lena.',
+        'PETROV called the Instagram user "Lena Okafor" (username: lena).',
+    ],
+)
+def test_a_short_username_is_read_after_its_label(conn: sqlite3.Connection, words: str) -> None:
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.account_ids) == [SHORT_IG]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the Instagram user "Lena Okafor" lena.',  # no label: a plain word
+        'PETROV called the Instagram user "Lena Okafor" username Lena.',  # not the identifier
+    ],
+)
+def test_a_short_username_without_its_label_names_no_caller(
+    conn: sqlite3.Connection, words: str
+) -> None:
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made
+    _, tokens = f._party_tokens(f"{IG_AT} {words}", "Instagram")
+    assert ("acct", "lena") not in tokens.values()  # an unlabelled short word is no party
