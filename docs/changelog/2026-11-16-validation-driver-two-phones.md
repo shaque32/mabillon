@@ -16,12 +16,12 @@
   that differs from the zone given for every phone is refused, as is a given zone that differs
   from the one zone a LEAPP phone's tables name when the importer left it unrecorded because
   some zone values could not be read; with no zone given, that phone stops the build and the
-  message names the zone to give. Zones are compared as resolved names, and a recorded zone no
-  tool can read is refused even when the same text is given. Each phone's name, zone and user are set right after its
+  message names the zone to give. Zones are compared as resolved names, the header's and `--phone-zone` too, and a recorded zone
+  no tool can read stops the build whether or not a zone is given. Each phone's name, zone and user are set right after its
   import, so a zone the run cannot use stops it before the next import. `--phone-sha256` takes
   hex in either case, and a resume may name the phones in any order. A resume always hashes
   each package, so two packages of one file name swapped between phones, or a package changed
-  since the build even when its original digest is given, are refused, and it restores the build's fields in run.json if the run stopped before writing it. `--ufdr` keeps working for
+  since the build even when its original digest is given, are refused, a package that is gone stops it with a message, and it restores the build's fields in run.json if the run stopped before writing it. `--ufdr` keeps working for
   one phone as before. run.json lists each phone's importer, file hash, recorded zone, and
   whether the given zone was set on the case (`zone_set_by_examiner`). Why: validation v5 is a two-phone case
   read through LEAPP, and without a zone every stated window on a LEAPP phone is refused.
@@ -29,8 +29,8 @@
 - Verified: `tests/test_validation_run.py` (two synthetic case01 phones: names, owners, people,
   hash refusal, resume refusal, header refusals, flag mixes; a two-phone LEAPP case where one
   phone records its zone, one takes the given zone, and one with two zones stops the build; a
-  LEAPP phone with one unrecorded zone refuses another; a resume in another flag order; two same-named packages swapped; a resume after run.json was lost; a refused build closes case.db; zone spellings).
-  With #264 on main the LEAPP test always runs (its skip guard is gone); the file's 38 tests
+  LEAPP phone with one unrecorded zone refuses another; a resume in another flag order; two same-named packages swapped; a resume after run.json was lost; a refused build closes case.db; zone spellings; a resume whose package is gone).
+  With #264 on main the LEAPP test always runs (its skip guard is gone); the file's 40 tests
   pass locally on main c93e97d plus this change, cloud container, 2026-11-17. `make check` runs
   on GitHub CI.
 - Open: run end to end on development LEAPP output (Android 13 and iOS 15, stand-in

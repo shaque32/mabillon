@@ -268,8 +268,9 @@ def test_a_quoted_message_s_own_words_never_stop_the_report(conn):
     assert any(" deleted, UTC" in n for n in row(rows, "8", "At 2:31 a.m.").notes)
     assert row(rows, "9", "At 10:05 p.m.").status == "order"
     html = render_report(conn)
-    assert '<span class="q">&quot;i deleted&quot;</span>' in html
-    assert '<span class="q">&quot;i deleted it tonight&quot;</span>' in html
+    # the quote marks are the tool's, outside the cite, as on the rest of the page
+    assert '&quot;<span class="q">i deleted</span>&quot;' in html
+    assert '&quot;<span class="q">i deleted it tonight</span>&quot;' in html
     assert re.search(r'printed \(<span class="q">[^<]* deleted</span>, UTC', html)
     check_report_text(html)
 
@@ -294,6 +295,32 @@ def test_a_raw_time_that_matches_the_note_s_own_words_is_cited_where_it_stands(c
     html = render_report(conn)
     assert 'clock the report printed (<span class="q">time deleted</span>, UTC' in html
     check_report_text(html)
+
+
+def test_a_printed_time_with_no_raw_value_cites_nothing():
+    # A record with an offset but no raw value: the note gives the tool's reading of the
+    # printed clock, never the word "None" as if the phone records said it (Claude review).
+    para = 'At 2:31 a.m. on March 5, 2026, he wrote "bring the blue bag".'
+    conn = _tiny("America/New_York", "2026-03-05T02:31:00Z", 0, "x", para)
+    conn.execute("UPDATE messages SET ts_raw = NULL")
+    (r,) = rows_for(conn)
+    assert r.status == "differs"
+    (note,) = r.notes
+    assert "None" not in note and "printed (2026-03-05 02:31:00, UTC+00:00)" in note
+    assert all(not src for _, src in r.note_parts[0])
+
+
+def test_a_row_whose_segments_differ_from_its_text_is_refused():
+    from core.timeline.check import TimelineRow
+
+    para = 'At 2:31 a.m. on March 5, 2026, he wrote "bring the blue bag".'
+    stated = rows_for(_tiny("UTC", "2026-03-05T02:31:00Z", 0, "x", para))[0].stated
+    with pytest.raises(ValueError, match="summary_parts"):
+        TimelineRow(stated, "differs", "One text.", "", None, summary_parts=(("Another.", False),))
+    with pytest.raises(ValueError, match="note_parts"):
+        TimelineRow(
+            stated, "differs", "x", "", None, notes=("a", "b"), note_parts=((("a", False),),)
+        )
 
 
 def test_render_report_takes_default_settings(conn):

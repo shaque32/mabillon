@@ -4,6 +4,7 @@ with stand-in components. The real run is on the public Hickman phone with the l
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -402,6 +403,20 @@ def test_the_headers_zone_is_the_examiners_and_a_different_one_is_refused(ufdr, 
     other = _defs(tmp_path, {"phone_time_zone": "America/Chicago"})
     with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
         hickman_run.main([*args[:-1], str(other)])
+    # ...but one zone written two ways is the same zone (Claude review on #267)
+    same = _defs(tmp_path, {"phone_time_zone": "(UTC-05:00) Eastern Time (US & Canada)"})
+    assert hickman_run.main([*args[:-1], str(same), "--phone-zone", "America/New_York"]) == 0
+
+
+def test_a_resume_whose_package_is_gone_says_so(ufdr, tmp_path):
+    copy = tmp_path / ufdr.name
+    shutil.copyfile(ufdr, copy)
+    args = ["--ufdr", str(copy), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    copy.unlink()
+    with pytest.raises(SystemExit, match="cannot read .* to resume"):
+        hickman_run.main(args)
 
 
 # ---------------------------------------------------------------- two phones (validation v5)
@@ -532,14 +547,17 @@ def test_one_zone_written_two_ways_is_not_a_conflict(pair, tmp_path):
     assert hickman_run.main(_two(pair, tmp_path, defs)) == 0
 
 
+@pytest.mark.parametrize("given", [["--phone-zone", "America/New_York"], []])
 def test_a_recorded_zone_no_tool_can_read_is_refused_even_when_the_same_is_given(
-    ufdr, tmp_path, monkeypatch
+    ufdr, tmp_path, monkeypatch, given
 ):
     import core.timeline.records as records
 
-    monkeypatch.setattr(records, "zone", lambda name: None)  # the package's zone text reads as none
+    # the package's zone text reads as none; with no zone given the run stops too, before any
+    # model call, rather than score a phone whose every window is refused (Claude review)
+    monkeypatch.setattr(records, "zone", lambda name: None)
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
-            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+            str(tmp_path / "out"), "--fake", *given]  # fmt: skip
     with pytest.raises(SystemExit, match="names no time zone this tool can read"):
         hickman_run.main(args)
 

@@ -107,6 +107,14 @@ class TimelineRow:
     # renderer cites it rather than printing a message's words as the tool's own
     summary_parts: Parts = ()
 
+    def __post_init__(self) -> None:
+        # The segments are the text the renderer prints: any drift from `summary` or `notes`
+        # would print other words than the row holds, so a mismatch stops here (Claude review).
+        if self.summary_parts and joined(self.summary_parts) != self.summary:
+            raise ValueError("TimelineRow: summary_parts do not spell the summary")
+        if self.note_parts and tuple(joined(p) for p in self.note_parts) != self.notes:
+            raise ValueError("TimelineRow: note_parts do not spell the notes")
+
 
 def zoneless_note(labels: tuple[str, ...], cite: Callable[[str], str]) -> str:
     """The note for phones that state no usable zone, each label passed through `cite`."""
@@ -177,7 +185,8 @@ def compare(st: StatedTime, rec: Record, tol_s: float, relation: Relation = "at"
             wall = (rec.ts_utc + printed).replace(tzinfo=None)
             pd = _naive_distance(wall, st)
             off = _offset_str(rec.offset_min)
-            raw = (str(rec.ts_raw), True)
+            # the source's own printed value, cited; with none kept, the tool's reading of it
+            raw = (str(rec.ts_raw), True) if rec.ts_raw else (f"{wall:%Y-%m-%d %H:%M:%S}", False)
             if status == "differs" and abs(pd) <= tol_s:
                 note = (
                     ("The stated time agrees with the clock the report printed (", False), raw,
@@ -391,7 +400,8 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
         if st.readings:
             what += " (" + " or ".join(f"{d:%B} {d.day}, {d.year}" for d in st.readings) + ")"
         return TimelineRow(st, "not_compared", f"Not compared: {what}.", "", None,
-                           notes=tuple(notes))  # fmt: skip
+                           notes=tuple(notes),
+                           note_parts=tuple(((n, False),) for n in notes))  # fmt: skip
     if st.kind == "open":
         notes.append("One end of this range is open; only the stated end is compared.")
     # a phone whose own zone is missing or unusable: name it (comparing the number of distinct
@@ -475,8 +485,6 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
             if c.printed_note and c.printed_note not in notes:
                 notes.append(c.printed_note)
                 note_parts.append(c.printed_parts)
-    if parts and summary != joined(parts):
-        parts = (*parts, (summary[len(joined(parts)) :], False))  # a sentence added after
     return TimelineRow(
         st, status, summary, zone_label, key, tuple(links), tuple(nearby), nearby_total,
         tuple(counts), tuple(notes), tuple(note_parts), zoneless, parts,
@@ -492,7 +500,7 @@ def label_parts(lk: Link) -> Parts:
     are source text, cited by the renderer, never the tool's own (a message "I deleted it."
     stopped a report)."""
     if lk.how == "quote":
-        return (("the message ", False), (f'"{lk.words}"', True))
+        return (('the message "', False), (lk.words, True), ('"', False))
     return (("the call with ", False), (lk.words, True))
 
 

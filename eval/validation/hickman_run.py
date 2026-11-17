@@ -220,8 +220,11 @@ def _hashes(values: list[str]) -> dict[str, str]:
 def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
     """The case's phones, from --ufdr (one phone, the v1 to v4 setup) or each --phone, with
     names, owners and zones from the definitions' `phones` (needed when there are two)."""
+    from core.zones import resolve_zone
+
     zone_all = (defs or {}).get(ZONE_KEY)
-    if zone_all and a.phone_zone and zone_all != a.phone_zone:
+    # one zone written two ways is the same zone, as in every other zone check (Claude review)
+    if zone_all and a.phone_zone and resolve_zone(zone_all) != resolve_zone(a.phone_zone):
         raise SystemExit(f"--phone-zone {a.phone_zone} differs from the definitions' {zone_all}")
     zone_all = a.phone_zone or zone_all
     if a.ufdr is not None:
@@ -248,8 +251,6 @@ def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
         raise SystemExit(
             f"--definitions: {PHONES_KEY} names {sorted(specs)}, the packages are {sorted(paths)}"
         )
-    from core.zones import resolve_zone
-
     for sid in sorted(specs):
         own = specs[sid].get("zone")
         if own and zone_all and resolve_zone(own) != resolve_zone(zone_all):
@@ -333,15 +334,17 @@ def build(  # noqa: ANN001
             ).fetchone()
             rec["zone_recorded"] = recorded
             rec["zone_set_by_examiner"] = False  # True only when the given zone is the case's
+            if recorded and zone_info(resolve_zone(recorded)) is None:
+                # A recorded zone this tool cannot read: the examiner's zone cannot replace the
+                # source's, and every stated window on the phone would be refused, so the run
+                # stops before any model call, given zone or not (Claude review on #267).
+                raise SystemExit(
+                    f"--phone-zone: the extraction records {ph.source_id}'s zone as"
+                    f" {recorded!r}, which names no time zone this tool can read"
+                )
             if recorded and ph.zone:
                 # The source's own zone is kept; the examiner's must say the same, or the claims'
-                # times and the phone's would be read in two zones. Two equal texts that name no
-                # zone this tool reads say nothing, so they are refused too (Claude review).
-                if zone_info(resolve_zone(recorded)) is None:
-                    raise SystemExit(
-                        f"--phone-zone: the extraction records {ph.source_id}'s zone as"
-                        f" {recorded!r}, which names no time zone this tool can read"
-                    )
+                # times and the phone's would be read in two zones.
                 if resolve_zone(recorded) != resolve_zone(ph.zone):
                     raise SystemExit(
                         f"--phone-zone: the extraction records {ph.source_id}'s zone ({recorded}),"
@@ -757,7 +760,12 @@ def main(argv: list[str] | None = None) -> int:
         given = {ph.source_id: ph for ph in phones}
         for p in was["imported"]:
             ph = given[p["source_id"]]
-            h = sha256_file(ph.path)  # always the bytes now, never only the digest given
+            # always the bytes now, never only the digest given: a size or time check would
+            # pass a package swapped for one of the same size and copied time (CodeRabbit)
+            try:
+                h = sha256_file(ph.path)
+            except OSError as e:
+                raise SystemExit(f"{ph.source_id}: cannot read {ph.path} to resume: {e}") from None
             if p["sha256"] != h:
                 raise SystemExit(
                     f"{a.out} was built from {p['file']} {p['sha256']}; use a new --out"
