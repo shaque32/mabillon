@@ -207,6 +207,16 @@ def _pairs(values: list[str], flag: str) -> dict[str, str]:
     return out
 
 
+def _sid(phone: dict) -> str:
+    return phone["source_id"]
+
+
+def _hashes(values: list[str]) -> dict[str, str]:
+    """--phone-sha256 values, lowercased: sha256sum prints lowercase hex, a hash copied in
+    uppercase is the same digest (Claude review on #267)."""
+    return {k: v.strip().lower() for k, v in _pairs(values, "--phone-sha256").items()}
+
+
 def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
     """The case's phones, from --ufdr (one phone, the v1 to v4 setup) or each --phone, with
     names, owners and zones from the definitions' `phones` (needed when there are two)."""
@@ -224,7 +234,7 @@ def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
         if a.source_id != SOURCE_ID:
             raise SystemExit("--source-id goes with --ufdr; --phone names each source id")
         paths = _pairs(a.phone, "--phone")
-    hashes = _pairs(a.phone_sha256 or [], "--phone-sha256")
+    hashes = _hashes(a.phone_sha256 or [])
     if hashes.keys() - paths.keys():
         raise SystemExit(f"--phone-sha256: no phone {sorted(hashes.keys() - paths.keys())[0]}")
     specs = (defs or {}).get(PHONES_KEY)
@@ -238,6 +248,15 @@ def phones_from(a, defs: dict | None) -> list[Phone]:  # noqa: ANN001
         raise SystemExit(
             f"--definitions: {PHONES_KEY} names {sorted(specs)}, the packages are {sorted(paths)}"
         )
+    for sid in sorted(specs):
+        own = specs[sid].get("zone")
+        if own and zone_all and own != zone_all:
+            # Neither silently wins: a phone's zone sets how every stated window on it is read
+            # (Claude review on #267).
+            raise SystemExit(
+                f"--definitions: {PHONES_KEY}.{sid}.zone is {own}, but the zone given for"
+                f" every phone is {zone_all}; give one"
+            )
     phones = [
         Phone(
             source_id=sid,
@@ -294,18 +313,10 @@ def build(  # noqa: ANN001
             f"imported {src.file_name} as {ph.source_id} ({importer.name}, {src.fidelity.value})"
             f" in {time.monotonic() - t:.0f} s"
         )
-        imported.append({**ph.record(), "importer": importer.name, "sha256": src.sha256})
-    _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
-        render_affidavit(claims, out / "affidavit.pdf"), conn
-    )
-    by_label = {p.label: p for p in paragraphs if p.label}
-    for c in claims:
-        para = by_label.get(str(c["para_no"]))
-        if para is None:
-            raise SystemExit(f"{c['claim_id']}: the ingester found no paragraph {c['para_no']}")
-        kind = ClaimType(c["claim_type"])
-        actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
-    for ph, rec in zip(phones, imported, strict=True):
+        rec = {**ph.record(), "importer": importer.name, "sha256": src.sha256}
+        imported.append(rec)
+        # The phone's name, zone and user are set right after its import, so a zone the run
+        # cannot use stops it before the next import (Claude review on #267).
         dev = f"dev:{ph.source_id}"
         try:
             actions.name_device(conn, dev, [ph.name], ACTOR)
@@ -313,6 +324,7 @@ def build(  # noqa: ANN001
             raise SystemExit(f"--definitions: {ph.source_id}: {e}") from None
         (recorded,) = conn.execute("SELECT timezone FROM devices WHERE id = ?", (dev,)).fetchone()
         rec["zone_recorded"] = recorded
+        rec["zone_set_by_examiner"] = False  # True only when the given zone is the case's
         if recorded and ph.zone:
             # The source's own zone is kept; the examiner's must say the same, or the claims'
             # times and the phone's would be read in two zones.
@@ -332,15 +344,33 @@ def build(  # noqa: ANN001
                 f" ({', '.join(seen)}), so no one zone can be given for it"
             )
         elif ph.zone:
+            if seen and resolve_zone(seen[0]) != resolve_zone(ph.zone):
+                # One zone in the phone's tables, left unrecorded only because some zone values
+                # could not be read: the given zone must still say the same (Claude review).
+                raise SystemExit(
+                    f"--phone-zone: {ph.source_id}'s own tables name the zone {seen[0]},"
+                    f" not {ph.zone}"
+                )
             # The examiner's statement of the zone, for a package that records none.
             try:
                 actions.set_device_zone(conn, dev, ph.zone, ACTOR)
             except actions.ReviewError as e:
                 raise SystemExit(f"--phone-zone: {e}") from None
+            rec["zone_set_by_examiner"] = True
             log(f"{ph.source_id}: the phone's zone, as the examiner gives it: {ph.zone}")
         elif not recorded:
             log(f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated")
         actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
+    _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
+        render_affidavit(claims, out / "affidavit.pdf"), conn
+    )
+    by_label = {p.label: p for p in paragraphs if p.label}
+    for c in claims:
+        para = by_label.get(str(c["para_no"]))
+        if para is None:
+            raise SystemExit(f"{c['claim_id']}: the ingester found no paragraph {c['para_no']}")
+        kind = ClaimType(c["claim_type"])
+        actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
     owners = {ph.owner for ph in phones}
     others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - owners)
     linked = {}
@@ -680,23 +710,32 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 f"{a.out} was built from report.xml {was.get('report_xml_sha256')}; use a new --out"
             )
-        was_zones = [p.pop("zone_given", None) for p in was["phones"]]
-        now_zones = [p.pop("zone_given", None) for p in setup["phones"]]
+
+        def zoneless(phones: list[dict]) -> list[dict]:
+            # by source id, so a resume may name the phones in any order (Claude review)
+            return sorted(
+                ({k: v for k, v in p.items() if k != "zone_given"} for p in phones),
+                key=_sid,
+            )
+
+        if any(was.get(k) != v for k, v in setup.items() if k != "phones") or zoneless(
+            was["phones"]
+        ) != zoneless(setup["phones"]):
+            raise SystemExit(
+                f"{a.out} was built with another source id or definitions, or other phones;"
+                " use a new --out"
+            )
+        was_zones = [p.get("zone_given") for p in sorted(was["phones"], key=_sid)]
+        now_zones = [p.get("zone_given") for p in sorted(setup["phones"], key=_sid)]
         if was_zones != now_zones:
             raise SystemExit(
                 f"--phone-zone: {a.out} was built with "
                 + (f"the zones {was_zones}" if any(was_zones) else "no zone given")
                 + "; resume with the same zones, or use a new --out"
             )
-        if any(was.get(k) != v for k, v in setup.items()):
-            raise SystemExit(
-                f"{a.out} was built with another source id or definitions, or other phones;"
-                " use a new --out"
-            )
-        for p, z in zip(setup["phones"], now_zones, strict=True):
-            p["zone_given"] = z
-        for p, h in zip(was["imported"], [ph.sha256 for ph in phones], strict=True):
-            if h and p["sha256"] != h:
+        given = {ph.source_id: ph.sha256 for ph in phones}
+        for p in was["imported"]:
+            if (h := given[p["source_id"]]) and p["sha256"] != h:
                 raise SystemExit(
                     f"{a.out} was built from {p['file']} {p['sha256']}; use a new --out"
                 )

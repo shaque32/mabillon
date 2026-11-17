@@ -435,8 +435,12 @@ def test_two_phones_each_take_their_name_and_user(pair, tmp_path):
         ("item2", "ufdr", sha["item2"]),
     ]
     assert "report_xml_sha256" not in run
-    # a resume names the same phones; swapping the packages is a new case
+    # a resume names the same phones, in any order and with hashes in either case; swapping
+    # the packages is a new case
     assert hickman_run.main(args) == 0
+    upper = [f"--phone-sha256={k}={v.upper()}" for k, v in sha.items()]
+    assert hickman_run.main([*_two(pair, tmp_path, defs)[2:4], *_two(pair, tmp_path, defs)[:2],
+                             *_two(pair, tmp_path, defs)[4:], *upper]) == 0  # fmt: skip
     swapped = [a.replace("item1=", "itemX=").replace("item2=", "item1=") for a in args]
     swapped = [a.replace("itemX=", "item2=") for a in swapped]
     with pytest.raises(SystemExit, match="other phones"):
@@ -467,6 +471,13 @@ def test_two_phones_each_take_their_name_and_user(pair, tmp_path):
             "owner is not a SUBJECT",
         ),
         ({"phones": {**PHONES, "item2": {**PHONES["item2"], "imei": "1"}}}, "needs a name"),
+        (
+            {
+                "phones": {**PHONES, "item2": {**PHONES["item2"], "zone": "America/Chicago"}},
+                "phone_time_zone": "America/New_York",
+            },
+            "item2.zone is America/Chicago, but the zone given for every phone",
+        ),
     ],
 )
 def test_two_phones_with_a_header_that_does_not_define_both_are_refused(pair, tmp_path, defs, why):
@@ -532,10 +543,9 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
     assert device_zones(conn) == {"dev:given": "America/New_York", "dev:kept": "America/New_York"}
     conn.close()
     run = json.loads((tmp_path / "out" / "run.json").read_text(encoding="utf-8"))
-    assert [(p["importer"], p["zone_recorded"]) for p in run["phones"]] == [
-        ("leapp", "America/New_York"),
-        ("leapp", None),
-    ]
+    assert [
+        (p["importer"], p["zone_recorded"], p["zone_set_by_examiner"]) for p in run["phones"]
+    ] == [("leapp", "America/New_York", False), ("leapp", None, True)]
     # a phone that kept two zones records none, and one given zone would misread part of it
     moved = phone("moved", ("America/New_York", "America/Chicago"))
     defs["phones"] = {"kept": PHONES["item1"], "moved": PHONES["item2"]}
@@ -550,3 +560,40 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
     args[args.index("--out") + 1] = str(tmp_path / "out3")
     with pytest.raises(SystemExit, match="moved recorded 2 zones"):
         hickman_run.main(args)
+
+
+def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):
+    # One zone in the phone's tables plus a zone value the importer could not read: the
+    # package records no zone, but a given zone must still match the one its tables name.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add(
+        "get_calllog",
+        **{
+            "Call Date": "2024-03-01T15:00:00Z",
+            "Partner": "+19195550111",
+            "Raw Call Type (as stored)": "1",
+            "Duration in Secs": "5",
+        },
+    )
+    lv.add(
+        "get_battery_usage_v4",
+        **{"Timestamp": "2024-03-01T00:00:00Z", "Timezone": "America/Chicago"},
+    )
+    lv.add(
+        "get_battery_usage_v4", **{"Timestamp": "2024-03-02T00:00:00Z", "Timezone": "Mars/Olympus"}
+    )
+    pkg = lv.write_zip(tmp_path / "half.zip")
+    claims = str(_claims(tmp_path, TWO[:1]))
+
+    def run(zone: str, out: str) -> int:
+        defs = {"phones": {"half": PHONES["item1"]}, "phone_time_zone": zone}
+        return hickman_run.main(
+            ["--phone", f"half={pkg}", "--claims", claims, "--out", str(tmp_path / out),
+             "--fake", "--definitions", str(_defs(tmp_path, defs))]
+        )  # fmt: skip
+
+    with pytest.raises(SystemExit, match="half's own tables name the zone America/Chicago"):
+        run("America/New_York", "out")
+    assert run("America/Chicago", "out2") == 0

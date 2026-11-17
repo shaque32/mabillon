@@ -9,6 +9,7 @@ All data is synthetic.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 from datetime import UTC, datetime
@@ -259,13 +260,17 @@ def test_a_quoted_message_s_own_words_never_stop_the_report(conn):
                 f"UPDATE {table} SET {col} = replace({col}, ?, ?) WHERE {col} LIKE ?",  # noqa: S608
                 (old, new, f"%{old}%"),
             )
+    # the raw time a note quotes is the source's text too (Claude review on #267)
+    conn.execute("UPDATE messages SET ts_raw = ts_raw || ' deleted' WHERE body LIKE '%i deleted%'")
     conn.commit()
     rows = rows_for(conn)
     assert row(rows, "8", "At 2:31 a.m.").status == "differs"
+    assert any(" deleted, UTC" in n for n in row(rows, "8", "At 2:31 a.m.").notes)
     assert row(rows, "9", "At 10:05 p.m.").status == "order"
     html = render_report(conn)
     assert '<span class="q">&quot;i deleted&quot;</span>' in html
     assert '<span class="q">&quot;i deleted it tonight&quot;</span>' in html
+    assert re.search(r'printed \(<span class="q">[^<]* deleted</span>, UTC', html)
     check_report_text(html)
 
 
