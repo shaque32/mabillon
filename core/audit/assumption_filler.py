@@ -4431,8 +4431,14 @@ class LocalAssumptionFiller:
                 rf"\b(?:{re.escape(app)}|{re.escape(app.upper())})\b", bare
             )
 
+        # "by phone" is read before a phone named "Phone" is blanked; the message and call
+        # words after, so a phone named "Messages Phone" is no kind of contact (CodeRabbit on
+        # #265)
+        with_names = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim.text)))
         one_kind = bool(
-            _MESSAGE_WORD_RE.search(bare) or _CALL_WORD_RE.search(bare) or _BY_PHONE_RE.search(bare)
+            _MESSAGE_WORD_RE.search(bare)
+            or _CALL_WORD_RE.search(bare)
+            or _BY_PHONE_RE.search(with_names)
         )
         # Guards on every count and absence row, whether code or the model chose its apps
         # (Greptile on #265).

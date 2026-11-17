@@ -3486,6 +3486,17 @@ def test_a_phone_named_after_an_app_names_no_app(tmp_path):
     assert [a.params.channels for a in made] == [("Telegram",)], filler.drops
 
 
+def test_by_phone_is_one_kind_of_contact_on_a_case_with_a_phone_named_phone(tmp_path):
+    # A phone labelled "Phone" blanked "phone" in "no contact by phone", so the absence, read
+    # on messages and calls alike, was kept (CodeRabbit on #265).
+    c = _case_with(tmp_path, "UPDATE devices SET label = 'Phone' WHERE id = 'dev:item1'")
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    text = "PETROV and REYES had no contact by phone between March 20 and March 23, 2026."
+    made, filler = build_text(c, text, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+    assert any("one kind of contact" in d.reason for d in filler.drops), filler.drops
+
+
 def test_a_video_is_a_word_no_check_reads(conn):
     # "video" was blanked as a calling app's name, so "sent a video" passed on the sender and
     # time checks alone (CodeRabbit on #265).

@@ -32,8 +32,8 @@
     guard runs on every app row, also those the model scoped; it knows messaging, social and
     mail apps beyond the calling apps ("no contact on TikTok"), reads a short name of a held
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
-    picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app (CodeRabbit on
-    #265). "Texted" on a
+    picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, while "by phone"
+    is still one kind of contact on a case with a phone named "Phone" (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
     alone (Claude review and CodeRabbit on #265). Before, "wrote on
@@ -66,7 +66,7 @@
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,783), and
+  its fix. The filler, fill, replay, override and check suites pass locally (1,784), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
