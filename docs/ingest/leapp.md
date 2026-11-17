@@ -60,13 +60,17 @@ sent to the same person with the same text within two seconds, held only in Goog
 would be skipped as that MMS. The other party is the sender of a received message, and for a sent one the
 receiver: `Other Participant/Conversation Name` when it is a number or email; when it is a
 display name, the one number the phone's contacts (ALEAPP `contacts`) give that name, if every
-sender of the chat's received messages is that number too. Failing both, the chat's one sender
+sender of the chat's received messages is that number too (ALEAPP does not say whether a chat
+is a group, so a group named exactly as a contact, where only that contact has written, is
+taken for that contact's chat). Failing both, the chat's one sender
 (when it has exactly one) is used only to find a possible copy, never to skip one, since a group
 may have had one sender so far. An SMS or MMS names its other party in `Address`, `From Address`
 (received) or `To Address`, `Cc` and `Bcc` (sent), and counts only when it names exactly one.
 Numbers compare by their digits, and one with a country code of up to three digits in front of
-at least ten digits matches the same number without it (`+19195550111` and `(919) 555-0111`);
-two numbers that both carry a country code (`+` or `00`) match only when equal. A national
+at least ten digits matches the same number without it (`+19195550111` and `(919) 555-0111`),
+but only when that country code is marked (`+` or `00`): `17912345678` and `7912345678` may be
+two national numbers, so they make only a possible copy (below). Two numbers that both carry a
+country code match only when equal. A national
 number written with its trunk 0 (`07911 123456`) never matches the same number with its country
 code (`+44 7911 123456`), but when its other seven or more digits follow a country code of up to
 three digits it makes a possible copy (below). Emails compare without case. When the direction

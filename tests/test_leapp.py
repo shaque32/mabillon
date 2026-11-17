@@ -905,19 +905,25 @@ def test_one_table_read_through_never_hides_another_with_the_same_key(tmp_path: 
 
 
 @pytest.mark.parametrize(
-    ("a", "b", "same"),
+    ("a", "b", "same", "maybe"),
     [
-        ("+19195550111", "(919) 555-0111", True),
-        ("19195550111", "9195550111", True),
-        ("+19195550111", "0019195550111", True),
-        ("+19195550111", "+919195550111", False),  # two country codes: never by suffix
-        ("+19195550111", "+19195550112", False),
-        ("Bob@Example.com", "bob@example.com", True),
+        ("+19195550111", "(919) 555-0111", True, False),
+        ("+19195550111", "0019195550111", True, False),
+        ("0019195550111", "9195550111", True, False),
+        # CodeRabbit on #264: an unmarked leading digit may be part of another national number
+        ("17912345678", "7912345678", False, True),
+        ("+19195550111", "+919195550111", False, False),  # two country codes: never by suffix
+        ("+19195550111", "+19195550112", False, False),
+        ("07911 123456", "+44 7911 123456", False, True),
+        ("Bob@Example.com", "bob@example.com", True, False),
     ],
 )
-def test_two_handles_are_one_party_only_when_they_can_be(a: str, b: str, same: bool) -> None:
+def test_two_handles_are_one_party_only_when_they_can_be(
+    a: str, b: str, same: bool, maybe: bool
+) -> None:
     ka, kb = leapp._party_key(a), leapp._party_key(b)
     assert ka and kb and leapp._same_party(ka, kb) is same
+    assert leapp._maybe_same_party(ka, kb) is maybe
 
 
 def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_path: Path) -> None:

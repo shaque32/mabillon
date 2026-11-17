@@ -89,6 +89,9 @@
   texts to the same person within two seconds, one of them only in Google Messages, would be read
   as one. A photo only in Google Messages, sent by the same person with the same text within two
   seconds of an MMS photo whose own Google Messages copy is missing, would be read as that MMS.
+  ALEAPP does not say whether a Google Messages chat is a group, so a sent message in a group
+  whose custom name is exactly a contact's name, where only that contact has written, would be
+  read as a copy of a one-to-one SMS to that contact with the same text within two seconds.
   A number written with a national trunk prefix ("07911...") never matches the same number
   with a country code; such a copy is kept and listed as a possible copy, so a count over it is
   inconclusive rather than double. Rejected calls (ALEAPP type 5) are read as missed, where Mabillon's UFDR

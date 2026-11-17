@@ -560,23 +560,34 @@ def _party_key(v: object) -> str | None:
 def _same_party(a: str, b: str) -> bool:
     """True when two party keys name one handle: equal, or one number is the other with a
     country code of up to three digits in front of at least ten digits ("+19195550111" and
-    "(919) 555-0111"). Two numbers that both carry their country code ("+...") match only when
-    equal."""
+    "(919) 555-0111"). The longer one must carry its country code explicitly ("+" or "00"):
+    without it, "17912345678" may be another national number, not "7912345678" with a country
+    code (CodeRabbit on #264). Two numbers that both carry one match only when equal."""
     if a == b:
         return True
     if "@" in a or "@" in b or (a.startswith("+") and b.startswith("+")):
         return False
-    short, long = sorted((a.lstrip("+"), b.lstrip("+")), key=len)
-    return len(short) >= 10 and long.endswith(short) and len(long) - len(short) <= 3
+    short, long = sorted((a, b), key=lambda k: len(k.lstrip("+")))
+    return long.startswith("+") and _suffix_of(short, long)
+
+
+def _suffix_of(short: str, long: str) -> bool:
+    """True when `long`'s digits are `short`'s (at least ten) after one to three more."""
+    s, l_ = short.lstrip("+"), long.lstrip("+")
+    return len(s) >= 10 and l_.endswith(s) and 1 <= len(l_) - len(s) <= 3
 
 
 def _maybe_same_party(a: str, b: str) -> bool:
-    """True when two numbers that `_same_party` keeps apart may still be one handle: a national
-    number written with its trunk 0 ("07911 123456") whose rest of at least seven digits is
-    the other number after a country code of up to three digits ("+44 7911 123456"). Never
-    enough for a copy, only for a possible copy (CodeRabbit on #264)."""
-    if "@" in a or "@" in b:
+    """True when two numbers that `_same_party` keeps apart may still be one handle: one is the
+    other after one to three digits that may be a country code but are not marked as one
+    ("17912345678" and "7912345678"), or a national number written with its trunk 0
+    ("07911 123456") whose rest of at least seven digits is the other number after a country
+    code of up to three digits ("+44 7911 123456"). Never enough for a copy, only for a
+    possible copy (CodeRabbit on #264)."""
+    if "@" in a or "@" in b or (a.startswith("+") and b.startswith("+")) or _same_party(a, b):
         return False
+    if _suffix_of(*sorted((a, b), key=lambda k: len(k.lstrip("+")))):
+        return True
     for nat, intl in ((a, b), (b, a)):
         rest, full = nat[1:], intl.lstrip("+")
         if (
