@@ -44,7 +44,10 @@
   for a copy of "OK" from Alice, and each SMS or MMS stands for at most one Google Messages
   message, paired nearest in time first. Attachments cannot be compared one to one across the
   two stores (their file names differ), so a message with attachments is paired only when the
-  pairing is unambiguous; otherwise every row involved is kept and listed as a possible copy. When the other party cannot be compared (a sent message whose chat has no single
+  pairing is unambiguous; otherwise every row involved is kept and listed as a possible copy. A
+  sent message's other party comes from the chat's number, or from the phone's contacts for a
+  chat named by display name; the chat's one sender alone only marks a possible copy. Two
+  numbers that both carry a country code match only when equal. When the other party cannot be compared (a sent message whose chat has no single
   sender, or a group MMS), the message is kept, flagged `may_be_same_as_an_sms_or_mms_message`,
   and both rows are listed as possible copies, so a count over them is inconclusive. The count
   check's wording for such rows now says "listed by the import as a possible copy". (2) The
@@ -54,14 +57,15 @@
   their record ids. (5) A table counts as read only when it was read through: a missing table, or
   a chat view naming no text, direction or time column, is listed with `read_failed`, raises
   `leapp_artifact_not_read`, and leaves its app out of `apps_read_in_full`; the phone's own
-  messages or calls count as read in full only when all their tables with records were read.
+  messages or calls count as read in full only when all their tables that may hold records (a
+  missing count counts as may) were read, compared by manifest entry.
   (6) A run whose manifest does not say `Complete` (LEAPP writes `In Progress` when a run starts)
   is fidelity `unknown`, not `full_extraction`. (7) The count check's "at most" and "exactly"
   need every app counted to be read in full in that source (`apps_read_in_full`); otherwise they
   are inconclusive. (8) The report's limitations name the LEAPP reader for a LEAPP import, not
   the UFDR reader.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (33 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (40 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text

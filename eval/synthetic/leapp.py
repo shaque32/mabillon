@@ -193,7 +193,7 @@ class Lava:
                         "record_count": len(rows),
                         "source_path": f"/synthetic/{key}.db",
                         **(
-                            {"data_views": {"conversation": DATA_VIEWS[key]}}
+                            {"data_views": {"conversation": dict(DATA_VIEWS[key])}}
                             if key in DATA_VIEWS
                             else {}
                         ),

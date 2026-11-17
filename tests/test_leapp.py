@@ -680,29 +680,41 @@ def test_one_sms_stands_for_at_most_one_google_messages_message(tmp_path: Path) 
     assert locs == ["get_googlemessages/rowid=2"]
 
 
-def test_a_sent_google_messages_message_takes_its_chats_one_sender_as_the_other_party(
+def test_a_sent_google_messages_message_is_a_copy_only_when_its_party_is_known(
     tmp_path: Path,
 ) -> None:
-    # A sent message names the chat by display name. With Alice the chat's one sender, it is
-    # compared as sent to Alice; with no sender in the chat it cannot be compared, so it is kept
-    # and flagged.
+    # A sent message names the chat by display name. When the phone's contacts give that name
+    # one number, and the chat heard from no one else, it is compared as sent to that number.
+    # The chat's one sender alone is not enough (a group may have one sender so far: CodeRabbit
+    # on #264), and with neither the party cannot be compared: both are kept and flagged.
     sent = {"Message Timestamp": "2024-03-01T12:00:00Z", "Direction": "Outgoing",
             "Message Sender": OWNER, "Other Participant/Conversation Name": "Alice Ames",
-            "Message": "on my way"}  # fmt: skip
+            "Message": "on my way", "Conversation ID": "9"}  # fmt: skip
     native = [{"Date": "2024-03-01T12:00:00Z", "Type": "Sent", "Address": ALICE,
                "Body": "on my way"}]  # fmt: skip
     heard = {"Message Timestamp": "2024-03-01T11:00:00Z", "Direction": "Incoming",
              "Message Sender": ALICE, "Message": "where", "Conversation ID": "9"}  # fmt: skip
+    alice = {"Mimetype": "vnd.android.cursor.item/phone_v2", "Data 1": "(919) 555-0111",
+             "Display Name": "Alice Ames", "Phone Number": "(919) 555-0111"}  # fmt: skip
     possible = "may_be_same_as_an_sms_or_mms_message"
-    locs, flags, _ = _gm_imported(
-        tmp_path, _gm_lava(native, [heard, {**sent, "Conversation ID": "9"}])
-    )
-    assert locs == ["get_googlemessages/rowid=1"] and possible not in flags
-    (tmp_path / "b").mkdir()
-    lv = _gm_lava(native, [{**sent, "Conversation ID": "7"}])
-    locs, flags, codes = _gm_imported(tmp_path / "b", lv)
-    assert locs == ["get_googlemessages/rowid=1"]
-    assert flags[possible] == 1 and possible in codes
+    for n, (contact, gm, kept) in enumerate(
+        [
+            (True, [heard, sent], ["get_googlemessages/rowid=1"]),  # the copy is skipped
+            (True, [sent], []),  # the contact alone names the party
+            (False, [heard, sent], ["get_googlemessages/rowid=1", "get_googlemessages/rowid=2"]),
+            (False, [sent], ["get_googlemessages/rowid=1"]),
+        ]
+    ):
+        lv = _gm_lava(native, gm)
+        if contact:
+            lv.add("contacts", **alice)
+        (tmp_path / str(n)).mkdir()
+        locs, flags, codes = _gm_imported(tmp_path / str(n), lv)
+        assert locs == kept, n
+        if contact:
+            assert possible not in flags, n
+        else:
+            assert flags[possible] == 1 and possible in codes, n
 
 
 def _zip_with(tmp_path: Path, lv: Lava, change) -> Path:
@@ -841,3 +853,39 @@ def test_one_table_read_through_never_hides_another_with_the_same_key(tmp_path: 
     payload = coverage.load(conn, "and").payload
     assert "Instagram" not in payload["apps_read_in_full"]
     assert [e["table"] for e in payload["not_imported"] if e.get("read_failed")] == ["not_there"]
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "same"),
+    [
+        ("+19195550111", "(919) 555-0111", True),
+        ("19195550111", "9195550111", True),
+        ("+19195550111", "0019195550111", True),
+        ("+19195550111", "+919195550111", False),  # two country codes: never by suffix
+        ("+19195550111", "+19195550112", False),
+        ("Bob@Example.com", "bob@example.com", True),
+    ],
+)
+def test_two_handles_are_one_party_only_when_they_can_be(a: str, b: str, same: bool) -> None:
+    ka, kb = leapp._party_key(a), leapp._party_key(b)
+    assert ka and kb and leapp._same_party(ka, kb) is same
+
+
+def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_path: Path) -> None:
+    # CodeRabbit on #264: a missing record count was read as zero.
+    lv = _android()
+    z = lv.write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    sms = next(a for a in lava.artifacts if a.key == "get_sms_mms")
+    from dataclasses import replace
+
+    assert leapp._may_hold_records(lava, replace(sms, record_count=None))
+    assert not leapp._may_hold_records(lava, replace(sms, record_count=0))
+    assert leapp._may_hold_records(lava, replace(sms, record_count=None, table="not_there"))
+    lv.tables["get_sms_mms"] = []  # the table is written with no rows
+    z = lv.write_zip(tmp_path / "b.zip")
+    with z.open("rb") as f:
+        empty = leapp.read_lava(f, z.name)
+    sms = next(a for a in empty.artifacts if a.key == "get_sms_mms")
+    assert not leapp._may_hold_records(empty, replace(sms, record_count=None))

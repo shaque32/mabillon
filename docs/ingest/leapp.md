@@ -56,16 +56,21 @@ differently (a Google Messages cache path, an MMS part file), so attachments are
 number only, and a message with attachments is paired only when it has one such SMS or MMS and
 that SMS or MMS has no other such Google Messages message; otherwise all of them are kept and
 listed as possible copies. The other party is the sender of a received message, and for a sent one the
-receiver: `Other Participant/Conversation Name` when it is a number or email, else the one
-sender of the chat's received messages when the chat has exactly one. An SMS or MMS names its
-other party in `Address`, `From Address` (received) or `To Address`, `Cc` and `Bcc` (sent), and
-counts only when it names exactly one. Numbers compare by their digits, and one with a country
-code of up to three digits in front of at least ten digits matches the same number without it
-(`+19195550111` and `(919) 555-0111`); emails compare without case. When the direction and text
-match but either side names no other party, or several, the Google Messages message is kept and
-flagged (`may_be_same_as_an_sms_or_mms_message`), so a count over it may hold one message twice.
-On the public Android 13 phone all 123 copies found by direction and text alone still match
-under this rule, and the same pairs. The coverage record and the import's audit log entry list each skipped one under
+receiver: `Other Participant/Conversation Name` when it is a number or email; when it is a
+display name, the one number the phone's contacts (ALEAPP `contacts`) give that name, if every
+sender of the chat's received messages is that number too. Failing both, the chat's one sender
+(when it has exactly one) is used only to find a possible copy, never to skip one, since a group
+may have had one sender so far. An SMS or MMS names its other party in `Address`, `From Address`
+(received) or `To Address`, `Cc` and `Bcc` (sent), and counts only when it names exactly one.
+Numbers compare by their digits, and one with a country code of up to three digits in front of
+at least ten digits matches the same number without it (`+19195550111` and `(919) 555-0111`);
+two numbers that both carry a country code (`+` or `00`) match only when equal. Emails compare
+without case. When the direction and text match but either side names no other party, or
+several, or the party was only inferred, the Google Messages message is kept, flagged
+(`may_be_same_as_an_sms_or_mms_message`) and listed with the SMS or MMS as possible copies
+(`numbered_copy_records`), so a count over them is inconclusive. On the public Android 13 phone
+all 123 copies found by direction and text alone still match under this rule, with the same
+pairs; the 12 sent ones are confirmed by the contact's number. The coverage record and the import's audit log entry list each skipped one under
 `leapp.google_messages_skipped`: its locator, its part rows (LAVA rowids), the SMS or MMS it
 matched (`same_as`, the nearest in time) and `seconds_apart`, so another reader can re-check
 every pair. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
@@ -177,7 +182,9 @@ but its table is missing from the database, or a chat app's conversation view na
 direction or time column, it is listed in `not_imported` with `read_failed` and its reason, the
 coverage summary raises `leapp_artifact_not_read`, and its app is not in `apps_read_in_full`.
 The phone's own messages, or its calls, count as read in full only when every one of their
-tables that holds records was read. The absence check and the count check's "at most" and
+tables that may hold records was read. A table may hold records unless the manifest states 0, or
+states no count and the table is in the database with no rows. Tables are compared by manifest
+entry, so two entries with one key are each counted. The absence check and the count check's "at most" and
 "exactly" read that list: an app not on it cannot show that something is absent or that a count
 is complete.
 

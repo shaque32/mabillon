@@ -545,18 +545,28 @@ def _party_key(v: object) -> str | None:
         return None
     if "@" in s:
         return s.casefold()
-    return re.sub(r"\D", "", s) or None
+    digits = re.sub(r"\D", "", s)
+    if not digits:
+        return None
+    # An explicit international prefix ("+" or "00") is kept as "+", so two numbers that both
+    # carry their country code are never matched by suffix (CodeRabbit on #264).
+    if s.startswith("+"):
+        return "+" + digits
+    if digits.startswith("00") and len(digits) > 2:
+        return "+" + digits[2:]
+    return digits
 
 
 def _same_party(a: str, b: str) -> bool:
     """True when two party keys name one handle: equal, or one number is the other with a
     country code of up to three digits in front of at least ten digits ("+19195550111" and
-    "(919) 555-0111")."""
+    "(919) 555-0111"). Two numbers that both carry their country code ("+...") match only when
+    equal."""
     if a == b:
         return True
-    if "@" in a or "@" in b:
+    if "@" in a or "@" in b or (a.startswith("+") and b.startswith("+")):
         return False
-    short, long = sorted((a, b), key=len)
+    short, long = sorted((a.lstrip("+"), b.lstrip("+")), key=len)
     return len(short) >= 10 and long.endswith(short) and len(long) - len(short) <= 3
 
 
@@ -630,6 +640,7 @@ class _GmMessage:
     body: str
     party: str | None  # its other party (_party_key); None when it cannot be told
     media: int  # attachments
+    inferred: bool = False  # party taken from the chat's one sender, not stated or a contact
 
 
 def _match_copies(
@@ -662,7 +673,12 @@ def _match_copies(
     def copy(m: _GmMessage, n: _Native) -> bool:
         return m.party is not None and n.party is not None and _same_party(m.party, n.party)
 
-    copies = [[x for x in cs if copy(m, x[2])] for m, cs in zip(msgs, cands, strict=True)]
+    # A party taken only from the chat's one sender may be a group's one sender so far, so it
+    # never confirms a copy (CodeRabbit on #264): such a match is a possible copy.
+    copies = [
+        [x for x in cs if copy(m, x[2])] if not m.inferred else []
+        for m, cs in zip(msgs, cands, strict=True)
+    ]
     claimants = Counter(x[2].locator for cs in copies for x in cs)
     result: list[tuple[tuple[str, int] | None, str | None]] = [(None, None)] * len(msgs)
     used: set[str] = set()
@@ -688,12 +704,44 @@ def _match_copies(
                     and n.locator not in used
                     and (m.party is None or n.party is None)
                 )
-                or (copy(m, n) and m.media)
+                or (copy(m, n) and (m.media or m.inferred))
             ),
             None,
         )
         result[i] = (None, possible)
     return result
+
+
+def _contact_numbers(lava: Lava) -> dict[str, list[str]]:
+    """ALEAPP contacts: display name -> the party keys of its phone numbers."""
+    out: dict[str, list[str]] = defaultdict(list)
+    for art in lava.artifacts:
+        if art.key == "contacts":
+            for _rowid, r in lava.rows(art):
+                name, k = _text(r.get("Display Name")), _party_key(r.get("Phone Number"))
+                if name and k:
+                    out[name].append(k)
+    return out
+
+
+def _sent_party(
+    r: dict[str, Any], heard: set[str], named: dict[str, list[str]]
+) -> tuple[str | None, bool]:
+    """(other party, inferred) of a sent Google Messages message. `Other Participant/
+    Conversation Name` when it is a number or email; else, when it is a display name, the one
+    number the phone's contacts give that name, if every sender heard in the chat is that number
+    too; else the chat's one sender, inferred (it may be a group's one sender so far)."""
+    label = r.get("Other Participant/Conversation Name")
+    if k := _party_key(label):
+        return k, False
+    nums = named.get(_text(label) or "", [])
+    if nums and all(_same_party(nums[0], x) for x in nums[1:]):
+        if all(_same_party(nums[0], h) for h in heard):
+            return nums[0], False
+        return None, False
+    if len(heard) == 1:
+        return next(iter(heard)), True
+    return None, False
 
 
 def _android_google_messages(c: _Ctx) -> None:
@@ -716,6 +764,7 @@ def _android_google_messages(c: _Ctx) -> None:
     for (cid, _t, d, who), _rows in groups.items():
         if d.lower() == "incoming" and (k := _party_key(who)):
             heard[cid].add(k)
+    named = _contact_numbers(c.lava)
     msgs: list[_GmMessage] = []
     medias: list[list[str]] = []
     for rows in groups.values():
@@ -738,16 +787,15 @@ def _android_google_messages(c: _Ctx) -> None:
             and (mt := _text(x.get("Message Type")) or "")
             and not mt.startswith("text/")
         ]
+        inferred = False
         if mdir is MessageDirection.INCOMING:
             party = _party_key(r.get("Message Sender"))
         elif mdir is MessageDirection.OUTGOING:
             cid = _text(r.get("Conversation ID")) or ""
-            party = _party_key(r.get("Other Participant/Conversation Name")) or (
-                next(iter(heard[cid])) if len(heard[cid]) == 1 else None
-            )
+            party, inferred = _sent_party(r, heard[cid], named)
         else:
             party = None
-        msgs.append(_GmMessage(ts, mdir, body, party, len(media)))
+        msgs.append(_GmMessage(ts, mdir, body, party, len(media), inferred))
         medias.append(media)
     matches = _match_copies(msgs, native)
     for rows, m, media, (match, possible) in zip(
@@ -1138,6 +1186,17 @@ def device_facts(lava: Lava) -> dict[str, Any]:
 # ---------------------------------------------------------------- importer
 
 
+def _may_hold_records(lava: Lava, art: Artifact) -> bool:
+    """False only when the artifact is known to be empty: the manifest states 0 records, or it
+    states no count and its table is in the database with no rows (CodeRabbit on #264)."""
+    if art.record_count is not None:
+        return art.record_count > 0
+    if not lava.has_table(art):
+        return True
+    quoted = art.table.replace(chr(34), chr(34) * 2)
+    return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
+
+
 def _not_read(art: Artifact, why: str) -> dict[str, Any]:
     return {"name": art.name, "category": art.category, "table": art.table,
             "records": art.record_count, "reason": why, "read_failed": True}  # fmt: skip
@@ -1157,7 +1216,7 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     # hide another that was not (CodeRabbit on #264).
     done = {id(a) for _, a in read}
     keys = {a.key for _, a in read}
-    unread = [a for a in lava.artifacts if id(a) not in done and (a.record_count or 0) > 0]
+    unread = [a for a in lava.artifacts if id(a) not in done and _may_hold_records(lava, a)]
     unread_keys = {a.key for a in unread}
     apps: set[str] = set()
     if keys & _NATIVE_MESSAGE_KEYS and not unread_keys & _NATIVE_MESSAGE_KEYS:

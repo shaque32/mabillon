@@ -173,7 +173,8 @@ class CountCheck(TemplateCheck):
             lines.append(f"{deleted} of them carry the source's deletion flag")
         if no_time:
             lines.append(f"{len(no_time)} matching messages have no usable time")
-        extra = [r for r in unplaced if r not in unknown_sender]
+        named_already = {r.id for r in unknown_sender}
+        extra = [r for r in unplaced if r.id not in named_already]
         if extra:
             lines.append(
                 f"{len(extra)} messages name no sender or no receiver, so they may be among "
