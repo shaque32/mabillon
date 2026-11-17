@@ -297,88 +297,96 @@ def build(  # noqa: ANN001
     db = out / "case.db"
     db.unlink(missing_ok=True)
     conn = connect(db)
-    apply_schema(conn)
-    defined = DEFINED_NUMBERS if defined is None else defined
-    imported = []
-    for ph in phones:
-        t = time.monotonic()
-        importer = report_importer(ph.path)
-        try:
-            src = importer(source_id=ph.source_id, expected_sha256=ph.sha256).import_source(
-                ph.path, conn
-            )
-        except InputChanged as e:
-            raise SystemExit(f"--phone-sha256: {e}") from None
-        log(
-            f"imported {src.file_name} as {ph.source_id} ({importer.name}, {src.fidelity.value})"
-            f" in {time.monotonic() - t:.0f} s"
-        )
-        rec = {**ph.record(), "importer": importer.name, "sha256": src.sha256}
-        imported.append(rec)
-        # The phone's name, zone and user are set right after its import, so a zone the run
-        # cannot use stops it before the next import (Claude review on #267).
-        dev = f"dev:{ph.source_id}"
-        try:
-            actions.name_device(conn, dev, [ph.name], ACTOR)
-        except actions.ReviewError as e:
-            raise SystemExit(f"--definitions: {ph.source_id}: {e}") from None
-        (recorded,) = conn.execute("SELECT timezone FROM devices WHERE id = ?", (dev,)).fetchone()
-        rec["zone_recorded"] = recorded
-        rec["zone_set_by_examiner"] = False  # True only when the given zone is the case's
-        if recorded and ph.zone:
-            # The source's own zone is kept; the examiner's must say the same, or the claims'
-            # times and the phone's would be read in two zones.
-            if resolve_zone(recorded) != resolve_zone(ph.zone):
-                raise SystemExit(
-                    f"--phone-zone: the extraction records {ph.source_id}'s zone ({recorded}),"
-                    f" not {ph.zone}"
-                )
-            log(f"{ph.source_id}: the package records the zone given ({recorded})")
-        elif len(seen := zones_seen(conn, ph.source_id)) > 1:
-            # The package records no zone because the phone kept more than one (LEAPP's
-            # leapp.device.zones_seen): one given zone would misread part of its times, and
-            # with none every stated window on it would be refused, so the run stops here
-            # rather than score a phone it cannot read (CodeRabbit on #267).
-            raise SystemExit(
-                f"--phone-zone: {ph.source_id} recorded {len(seen)} zones"
-                f" ({', '.join(seen)}), so no one zone can be given for it"
-            )
-        elif ph.zone:
-            if seen and resolve_zone(seen[0]) != resolve_zone(ph.zone):
-                # One zone in the phone's tables, left unrecorded only because some zone values
-                # could not be read: the given zone must still say the same (Claude review).
-                raise SystemExit(
-                    f"--phone-zone: {ph.source_id}'s own tables name the zone {seen[0]},"
-                    f" not {ph.zone}"
-                )
-            # The examiner's statement of the zone, for a package that records none.
+    # Closed on a refusal too: a SystemExit's traceback keeps this frame, and an open
+    # connection locks case.db on Windows for the next build (CI on #267).
+    try:
+        apply_schema(conn)
+        defined = DEFINED_NUMBERS if defined is None else defined
+        imported = []
+        for ph in phones:
+            t = time.monotonic()
+            importer = report_importer(ph.path)
             try:
-                actions.set_device_zone(conn, dev, ph.zone, ACTOR)
+                src = importer(source_id=ph.source_id, expected_sha256=ph.sha256).import_source(
+                    ph.path, conn
+                )
+            except InputChanged as e:
+                raise SystemExit(f"--phone-sha256: {e}") from None
+            log(
+                f"imported {src.file_name} as {ph.source_id}"
+                f" ({importer.name}, {src.fidelity.value}) in {time.monotonic() - t:.0f} s"
+            )
+            rec = {**ph.record(), "importer": importer.name, "sha256": src.sha256}
+            imported.append(rec)
+            # The phone's name, zone and user are set right after its import, so a zone the run
+            # cannot use stops it before the next import (Claude review on #267).
+            dev = f"dev:{ph.source_id}"
+            try:
+                actions.name_device(conn, dev, [ph.name], ACTOR)
             except actions.ReviewError as e:
-                raise SystemExit(f"--phone-zone: {e}") from None
-            rec["zone_set_by_examiner"] = True
-            log(f"{ph.source_id}: the phone's zone, as the examiner gives it: {ph.zone}")
-        elif not recorded:
-            log(f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated")
-        actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
-    _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
-        render_affidavit(claims, out / "affidavit.pdf"), conn
-    )
-    by_label = {p.label: p for p in paragraphs if p.label}
-    for c in claims:
-        para = by_label.get(str(c["para_no"]))
-        if para is None:
-            raise SystemExit(f"{c['claim_id']}: the ingester found no paragraph {c['para_no']}")
-        kind = ClaimType(c["claim_type"])
-        actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
-    owners = {ph.owner for ph in phones}
-    others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - owners)
-    linked = {}
-    for name in others:
-        pid = actions.add_person(conn, name, ACTOR)
-        if name in defined:
-            linked[name] = link_defined_number(conn, pid, defined[name])
-    conn.close()
+                raise SystemExit(f"--definitions: {ph.source_id}: {e}") from None
+            (recorded,) = conn.execute(
+                "SELECT timezone FROM devices WHERE id = ?", (dev,)
+            ).fetchone()
+            rec["zone_recorded"] = recorded
+            rec["zone_set_by_examiner"] = False  # True only when the given zone is the case's
+            if recorded and ph.zone:
+                # The source's own zone is kept; the examiner's must say the same, or the claims'
+                # times and the phone's would be read in two zones.
+                if resolve_zone(recorded) != resolve_zone(ph.zone):
+                    raise SystemExit(
+                        f"--phone-zone: the extraction records {ph.source_id}'s zone ({recorded}),"
+                        f" not {ph.zone}"
+                    )
+                log(f"{ph.source_id}: the package records the zone given ({recorded})")
+            elif len(seen := zones_seen(conn, ph.source_id)) > 1:
+                # The package records no zone because the phone kept more than one (LEAPP's
+                # leapp.device.zones_seen): one given zone would misread part of its times, and
+                # with none every stated window on it would be refused, so the run stops here
+                # rather than score a phone it cannot read (CodeRabbit on #267).
+                raise SystemExit(
+                    f"--phone-zone: {ph.source_id} recorded {len(seen)} zones"
+                    f" ({', '.join(seen)}), so no one zone can be given for it"
+                )
+            elif ph.zone:
+                if seen and resolve_zone(seen[0]) != resolve_zone(ph.zone):
+                    # One zone in the phone's tables, left unrecorded only because some zone values
+                    # could not be read: the given zone must still say the same (Claude review).
+                    raise SystemExit(
+                        f"--phone-zone: {ph.source_id}'s own tables name the zone {seen[0]},"
+                        f" not {ph.zone}"
+                    )
+                # The examiner's statement of the zone, for a package that records none.
+                try:
+                    actions.set_device_zone(conn, dev, ph.zone, ACTOR)
+                except actions.ReviewError as e:
+                    raise SystemExit(f"--phone-zone: {e}") from None
+                rec["zone_set_by_examiner"] = True
+                log(f"{ph.source_id}: the phone's zone, as the examiner gives it: {ph.zone}")
+            elif not recorded:
+                log(
+                    f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated"
+                )
+            actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
+        _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
+            render_affidavit(claims, out / "affidavit.pdf"), conn
+        )
+        by_label = {p.label: p for p in paragraphs if p.label}
+        for c in claims:
+            para = by_label.get(str(c["para_no"]))
+            if para is None:
+                raise SystemExit(f"{c['claim_id']}: the ingester found no paragraph {c['para_no']}")
+            kind = ClaimType(c["claim_type"])
+            actions.add_claim(conn, c["claim_id"], para.id, c["text"], kind, ACTOR)
+        owners = {ph.owner for ph in phones}
+        others = sorted(set(SUBJECT.findall(" ".join(c["text"] for c in claims))) - owners)
+        linked = {}
+        for name in others:
+            pid = actions.add_person(conn, name, ACTOR)
+            if name in defined:
+                linked[name] = link_defined_number(conn, pid, defined[name])
+    finally:
+        conn.close()
     log(
         f"case built: {len(claims)} claims on {len(paragraphs)} paragraphs; "
         + "; ".join(f"{ph.name} is {ph.source_id}, used by {ph.owner}" for ph in phones)

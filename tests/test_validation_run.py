@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from core.db import connect
 from core.review.device_names import logged_names
 from eval.synthetic.generate import generate
 from eval.synthetic.ufdr import write_case01
@@ -297,12 +298,25 @@ def test_a_capped_run_on_a_model_without_a_price_is_refused(ufdr, tmp_path):
     assert not out.exists()
 
 
-def test_a_phone_zone_must_be_the_one_the_package_records(ufdr, tmp_path):
+def test_a_phone_zone_must_be_the_one_the_package_records(ufdr, tmp_path, monkeypatch):
     # case01's package records America/New_York: the source's zone is kept, never replaced.
     claims, out = _claims(tmp_path), tmp_path / "out"
     args = ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake"]
-    with pytest.raises(SystemExit, match="--phone-zone: the extraction records .* not America/C"):
-        hickman_run.main([*args, "--phone-zone", "America/Chicago"])
+    opened = []
+
+    def tracked(path):  # noqa: ANN001, ANN202
+        conn = connect(path)
+        opened.append(conn)
+        return conn
+
+    with monkeypatch.context() as m:
+        m.setattr(hickman_run, "connect", tracked)
+        with pytest.raises(SystemExit, match="--phone-zone: the extraction records .* not Ameri"):
+            hickman_run.main([*args, "--phone-zone", "America/Chicago"])
+    # the refused build closed its case.db, which on Windows the next build must replace (CI)
+    for conn in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
     assert hickman_run.main([*args, "--phone-zone", "America/New_York"]) == 0
     from core.zones import given_zones
 
