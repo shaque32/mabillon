@@ -32,11 +32,13 @@
     Google Messages), one copy often with the number written another way or no sender, so a
     true "exactly 12" failed. App, sender and direction are left out of the match on purpose
     (CodeRabbit on #265): a look-alike only holds a count open.
-  - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`). An app code
-    binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not counted as
-    naming more than the signed sheet, as a party the claim names is not. Without this, "texted"
-    bound to SMS read as a mismatch on case01 C12. Other apps a try names still count.
-- Where: branch claude/project-thread-kpsvpk (PR to come), on top of #263
+  - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
+    An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
+    counted as naming more than the signed sheet, as a party the claim names is not. Without
+    this, "texted" bound to SMS read as a mismatch on case01 C12. Other apps a try names still
+    count. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
+    instead of failing it on filler 12's new rows (CodeRabbit on #265).
+- Where: PR #265 (on top of #263)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, seven
   unread tails, a named app bound, an app or email the case lacks, seconds, four absence
   wordings, a plain-word app) and `tests/test_count_look_alike.py`. The filler, fill, replay,
@@ -55,9 +57,9 @@
 - Affects: verdicts (fewer code-checked SUPPORTED; claims naming an app the case lacks, or
   naming one kind of contact in an absence, go untested; counts over look-alike rows go
   inconclusive); customer-facing claims: none. No privacy or network change.
-- Status doc: pending: header "Other versions": filler 12, count 1.3.0. Section 2, step 5
+- Status doc: pending: header "Other versions": filler 12, count 1.3.0, testability step 0.3.0. Section 2, step 5
   (Assumptions): add "a communication, timing or count claim with words no check reads gets a
   code-made event that only an expert can carry; a message row gets the app the claim names;
   a time stated to the second gets no minute range". Section on the count check: add "since
-  1.3.0, rows repeating another row's app, sender, words and time within 2 seconds make the
-  count inconclusive".
+  1.3.0, rows repeating another row's words within 2 seconds, on any app and from any sender,
+  make the count inconclusive".
