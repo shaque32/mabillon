@@ -1689,6 +1689,10 @@ _CALL_FORM_RE = re.compile(
 # The other side's id set beside its name, right after the clause: '"Marc R.," user ID
 # 4984911', "(account ID 4984911)". The id must be the same one account as the name
 # (`CallForm.one_account`), so it narrows the side, never adds a party.
+# A label before a written identifier, taken off only where something parts it from the
+# identifier: "ID 42" and "id: 42" are 42, but "id42" and "idris_m" are written so (CodeRabbit
+# on #263).
+_WRITTEN_ID_LABEL_RE = re.compile(r"(?i)^(?:(?:user\s*id|id|number)(?:\s*[:#]\s*|\s+)|no\.\s*)")
 _ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
 _CALL_ID_TAIL_RE = re.compile(
     rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
@@ -4742,7 +4746,7 @@ class LocalAssumptionFiller:
         entry (`one_number` False), which names the one account written exactly so, or else the
         only one that holds the number."""
         app = acc.app.strip().casefold()
-        ident = re.sub(r"(?i)^(user\s*id|id|number|no\.)\s*", "", acc.as_written.strip())
+        ident = _WRITTEN_ID_LABEL_RE.sub("", acc.as_written.strip())
         # A name the expert gave a number or id ("the BURNER") is that identifier, and the
         # rules below still apply to it: a number alone never picks the app.
         named_ident = account_names.designated(self.conn, acc.as_written)

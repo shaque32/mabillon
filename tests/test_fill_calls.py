@@ -704,3 +704,29 @@ def test_a_short_username_of_another_account_names_no_caller(conn: sqlite3.Conne
     made, f = short_fill(conn, words)
     assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made
+
+
+def test_an_identifier_that_begins_with_id_is_read_as_written(conn: sqlite3.Connection) -> None:
+    acc = "acct:item1:Instagram:id42"
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'Instagram', 'id42',"
+        " 'Ivy Dunmore')",
+        (acc, acc),
+    )
+    conn.execute(  # an account "42": "id42" must never be read as it
+        "INSERT OR IGNORE INTO accounts VALUES ('acct:item1:Instagram:42', 'item1',"
+        " 'acct:item1:Instagram:42', NULL, 'Instagram', '42', 'Forty Two')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:ig:ivy', 'item1', 'c:ig:ivy', 'dev:item1',"
+        " 'Instagram', NULL, ?, 'outgoing', '2026-06-16T01:00:00Z', 0, NULL, 60, 0)",
+        (acc,),
+    )
+    made, f = fill(conn, f'{IG_AT} PETROV called the Instagram user "Ivy Dunmore" username id42.',
+                   people=["PETROV"], accounts=[{"as_written": "Ivy Dunmore", "app": "Instagram"}],
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.account_ids) == [acc], [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
