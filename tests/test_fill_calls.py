@@ -556,6 +556,7 @@ def ig_fill(conn, words: str, written: str = "49800011122"):
 )
 def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, words):
     made, f = ig_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
     a = made["caller"]
     assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
     assert list(a.params.account_ids) == [GARAGE_IG]
@@ -571,19 +572,39 @@ def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(conn):
     assert "caller" not in made  # an id beside the first side is not read either
 
 
+NAMED = [{"as_written": "Marc Garage", "app": "Instagram"}]
+
+
 @pytest.mark.parametrize(
-    "words",
+    ("words", "people", "accounts", "form"),
     [
-        # the id is another account than the name: two parties, not one side
-        'PETROV called the Instagram user "Marc Garage," user ID 49800099999.',
+        # the id is another account than the name: the clause is read as one side, and the
+        # caller is refused when the name and the id are not one account
+        ('PETROV called the Instagram user "Marc Garage," user ID 49800099999.', ["PETROV"],
+         [{"as_written": "49800099999", "app": "Instagram"}], True),
+        ('PETROV called the Instagram user "Marc Garage," user ID 49800099999.', ["PETROV"],
+         [*NAMED, {"as_written": "49800099999", "app": "Instagram"}], True),
         # another app's name describes the side
-        'PETROV called the Telegram user "Marc Garage," user ID 49800011122.',
+        ('PETROV called the Telegram user "Marc Garage," user ID 49800011122, on Instagram.',
+         ["PETROV"], [{"as_written": "49800011122", "app": "Instagram"}], False),
         # a person, not an account, described as an app's user
-        "PETROV called the Instagram user REYES.",
+        ("PETROV called the Instagram user REYES.", ["PETROV", "REYES"], [], False),
         # other words describe the side
-        'PETROV called the old Instagram user "Marc Garage."',
+        ('PETROV called the old Instagram user "Marc Garage."', ["PETROV"], NAMED, False),
     ],
-)
-def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(conn, words):
-    made, _ = ig_fill(conn, words)
+)  # fmt: skip
+def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(
+    conn, words, people, accounts, form
+):
+    _add_instagram(conn)
+    text = f"{IG_AT} {words}"
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    read = f.call_form(claim(text), "Instagram")
+    # the parser's own refusals leave the clause unread; the id case is read as one side
+    assert (read is not None and read.one_account) is form, read
+    made, f = fill(conn, text, people=people, accounts=accounts,
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    # the proposal itself is kept (its time is checked), so only the caller guard is tested
+    assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made

@@ -5,6 +5,7 @@ import ast
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,7 @@ KINDS = {
 
 
 @pytest.fixture
-def lava(tmp_path):
+def lava(tmp_path: Path) -> Path:
     db = sqlite3.connect(tmp_path / dump_lava.DATABASE)
     db.executescript(
         "CREATE TABLE sms (message_row_id INTEGER, body TEXT, attachment TEXT);"
@@ -56,7 +57,7 @@ def lava(tmp_path):
     return tmp_path
 
 
-def test_counts_come_from_the_tables_with_attachments_deduped(lava):
+def test_counts_come_from_the_tables_with_attachments_deduped(lava: Path) -> None:
     r = dump_lava.read(lava, KINDS)
     assert r["counts"] == {"message": 2 + 2, "call": 3, "contact": 1}
     sms = r["tables"]["sms"]
@@ -65,7 +66,7 @@ def test_counts_come_from_the_tables_with_attachments_deduped(lava):
     assert r["leapp_name"] == "iLEAPP" and len(r["database_sha256"]) == 64
 
 
-def test_the_manifest_count_is_reported_never_used(lava):
+def test_the_manifest_count_is_reported_never_used(lava: Path) -> None:
     r = dump_lava.read(lava, KINDS)
     assert r["tables"]["whatsapp_messages"]["count"] == 2
     assert r["tables"]["whatsapp_messages"]["manifest_record_count"] == 5
@@ -73,20 +74,20 @@ def test_the_manifest_count_is_reported_never_used(lava):
     assert r["tables_not_counted"] == ["wifi"]
 
 
-def test_a_bad_kind_or_dedupe_column_stops_the_reader(lava):
+def test_a_bad_kind_or_dedupe_column_stops_the_reader(lava: Path) -> None:
     with pytest.raises(SystemExit, match="not one of"):
         dump_lava.read(lava, {"sms": {"kind": "note"}})
     with pytest.raises(SystemExit, match="no column"):
         dump_lava.read(lava, {"sms": {"kind": "message", "dedupe": "row"}})
 
 
-def test_the_database_is_opened_read_only(lava):
+def test_the_database_is_opened_read_only(lava: Path) -> None:
     before = (lava / dump_lava.DATABASE).read_bytes()
     dump_lava.read(lava, KINDS)
     assert (lava / dump_lava.DATABASE).read_bytes() == before
 
 
-def test_the_reader_imports_only_the_standard_library():
+def test_the_reader_imports_only_the_standard_library() -> None:
     tree = ast.parse(open(dump_lava.__file__, encoding="utf-8").read())
     names = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)
              for a in n.names}  # fmt: skip
@@ -94,7 +95,7 @@ def test_the_reader_imports_only_the_standard_library():
     assert names <= set(sys.stdlib_module_names), names
 
 
-def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
+def test_a_folder_name_with_uri_marks_still_opens_read_only(lava: Path, tmp_path: Path) -> None:
     # "?" cannot be in a Windows folder name; "#" and "%" can, and break a URI as well
     odd = tmp_path / ("phone#1 x%20" if sys.platform == "win32" else "phone#1 ?x%20")
     odd.mkdir()
@@ -105,7 +106,7 @@ def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
     assert sorted(p.name for p in odd.parent.iterdir()) == before  # no stray file made
 
 
-def test_a_composite_dedupe_key_and_a_skipped_table(lava):
+def test_a_composite_dedupe_key_and_a_skipped_table(lava: Path) -> None:
     db = sqlite3.connect(lava / dump_lava.DATABASE)
     db.executescript(
         "CREATE TABLE parts (conv INTEGER, ts INTEGER, dir TEXT, body TEXT);"
