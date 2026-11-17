@@ -770,6 +770,28 @@ def test_a_count_over_chat_rows_that_name_no_receiver_never_passes() -> None:
     assert r.outcome is CheckOutcome.PASS, r.detail
 
 
+def test_a_chat_where_no_message_names_a_side_holds_counts_and_absence_open() -> None:
+    # CodeRabbit on #264: an iOS chat whose rows do not say who sent them stores no sender and
+    # no receiver on any row, so no party's chat led to it and "at most" and "no contact"
+    # passed. Nothing places such a message, so it may be between the parties.
+    conn = without_undated_row(build())
+    conn.execute(
+        "INSERT INTO threads (id, source_id, locator, device_id, app) VALUES"
+        " ('t9', 'p1', 'x', 'dev:p1', 'SMS')"
+    )
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES ('msg:p1:o1', 'p1', 'x', 't9', NULL, 'unknown',"
+        " '2026-03-20T15:00:00Z', 'see you'), ('msg:p1:o2', 'p1', 'x', 't9', NULL, 'unknown',"
+        " '2026-04-05T12:00:00Z', 'see you')"
+    )
+    r = check(conn, "message_count", person_ids=[A, B], device_ids=["dev:p1"], window=MARCH,
+              expected_count=2, count_op="le")  # fmt: skip
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:o1" in r.detail, r.detail
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and r.record_ids == ("msg:p1:o2",), r.detail
+
+
 def test_a_call_count_over_calls_that_name_no_other_side_never_passes() -> None:
     conn = _with_calls(without_undated_row(build()), ["2026-03-10T15:00:00Z"])
     conn.execute(

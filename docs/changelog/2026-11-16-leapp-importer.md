@@ -76,10 +76,17 @@
   more than one text in the same second may be several messages joined; they are flagged
   `may_be_several_messages` and listed with the possible copies, so a count over them is
   inconclusive. (4) The coverage item names an unread artifact with no stated count among those
-  that may hold records.
+  that may hold records. CodeRabbit's review of those fixes found three more, all fixed: a
+  call that names neither side for any reason (a withheld caller on a line the row does not
+  name) also keeps the call log from being read in full; a Google Messages group that may be
+  several messages joined is never taken for a copy, only listed as a possible one; and a
+  message in a chat where no message names any side (an iOS chat whose rows do not say who sent
+  them) holds counts and the absence check open, since nothing places it (the absence and count
+  checks read it through `incomplete_beside` in `core/audit/checks/_common.py`).
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (52 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
-  and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
+- Verified: `tests/test_leapp.py` (54 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+  and the full test suite pass locally (4535 passed on e98a4da, cloud container, 2026-11-17; the three
+  tests added after it pass with the LEAPP and check tests); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text
   messages match on time to the second, direction and text (the other differs by a line break);
@@ -88,7 +95,11 @@
   party-aware match (2026-11-17, same container) the same 123 are skipped, with the same pairs,
   and none is flagged as a possible copy. After the Claude review fixes (2026-11-17, same
   container) the Android 13 call log is no longer read in full (it holds 38 voicemail and other
-  calls with no direction), and its 34 received MMS that named receivers now name none. On the public
+  calls with no direction), and its 34 received MMS that named receivers now name none. After
+  CodeRabbit's next round the same 123 pairs hold; the dev phones have chats where no message
+  names a side only on chat apps whose rows name senders by display name (A13: one TikTok chat,
+  23 messages; iOS 15: 12 GroupMe, Kik, Telegram and WhatsApp chats, 154 messages), which a
+  count or absence check over those apps now holds open. On the public
   iOS 15 phone (iLEAPP 2026.4.7-dev, same day and machine): all 37 text messages and all 22 calls
   match the UFDR import, and all 13 contact numbers are in it. Each skipped Google Messages
   message is listed with the SMS or MMS it matched (`leapp.google_messages_skipped` in the

@@ -683,6 +683,7 @@ class _GmMessage:
     party: str | None  # its other party (_party_key); None when it cannot be told
     media: int  # attachments
     inferred: bool = False  # party taken from the chat's one sender, not stated or a contact
+    several: bool = False  # more than one text in one second: may be several messages joined
 
 
 def _match_copies(
@@ -697,6 +698,8 @@ def _match_copies(
     stores name an attachment's file differently (a Google Messages cache path, an MMS part
     file), so attachments cannot be compared one to one: a message with attachments is paired
     only when it has one copy and that SMS or MMS is a copy of no other Google Messages message.
+    A message whose party was inferred, or that joins several texts sent in one second, is never
+    paired.
 
     match is (locator, seconds apart) of its pair. possible, when it has no pair, is the
     locator of the nearest candidate it may be a copy of: one whose other party cannot be
@@ -718,10 +721,11 @@ def _match_copies(
     def copy(m: _GmMessage, n: _Native) -> bool:
         return m.party is not None and n.party is not None and _same_party(m.party, n.party)
 
-    # A party taken only from the chat's one sender may be a group's one sender so far, so it
-    # never confirms a copy (CodeRabbit on #264): such a match is a possible copy.
+    # A party taken only from the chat's one sender may be a group's one sender so far, and a
+    # group of texts sent in one second may be several messages joined, so neither ever
+    # confirms a copy (CodeRabbit on #264): such a match is a possible copy.
     copies = [
-        [x for x in cs if copy(m, x[2])] if not m.inferred else []
+        [x for x in cs if copy(m, x[2])] if not (m.inferred or m.several) else []
         for m, cs in zip(msgs, cands, strict=True)
     ]
     claimants = Counter(x[2].locator for cs in copies for x in cs)
@@ -838,7 +842,7 @@ def _android_google_messages(c: _Ctx) -> None:
             party, inferred = _sent_party(r, heard[cid], named)
         else:
             party = None
-        msgs.append(_GmMessage(ts, mdir, body, party, len(media), inferred))
+        msgs.append(_GmMessage(ts, mdir, body, party, len(media), inferred, len(texts) > 1))
         medias.append(media)
     matches = _match_copies(msgs, native)
     for rows, m, media, (match, possible) in zip(
@@ -847,7 +851,7 @@ def _android_google_messages(c: _Ctx) -> None:
         rowid, r = rows[0]
         loc = f"{c.art.table}/rowid={rowid}"
         ts, mdir, body = m.ts, m.direction, m.body
-        if sum(1 for _, x in rows if _text(x.get("Message"))) > 1:
+        if m.several:
             # Parts are grouped by the whole second, with no message id, so two texts from one
             # sender in one second may be two messages joined: a count over it never passes
             # (Claude review on #264).
@@ -1010,6 +1014,10 @@ def _add_call(
     scope = f"row:{loc}"
     from_id = w.account(app, frm, loc, scope) if frm and frm.identifier else None
     to_id = w.account(app, to, loc, scope) if to and to.identifier else None
+    if from_id is None and to_id is None:
+        # No check can find a call that names neither side (no direction, or no number on
+        # either end), so the call log is then not held in full (CodeRabbit on #264).
+        c.lava.calls_without_sides += 1
     w.calls.append(
         (f"call:{w.src}:{loc}", w.src, loc, w.dev, app, from_id, to_id, direction.value,
          *_ts_cols(ts), duration, _db_bool(deleted))
@@ -1038,7 +1046,6 @@ def _ios_calls(c: _Ctx) -> None:
         else:
             direction, frm, to = CallDirection.UNKNOWN, None, None
             c.flag("direction_not_stated", loc)
-            c.lava.calls_without_sides += 1
             if other.identifier:
                 c.w.account(app, other, loc, f"row:{loc}")
         _add_call(
@@ -1062,7 +1069,6 @@ def _android_calls(c: _Ctx) -> None:
         elif direction is CallDirection.UNKNOWN:
             frm, to = None, None
             c.flag("call_type_not_incoming_outgoing_or_missed", loc)
-            c.lava.calls_without_sides += 1
             c.w.cov.unmapped_direction_values[str(raw_type)] += 1
             for p in (other, owner):
                 if p and p.identifier:

@@ -987,6 +987,29 @@ def test_a_call_with_no_direction_keeps_the_call_log_from_being_read_in_full(
     assert "unknown" in coverage.load(conn, "and").payload["apps_read_in_full"]
 
 
+def test_a_call_that_names_neither_side_keeps_the_call_log_from_being_read_in_full(
+    tmp_path: Path,
+) -> None:
+    # CodeRabbit on #264: an incoming call with no number on either end (a withheld caller, and
+    # no line of the phone's own) is stored with neither side, so no check finds it either.
+    lv = _android()
+    lv.tables["get_calllog"] = [
+        r for r in lv.tables["get_calllog"] if r.get("Raw Call Type (as stored)") != "6"
+    ]
+    lv.tables["get_calllog"][0] = {
+        **lv.tables["get_calllog"][0],
+        "Partner": "",
+        "Phone Account Address": "",
+    }
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    sides = conn.execute(
+        "SELECT COUNT(*) FROM calls WHERE from_account_id IS NULL AND to_account_id IS NULL"
+    ).fetchone()
+    assert sides == (1,)
+    assert "unknown" not in coverage.load(conn, "and").payload["apps_read_in_full"]
+
+
 def test_an_unread_artifact_with_no_stated_count_is_named_as_holding_records(
     tmp_path: Path,
 ) -> None:
@@ -1015,3 +1038,16 @@ def test_two_texts_from_one_sender_in_one_second_are_flagged_as_maybe_several(
     locs, flags, codes = _gm_imported(tmp_path, lv)
     assert locs == ["get_googlemessages/rowid=1"]
     assert flags["may_be_several_messages"] == 1 and "may_be_several_messages" in codes
+
+
+def test_texts_from_one_second_never_confirm_a_copy_of_an_sms(tmp_path: Path) -> None:
+    # CodeRabbit on #264: a group that may be several messages joined matched an SMS with the
+    # same joined text and was skipped as its copy. It is kept, and both are possible copies.
+    gm = {"Message Timestamp": "2024-03-05T10:00:00Z", "Direction": "Incoming",
+          "Message Sender": ALICE, "Conversation ID": "9"}  # fmt: skip
+    sms = {"Date": "2024-03-05T10:00:00Z", "Type": "Received", "Address": ALICE,
+           "Body": "ok\non my way"}  # fmt: skip
+    lv = _gm_lava([sms], [{**gm, "Message": "ok"}, {**gm, "Message": "on my way"}])
+    locs, flags, _codes = _gm_imported(tmp_path, lv)
+    assert locs == ["get_googlemessages/rowid=1"]
+    assert flags["may_be_same_as_an_sms_or_mms_message"] == 1

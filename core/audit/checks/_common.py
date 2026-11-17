@@ -467,19 +467,25 @@ def apps_not_read(data: CaseData, source_id: str, apps: set[str]) -> str | None:
 
 def incomplete_beside(data: CaseData, account_ids: set[str]) -> list[Row]:
     """Every message with no sender or no receiver in a chat that holds a message an account in
-    the set sent or received: a phone's own message in that chat often names neither side."""
+    the set sent or received: a phone's own message in that chat often names neither side. Also
+    every message in a chat where no message names any side (such as an iOS chat whose rows do
+    not say who sent them): nothing places it, so it may be between anyone (CodeRabbit on #264).
+    """
     if not account_ids:
         return []
     ids = json.dumps(sorted(account_ids))
     rows = data.conn.execute(
         _MSG_SQL  # noqa: S608  (constant SQL; values are bound)
-        + " WHERE m.thread_id IN"  # noqa: S608  (constant SQL; values are bound)
+        + " WHERE ((m.thread_id IN"  # noqa: S608  (constant SQL; values are bound)
         " (SELECT x.thread_id FROM messages x"
         "  WHERE x.sender_account_id IN (SELECT value FROM json_each(?))"
         "  OR x.id IN (SELECT r.message_id FROM message_recipients r"
         "   WHERE r.account_id IN (SELECT value FROM json_each(?))))"
         " AND (m.sender_account_id IS NULL"
-        "  OR NOT EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = m.id))"
+        "  OR NOT EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = m.id)))"
+        " OR NOT EXISTS (SELECT 1 FROM messages x WHERE x.thread_id = m.thread_id"
+        "  AND (x.sender_account_id IS NOT NULL"
+        "   OR EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = x.id))))"
         f" AND {NOT_COPY} ORDER BY m.id",
         (ids, ids),
     )

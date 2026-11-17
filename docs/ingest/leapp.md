@@ -88,7 +88,9 @@ every pair. An MMS part whose file ALEAPP did not find is written as its path in
 is recorded as the attachment's name, never as text, and flagged (`media_file_not_in_extraction`). Google
 Messages parts carry no message id and are grouped by the whole second, so a group with more than
 one text may be several messages from one sender joined; it is flagged (`may_be_several_messages`)
-and listed with the possible copies, so a count over it is inconclusive.
+and listed with the possible copies, so a count over it is inconclusive. Such a group is never
+taken for a copy of an SMS or MMS: one with the same text is kept, and both are listed as possible
+copies.
 
 ### Other chat apps
 
@@ -157,7 +159,9 @@ Direction and parties:
   incoming, outgoing and missed, and 5 (rejected on the phone) is missed too, since the other side
   placed it and it was not answered; any other (voicemail, blocked, answered elsewhere), and an
   iLEAPP call with no direction, is imported with direction unknown, no sides, and flagged.
-  No check can find such a call, so the call log then does not count as read in full. ALEAPP's
+  No check can find such a call, so the call log then does not count as read in full; the same
+  holds for any call that names neither side, such as a withheld caller on a line the row does
+  not name. ALEAPP's
   `Phone Account Address` is the owner's line on the call. The public Android 13 phone has 38
   voicemail and other such calls, so its call log is not read in full.
 
