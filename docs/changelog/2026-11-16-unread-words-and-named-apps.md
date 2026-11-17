@@ -23,7 +23,9 @@
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
-    beside an app it holds ("on Telegram and Signal", CodeRabbit on #265). An absence that names
+    beside an app it holds ("on Telegram and Signal", CodeRabbit on #265). A count or
+    absence the model put on fewer apps than the claim names ("no contact on Telegram or Viber"
+    read on Telegram alone) is refused (CodeRabbit on #265). An absence that names
     one kind of contact ("did not text", "never messaged on Telegram", "by telephone") is refused
     whatever its app, since the absence check reads messages and calls alike. The missing-app
     guard runs on every app row, also those the model scoped; it knows messaging, social and
@@ -62,7 +64,7 @@
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,780), and
+  its fix. The filler, fill, replay, override and check suites pass locally (1,781), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

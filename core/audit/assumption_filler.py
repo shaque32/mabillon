@@ -4437,6 +4437,13 @@ class LocalAssumptionFiller:
                     f"the claim's {bad[0].casefold()!r} may be a plain word, not the app, so"
                     " no count or absence is read on it"
                 )
+            # "exactly 2 messages on Telegram and Viber" is never counted on Telegram alone
+            # (CodeRabbit on #265)
+            given = {c.casefold() for c in p.params.get("channels") or ()}
+            if given and (left := [a for a in apps if a.casefold() not in given]):
+                raise Reject(
+                    f"the claim names {left[0]!r}, which the count or absence does not read"
+                )
         # An app or email the case does not hold, beside one it holds or alone, whether code or
         # the model chose the rows' apps: "on Telegram and Signal" on a case with no Signal is
         # never read on Telegram alone, nor "on Signal" on the model's Telegram (CodeRabbit on

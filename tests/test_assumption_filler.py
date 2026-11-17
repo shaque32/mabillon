@@ -3443,6 +3443,27 @@ def test_a_count_of_text_messages_on_one_app_the_model_chose_is_refused(tmp_path
     assert made == []
 
 
+def test_an_absence_on_one_of_the_apps_the_claim_names_is_refused(tmp_path):
+    # On a case holding Telegram and Viber, "no contact on Telegram or Viber" read on Telegram
+    # alone was kept: Viber went unsearched. It is refused; on both apps it is kept
+    # (CodeRabbit on #265). A count so worded is refused already by its own wording checks.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    text = (
+        "PETROV and REYES had no contact on Telegram or Viber between March 20 and March 23, 2026."
+    )
+    (prop,) = GOOD["C14"]
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [{**prop, "channels": ["Telegram"]}])
+    assert made == []
+    assert any("'Viber', which the count or absence" in d.reason for d in filler.drops)
+    both = {**prop, "channels": ["Telegram", "Viber"]}
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [both])
+    assert [a.params.channels for a in made] == [("Telegram", "Viber")], filler.drops
+
+
 def test_a_handle_named_like_an_app_picks_no_app(tmp_path):
     # On a case holding Telegram and Viber, "to @viber on Telegram" names Telegram only: the
     # handle never adds Viber to the rows or to the claim's apps (CodeRabbit on #265).
