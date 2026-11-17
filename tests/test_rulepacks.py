@@ -234,9 +234,10 @@ def test_malformed_rows_are_counted_and_a_blank_length_is_not_zero(pack: RulePac
     text = _one_row_file("carrier-a", [*good, "", "VOICE"])
     text += ",".join(good[:3]) + "\n"  # short row
     text += ",".join([*good, "1:23", "VOICE"]) + "\n"  # not whole seconds
+    text += ",".join([*good, "\u00b2", "VOICE"]) + "\n"  # a digit int() refuses (CodeRabbit)
     loaded = carrier.read(text, lay)
     assert loaded.conn.execute("SELECT duration_s FROM calls").fetchall() == [(None,)]
-    assert loaded.coverage["skipped"]["malformed"] == 2
+    assert loaded.coverage["skipped"]["malformed"] == 3
 
 
 def test_a_pack_must_list_every_template_its_claims_use(pack: RulePack) -> None:

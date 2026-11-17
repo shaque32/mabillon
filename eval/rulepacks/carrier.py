@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import random
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -188,7 +189,7 @@ def read(text: str, layout: Layout) -> Loaded:
             skipped["malformed"] += 1
             continue
         raw_duration = r[col[layout.duration_col]].strip()
-        if raw_duration and not raw_duration.isdigit():
+        if raw_duration and not re.fullmatch(r"[0-9]+", raw_duration):  # ASCII digits only
             skipped["malformed"] += 1
             continue
         duration = int(raw_duration) if raw_duration else None  # blank: not stated, not 0

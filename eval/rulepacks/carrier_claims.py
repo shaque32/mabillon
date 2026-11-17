@@ -16,14 +16,14 @@ from datetime import datetime
 from typing import Any
 
 from core.audit.assumptions import local_window
-from core.contracts import ClaimType, Verdict
+from core.contracts import ClaimType, TimeWindow, Verdict
 from eval.rulepacks.carrier import LINE_DEVICE, P1, P3, SUBJECT_2_LINE, SUBJECT_3_LINE
 
 ET = "America/New_York"
 A2, A3 = f"a:cdr:{SUBJECT_2_LINE}", f"a:cdr:{SUBJECT_3_LINE}"
 
 
-def _w(start: datetime, end: datetime, raw: str):
+def _w(start: datetime, end: datetime, raw: str) -> TimeWindow:
     return local_window(start, end, ET, raw)
 
 
@@ -38,7 +38,9 @@ class GoldClaim:
     tests: str  # what the claim tests, in a few words
 
 
-def _call(caller: str, callee: str, window, duration=None) -> tuple[tuple[str, dict], ...]:
+def _call(
+    caller: str, callee: str, window: TimeWindow, duration: tuple[int, int] | None = None
+) -> tuple[tuple[str, dict[str, Any]], ...]:
     """'caller placed a call to callee in window': who placed it, and when. One side is
     SUBJECT-1 (the TARGET LINE's holder); the other is a person or an account id."""
     if P1 not in (caller, callee):
