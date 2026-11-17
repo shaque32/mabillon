@@ -63,9 +63,22 @@
   is fidelity `unknown`, not `full_extraction`. (7) The count check's "at most" and "exactly"
   need every app counted to be read in full in that source (`apps_read_in_full`); otherwise they
   are inconclusive. (8) The report's limitations name the LEAPP reader for a LEAPP import, not
-  the UFDR reader.
+  the UFDR reader. Later CodeRabbit rounds: a number with an unmarked leading country code
+  ("17912345678" and "7912345678"), or written with a national trunk 0 ("07911..." and
+  "+44 7911..."), is never a match but makes a possible copy, as does a Google Messages message
+  left over when its SMS or MMS was already paired. A Claude code review on #264 (high effort)
+  found four more ways a check could pass on rows the import did not place, all fixed. (1) An
+  iOS received message that names neither of the phone's own fields, and any ALEAPP received
+  MMS (ALEAPP does not say which number is the phone's own line), is stored with no receivers,
+  so a check between its sender and the owner holds it open instead of missing it. (2) A call
+  whose type names no direction (voicemail, blocked, answered elsewhere) is stored with no sides
+  and no check finds it, so the call log is then not read in full. (3) Google Messages parts with
+  more than one text in the same second may be several messages joined; they are flagged
+  `may_be_several_messages` and listed with the possible copies, so a count over them is
+  inconclusive. (4) The coverage item names an unread artifact with no stated count among those
+  that may hold records.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (46 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (52 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text
@@ -73,7 +86,9 @@
   all 108 calls match on time and other party; all 13 phone contacts are in the UFDR. All 123
   Google Messages messages on that phone repeat an SMS or MMS and were skipped; after the
   party-aware match (2026-11-17, same container) the same 123 are skipped, with the same pairs,
-  and none is flagged as a possible copy. On the public
+  and none is flagged as a possible copy. After the Claude review fixes (2026-11-17, same
+  container) the Android 13 call log is no longer read in full (it holds 38 voicemail and other
+  calls with no direction), and its 34 received MMS that named receivers now name none. On the public
   iOS 15 phone (iLEAPP 2026.4.7-dev, same day and machine): all 37 text messages and all 22 calls
   match the UFDR import, and all 13 contact numbers are in it. Each skipped Google Messages
   message is listed with the SMS or MMS it matched (`leapp.google_messages_skipped` in the
@@ -84,7 +99,12 @@
   marks are not read. LEAPP stores whole seconds, so a timing claim
   closer than a second needs the phone's own value. A file system run with no profile is
   `full_extraction` for the tables LEAPP parsed; whether that is the right fidelity for an absence
-  check on LEAPP output is a judgment for review. The Google Messages match is by direction, text,
+  check on LEAPP output is a judgment for review: LEAPP's input type does not say whether a zip
+  or tar is a whole file system or a partial collection. The phone's zone comes from tables that
+  cover a short recent span and is applied to every record, as a UFDR's device zone is. On main,
+  the count check's "exactly" passes on a curated report too ("at most" needs a full
+  extraction); a LEAPP profile run is a curated report, so this applies to it as to a curated
+  UFDR, and is left for a separate change since it moves case01's verdicts. The Google Messages match is by direction, text,
   attachments, other party and time within two seconds, with no message id, so two identical
   texts to the same person within two seconds, one of them only in Google Messages, would be read
   as one. A photo only in Google Messages, sent by the same person with the same text within two

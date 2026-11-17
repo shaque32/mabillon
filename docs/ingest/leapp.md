@@ -85,7 +85,10 @@ pairs; the 12 sent ones are confirmed by the contact's number. The coverage reco
 `leapp.google_messages_skipped`: its locator, its part rows (LAVA rowids), the SMS or MMS it
 matched (`same_as`, the nearest in time) and `seconds_apart`, so another reader can re-check
 every pair. An MMS part whose file ALEAPP did not find is written as its path in `Body`; that path
-is recorded as the attachment's name, never as text, and flagged (`media_file_not_in_extraction`).
+is recorded as the attachment's name, never as text, and flagged (`media_file_not_in_extraction`). Google
+Messages parts carry no message id and are grouped by the whole second, so a group with more than
+one text may be several messages from one sender joined; it is flagged (`may_be_several_messages`)
+and listed with the possible copies, so a count over it is inconclusive.
 
 ### Other chat apps
 
@@ -141,15 +144,22 @@ Direction and parties:
 
 - iLEAPP `From Me` 1 is outgoing, sent by the owner's line (`Destination Caller ID`, else
   `Account` without its `E:`/`P:` prefix) to the chat's participants; 0 is incoming, from
-  `Sender`, to the owner's line and the other participants.
+  `Sender`, to the owner's line and the other participants. An incoming row that names neither
+  owner field is stored with no receivers (`received_without_own_account`): the phone's own line
+  received it, so storing only the other members would hide it from a check between the sender
+  and the owner.
 - ALEAPP `Type` (SMS) or `Direction` (MMS) `Received` is incoming and `Sent` outgoing. Draft,
   Outbox, Queued, Failed and any other value are imported with direction unknown and flagged
-  (`not_sent_or_received`), so none counts as sent.
+  (`not_sent_or_received`), so none counts as sent. A received SMS or MMS is stored with no
+  receivers: ALEAPP does not say which number is the phone's own line, so the numbers an MMS
+  names may leave it out, and the checks hold such a row open as possibly to anyone.
 - iLEAPP incoming calls with `Answered` No are missed. ALEAPP call types 1, 2 and 3 are
   incoming, outgoing and missed, and 5 (rejected on the phone) is missed too, since the other side
-  placed it and it was not answered; any other (voicemail, blocked, answered elsewhere) is
-  imported with direction unknown and flagged. ALEAPP's `Phone Account Address` is the owner's
-  line on the call.
+  placed it and it was not answered; any other (voicemail, blocked, answered elsewhere), and an
+  iLEAPP call with no direction, is imported with direction unknown, no sides, and flagged.
+  No check can find such a call, so the call log then does not count as read in full. ALEAPP's
+  `Phone Account Address` is the owner's line on the call. The public Android 13 phone has 38
+  voicemail and other such calls, so its call log is not read in full.
 
 iOS writes U+FFFC (the object replacement character) in a message's text where an attachment
 sits; it is removed from the text, and the attachment is recorded on its own.
@@ -168,7 +178,10 @@ tables recorded is the same one. A phone that recorded two or more zones, or non
 and an attention item saying so, and a claim with a time window is not tested until the expert
 sets the zone (case screen, or `mabillon set-device-zone`). Any name the standard library knows
 counts, `UTC` included. A value it does not know is counted (`zones_not_read`), and the phone then
-gets no zone either, with its own attention item, since that value may be a second zone. The coverage record keeps every zone seen,
+gets no zone either, with its own attention item, since that value may be a second zone. These
+tables cover only the span they kept (iOS powerlog keeps days to weeks), so a phone that was in
+another zone before that span still gets the one zone, and a weekday or local-time claim about
+an earlier record may be read in the wrong zone; the expert can set the zone. The coverage record keeps every zone seen,
 with its record count, tables and first and last time (`leapp.device.zones_seen`), and the item
 says the zone places every record, including any from times the phone did not record its zone.
 

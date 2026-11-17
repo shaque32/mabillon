@@ -180,6 +180,8 @@ class Lava:
     artifacts: list[Artifact]
     # Google Messages messages skipped as the same as an SMS or MMS, each with the one it matched
     dropped: list[dict[str, Any]] = field(default_factory=list)
+    # calls whose type names no direction: stored with neither side, so no check finds them
+    calls_without_sides: int = 0
 
     def has_table(self, art: Artifact) -> bool:
         return bool(
@@ -255,6 +257,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     _check_size(z, db_member, MAX_DB_BYTES, file_name)
     db = sqlite3.connect(":memory:")
     try:
+        # deserialize copies the bytes into SQLite, so the read is not kept past this call
         db.deserialize(z.read(db_member))
         db.execute("PRAGMA query_only = ON")
         db.execute("SELECT count(*) FROM sqlite_master").fetchone()
@@ -435,9 +438,12 @@ def _ios_sms(c: _Ctx) -> None:
             direction = MessageDirection.INCOMING
             s = _ident(r.get("Sender"))
             sender = _party(s) if s else None
-            recips = [_party(p) for p in participants if p != s]
-            if owner is not None:
-                recips.append(owner)
+            # The phone's own line received it. When the row does not name that line, the
+            # receivers are not all known, so none are stored and the checks hold the row open
+            # as possibly to anyone, never as to the other members only (Claude review, #264).
+            recips = ([_party(p) for p in participants if p != s] + [owner]) if owner else []
+            if owner is None:
+                c.flag("received_without_own_account", loc)
             if s is None:
                 c.flag("received_without_sender", loc)
         else:
@@ -505,6 +511,11 @@ def _android_mms(c: _Ctx) -> None:
         # Every receiver the MMS names: To, Cc and Bcc (Greptile on #264).
         named = [p for k in ("To Address", "Cc", "Bcc") for p in _split(r.get(k))]
         to = [_party(p) for p in dict.fromkeys(named)]
+        if direction is MessageDirection.INCOMING:
+            # ALEAPP does not say which number is the phone's own line, so a received MMS that
+            # names receivers may leave it out; like a received SMS, it stores none and the
+            # checks hold it open as possibly to anyone (Claude review, #264).
+            to = []
         sender = _party(frm) if frm and frm.lower() != "insert-address-token" else None
         thread = _text(r.get("Thread ID"))
         chat_key = f"thread:{thread}" if thread else f"row:{loc}"
@@ -836,6 +847,12 @@ def _android_google_messages(c: _Ctx) -> None:
         rowid, r = rows[0]
         loc = f"{c.art.table}/rowid={rowid}"
         ts, mdir, body = m.ts, m.direction, m.body
+        if sum(1 for _, x in rows if _text(x.get("Message"))) > 1:
+            # Parts are grouped by the whole second, with no message id, so two texts from one
+            # sender in one second may be two messages joined: a count over it never passes
+            # (Claude review on #264).
+            c.flag("may_be_several_messages", loc)
+            c.w.cov.numbered_copy_records.append(f"msg:{c.w.src}:{loc}")
         if possible is not None:
             c.flag("may_be_same_as_an_sms_or_mms_message", loc)
             # Both may be one message, so a count over them never passes (count check).
@@ -1021,6 +1038,7 @@ def _ios_calls(c: _Ctx) -> None:
         else:
             direction, frm, to = CallDirection.UNKNOWN, None, None
             c.flag("direction_not_stated", loc)
+            c.lava.calls_without_sides += 1
             if other.identifier:
                 c.w.account(app, other, loc, f"row:{loc}")
         _add_call(
@@ -1044,6 +1062,7 @@ def _android_calls(c: _Ctx) -> None:
         elif direction is CallDirection.UNKNOWN:
             frm, to = None, None
             c.flag("call_type_not_incoming_outgoing_or_missed", loc)
+            c.lava.calls_without_sides += 1
             c.w.cov.unmapped_direction_values[str(raw_type)] += 1
             for p in (other, owner):
                 if p and p.identifier:
@@ -1240,7 +1259,8 @@ _NATIVE_CALL_KEYS = {"callHistory", "get_calllog"}
 
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
     """The apps whose records this import holds in full, from the artifacts read through: the
-    phone's own messages, and its calls, when every such table that holds records was read, and
+    phone's own messages, and its calls, when every such table that holds records was read (and,
+    for calls, every call's direction could be read), and
     a chat app when no artifact LEAPP wrote for it (by its category's first word) holds records
     Mabillon did not read. Every other app, and a search on every channel, is not covered by
     this source (the absence and count checks read this list)."""
@@ -1253,7 +1273,13 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     apps: set[str] = set()
     if keys & _NATIVE_MESSAGE_KEYS and not unread_keys & _NATIVE_MESSAGE_KEYS:
         apps.add(NATIVE_MESSAGES_APP)
-    if keys & _NATIVE_CALL_KEYS and not unread_keys & _NATIVE_CALL_KEYS:
+    # A call whose type names no direction is stored with neither side, so no check can find
+    # it: the call log is then not held in full (Claude review on #264).
+    if (
+        keys & _NATIVE_CALL_KEYS
+        and not unread_keys & _NATIVE_CALL_KEYS
+        and not lava.calls_without_sides
+    ):
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
     unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
@@ -1348,7 +1374,8 @@ class LeappImporter:
                 why = SAME_RECORDS.get((lava.leapp_name, art.key), "Mabillon does not read it")
                 cov.not_imported.append(
                     {"name": art.name, "category": art.category, "table": art.table,
-                     "records": art.record_count, "reason": why}
+                     "records": art.record_count, "reason": why,
+                     "may_hold_records": _may_hold_records(lava, art)}
                 )  # fmt: skip
                 continue
             read.append((spec, art))

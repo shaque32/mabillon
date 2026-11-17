@@ -193,9 +193,9 @@ class CountCheck(TemplateCheck):
             lines.append(
                 f"{copies} of the matching messages {'is' if copies == 1 else 'are'} listed "
                 "by the import as a possible copy of another row (numbered as a copy by the "
-                "extraction tool, or with the same direction, time and text as another), so the "
-                "count may hold one message twice; an expert must decide which rows are the same "
-                "message"
+                "extraction tool, or with the same direction, time and text as another) or as "
+                "possibly several messages joined, so the count may hold one message twice or "
+                "several as one; an expert must decide which rows are which messages"
             )
 
         if copies:

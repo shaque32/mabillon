@@ -944,3 +944,74 @@ def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_pa
         empty = leapp.read_lava(f, z.name)
     sms = next(a for a in empty.artifacts if a.key == "get_sms_mms")
     assert not leapp._may_hold_records(empty, replace(sms, record_count=None))
+
+
+def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(
+    tmp_path: Path,
+) -> None:
+    # Claude review on #264: an iOS group message with no Destination Caller ID was stored as
+    # to the other members only, and an ALEAPP received MMS as to the numbers it names, so a
+    # check between its sender and the phone's owner found nothing and held nothing open.
+    lv = Lava(leapp="iLEAPP")
+    lv.add("sms", **{"Message Timestamp": "2024-02-02T10:00:00Z", "From Me": "0",
+                     "Sender": ALICE, "Message": "hello all", "Message Row ID": "13",
+                     "Chat Participants": f"{ALICE},{BOB}", "Chat ID": "4"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
+    assert conn.execute("SELECT count(*) FROM message_recipients").fetchone() == (0,)
+    flags = coverage.load(conn, "ios").payload["tables"][0]["flag_counts"]
+    assert flags["received_without_own_account"] == 1
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_android().write_zip(tmp_path / "a.zip"), conn)
+    got = conn.execute(
+        "SELECT count(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id"
+        " WHERE m.locator = 'get_sms_mms_mms/msg_id=40'"
+    ).fetchone()
+    assert got == (0,)
+
+
+def test_a_call_with_no_direction_keeps_the_call_log_from_being_read_in_full(
+    tmp_path: Path,
+) -> None:
+    # Claude review on #264: a voicemail or blocked call is stored with neither side, so no
+    # check finds it; the call log was still listed as read in full.
+    lv = _android()
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert "unknown" not in coverage.load(conn, "and").payload["apps_read_in_full"]
+    lv.tables["get_calllog"] = [
+        r for r in lv.tables["get_calllog"] if r.get("Raw Call Type (as stored)") != "6"
+    ]
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "b.zip"), conn)
+    assert "unknown" in coverage.load(conn, "and").payload["apps_read_in_full"]
+
+
+def test_an_unread_artifact_with_no_stated_count_is_named_as_holding_records(
+    tmp_path: Path,
+) -> None:
+    # Claude review on #264: the not-imported item named only artifacts with a count above
+    # zero, so one with rows but no stated count went unnamed.
+    def no_count(m: dict) -> None:
+        _artifact(m, "wifiNetworks")["record_count"] = None
+
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(_zip_with(tmp_path, _ios(), no_count), conn)
+    s = coverage.summary(conn, "ios")
+    assert s is not None
+    item = next(i for i in s.items if i.code == "not_imported")
+    text = "".join(t for t, _q in item.parts)
+    assert "Wifi Networks" in text.split("Those holding records", 1)[1]
+
+
+def test_two_texts_from_one_sender_in_one_second_are_flagged_as_maybe_several(
+    tmp_path: Path,
+) -> None:
+    # Claude review on #264: parts are grouped by the whole second with no message id, so "ok"
+    # and "on my way" sent in one second import as one message; a count over it must not pass.
+    gm = {"Message Timestamp": "2024-03-05T10:00:00Z", "Direction": "Incoming",
+          "Message Sender": ALICE, "Conversation ID": "9"}  # fmt: skip
+    lv = _gm_lava([], [{**gm, "Message": "ok"}, {**gm, "Message": "on my way"}])
+    locs, flags, codes = _gm_imported(tmp_path, lv)
+    assert locs == ["get_googlemessages/rowid=1"]
+    assert flags["may_be_several_messages"] == 1 and "may_be_several_messages" in codes

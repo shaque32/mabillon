@@ -368,7 +368,8 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "attention",
         "{n} {have} a call type other than incoming, outgoing, missed or rejected (such as "
         "voicemail, blocked or answered elsewhere), so {them} {be} imported with direction "
-        "unknown.",
+        "unknown and neither side recorded; no check finds {them}, so the call log is not "
+        "treated as read in full.",
     ),
     "sent_without_own_account": (
         "attention",
@@ -379,11 +380,23 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "attention",
         "{n} {be} received but name no sender, so no sender was recorded.",
     ),
+    "received_without_own_account": (
+        "attention",
+        "{n} {be} received but do not name the phone's own number or account, so the receivers "
+        "are not all known; none were recorded, and a check holds {them} open as possibly to "
+        "anyone.",
+    ),
     "sender_name_only": (
         "info",
         "{n} name{s0} the sender by display name only. A display name is not taken as an "
         "account (two people can share one), so no sender was recorded and a claim about who "
         "sent {them} is not tested from {them}.",
+    ),
+    "may_be_several_messages": (
+        "attention",
+        "{n} {be} grouped from parts with more than one text in the same second; LEAPP gives no "
+        "message id, so each may be several messages joined, and a count over {them} is "
+        "inconclusive.",
     ),
     "may_be_same_as_an_sms_or_mms_message": (
         "attention",
@@ -827,7 +840,10 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
             )
     if p.get("importer") == "leapp" and not_imported:
         # LEAPP parses hundreds of artifacts; one line names every one Mabillon did not read.
-        with_rows = [e for e in not_imported if (e.get("records") or 0) > 0]
+        # One with no stated count may hold records too (Claude review on #264).
+        with_rows = [
+            e for e in not_imported if e.get("may_hold_records", (e.get("records") or 0) > 0)
+        ]
         names = sorted({str(e.get("name")) for e in with_rows})
         parts: list[Segment] = [
             _t(
