@@ -1641,11 +1641,11 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
         # phone's own call records (CallKit) that iLEAPP lists under no app, so no table read
         # here holds every call of a chat app: none counts as read in full.
         return sorted(apps)
-    if lava.calls_from_other_packages or "get_calllog" not in keys:
+    if lava.calls_from_other_packages or "get_calllog" not in keys or "get_calllog" in unread_keys:
         # A VoIP app can write its calls to Android's call log too, where they are stored under
         # the call log, not the app (Claude review on #268): when the call log holds a row from
-        # another package, or was not read (absent included; CodeRabbit on #268), no chat app
-        # counts as read in full.
+        # another package, or was not read (absent included), or one of its entries holds
+        # records that were not read (CodeRabbit on #268), no chat app counts as read in full.
         return sorted(apps)
     read_keys = {(lava.leapp_name, a.key) for _, a in read}
     unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}

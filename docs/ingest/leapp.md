@@ -186,8 +186,9 @@ does not read its participants, so it reads as a call with the caller alone. Wha
 therefore never read in full from ALEAPP output. An app can also place calls through Android's telecom service, which
 writes them to the phone's call log, where they are stored under the call log, not the app. So
 when an ALEAPP call log row names a `Phone Account Package` other than `com.android.phone`
-(flagged `call_placed_by_another_app`), or the call log was not read or is not in the run, no
-chat app counts as read in full. Calls stored from a chat table's call notices count among the
+(flagged `call_placed_by_another_app`), or the call log was not read or is not in the run, or
+any call log entry in the manifest holds records that were not read, no chat app counts as read
+in full. Calls stored from a chat table's call notices count among the
 kinds the import read. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
 WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
 
@@ -203,7 +204,7 @@ for 4 calls, no party id) and `instagramDirectCalls` (17 call events for 9 calls
 The coverage record lists `apps_read_in_full`: the phone's own messages (`Native Messages`) and
 call log (`unknown`) when their tables were read, and, on ALEAPP only, a chat app when no other
 artifact in its LEAPP category holds records Mabillon did not read, none of its calls was
-stored with neither side, and the phone's call log was read and holds no row from another app
+stored with neither side, and every call log entry was read and holds no row from another app
 (above). On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
 holds WhatsApp, Viber and other app calls from the phone's own call records (CallKit) that
 iLEAPP lists under no app, so no iLEAPP table holds every call of an app. The absence check (1.0.2) treats any other

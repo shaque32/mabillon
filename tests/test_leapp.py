@@ -1337,3 +1337,25 @@ def test_a_telegram_only_run_holds_calls_and_no_chat_app_in_full(tmp_path: Path)
     assert payload["apps_read_in_full"] == []
     assert "calls" in payload["categories_read"]
     assert "calls" not in payload["categories_not_found"]
+
+
+@pytest.mark.parametrize("second", [False, True])
+def test_an_unread_call_log_entry_keeps_every_chat_app_partial(
+    tmp_path: Path, second: bool
+) -> None:
+    # CodeRabbit on #268: one call log entry read through must not hide another that was not,
+    # since a VoIP app's calls can sit in the call log rather than the app's own tables.
+    lv = _android()
+    lv.add("get_telegramMessages", **{"Timestamp": "2024-03-06T10:00:00Z", "Direction": "Outgoing",
+           "Sender ID": "111", "Dialog ID": "42", "Record Origin": "Live",
+           "Message": "hi"})  # fmt: skip
+
+    def change(m: dict) -> None:
+        if second:
+            a = _artifact(m, "get_calllog")
+            m["artifacts"].setdefault("Call Logs", []).append({**a, "tablename": "not_there"})
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_zip_with(tmp_path, lv, change), conn)
+    payload = coverage.load(conn, "and").payload
+    assert ("Telegram" in payload["apps_read_in_full"]) is not second
