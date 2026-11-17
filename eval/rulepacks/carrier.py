@@ -175,8 +175,23 @@ def read(text: str, layout: Layout) -> Loaded:
 
     account(TARGET)
     record_types: dict[str, str] = {}
-    skipped = {"sms": 0, "unmapped_direction": 0, "unmapped_type": 0, "bad_time": 0}
+    skipped = {
+        "sms": 0,
+        "unmapped_direction": 0,
+        "unmapped_type": 0,
+        "bad_time": 0,
+        "malformed": 0,
+    }
+    unsure_times = 0  # rows kept with no UTC time: a local time DST makes double or missing
     for n, r in enumerate(rows[1:], start=2):
+        if len(r) != len(layout.headers):
+            skipped["malformed"] += 1
+            continue
+        raw_duration = r[col[layout.duration_col]].strip()
+        if raw_duration and not raw_duration.isdigit():
+            skipped["malformed"] += 1
+            continue
+        duration = int(raw_duration) if raw_duration else None  # blank: not stated, not 0
         kind = layout.type_values.get(r[col[layout.type_col]])
         if kind is None:
             skipped["unmapped_type"] += 1
@@ -190,11 +205,16 @@ def read(text: str, layout: Layout) -> Loaded:
             continue
         raw = f"{r[col[layout.date_col]]} {r[col[layout.time_col]]}"
         try:
-            local = datetime.strptime(raw, layout.datetime_format).replace(tzinfo=zone)
+            naive = datetime.strptime(raw, layout.datetime_format)
         except ValueError:
             skipped["bad_time"] += 1
             continue
-        off = local.utcoffset() or timedelta(0)
+        local = naive.replace(tzinfo=zone)
+        ts_utc: str | None = local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        off_min: int | None = int((local.utcoffset() or timedelta(0)).total_seconds() // 60)
+        if not _one_instant(naive, zone):
+            ts_utc, off_min = None, None  # the raw value is kept; no check reads a guess
+            unsure_times += 1
         frm, to = account(r[col[layout.from_col]]), account(r[col[layout.to_col]])
         cid = f"call:cdr:{n}"
         conn.execute(
@@ -209,10 +229,10 @@ def read(text: str, layout: Layout) -> Loaded:
                 frm,
                 to,
                 direction,
-                local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                int(off.total_seconds() // 60),
+                ts_utc,
+                off_min,
                 raw,
-                int(r[col[layout.duration_col]] or 0),
+                duration,
             ),
         )
         record_types[cid] = kind
@@ -222,7 +242,10 @@ def read(text: str, layout: Layout) -> Loaded:
         "rows": len(rows) - 1,
         "calls": len(record_types),
         "skipped": skipped,
+        "unsure_times": unsure_times,
         "notes": [
+            "A local time that daylight saving makes happen twice, or not at all, is kept with"
+            " its raw value and no UTC time.",
             "A carrier record shows the line's activity, not who held the phone.",
             "Synthetic: treated as complete for the line over the file's dates.",
         ],
@@ -233,6 +256,15 @@ def read(text: str, layout: Layout) -> Loaded:
     )
     _people(conn, accounts)
     return Loaded(conn, record_types, coverage)
+
+
+def _one_instant(naive: datetime, zone: ZoneInfo) -> bool:
+    """True if this wall-clock time names exactly one instant in the zone: not repeated when
+    clocks fall back, not skipped when they spring forward."""
+    a, b = naive.replace(tzinfo=zone, fold=0), naive.replace(tzinfo=zone, fold=1)
+    if a.utcoffset() != b.utcoffset():
+        return False
+    return a.astimezone(UTC).astimezone(zone).replace(tzinfo=None) == naive
 
 
 def _people(conn: sqlite3.Connection, accounts: dict[str, str]) -> None:
@@ -254,9 +286,18 @@ def _people(conn: sqlite3.Connection, accounts: dict[str, str]) -> None:
     for lid, aid, pid, status in links:
         if aid is None:
             continue
+        confirmed = status == "confirmed"
         conn.execute(
-            "INSERT INTO identity_links VALUES (?, ?, ?, ?, 'derived', 'subscriber record', ?, ?)",
-            (lid, aid, pid, status, "expert:synthetic" if status == "confirmed" else None, None),
+            "INSERT INTO identity_links VALUES (?, ?, ?, ?, ?, 'subscriber record', ?, ?)",
+            (
+                lid,
+                aid,
+                pid,
+                status,
+                "confirmed" if confirmed else "inferred",  # as core/review/actions.py sets it
+                "expert:synthetic" if confirmed else None,
+                "2026-11-15T00:00:00Z" if confirmed else None,
+            ),
         )
 
 

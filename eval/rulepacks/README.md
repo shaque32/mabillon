@@ -32,24 +32,32 @@ python -m eval.rulepacks.harness <pack.json> --json   # the full report
 
 A pack is dropped (exit code 1, `DROP`) unless all of these hold:
 
-0. **Every synthetic layout is covered:** the pack has a layout for each synthetic file and no
-   layout without one.
-1. **Zero false supported** on every claim, in every layout.
-2. **Rule-kill:** removing each guard in turn lets at least one trap it names through as a
-   false supported, and every trap it names must get through. A guard that blocks nothing, or
-   that names a trap no claim has, fails the gate.
+0. **Coverage:** the pack has a layout for each synthetic file and no layout without one, and
+   lists every assumption template the claims use.
+1. **Every claim as expected**, in every layout: zero false supported, and no true claim or
+   contradiction lost to a guard that blocks too much.
+2. **Rule-kill:** removing each guard in turn lets every trap it names through as a false
+   supported that the full pack holds. A guard that blocks nothing, or that names a trap no
+   claim has, fails the gate.
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
-   are mutated (direction flipped, time moved six hours).
+   are mutated, once with the time moved six hours and once (for a claim about who placed a
+   call) with the direction flipped.
 
 Beside the gate the harness reports **layout mistakes**: each wrong zone and a flipped direction
-map, and which claims each one changes from the pack's own result. A mistake that changes nothing is a gap in the claim set.
+map, and which claims each one changes from the pack's own result. A mistake that changes
+nothing is a gap in the claim set.
 On the reference pack, reading a UTC or Central time as Eastern lets a trap through as a false
 supported; a flipped direction map does not, because the caller check refuses a row whose
 parties sit on the wrong side for its direction.
 
 The validator also refuses a layout whose zone the header does not state (`zone_evidence` must
-be a known zone word in the time column's header, and mean that zone). The list of zone words
-is human-owned.
+be a known zone word that stands alone at the end of a label in the time column's header, so
+"Time (UTC-05:00)" and "Central Standard Time" are refused, and it must mean that zone). The
+list of zone words is human-owned.
+
+The reader skips and counts malformed rows (wrong field count, a length that is not whole
+seconds), stores a blank length as unknown rather than 0, and keeps a local time that daylight
+saving repeats or skips with its raw value and no UTC time.
 
 ## The reference claims
 

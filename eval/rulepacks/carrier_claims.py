@@ -11,7 +11,7 @@ by a separate session that never sees the draft pack (baker/plans/rule-drafting.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -36,22 +36,24 @@ class GoldClaim:
     expected: Verdict
     trap: bool
     tests: str  # what the claim tests, in a few words
-    blocked_by: tuple[str, ...] = field(default=())  # pack guards meant to block it
 
 
-def _call(caller: str, other: str, window, duration=None) -> tuple[tuple[str, dict], ...]:
-    """'caller placed a call to other in window': who placed it, and when."""
+def _call(caller: str, callee: str, window, duration=None) -> tuple[tuple[str, dict], ...]:
+    """'caller placed a call to callee in window': who placed it, and when. One side is
+    SUBJECT-1 (the TARGET LINE's holder); the other is a person or an account id."""
+    if P1 not in (caller, callee):
+        raise ValueError("one side of a carrier claim is SUBJECT-1")
+    other = callee if caller == P1 else caller
     base: dict[str, Any] = {"channels": ["call"], "window": window}
     if duration:
         base["duration_s"] = duration
-    persons = [P1] + ([other] if other.startswith("person:") else [])
-    accounts = [] if other.startswith("person:") else [other]
-    parties: dict[str, Any] = {"person_ids": persons}
-    if accounts:
-        parties["account_ids"] = accounts
-    sent_by = [caller] if caller.startswith("person:") else accounts
+    parties: dict[str, Any] = {"person_ids": [P1]}
+    if other.startswith("person:"):
+        parties["person_ids"] = [P1, other]
+    else:
+        parties["account_ids"] = [other]
     return (
-        ("caller", {**base, **parties, "sent_by": sent_by}),
+        ("caller", {**base, **parties, "sent_by": [caller]}),
         ("record_time", {**base, **parties}),
     )
 
@@ -83,7 +85,7 @@ CLAIMS: tuple[GoldClaim, ...] = (
         "g-in-call",
         "At about 2:14 a.m. on March 4, 555-010-0377 called SUBJECT-1.",
         ClaimType.COMMUNICATION,
-        _call(A2, A2, MAR4_2AM),
+        _call(A2, P1, MAR4_2AM),
         Verdict.SUPPORTED,
         False,
         "an incoming call read the right way",
@@ -125,17 +127,15 @@ CLAIMS: tuple[GoldClaim, ...] = (
         Verdict.UNPROVEN,
         True,
         "a voicemail leg is not a conversation",
-        ("voicemail-leg",),
     ),
     GoldClaim(
         "t-forwarded",
         "At about 10 p.m. on March 5, 555-010-0444 called SUBJECT-1.",
         ClaimType.COMMUNICATION,
-        _call(A3, A3, MAR5_10PM),
+        _call(A3, P1, MAR5_10PM),
         Verdict.UNPROVEN,
         True,
         "a forwarded leg may never have reached the handset",
-        ("forwarded-leg",),
     ),
     GoldClaim(
         "t-holder",
@@ -186,6 +186,5 @@ CLAIMS: tuple[GoldClaim, ...] = (
         Verdict.UNPROVEN,
         True,
         "a voicemail leg counted as a conversation",
-        ("voicemail-leg",),
     ),  # fmt: skip
 )

@@ -6,17 +6,19 @@ out inconclusive instead. That can only move a claim away from SUPPORTED or CONT
 never toward them.
 
 The gate (a pack is dropped if any part fails):
-1. zero false supported: no claim the gold set says is not SUPPORTED comes out SUPPORTED,
-   in any layout;
-2. every guard earns its place: removing it lets at least one of the traps it names through
-   as a false supported (rule-kill);
+0. the pack covers every synthetic layout and no other, and lists every template the claims
+   use;
+1. every claim comes out as the gold set expects, in every layout: no false supported, and no
+   true claim or contradiction lost to a guard that blocks too much;
+2. every guard earns its place: removing it lets every trap it names through as a false
+   supported that the full pack does not let through (rule-kill);
 3. sensitivity: every SUPPORTED claim stops being SUPPORTED when the records it rests on are
-   mutated (direction flipped, time moved six hours).
+   mutated, once with the time moved six hours and once (for a claim about who placed a call)
+   with the direction flipped.
 
-Trap strength is reported beside the gate: each plausible layout mistake (a wrong zone, a
-flipped direction map) must change some claim's verdict, so the mistake shows. One that lets a
-trap through as a false supported is caught by the traps; one that only turns true claims
-unproven is caught by the gold claims; one that changes nothing is a gap in the claim set.
+Layout mistakes are reported beside the gate: each plausible one (a wrong zone, a flipped
+direction map) must change some claim's verdict from the pack's own result, so the mistake
+shows. One that changes nothing is a gap in the claim set.
 
     python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-reference.json
 """
@@ -101,18 +103,24 @@ def run_case(
     return [decide(c, loaded.conn, g, loaded.record_types) for c in CLAIMS]
 
 
-def _mutate(conn: sqlite3.Connection, record_ids: set[str]) -> None:
-    """Flip each record's direction and move it six hours later."""
+MUTATIONS = ("time", "direction")
+
+
+def _mutate(conn: sqlite3.Connection, record_ids: set[str], how: str) -> None:
+    """Move each record six hours later ('time'), or flip its direction ('direction'). One
+    property at a time, so a check that ignores either one shows."""
     for rid in record_ids:
         row = conn.execute("SELECT direction, ts_utc FROM calls WHERE id = ?", (rid,)).fetchone()
         if row is None:
             continue
-        flipped = _flip(row[0])
-        ts = datetime.strptime(row[1], "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=6)
-        conn.execute(
-            "UPDATE calls SET direction = ?, ts_utc = ? WHERE id = ?",
-            (flipped, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), rid),
-        )
+        if how == "direction":
+            conn.execute("UPDATE calls SET direction = ? WHERE id = ?", (_flip(row[0]), rid))
+        elif row[1] is not None:
+            ts = datetime.strptime(row[1], "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=6)
+            conn.execute(
+                "UPDATE calls SET ts_utc = ? WHERE id = ?",
+                (ts.strftime("%Y-%m-%dT%H:%M:%SZ"), rid),
+            )
 
 
 @dataclass
@@ -128,6 +136,7 @@ class Report:
     unblocked_named_traps: list[str] = field(default_factory=list)
     unknown_traps: list[str] = field(default_factory=list)  # guard:name that is no claim's
     layout_errors: list[str] = field(default_factory=list)  # missing:<id> or unknown:<id>
+    template_errors: list[str] = field(default_factory=list)  # claim:template not in pack
     insensitive: list[str] = field(default_factory=list)
     # layout mistake -> claims whose verdict it changes, and those it makes false supported
     trap_strength: dict[str, dict[str, list[str]]] = field(default_factory=dict)
@@ -136,11 +145,13 @@ class Report:
     @property
     def passed(self) -> bool:
         return not (
-            self.false_supported
+            self.wrong
+            or self.false_supported
             or self.unearned_guards
             or self.unblocked_named_traps
             or self.unknown_traps
             or self.layout_errors
+            or self.template_errors
             or self.insensitive
         )
 
@@ -157,7 +168,11 @@ def evaluate(pack: RulePack) -> Report:
     rep.layout_errors = [f"missing:{i}" for i in sorted(set(carrier.LAYOUTS) - have)] + [
         f"unknown:{i}" for i in sorted(have - set(carrier.LAYOUTS))
     ]
-    if rep.layout_errors:
+    # a pack lists the templates its claims use; a claim needing another is not tested by it
+    rep.template_errors = sorted(
+        {f"{c.id}:{t}" for c in CLAIMS for t, _ in c.assumptions if t not in pack.templates}
+    )
+    if rep.layout_errors or rep.template_errors:
         return rep
     by_layout = {x.id: run_case(pack, x.id) for x in pack.layouts}
     for lid, outs in by_layout.items():
@@ -170,12 +185,13 @@ def evaluate(pack: RulePack) -> Report:
 
     # rule-kill: each guard must let every trap it names through once removed. A name that is
     # no claim's fails the gate, so a misspelled trap cannot skip its test.
+    # Only traps the full pack holds count: one that gets through anyway is not this guard's.
     known = {c.id for c in CLAIMS}
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
         for x in pack.layouts:
-            through |= _fs(run_case(pack, x.id, guards=rest))
+            through |= _fs(run_case(pack, x.id, guards=rest)) - _fs(by_layout[x.id])
         rep.rule_kill[g.id] = sorted(through)
         if not through:
             rep.unearned_guards.append(g.id)
@@ -186,16 +202,19 @@ def evaluate(pack: RulePack) -> Report:
                 rep.unblocked_named_traps.append(f"{g.id}:{trap}")
 
     # sensitivity: a SUPPORTED claim must not survive mutation of the records it rests on
+    claims = {c.id: c for c in CLAIMS}
     for x in pack.layouts:
-        loaded = carrier.load_case(pack, x.id)
-        for c in CLAIMS:
-            o = decide(c, loaded.conn, pack.guards, loaded.record_types)
+        for o in by_layout[x.id]:
             if o.got is not Verdict.SUPPORTED:
                 continue
-            m = carrier.load_case(pack, x.id)
-            _mutate(m.conn, set(o.cited_records))
-            if decide(c, m.conn, pack.guards, m.record_types).got is Verdict.SUPPORTED:
-                rep.insensitive.append(f"{x.id}:{c.id}")
+            c = claims[o.claim_id]
+            for how in MUTATIONS:
+                if how == "direction" and not any(t == "caller" for t, _ in c.assumptions):
+                    continue  # only a claim about who placed a call turns on direction
+                m = carrier.load_case(pack, x.id)
+                _mutate(m.conn, set(o.cited_records), how)
+                if decide(c, m.conn, pack.guards, m.record_types).got is Verdict.SUPPORTED:
+                    rep.insensitive.append(f"{x.id}:{c.id}:{how}")
 
     # layout mistakes: each must change some claim's verdict from the pack's own result
     for x in pack.layouts:
@@ -246,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pack {rep.pack} sha256 {rep.pack_sha256[:12]} rules {rep.rule_version}")
         if rep.layout_errors:
             print(f"  layouts not matching the synthetic files: {rep.layout_errors}")
+        if rep.template_errors:
+            print(f"  claims needing a template the pack does not list: {rep.template_errors}")
         for lid, rows in rep.layouts.items():
             right = sum(r["expected"] == r["got"] for r in rows)
             print(f"  {lid}: {right}/{len(rows)} claims as expected")

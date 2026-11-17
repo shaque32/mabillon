@@ -83,22 +83,24 @@ def test_unknown_templates_and_unsigned_signed_packs_are_refused(pack: RulePack)
         RulePack.model_validate({**body, "templates": ["caller", "made_up"]})
     with pytest.raises(ValidationError, match="examiner's and the owner's"):
         RulePack.model_validate({**body, "status": "signed"})
-    stale = Signature(role="examiner", name="x", signed_at_utc="2026-11-15", pack_sha256="0" * 64)
+    stale = Signature(
+        role="examiner", name="x", signed_at_utc="2026-11-15T00:00:00Z", pack_sha256="0" * 64
+    )
     owner = stale.model_copy(update={"role": "owner"})
     with pytest.raises(ValidationError, match="another version"):
         RulePack.model_validate({**body, "status": "signed", "signatures": [
-            stale.model_dump(), owner.model_dump()]})  # fmt: skip
+            stale.model_dump(mode="json"), owner.model_dump(mode="json")]})  # fmt: skip
 
 
 def test_the_hash_ignores_signatures_and_status_but_not_content(pack: RulePack) -> None:
     h = pack.sha256()
     sigs = tuple(
-        Signature(role=r, name="x", signed_at_utc="2026-11-15", pack_sha256=h)
+        Signature(role=r, name="x", signed_at_utc="2026-11-15T00:00:00Z", pack_sha256=h)
         for r in ("examiner", "owner")
     )
     signed = RulePack.model_validate(
         {**pack.model_dump(mode="json"), "status": "signed",
-         "signatures": [s.model_dump() for s in sigs]}
+         "signatures": [s.model_dump(mode="json") for s in sigs]}
     )  # fmt: skip
     assert signed.sha256() == h
     assert pack.without_guard("forwarded-leg").sha256() != h
@@ -172,3 +174,115 @@ def test_a_pack_must_read_every_synthetic_layout_and_no_other(pack: RulePack) ->
     extra = pack.layouts[1].model_copy(update={"id": "carrier-c"})
     rep = harness.evaluate(pack.model_copy(update={"layouts": (*pack.layouts, extra)}))
     assert not rep.passed and rep.layout_errors == ["unknown:carrier-c"]
+
+
+# ---- code review on #260
+
+
+def test_a_pack_that_guards_too_much_is_dropped(pack: RulePack) -> None:
+    # A guard on every call type blocks the traps but also turns true claims unproven.
+    blanket = Guard(
+        id="every-call",
+        text="No call record of any kind may carry a check result.",
+        record_types=("voice", "voicemail", "forwarded"),
+        blocks=("t-voicemail", "t-forwarded", "t-count-voicemail"),
+    )
+    rep = harness.evaluate(pack.model_copy(update={"guards": (blanket,)}))
+    assert not rep.passed and rep.false_supported == []
+    assert {"carrier-a:g-in-call", "carrier-a:t-direction"} <= set(rep.wrong)
+
+
+@pytest.mark.parametrize("time_col", ["Time (UTC -05:00)", "Time (UTC +1)", "Time UTC-5"])
+def test_a_zone_word_with_any_offset_after_it_is_refused(pack: RulePack, time_col: str) -> None:
+    body = pack.model_dump(mode="json")
+    lay = body["layouts"][0]
+    lay["headers"] = [(time_col if h == "Time (UTC)" else h) for h in lay["headers"]]
+    lay["time_col"] = time_col
+    with pytest.raises(ValidationError, match="zone_evidence"):
+        RulePack.model_validate(body)
+
+
+def test_central_standard_time_is_not_read_as_chicago_time(pack: RulePack) -> None:
+    body = pack.model_dump(mode="json")
+    lay = body["layouts"][1]
+    col = "Call Time (Central Standard Time)"
+    lay["headers"] = [(col if h == "Call Time (CT)" else h) for h in lay["headers"]]
+    lay["time_col"], lay["zone_evidence"] = col, "Central"
+    with pytest.raises(ValidationError, match="zone_evidence"):
+        RulePack.model_validate(body)
+
+
+def _one_row_file(layout_id: str, row: list[str]) -> str:
+    head = carrier.render(layout_id).splitlines()[0]
+    return head + "\n" + ",".join(row) + "\n"
+
+
+def test_a_local_time_daylight_saving_repeats_or_skips_keeps_no_utc_time(pack: RulePack) -> None:
+    for day, clock in [("11/01/2026", "01:30:00"), ("03/08/2026", "02:30:00")]:
+        text = _one_row_file(
+            "carrier-b", [day, clock, carrier.TARGET, "5550100377", "MO", "60", "V"]
+        )
+        loaded = carrier.read(text, pack.layout("carrier-b"))
+        row = loaded.conn.execute("SELECT ts_utc, ts_offset_min, ts_raw FROM calls").fetchone()
+        assert row == (None, None, f"{day} {clock}")
+        assert loaded.coverage["unsure_times"] == 1
+
+
+def test_malformed_rows_are_counted_and_a_blank_length_is_not_zero(pack: RulePack) -> None:
+    lay = pack.layout("carrier-a")
+    good = ["2026-03-04", "07:14:40", "5550100377", carrier.TARGET, "IN"]
+    text = _one_row_file("carrier-a", [*good, "", "VOICE"])
+    text += ",".join(good[:3]) + "\n"  # short row
+    text += ",".join([*good, "1:23", "VOICE"]) + "\n"  # not whole seconds
+    loaded = carrier.read(text, lay)
+    assert loaded.conn.execute("SELECT duration_s FROM calls").fetchall() == [(None,)]
+    assert loaded.coverage["skipped"]["malformed"] == 2
+
+
+def test_a_pack_must_list_every_template_its_claims_use(pack: RulePack) -> None:
+    rep = harness.evaluate(pack.model_copy(update={"templates": ("record_time",)}))
+    assert not rep.passed
+    assert "g-in-call:caller" in rep.template_errors
+    assert "t-count-voicemail:message_count" in rep.template_errors
+
+
+def test_a_trap_the_full_pack_lets_through_is_not_credited_to_a_guard(pack: RulePack) -> None:
+    # A type map that reads forwarded legs as voice lets t-forwarded through with every guard
+    # on, so removing forwarded-leg changes nothing and the guard is unearned.
+    body = pack.model_dump(mode="json")
+    for lay in body["layouts"]:
+        lay["type_values"] = {k: ("voice" if v == "forwarded" else v)
+                              for k, v in lay["type_values"].items()}  # fmt: skip
+    rep = harness.evaluate(RulePack.model_validate(body))
+    assert "carrier-a:t-forwarded" in rep.false_supported
+    assert "t-forwarded" not in rep.rule_kill["forwarded-leg"]
+    assert "forwarded-leg" in rep.unearned_guards
+
+
+def test_a_carrier_claim_names_subject_1_and_its_stated_caller() -> None:
+    from eval.rulepacks.carrier_claims import A2, A3, MAR4_2AM, _call
+
+    caller, _ = _call(A2, carrier.P1, MAR4_2AM)
+    assert caller[1]["sent_by"] == [A2] and caller[1]["account_ids"] == [A2]
+    with pytest.raises(ValueError, match="SUBJECT-1"):
+        _call(A3, A2, MAR4_2AM)
+
+
+def test_signatures_need_a_name_and_a_time_and_a_changed_copy_is_unsigned(
+    pack: RulePack,
+) -> None:
+    h = pack.sha256()
+    with pytest.raises(ValidationError):
+        Signature(role="examiner", name="", signed_at_utc="2026-11-15T00:00:00Z", pack_sha256=h)
+    with pytest.raises(ValidationError):
+        Signature(role="examiner", name="x", signed_at_utc="2026-11-15", pack_sha256=h)
+    sigs = [
+        Signature(role=r, name="x", signed_at_utc="2026-11-15T00:00:00Z", pack_sha256=h)
+        for r in ("examiner", "owner")
+    ]
+    signed = RulePack.model_validate(
+        {**pack.model_dump(mode="json"), "status": "signed",
+         "signatures": [s.model_dump(mode="json") for s in sigs]}
+    )  # fmt: skip
+    copy = signed.without_guard("voicemail-leg")
+    assert copy.status == "draft" and copy.signatures == ()

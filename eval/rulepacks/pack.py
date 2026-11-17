@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from core.audit.assumptions import TEMPLATES
 from core.audit.checks import CHECKS
@@ -79,9 +79,10 @@ class Layout(_Strict):
         missing = [c for c in cols if c not in self.headers]
         if missing:
             raise ValueError(f"layout {self.id}: columns not in headers: {missing}")
-        # the zone word must stand alone: "Time (UTC-05:00)" states an offset, not UTC
-        # (CodeRabbit on #260)
-        standalone = rf"(?<![A-Za-z0-9+\-]){re.escape(self.zone_evidence)}(?![A-Za-z0-9+\-:])"
+        # the zone word must stand alone and end the label: "Time (UTC-05:00)", "Time (UTC
+        # -05:00)" and "Central Standard Time" state an offset or a fixed standard time, not
+        # the zone (CodeRabbit and code review on #260)
+        standalone = rf"(?:^|[\s(]){re.escape(self.zone_evidence)}\s*(?:\)|$)"
         if not self.zone_evidence or not re.search(standalone, self.time_col):
             raise ValueError(
                 f"layout {self.id}: zone_evidence {self.zone_evidence!r} is not in the time "
@@ -113,9 +114,9 @@ class Guard(_Strict):
 
 class Signature(_Strict):
     role: Literal["examiner", "owner"]
-    name: str
-    signed_at_utc: str
-    pack_sha256: str  # the hash of the pack without its signatures
+    name: str = Field(min_length=1, pattern=r"\S")
+    signed_at_utc: AwareDatetime
+    pack_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")  # the hash without signatures
 
 
 class RulePack(_Strict):
@@ -172,7 +173,15 @@ class RulePack(_Strict):
         raise KeyError(layout_id)
 
     def without_guard(self, guard_id: str) -> RulePack:
-        return self.model_copy(update={"guards": tuple(g for g in self.guards if g.id != guard_id)})
+        """A changed copy is another pack: it is a draft, and no signature carries over."""
+        return RulePack.model_validate(
+            {
+                **self.model_dump(mode="json"),
+                "status": "draft",
+                "signatures": [],
+                "guards": [g.model_dump(mode="json") for g in self.guards if g.id != guard_id],
+            }
+        )
 
 
 def load(path: Path) -> RulePack:
