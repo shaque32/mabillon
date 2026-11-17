@@ -131,6 +131,27 @@ def test_a_composite_dedupe_key_and_a_skipped_table(lava: Path) -> None:
     assert r["counts"]["message"] == 2  # the skipped table repeats another and is not counted
 
 
+def test_a_skipped_table_s_dedupe_columns_are_never_read(lava: Path) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.executescript("CREATE TABLE combined2 (body TEXT); INSERT INTO combined2 VALUES ('hi');")
+    db.commit()
+    db.close()
+    r = dump_lava.read(lava, {"combined2": {"kind": "skip", "dedupe": "old_col"}})
+    assert r["tables"]["combined2"]["rows"] == 1  # reported, not stopped by a column it lacks
+    assert r["counts"] == {"message": 0, "call": 0, "contact": 0}
+
+
+def test_a_kinds_file_that_writes_one_table_twice_stops_the_reader(
+    lava: Path, tmp_path: Path
+) -> None:
+    kinds = tmp_path / "kinds.json"
+    kinds.write_text(
+        '{"sms": {"kind": "message"}, "sms": {"kind": "skip"}}', "utf-8"
+    )  # json.loads alone would keep only the second
+    with pytest.raises(SystemExit, match="twice"):
+        dump_lava.main([str(lava), str(kinds), str(tmp_path / "out.json")])
+
+
 def test_table_names_match_whatever_their_case_and_no_written_table_goes_unreported(
     lava: Path,
 ) -> None:
@@ -182,4 +203,4 @@ def test_a_listed_table_the_database_does_not_hold_is_flagged(lava: Path) -> Non
     t = r["tables"]["telegram_messages"]
     assert (t["present"], t["count"], t["manifest_record_count"]) == (False, 0, 500)
     assert "telegram_messages" in r["manifest_count_differs"]  # never a silent zero
-    assert r["tables_not_in_database"] == ["telegram_messages"]
+    assert r["tables_not_in_database"] == {"telegram_messages": 500}  # with its count

@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import LocalAssumptionFiller, _Account
+from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, _Account
 from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
 from core.audit.rules import decide_verdict
@@ -732,7 +732,7 @@ def test_an_identifier_that_begins_with_id_is_read_as_written(conn: sqlite3.Conn
     assert r.outcome is CheckOutcome.PASS
 
 
-def _parse(conn: sqlite3.Connection, words: str, app: str = "Instagram"):
+def _parse(conn: sqlite3.Connection, words: str, app: str = "Instagram") -> CallForm | None:
     f = LocalAssumptionFiller(FakeModel("{}"), conn,
                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
     return f.call_form(claim(f"{IG_AT} {words}"), app)
@@ -765,6 +765,11 @@ def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection)
     for written in ("username lena", "user name: lena"):
         acc = _Account(as_written=written, app="Instagram")
         assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
+    _add_instagram(conn)
+    for written in ("user ID number 49800011122", "ID number: 49800011122"):
+        # every label the id tail reads (`_ID_LABEL`), "number" after it included
+        acc = _Account(as_written=written, app="Instagram")
+        assert f._accounts(acc, ["dev:item1"]) == {GARAGE_IG}, written
 
 
 @pytest.mark.parametrize(
@@ -783,3 +788,36 @@ def test_an_id_that_only_begins_with_a_known_id_names_no_caller(
     made, f = short_fill(conn, f'PETROV called the Instagram user "Lena Okafor" {ident}.')
     assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made  # lena.2 is not lena
+
+
+# One WhatsApp number held under two keys, its display name on one of them (ruling R6: one party).
+DUNN_WA = ["acct:item1:WhatsApp:+19195550142", "acct:item1:WhatsApp:19195550142@s.whatsapp.net"]
+
+
+def test_a_name_and_its_number_held_under_two_keys_get_a_caller(conn: sqlite3.Connection) -> None:
+    c = conn
+    c.execute("PRAGMA foreign_keys = OFF")
+    for acc, name in [(DUNN_WA[0], "Owen Dunn"), (DUNN_WA[1], None)]:
+        c.execute(
+            "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'WhatsApp', ?, ?)",
+            (acc, acc, acc.split(":", 3)[3], name),
+        )
+    c.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:wa:dunn', 'item1', 'c:wa:dunn', 'dev:item1',"
+        " 'WhatsApp', NULL, ?, 'outgoing', '2026-06-21T01:00:00Z', 0, NULL, 60, 0)",
+        (DUNN_WA[1],),
+    )
+    made, f = fill(
+        conn,
+        'On June 20, 2026, at about 9:00 p.m. EDT, PETROV called the WhatsApp user "Owen Dunn,"'
+        " ID +1 919 555 0142.",
+        people=["PETROV"],
+        accounts=[{"as_written": "+1 919 555 0142", "app": "WhatsApp"}],
+        channels=["call", "WhatsApp"],
+        window=W("June 20, 2026", "2026-06-20T20:52", "2026-06-20T21:09"),
+    )
+    assert "record_time" in made, [d.reason for d in f.drops]
+    a = made["caller"]
+    assert sorted(a.params.account_ids) == sorted(DUNN_WA), [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS

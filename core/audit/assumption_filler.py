@@ -96,6 +96,7 @@ Proposals then go through TemplateAssumptionBuilder, which validates them again.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
@@ -526,6 +527,18 @@ def _name_spans(text: str, name: str) -> list[tuple[int, int]]:
             rf"(?-i:(?<![\w-]){re.escape(x)}(?![\w-]))" for x in (parts[-1], parts[-1].upper())
         ]
     return [m.span() for f in found for m in re.finditer(f, text, re.IGNORECASE)]
+
+
+@functools.lru_cache(maxsize=4096)
+def _identifier_patterns(ident: str) -> tuple[re.Pattern[str], ...]:
+    """How `_identifier_spans` finds one identifier: whole, as `_ident_spans` reads it ("lena"
+    is not in "lena.2", "lena..2" or "lena:x"); after an id label, whose colon may touch it
+    ("user ID:4984911", "id:lena"); and, at six characters or more, anywhere."""
+    tail = rf"({re.escape(ident)})(?![\w@-]|[.:]+[\w@-])"
+    out = [re.compile(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}")]
+    if len(ident) >= 6:
+        out.append(re.compile(rf"(?<![\w.:@-]){tail}"))
+    return tuple(out)
 
 
 def _ident_spans(text: str, ident: str) -> list[tuple[int, int]]:
@@ -1688,9 +1701,12 @@ _CALL_FORM_RE = re.compile(
 )
 # A label before a written identifier, taken off only where something parts it from the
 # identifier: "ID 42", "id: 42" and "username lena" are 42 and lena, but "id42" and "idris_m"
-# are written so (CodeRabbit on #263).
+# are written so (CodeRabbit on #263). It takes off every label `_ID_LABEL` reads ("user ID
+# number 42"; Claude review on #263) and a few more; a label the id tail does not read leaves
+# the clause unread, so no caller is made.
 _WRITTEN_ID_LABEL_RE = re.compile(
-    r"(?i)^(?:(?:user\s*id|account\s*id|user\s*name|id|number)(?:\s*[:#]\s*|\s+)|no\.\s*)"
+    r"(?i)^(?:(?:user\s*id|account\s*id|user\s*name|id|number)(?:\s+number)?(?:\s*[:#]\s*|\s+)"
+    r"|no\.\s*)"
 )
 _ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
 # The other side's id set beside its name, right after the clause: '"Marc R.," user ID
@@ -4867,14 +4883,11 @@ class LocalAssumptionFiller:
             if a.app == app and a.identifier.strip() and not re.search(r"\s", a.identifier.strip())
         }
         out: set[tuple[str, int, int]] = set()
-        for i in sorted(ids):
-            # the whole id, as `_ident_spans` reads it: "lena" is not in "lena.2" or "lena:x"
-            tail = rf"({re.escape(i)})(?![\w@-]|[.:]+[\w@-])"
-            # after a label its colon may touch the id ("user ID:4984911", "id:lena")
-            found = list(re.finditer(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}", bare))
-            if len(i) >= 6:
-                found += re.finditer(rf"(?<![\w.:@-]){tail}", bare)
-            out.update((i, *m.span(1)) for m in found)
+        # Only an id the words hold, as written (its case kept), is searched for, with patterns
+        # compiled once per id: a case may hold thousands (Claude review on #263).
+        for i in sorted(x for x in ids if x in bare):
+            for pattern in _identifier_patterns(i):
+                out.update((i, *m.span(1)) for m in pattern.finditer(bare))
         return sorted(out, key=lambda t: (t[0], t[1]))  # by identifier, then place
 
     def _call_parties(
@@ -5198,6 +5211,20 @@ class LocalAssumptionFiller:
             out.append(Proposal("event", event, is_core=True, code_made=True))
         return out
 
+    def _one_party(self, accounts: list[str]) -> bool:
+        """The accounts are one party, as `_call_parties` reads one: one key, or one phone
+        number held under several keys (ruling R6; Claude review on #263)."""
+        accs = [self.data.accounts[x] for x in accounts]
+        if len({a.key for a in accs}) == 1:
+            return True
+        for acc in accs:
+            ident = acc.identifier.strip()
+            jid = re.fullmatch(r"(\d{8,15})@s\.whatsapp\.net", ident)
+            number = jid.group(1) if jid is not None else phone_digits(ident)
+            if number is not None and all(_same_number(number, a) for a in accs):
+                return True
+        return False
+
     def _caller_params(
         self, claim: Claim, rt: dict[str, Any]
     ) -> tuple[dict[str, Any], bool] | None:
@@ -5215,7 +5242,7 @@ class LocalAssumptionFiller:
         if len(phones) > 1:
             return None
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
-        if form.one_account and len({self.data.accounts[x].key for x in accounts}) != 1:
+        if form.one_account and not self._one_party(accounts):
             # The name and the id beside it are not one account. `_call_parties` already
             # refuses two accounts written as one side; this keeps the rule beside the caller
             # row too, so a change there cannot let one through.

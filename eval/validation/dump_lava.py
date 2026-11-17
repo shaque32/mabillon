@@ -9,7 +9,8 @@ lava_schema_version, profile_used, and artifacts by category, each with name, ta
 column_map, record_count and source_path), and `_lava_artifacts.db`, one SQLite table per
 artifact.
 
-Usage: python3 -I -m eval.validation.dump_lava <lava_dir> <kinds.json> <out.json>
+Usage: python3 -I eval/validation/dump_lava.py <lava_dir> <kinds.json> <out.json>
+(by path: -I keeps the working directory off sys.path, so `-m eval...` would not be found)
 kinds.json maps each table read as a kind to that kind and its dedupe columns, if any:
     {"sms": {"kind": "message", "dedupe": "message_row_id"},
      "get_googlemessages": {"kind": "message",
@@ -17,7 +18,9 @@ kinds.json maps each table read as a kind to that kind and its dedupe columns, i
 A table with dedupe columns is counted by its distinct values of those columns, over rows where
 none is null (iLEAPP's SMS table has one row per attachment); any other table by its rows. A
 table may also be listed with "kind": "skip" (one that repeats another, such as ALEAPP's
-get_sms_mms_combined): it is reported and never counted. The manifest's record_count
+get_sms_mms_combined): its rows are reported, it is never counted, and its dedupe columns, if
+any, are never read. A kinds file that names one table twice, in any spelling, stops the
+reader. The manifest's record_count
 is reported beside the live count and never used as the count.
 """
 
@@ -31,7 +34,7 @@ MANIFEST = "_lava_data.lava"
 DATABASE = "_lava_artifacts.db"
 KINDS = ("message", "call", "contact")
 SKIP = "skip"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def sha256(path: Path) -> str:
@@ -57,6 +60,17 @@ def manifest_tables(manifest: dict) -> dict[str, dict]:
 
 
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    """json.loads keeps only the last of two equal keys; a kinds file that names a table twice
+    must stop the reader instead (Claude review on #263)."""
+    out: dict = {}
+    for k, v in pairs:
+        if k in out:
+            raise SystemExit(f"dump_lava: kinds names table {k!r} twice")
+        out[k] = v
+    return out
 
 
 def fold(name: str) -> str:
@@ -140,7 +154,8 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
                     "in_manifest": fold(table) in listed,
                 }
                 continue
-            got = count(conn, name, spec.get("dedupe"))
+            # A skipped table is never counted, so its dedupe columns are never checked.
+            got = count(conn, name, None if kind == SKIP else spec.get("dedupe"))
             tables[table] = {
                 "kind": kind,
                 "present": True,
@@ -155,8 +170,11 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
         # of the count without being reported.
         unread = sorted(in_db[t] for t in in_db.keys() - named)
         unlisted = sorted(in_db[t] for t in in_db.keys() - listed.keys())
-        # Every table the manifest lists that the database does not hold.
-        unwritten = sorted(listed[t]["tablename"] for t in listed.keys() - in_db.keys())
+        # Every table the manifest lists that the database does not hold, with its record_count.
+        unwritten = {
+            listed[t]["tablename"]: listed[t].get("record_count")
+            for t in sorted(listed.keys() - in_db.keys())
+        }
     finally:
         conn.close()
     parser = manifest.get("parser_info") or {}
@@ -172,7 +190,7 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
         "tables": tables,
         "tables_not_counted": unread,  # written, read as no kind
         "tables_not_in_manifest": unlisted,  # written, but the manifest lists no artifact
-        "tables_not_in_database": unwritten,  # listed in the manifest, but not written
+        "tables_not_in_database": unwritten,  # listed but not written: {name: record_count}
         "manifest_count_differs": sorted(
             t
             for t, v in tables.items()
@@ -186,7 +204,7 @@ def main(argv: list[str] | None = None) -> None:
     if len(args) != 3:
         raise SystemExit(__doc__)
     lava_dir, kinds_path, out = Path(args[0]), Path(args[1]), Path(args[2])
-    kinds = json.loads(kinds_path.read_text("utf-8"))
+    kinds = json.loads(kinds_path.read_text("utf-8"), object_pairs_hook=no_duplicate_keys)
     result = read(lava_dir, kinds)
     out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", "utf-8")
     print(json.dumps(result["counts"]))
