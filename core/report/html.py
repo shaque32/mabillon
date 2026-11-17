@@ -711,6 +711,7 @@ SOURCE_KIND = {
     "cellebrite_pdf": "Cellebrite PDF report",
     "cellebrite_html": "Cellebrite HTML report",
     "axiom": "Magnet AXIOM report",
+    "leapp": "iLEAPP or ALEAPP output",
     "raw_zip": "Raw ZIP",
     "govdoc": "Government document",
     "synthetic": "Synthetic",
@@ -875,6 +876,15 @@ def _limitations(
                 "public descriptions of AXIOM's report exports and tested on synthetic exports "
                 "only. Each record cited from this file should be compared with the same record "
                 "in AXIOM Examine before it is relied on.</li>"
+            )
+        elif cov.format_unverified and cov.importer == "leapp":
+            items.append(
+                f"<li><strong>{q(cov.file_name)} was read with Mabillon's iLEAPP and ALEAPP "
+                "reader, which is not yet verified.</strong> It was built from LEAPP's published "
+                "source and run on public test phones only, never on case data, and reads only "
+                "the messages, calls and contacts tables. Each record cited from this file should "
+                "be compared with the same record in the LEAPP report or LAVA before it is relied "
+                "on.</li>"
             )
         elif cov.format_unverified:
             items.append(

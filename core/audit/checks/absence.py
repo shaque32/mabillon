@@ -16,8 +16,11 @@ from core.audit.checks._common import (
     calls_for_accounts,
     channel_ok,
     in_window,
+    incomplete,
+    incomplete_beside,
     involves_all,
     local_str,
+    may_be_between,
     messages_for_accounts,
     parties,
     sentences,
@@ -30,7 +33,7 @@ from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 
 class AbsenceCheck(TemplateCheck):
     name = "absence"
-    version = "1.0.1"
+    version = "1.0.2"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None:
@@ -63,9 +66,22 @@ class AbsenceCheck(TemplateCheck):
         rows = [r for r in rows if r.source_id in sources and channel_ok(r, p.channels)]
         found: list[Row] = []
         unplaced: list[Row] = []
+        # A message in a chat with a party that names neither side, such as the phone's own
+        # message in a LEAPP chat (Greptile on #264): it may be contact too.
+        seen = {r.id for r in rows}
+        rows += [
+            r
+            for r in incomplete_beside(data, everyone)
+            if r.id not in seen and r.source_id in sources and channel_ok(r, p.channels)
+        ]
         for r in rows:
-            if r.sender is None:
-                # A row with a party on it but no sender: it may be contact, it may not.
+            if incomplete(r):
+                # A row with a party on it but no sender, or no recorded receiver (an import
+                # that names the other side of a phone's own message or call but not the
+                # phone's line): it may be contact, it may not. One a third party sent is not
+                # (CodeRabbit on #264).
+                if not may_be_between(r, a_ids, b_ids):
+                    continue
                 if r.ts_utc is None or in_window(r.ts_utc, p.window):
                     unplaced.append(r)
             elif involves_all(r, [a_ids, b_ids]):
@@ -164,7 +180,18 @@ def _coverage_gaps(
         if lo is None or lo > start or hi < end:
             span = f"{lo} to {hi}" if lo else "no dated records"
             gaps.append(f"{sid}'s dated records ({span}) do not span the window")
+        read = data.apps_read.get(sid)
+        if read is not None and not channels:
+            gaps.append(
+                f"{sid} holds the records of only some apps ({', '.join(sorted(read)) or 'none'}"
+                "), so contact on any other app was not searched there"
+            )
         for app in channels:
+            if read is not None and app.strip().lower() not in read:
+                gaps.append(
+                    f"{sid} did not read every {app} record (only some apps' records were "
+                    "imported from it), so contact there is not ruled out"
+                )
             if app.strip().lower() == "call":
                 (n,) = data.conn.execute(
                     "SELECT count(*) FROM calls WHERE source_id = ?", (sid,)

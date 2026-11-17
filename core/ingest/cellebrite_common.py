@@ -1650,6 +1650,10 @@ def _header_like(cells: list[Cell]) -> bool:
 # Physical Analyzer numbers a record it lists again '3(1)' after '3': in a rooted Android
 # extraction the same database is read twice, at its own path and under /sbin/.magisk/mirror/.
 NUMBERED_COPIES_KEY = "numbered_copy_records"
+# A source that imported only some apps' records (LEAPP output, core/ingest/leapp.py) lists the
+# apps whose records it read in full under this key, and the absence check treats every other app,
+# and a search on every channel, as not covered by that source.
+APPS_READ_KEY = "apps_read_in_full"
 _COPY_NUMBER_RE = re.compile(r"^(\d+)\s*\(\d+\)$")
 
 

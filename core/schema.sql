@@ -1,4 +1,5 @@
--- Baker canonical schema v0.8.0 (matches CONTRACTS_VERSION in core/contracts.py).
+-- Baker canonical schema v0.9.0 (matches CONTRACTS_VERSION in core/contracts.py).
+-- 0.9.0: sources.kind 'leapp', iLEAPP and ALEAPP output (signed by Arsh 2026-11-16).
 -- 0.8.0: counsel reviews and the checked and counsel_reviewed bases (signed by Arsh 2026-11-06).
 -- 0.7.0: case_events, the dated events the document defines (signed by Arsh 2026-11-01).
 -- 0.6.0: person_aliases, the other names an expert gives a person (signed by Arsh 2026-10-30).
@@ -25,7 +26,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE sources (
     id               TEXT PRIMARY KEY,
     kind             TEXT NOT NULL CHECK (kind IN ('ufdr', 'cellebrite_excel', 'cellebrite_pdf',
-                         'cellebrite_html', 'axiom', 'raw_zip', 'govdoc', 'synthetic')),
+                         'cellebrite_html', 'axiom', 'leapp', 'raw_zip', 'govdoc', 'synthetic')),
     fidelity         TEXT NOT NULL CHECK (fidelity IN ('full_extraction', 'curated_report', 'unknown')),
     extraction_type  TEXT NOT NULL CHECK (extraction_type IN ('logical', 'file_system', 'physical',
                          'not_applicable', 'unknown')),
