@@ -539,7 +539,9 @@ def _add_instagram(c: sqlite3.Connection) -> None:
     )
 
 
-def ig_fill(conn, words: str, written: str = "49800011122"):
+def ig_fill(
+    conn: sqlite3.Connection, words: str, written: str = "49800011122"
+) -> tuple[dict, LocalAssumptionFiller]:
     _add_instagram(conn)
     return fill(conn, f"{IG_AT} {words}", people=["PETROV"],
                 accounts=[{"as_written": written, "app": "Instagram"}],
@@ -554,7 +556,9 @@ def ig_fill(conn, words: str, written: str = "49800011122"):
         'PETROV called "Marc Garage," user ID 49800011122, on Instagram.',
     ],
 )
-def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, words):
+def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(
+    conn: sqlite3.Connection, words: str
+) -> None:
     made, f = ig_fill(conn, words)
     assert "record_time" in made, [d.reason for d in f.drops]
     a = made["caller"]
@@ -564,7 +568,9 @@ def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, 
     assert r.outcome is CheckOutcome.PASS
 
 
-def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(conn):
+def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(
+    conn: sqlite3.Connection,
+) -> None:
     made, _ = ig_fill(conn, 'the Instagram user "Marc Garage," user ID 49800011122, called PETROV.')
     # a side described by its app is read only after the verb, so no caller is read here
     assert "caller" not in made
@@ -594,8 +600,12 @@ NAMED = [{"as_written": "Marc Garage", "app": "Instagram"}]
     ],
 )  # fmt: skip
 def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(
-    conn, words, people, accounts, form
-):
+    conn: sqlite3.Connection,
+    words: str,
+    people: list[str],
+    accounts: list[dict[str, str]],
+    form: bool,
+) -> None:
     _add_instagram(conn)
     text = f"{IG_AT} {words}"
     f = LocalAssumptionFiller(FakeModel("{}"), conn,
