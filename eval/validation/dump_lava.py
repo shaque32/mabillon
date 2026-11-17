@@ -43,17 +43,26 @@ def sha256(path: Path) -> str:
 
 
 def manifest_tables(manifest: dict) -> dict[str, dict]:
-    """Each artifact the manifest lists, by its table name."""
+    """Each artifact the manifest lists, by its table name as SQLite compares it (`fold`)."""
     out: dict[str, dict] = {}
     for category, artifacts in (manifest.get("artifacts") or {}).items():
         for art in artifacts if isinstance(artifacts, list) else artifacts.values():
             table = art.get("tablename")
             if not table:
                 continue
-            if table in out:
+            if fold(table) in out:
                 raise SystemExit(f"dump_lava: the manifest lists table {table!r} twice")
-            out[table] = {**art, "category": category}
+            out[fold(table)] = {**art, "category": category}
     return out
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def fold(name: str) -> str:
+    """A table or column name as SQLite compares it: only A-Z fold, so "SMS" is "sms" but "Ä"
+    and "ä" stay two names (CodeRabbit on #263)."""
+    return name.translate(_ASCII_LOWER)
 
 
 def quote(name: str) -> str:
@@ -69,11 +78,13 @@ def count(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) 
     out = {"rows": rows, "count": rows}
     if dedupe:
         keys = [dedupe] if isinstance(dedupe, str) else list(dedupe)
-        by_case = {c.casefold(): c for c in cols}  # SQLite column names are case-insensitive
+        by_case = {fold(c): c for c in cols}  # SQLite column names are case-insensitive
         for k in keys:
-            if k.casefold() not in by_case:
+            if fold(k) not in by_case:
                 raise SystemExit(f"dump_lava: table {table!r} has no column {k!r}")
-        keys = [by_case[k.casefold()] for k in keys]
+        keys = [by_case[fold(k)] for k in keys]
+        if len(set(keys)) != len(keys):
+            raise SystemExit(f"dump_lava: table {table!r} names one dedupe column twice")
         names = ", ".join(quote(k) for k in keys)
         no_null = " AND ".join(f"{quote(k)} IS NOT NULL" for k in keys)
         out["count"] = conn.execute(
@@ -98,35 +109,41 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
     try:
         # SQLite table names are case-insensitive, so a kinds entry "SMS" names table "sms".
         in_db = {
-            r[0].casefold(): r[0]
+            fold(r[0]): r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            if not r[0].casefold().startswith("sqlite_")
+            if not fold(r[0]).startswith("sqlite_")
         }
-        listed = {k.casefold(): v for k, v in listed.items()}
+        # Two entries for one table would count it twice (CodeRabbit on #263).
+        named: dict[str, str] = {}
+        for table in kinds:
+            if fold(table) in named:
+                raise SystemExit(
+                    f"dump_lava: kinds names table {table!r} twice ({named[fold(table)]!r})"
+                )
+            named[fold(table)] = table
         tables: dict[str, dict] = {}
         totals = {k: 0 for k in KINDS}
         for table, spec in sorted(kinds.items()):
             kind = spec.get("kind")
             if kind not in (*KINDS, SKIP):
                 raise SystemExit(f"dump_lava: {table!r} has kind {kind!r}, not one of {KINDS}")
-            name = in_db.get(table.casefold())
+            name = in_db.get(fold(table))
             if name is None:
                 # A table the importer reads but this run did not write: zero, said so.
                 tables[table] = {"kind": kind, "present": False, "count": 0}
                 continue
             got = count(conn, name, spec.get("dedupe"))
-            art = listed.get(table.casefold(), {})
+            art = listed.get(fold(table), {})
             tables[table] = {
                 "kind": kind,
                 "present": True,
                 **got,
                 "manifest_record_count": art.get("record_count"),
-                "in_manifest": table.casefold() in listed,
+                "in_manifest": fold(table) in listed,
                 "source_path": art.get("source_path"),
             }
             if kind != SKIP:
                 totals[kind] += got["count"]
-        named = {t.casefold() for t in kinds}
         # Every written table no kind names, listed in the manifest or not: none is left out
         # of the count without being reported.
         unread = sorted(in_db[t] for t in in_db.keys() - named)

@@ -12,7 +12,9 @@
   the LAVA format and not from the LEAPP importer's code. It counts the tables named as
   messages, calls and contacts from the tables themselves (distinct values of a dedupe column
   where one is given, since iLEAPP's SMS table has one row per attachment), reports the
-  manifest's record_count beside each live count, and opens the database read-only. Validation
+  manifest's record_count beside each live count, and opens the database read-only. Table and
+  column names match as SQLite matches them (only A-Z fold), and a table named twice in the
+  kinds file stops the reader rather than counting twice. Validation
   v5's bar 8 will compare Mabillon's import counts with it.
 - Also: validation scorer 1.5.0 reports a second bar 4 measure for validation v5 (Arsh's decision
   card, 2026-11-16): a false claim counts as shown with support only when it has supports
@@ -31,6 +33,8 @@
   in its window) instead of only a passing time check.
 - Open: a side described before the verb ("the Instagram user ... called X") is not read.
   A call with one call each way in the stated window stays inconclusive, by design.
+- Open: an app username shorter than six characters after an id label ("username marc") is
+  not read, so that claim gets no caller (fails closed, no caller check).
 - Affects: verdicts (more call claims get a caller check, which fails closed to
   inconclusive); customer-facing claims: none. No privacy or network change.
 - Status doc: pending: header "Other versions": filler 11; "validation scorer 1.4.1" becomes "validation scorer 1.5.0".

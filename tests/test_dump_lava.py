@@ -142,3 +142,24 @@ def test_table_names_match_whatever_their_case_and_no_written_table_goes_unrepor
     assert r["tables"]["SMS"]["present"] and r["tables"]["SMS"]["in_manifest"]
     assert r["tables_not_counted"] == ["contacts", "stray_chats", "whatsapp_messages", "wifi"]
     assert r["tables_not_in_manifest"] == ["stray_chats"]
+
+
+def test_one_table_named_twice_in_kinds_stops_the_reader(lava: Path) -> None:
+    kinds = {
+        "sms": {"kind": "message", "dedupe": "message_row_id"},
+        "SMS": {"kind": "message", "dedupe": "message_row_id"},
+    }
+    with pytest.raises(SystemExit, match="twice"):
+        dump_lava.read(lava, kinds)  # read once each, the two would count 4 messages, not 2
+
+
+def test_only_ascii_letters_fold_as_sqlite_compares_names(lava: Path) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.executescript(
+        'CREATE TABLE chats ("Ä" INTEGER, "ä" INTEGER); INSERT INTO chats VALUES (1, 7), (2, 7);'
+    )
+    db.commit()
+    db.close()
+    r = dump_lava.read(lava, {"chats": {"kind": "message", "dedupe": "Ä"}})
+    assert r["tables"]["chats"]["count"] == 2  # "Ä" is its own column, not "ä"
+    assert dump_lava.fold("SMS") == "sms" and dump_lava.fold("Ä") == "Ä"
