@@ -5107,7 +5107,9 @@ class LocalAssumptionFiller:
         case's apps the claim names: "Signal" beside "Telegram" on a case with no Signal, but
         not "Facebook" or "Messenger" inside a named "Facebook Messenger", nor "Wickr" for a
         case's "Wickr Pro". "video" is a kind of message or call, not an app (`_CALL_KIND_RE`
-        reads it for calls, `unread_words` for messages)."""
+        reads it for calls, `unread_words` for messages). A handle ("@viber") names an
+        account, not an app (CodeRabbit on #265)."""
+        bare = _HANDLE_RE.sub(" ", bare)
         held = [" ".join(a.casefold().split()) for a in self._named_apps(bare)]
         for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE):
             for m in rx.finditer(bare):

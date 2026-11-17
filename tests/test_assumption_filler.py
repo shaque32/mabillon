@@ -3531,6 +3531,15 @@ def test_a_short_name_of_an_app_the_case_holds_is_that_app(tmp_path):
     ], filler.drops
 
 
+def test_a_handle_named_like_an_app_is_no_app(conn):
+    # "@viber" is the Telegram account written to, not Viber, which the case lacks (CodeRabbit
+    # on #265).
+    text = 'On March 12, 2026, PETROV wrote to @viber on Telegram: "need 2 more by friday".'
+    scoped = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    _, filler = build_text(conn, text, ClaimType.COMMUNICATION, scoped)
+    assert not any("names an app no" in d.reason for d in filler.drops), filler.drops
+
+
 def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
     # The model already put both rows on Telegram: Signal, which the case lacks, is still read
     # (CodeRabbit on #265). A claim naming Signal alone already drops the model's Telegram, as
