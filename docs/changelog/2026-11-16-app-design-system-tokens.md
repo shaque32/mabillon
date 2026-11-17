@@ -9,11 +9,16 @@
   cards. Counted in the stylesheet before and after: font sizes 17 to 5, spacing values 35 to 8,
   colors about 28 to 5, radii 12 to 1, shadows 52 to 0, gradients 2 to 0.
   What the examiner sees: a claim's verdict is the 20px line directly under the claim text (the
-  "Paragraph as printed" fold moves below it); verdicts are the signed words plus a mark (solid
-  for the supported kinds, hollow ring for unproven, dashed ring for not tested, signal red for
-  contradicted), so Supported no longer has a green and red means only "against the claim as
-  stated" and errors; stance, tier and review tags are plain small text and the one filled tag
-  is "Needs you"; a frame means a warning; one solid button per page. At 390 px the Set up
+  "Paragraph as printed" fold moves below it); verdicts are the signed words plus a mark. The
+  mark's color says which way (ink for the claim, signal red against it, muted for neither) and
+  its fill says how far it has gone: solid for support the expert confirmed and for
+  contradicted; a ring for support by code checks, counsel or the AI reviewer, for a
+  contradiction that waits on the expert's confirm, and for unproven; a dashed ring for not
+  tested. So Supported no longer has a green, support the expert has not confirmed never wears
+  the expert-confirmed mark, and red means only "against the claim as stated" and errors; stance,
+  tier and review tags are plain small text and the one filled tag
+  is "Needs you"; a frame means a warning; the solid button is the page's main action, and Accept on
+  each open evidence item (as before). At 390 px the Set up
   tables and the Exhibits list stack, the claim counts sit two by two, and no app page scrolls
   sideways (before, Add a claim ran 487 px wide and the Files table broke to one word per line).
   App pages no longer load the report's stylesheets (core/report/*); the exported report keeps
@@ -24,18 +29,27 @@
   demo and untested-format notices; the picked-message and "This record" outlines.
 - Where: PR #266
 - Verified: new `tests/test_design_system.py` (fails on any color, spacing, type size, radius,
-  gradient, shadow or inline style from outside the tokens); ruff on `ui/` and the test; in the
-  cloud container on 2026-11-16 the 41 test files that import `ui` ran 1158 passed, 2 skipped,
-  25 failed, all 25 being encryption tests that need `sqlcipher3`, which that container lacks;
+  gradient or shadow from outside the tokens, on a font size paired with another step's line
+  height, and on a style attribute anywhere under `ui/` except the bare error page in
+  `ui/server.py`); ruff on `ui/` and the test; in the
+  cloud container on 2026-11-16 the 41 test files that import `ui` ran 1159 passed, 2 skipped,
+  25 failed (2026-11-17, after the review fixes), all 25 being encryption tests
+  that need `sqlcipher3`, which that container lacks;
   full `make check` on GitHub CI (numbers in the PR). Looked at by hand on the synthetic demo
   case (case01, scripted labels, no model call): all 19 app pages at 1440 and 390 px, plus the
   agent-proposal claim, a claim with alternatives, an evidence item, both context pages and the
-  error page. Contrast computed for the token pairs: muted on paper 6.28, signal on paper 6.39,
+  error page. A review on 2026-11-17 found ten things, fixed in the same PR: an identity link's
+  tier and status ran together; the conversation table lost its no-wrap times and its row
+  inset; zero counts on Identities took status colors; the four supported kinds shared one
+  mark; and five smaller code and wording points. An identity link card and a forwarded-copy
+  label are not in the demo case, so those two rules were checked on a pasted card only.
+  Contrast computed for the token pairs: muted on paper 6.28, signal on paper 6.39,
   ink on line 13.2. Screenshots in the project files, baker/app-design-system/.
 - Open: Safari and Windows browsers were not looked at by hand (CI jobs only); the screens of an
   encrypted case were not looked at (no sqlcipher3 in the container); the exported report is
   not on these tokens (optional follow-up, needs a REPORT_VERSION bump); with five colors,
-  Supported and Unproven differ by mark shape and words, not hue, which no examiner has tried.
+  Supported and Unproven differ by mark and words, not hue, and support by code checks differs
+  from unproven by the ring's color and the words, which no examiner has tried.
 - Affects: none (look of the local screen and one wrong date line; no verdict, rule, label,
   report or privacy change)
 - Status doc: pending: in section 8 ("Implemented features"), in the list of merged PRs that

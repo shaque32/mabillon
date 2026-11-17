@@ -60,16 +60,23 @@ _NAMED = re.compile(
 )
 
 
-def _declarations(css: str) -> list[tuple[str, str]]:
-    """Every `property: value` pair in the stylesheet, comments removed."""
+def _blocks(css: str) -> list[list[tuple[str, str]]]:
+    """Each rule's `property: value` pairs, one list per rule, comments removed."""
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    out: list[tuple[str, str]] = []
+    out: list[list[tuple[str, str]]] = []
     for body in re.findall(r"\{([^{}]*)\}", css):
+        block: list[tuple[str, str]] = []
         for decl in body.split(";"):
             if ":" in decl:
                 prop, value = decl.split(":", 1)
-                out.append((prop.strip(), " ".join(value.split())))
+                block.append((prop.strip(), " ".join(value.split())))
+        out.append(block)
     return out
+
+
+def _declarations(css: str) -> list[tuple[str, str]]:
+    """Every `property: value` pair in the stylesheet."""
+    return [decl for block in _blocks(css) for decl in block]
 
 
 def _parts(value: str) -> list[str]:
@@ -92,9 +99,17 @@ def _tokens() -> dict[str, str]:
     return dict(re.findall(r"(--[a-z0-9]+):\s*([^;]+);", TOKENS_CSS))
 
 
-def _app_declarations() -> list[tuple[str, str]]:
+def _app_css() -> str:
     assert TOKENS_CSS in THEME_CSS
-    return _declarations((THEME_CSS + PAGE_CSS).replace(TOKENS_CSS, ""))
+    return (THEME_CSS + PAGE_CSS).replace(TOKENS_CSS, "")
+
+
+def _app_blocks() -> list[list[tuple[str, str]]]:
+    return _blocks(_app_css())
+
+
+def _app_declarations() -> list[tuple[str, str]]:
+    return _declarations(_app_css())
 
 
 def test_the_token_block_is_the_agreed_scales_and_five_colors() -> None:
@@ -152,6 +167,21 @@ def test_type_comes_from_the_scale() -> None:
     assert bad == []
 
 
+def test_a_size_keeps_its_own_line_height() -> None:
+    """The scale is five size and line-height pairs: a rule that sets both takes one step."""
+    bad: list[tuple[str, str]] = []
+    for block in _app_blocks():
+        rule = dict(block)
+        size = re.fullmatch(r"var\(--t([1-5])\)", rule.get("font-size", ""))
+        line = re.fullmatch(r"var\(--l([1-5])\)", rule.get("line-height", ""))
+        if size and line and size.group(1) != line.group(1):
+            bad.append((rule["font-size"], rule["line-height"]))
+        short = re.search(r"var\(--t([1-5])\)/var\(--l([1-5])\)", rule.get("font", ""))
+        if short and short.group(1) != short.group(2):
+            bad.append(("font", rule["font"]))
+    assert bad == []
+
+
 def test_one_radius() -> None:
     bad = [
         (prop, value)
@@ -163,6 +193,14 @@ def test_one_radius() -> None:
 
 
 def test_page_markup_carries_no_inline_styles() -> None:
-    """A style attribute would step around the tokens, so the page builders have none."""
-    for name in ("pages.py", "help_pages.py", "restore_pages.py"):
-        assert "style=" not in (ROOT / "ui" / name).read_text(encoding="utf-8"), name
+    """A style attribute would step around the tokens, so nothing under ui/ writes one.
+
+    Two things stay outside this check, and both are outside the app's stylesheet too:
+    ui/server.py's bare "unexpected error" page, which is served without any stylesheet, and
+    the report's own fragments under core/report/ (the Gaps bars carry each bar's height as a
+    style attribute, a value from the data and not a design choice)."""
+    for path in sorted((ROOT / "ui").rglob("*.py")):
+        if path.name == "server.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert "style=" not in text, path.relative_to(ROOT).as_posix()

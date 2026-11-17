@@ -20,7 +20,7 @@ table.claim-order td .where, table.claim-order td .kind { font-size: var(--t1);
   line-height: var(--l1); color: var(--muted); }
 table.claim-order td .where::before { content: "\\A"; white-space: pre; }
 table.claim-order td .kind::before { content: " \\B7  "; white-space: pre; }
-table.claim-order td.brief:nth-child(3) { font-size: var(--t1); line-height: var(--l2);
+table.claim-order td.brief:nth-child(3) { font-size: var(--t1); line-height: var(--l1);
   color: var(--muted); white-space: normal; min-width: 96px; }
 table.claim-order td.decide { width: 1%; white-space: nowrap; overflow-wrap: normal; }
 table.claim-order .claim-actions { display: inline-flex; flex-wrap: nowrap; gap: var(--s1);

@@ -281,8 +281,9 @@ form.settings label.field { display: grid; align-content: start; gap: var(--s1);
 form.settings small { font-weight: 400; }
 form.settings .actions { display: flex; }
 
-/* ---- buttons: three ranks. The page's main action is solid ink; every other button is a
-   quiet fill; a link does the rest. */
+/* ---- buttons: three ranks. Solid ink is the page's main action, and Accept on each open
+   evidence item (the one decision that item waits for); every other button is a quiet fill;
+   a link does the rest. */
 button, a.button, a.dl { display: inline-flex; align-items: center; justify-content: center;
   gap: var(--s1); min-height: var(--control); padding: 0 var(--s3); margin: 0;
   font: 600 var(--t2)/var(--l2) var(--sans); color: var(--ink); background: var(--line);
@@ -313,14 +314,18 @@ details[open] > summary::before { transform: rotate(45deg); vertical-align: 0.25
 details > summary:hover::before { border-color: var(--ink); }
 details[open] > summary { margin-bottom: var(--s2); }
 
-/* ---- status words. A verdict is its signed words behind a mark: solid for supported, a ring
-   for unproven, a dashed ring for not tested, signal for contradicted. The words always show,
-   so no verdict rests on the mark or its color. */
+/* ---- status words. A verdict is its signed words behind a mark. The color says which way:
+   ink for the claim, signal against it, muted for neither. The fill says how far it has gone:
+   solid for support the expert confirmed and for contradicted; a ring for support by code
+   checks, counsel or the AI reviewer, for a contradiction that waits on the expert's confirm,
+   and for unproven; a dashed ring for not tested. So support the expert has not confirmed
+   never wears the expert-confirmed mark. The words always show, so no verdict rests on the
+   mark or its color. */
 .verdict { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600;
   white-space: nowrap; text-decoration: none; color: var(--ink); }
 .verdict::before { content: ""; flex: none; width: var(--dot); height: var(--dot);
   border-radius: 50%; border: 2px solid var(--ink); }
-.v-sup::before, .v-supai::before, .v-supchk::before, .v-supcou::before { background: var(--ink); }
+.v-sup::before { background: var(--ink); }
 .v-con, .v-confirm { color: var(--signal); }
 .v-con::before { background: var(--signal); border-color: var(--signal); }
 .v-confirm::before { border-color: var(--signal); }
@@ -329,13 +334,15 @@ details[open] > summary { margin-bottom: var(--s2); }
 /* every other tag is plain small text; a run of them is joined by a middle dot */
 .badge, .stpill, .chip, .tag, .sel-n { font-size: var(--t1); line-height: var(--l1);
   color: var(--muted); white-space: nowrap; }
-.badge + .badge::before, .stpill + .stpill::before { content: "·"; margin: 0 var(--s2);
-  color: var(--muted); font-weight: 400; }
+.badge + .badge::before, .stpill + .stpill::before, .badge + .stpill::before { content: "·";
+  margin: 0 var(--s2); color: var(--muted); font-weight: 400; }
 .b-against, .st-rejected.stpill, .chip.flag, .tag.left, .sel-n { color: var(--signal);
   font-weight: 600; }
 .sel-n.none { color: var(--muted); font-weight: 400; }
 .b-conf, .st-confirmed.stpill, .chip.ok, .tag.pick { color: var(--ink); font-weight: 600; }
 .stpill b { color: var(--ink); margin-left: var(--s1); }
+/* a count of none is not a status: no weight and no signal */
+.stpill.zero, .stpill.zero b { color: var(--muted); font-weight: 400; }
 .counts { display: flex; flex-wrap: wrap; align-items: baseline; }
 /* the one filled tag: this waits on you */
 .gap.you { display: inline-block; padding: 0 var(--s1); border-radius: var(--radius);
@@ -417,6 +424,8 @@ details.case-settings { margin: var(--s3) 0 var(--s5); }
   th, td { overflow-wrap: normal; }
   .counts { gap: var(--s1) var(--s3); }
   .counts .stpill + .stpill::before { content: none; }
+  .msg { grid-template-columns: minmax(0, 1fr); max-width: 92%; }
+  .msg .t { grid-column: 1; grid-row: auto; white-space: normal; }
   input[type=text], input[type=password] { min-width: 0; width: 100%; }
   dl.record { grid-template-columns: minmax(0, 1fr); gap: 0; }
   dl.record dd { margin: 0 0 var(--s2); }

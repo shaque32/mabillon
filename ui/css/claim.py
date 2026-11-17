@@ -201,8 +201,6 @@ html:has(.pg-claim aside.side .ledger li:target) { scroll-padding-top: 100vh; }
   .pg-claim aside.side .ledger li.on { position: relative; }
 }
 @media (max-width: 600px) {
-  .msg { grid-template-columns: minmax(0, 1fr); max-width: 92%; }
-  .msg .t { grid-column: 1; grid-row: auto; white-space: normal; }
   .pg-claim .checklist li { grid-template-columns: minmax(0, 1fr); }
   .pg-claim .checklist .said { justify-self: start; margin-top: var(--s1); }
   .ev-foot .ev-around { margin-left: 0; }

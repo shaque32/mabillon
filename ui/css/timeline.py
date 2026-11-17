@@ -2,8 +2,8 @@
 
 This page's own CSS, scoped to its markup (see ui/css/__init__.py). Both pages render the
 report's own fragments (core/report/timeline.py); the report keeps its look, and only the screen
-is restyled here, under .pg-timeline and .pg-gaps. The shared "report modules shown inside the
-app" rules in ui/theme.py stay; these override them where the screen needs it.
+is styled here, under .pg-timeline and .pg-gaps. App pages do not load the report's stylesheet,
+so every rule these fragments need on screen is in this module or in ui/theme.py.
 
 Timeline: the stated times read as one ledger (rows split by hairlines, not a stack of cards),
 each row the document's words, the phone records on a quiet rail, and one status.

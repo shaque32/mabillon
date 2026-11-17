@@ -5,27 +5,6 @@ tokens in ui/theme.py. The exhibit and match pages show fragments of the report
 (core/report/restore.py); the app styles them here, and the exported report keeps its own look.
 """
 
-
-def context_table_css(scope: str) -> str:
-    """The conversation table (core/report/restore.py context_table) under one page wrapper.
-
-    Words break only at spaces, never mid-word; direction and tier never wrap; the columns the
-    expert reads second (as printed, direction, tier, source) are small and muted. Columns:
-    UTC, phone's local time, as printed, sender, direction, message, tier, source."""
-    t = f"{scope} table.ctx"
-    return f"""
-{t} td {{ overflow-wrap: break-word; word-break: normal; }}
-{t} td:nth-child(3), {t} td:nth-child(5), {t} td:nth-child(7) {{ color: var(--muted);
-  font-size: var(--t1); line-height: var(--l1); }}
-{t} td:nth-child(5), {t} td:nth-child(7) {{ white-space: nowrap; }}
-{t} td:nth-child(6) {{ min-width: 26ch; }}
-{t} td.mono {{ word-break: normal; overflow-wrap: break-word; }}
-{t} tr.target td {{ font-weight: 400; }}
-{t} tr.target td:nth-child(6) {{ font-weight: 600; }}
-{scope} details.related {{ margin: var(--s5) 0 var(--s2); }}
-"""
-
-
 CSS = """
 /* fragments of the report shown in the app: a highlighted span, a quoted piece, a pasted text */
 .piece { font: 400 var(--t1)/var(--l1) var(--mono); background: var(--line);
@@ -108,4 +87,25 @@ pre.letter, pre.exhibit-text { white-space: pre-wrap; overflow-wrap: anywhere;
   .pg-exhibits table.exhibits tbody td.meta { grid-column: 1 / -1; }
   .pg-exhibits form.box .fields { grid-template-columns: minmax(0, 1fr); }
 }
-""" + context_table_css(".pg-match")
+
+/* The conversation table (core/report/restore.py context_table), wherever a page shows it:
+   the exhibit match, a message in context and the Selection folds. Columns: UTC, phone's local
+   time, as printed, sender, direction, message, tier, source. A time never breaks between its
+   date and its hour; words break only at spaces; the columns the expert reads second (as
+   printed, direction, tier, source) are small and muted. The row asked about is filled, so
+   every row is inset by the same step and the fill does not touch its text. */
+table.ctx th:first-child, table.ctx td:first-child { padding-left: var(--s2); }
+table.ctx td { overflow-wrap: break-word; word-break: normal; }
+table.ctx td.t { white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.ctx td:nth-child(3), table.ctx td:nth-child(5), table.ctx td:nth-child(7),
+table.ctx td.mono { color: var(--muted); font-size: var(--t1); line-height: var(--l1); }
+table.ctx td:nth-child(5), table.ctx td:nth-child(7) { white-space: nowrap; }
+table.ctx td:nth-child(6) { min-width: 26ch; }
+table.ctx td.mono { word-break: normal; overflow-wrap: break-word; }
+table.ctx tr.target td { font-weight: 400; }
+table.ctx tr.target td:nth-child(6) { font-weight: 600; }
+/* a forwarded copy's label, under the message it belongs to */
+table.ctx strong.warn { display: inline-block; margin-top: var(--s1); font-size: var(--t1);
+  line-height: var(--l1); }
+details.related { margin: var(--s5) 0 var(--s2); }
+"""

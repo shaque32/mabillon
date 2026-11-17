@@ -5,10 +5,7 @@ tokens in ui/theme.py. Both pages show fragments of the report (core/report/sele
 paired.py, restore.py); the app styles them here, and the exported report keeps its own look.
 """
 
-from ui.css.exhibits import context_table_css
-
-CSS = (
-    """
+CSS = """
 .pg-context p.picked { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .pg-context > p:not([class]) { color: var(--muted); }
 
@@ -82,6 +79,3 @@ ul.sel-quotes li { margin: 0 0 var(--s2); color: var(--muted); }
   .bub { max-width: 92%; }
 }
 """
-    + context_table_css(".pg-context")
-    + context_table_css(".pg-selection")
-)

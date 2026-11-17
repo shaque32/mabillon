@@ -2,9 +2,9 @@
 
 This page's own CSS, scoped to its markup (see ui/css/__init__.py). Every rule sits under
 .pg-ids, the page's wrapper, so nothing here reaches another page (the claim page's
-<aside class='side'> in particular). The shared identity rules in ui/theme.py still apply;
-these refine them: one status bar, a person header with the name first, link cards whose
-records read as the site's quiet rows, and one decision line per link.
+<aside class='side'> in particular). ui/theme.py holds only the shared controls and status
+words; the page itself is here: one status bar, a person header with the name first, links
+split by hairlines with their records for and against, and one decision line per link.
 """
 
 CSS = """

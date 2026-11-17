@@ -100,7 +100,8 @@ CSP = (
 )
 FONT_PREFIX = "/static/fonts/"
 REPORT_SAID_CSS = (
-    ".screen-said{margin:0 0 12px;font-size:.9em}.screen-said.err{color:#b3261e}"
+    ".screen-said,.screen-back{margin:0 0 12px}.screen-said{font-size:.9em}"
+    ".screen-said.err{color:#b3261e}"
     "@media print{.screen-said{display:none}}"
 )
 
@@ -693,7 +694,7 @@ class App:
                 # On screen only: a way back into the app and a way to save it.
                 body = body.replace(
                     "<h1>Mabillon claims report</h1>",
-                    "<p class='screen-only' style='margin:0 0 12px'><a href='/'>Back to the "
+                    "<p class='screen-only screen-back'><a href='/'>Back to the "
                     "case</a> · <a href='/report?download=1'>Save this report (HTML)</a></p>"
                     f"{report_said(page.flash)}<h1>Mabillon claims report</h1>",
                     1,
