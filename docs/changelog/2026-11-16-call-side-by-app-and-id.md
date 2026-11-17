@@ -8,10 +8,13 @@
   read as a party only right after an id label ("username lena"), never as a plain word; the
   tokenizer and the party lookup share that one reading, so a short id of another account
   beside a name ("Lena Okafor" username zoe1) is two accounts and names no caller. An account
-  lookup takes a label ("ID", "number") off a written identifier only where a space, colon or
-  "#" parts them, so "id42" is looked up as id42, never as 42. A comma inside a quoted name's closing
-  mark is the claim's punctuation, so the name is looked up without it. Before, such a claim
-  kept only its time row, so a reversed direction never showed.
+  lookup takes a label ("ID", "username", "number") off a written identifier only where a
+  space, colon or "#" parts them, so "id42" is looked up as id42, never as 42. An id may touch
+  its label's colon ("user ID:4984..."), a stated length may follow the id after a comma, and
+  "on <app>" may name the app by its alias ("on Teams"). The id never picks between accounts:
+  a name that two accounts carry is refused before the id is read. A comma inside a quoted
+  name's closing mark is the claim's punctuation, so the name is looked up without it. Before,
+  such a claim kept only its time row, so a reversed direction never showed.
 - Also: `eval/validation/dump_lava.py` (new, validation tooling only). A plain reader of a LEAPP
   run's output (`_lava_data.lava` and `_lava_artifacts.db`), standard library only, written from
   the LAVA format and not from the LEAPP importer's code. It counts the tables named as
@@ -19,7 +22,9 @@
   where one is given, since iLEAPP's SMS table has one row per attachment), reports the
   manifest's record_count beside each live count, and opens the database read-only. Table and
   column names match as SQLite matches them (only A-Z fold), and a table named twice in the
-  kinds file stops the reader rather than counting twice. Validation
+  kinds file stops the reader rather than counting twice. A table the kinds file or the
+  manifest names that the database does not hold is reported with the manifest's count, never
+  as a silent zero. Validation
   v5's bar 8 will compare Mabillon's import counts with it.
 - Also: validation scorer 1.5.0 reports a second bar 4 measure for validation v5 (Arsh's decision
   card, 2026-11-16): a false claim counts as shown with support only when it has supports
@@ -33,12 +38,15 @@
   made, and the parser's reading of each checked directly; a side described before the verb;
   an id in unbalanced brackets; a username under six characters, read only right after its
   label, as in "username lena"; a short id of another account beside the name; an identifier
-  that begins with "id"). Filler,
+  that begins with "id"; an id touching its label's colon; a length after the id; an app's
+  alias after "on"; a written id with a username label). Filler,
   window, quote, caller, check, axiom and validation tests pass locally (1,773). A replay of
   stored model answers on three development phones (no model call; results in project files
   only) changed one claim, which now gets a caller check (inconclusive: two calls each way
   in its window) instead of only a passing time check.
-- Open: a side described before the verb ("the Instagram user ... called X") is not read.
+- Open: a side described before the verb ("the Instagram user ... called X") is not read, and
+  a period inside a quoted name's closing mark ('"Marc Garage."') still leaves the name unread
+  (fails closed).
   A call with one call each way in the stated window stays inconclusive, by design.
 - Affects: verdicts (more call claims get a caller check, which fails closed to
   inconclusive); customer-facing claims: none. No privacy or network change.

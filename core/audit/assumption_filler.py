@@ -1686,14 +1686,17 @@ _CALL_FORM_RE = re.compile(
     rf"(?P<b>{_TOKEN})(?P<tail>[^\x01]*(?:{_TOKEN}[^\x01]*)?)$",
     re.IGNORECASE,
 )
-# The other side's id set beside its name, right after the clause: '"Marc R.," user ID
-# 4984911', "(account ID 4984911)". The id must be the same one account as the name
-# (`CallForm.one_account`), so it narrows the side, never adds a party.
 # A label before a written identifier, taken off only where something parts it from the
-# identifier: "ID 42" and "id: 42" are 42, but "id42" and "idris_m" are written so (CodeRabbit
-# on #263).
-_WRITTEN_ID_LABEL_RE = re.compile(r"(?i)^(?:(?:user\s*id|id|number)(?:\s*[:#]\s*|\s+)|no\.\s*)")
+# identifier: "ID 42", "id: 42" and "username lena" are 42 and lena, but "id42" and "idris_m"
+# are written so (CodeRabbit on #263).
+_WRITTEN_ID_LABEL_RE = re.compile(
+    r"(?i)^(?:(?:user\s*id|account\s*id|user\s*name|id|number)(?:\s*[:#]\s*|\s+)|no\.\s*)"
+)
 _ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
+# The other side's id set beside its name, right after the clause: '"Marc R.," user ID
+# 4984911', "(account ID 4984911)". The id never adds a party: the caller is read only when
+# the name and the id are one account (`CallForm.one_account`). It does not pick between
+# accounts: a name that two accounts carry is refused before the id is read.
 _CALL_ID_TAIL_RE = re.compile(
     rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
     rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
@@ -1712,7 +1715,7 @@ _CALL_APP_TAIL_RE = re.compile(
 )
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
 _CALL_LENGTH_TAIL_RE = re.compile(
-    r"^\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+    r"^\s*,?\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
 )
 
 
@@ -4863,12 +4866,15 @@ class LocalAssumptionFiller:
             for a in self.data.accounts.values()
             if a.app == app and a.identifier.strip() and not re.search(r"\s", a.identifier.strip())
         }
-        out: list[tuple[str, int, int]] = []
+        out: set[tuple[str, int, int]] = set()
         for i in sorted(ids):
-            lead = "" if len(i) >= 6 else rf"(?i:\b{_ID_LABEL})"
-            for m in re.finditer(rf"{lead}(?<![\w.:@-])({re.escape(i)})(?![\w@-])", bare):
-                out.append((i, *m.span(1)))
-        return out
+            tail = rf"({re.escape(i)})(?![\w@-])"
+            # after a label its colon may touch the id ("user ID:4984911", "id:lena")
+            found = list(re.finditer(rf"(?i:\b{_ID_LABEL})(?<![\w.@-]){tail}", bare))
+            if len(i) >= 6:
+                found += re.finditer(rf"(?<![\w.:@-]){tail}", bare)
+            out.update((i, *m.span(1)) for m in found)
+        return sorted(out, key=lambda t: (t[0], t[1]))  # by identifier, then place
 
     def _call_parties(
         self, claim: Claim, device_ids: list[str], app: str, *, phone_is_side: bool = False
@@ -5097,7 +5103,10 @@ class LocalAssumptionFiller:
     @staticmethod
     def _names_app(m: re.Match[str] | None, app: str) -> bool:
         """True when a call clause's tail "on Telegram" names the call's own app."""
-        return m is not None and _words(m.group("app")) == _words(app)
+        return m is not None and (
+            _words(m.group("app")) == _words(app)
+            or LocalAssumptionFiller._is_app_name(m.group("app"), app)
+        )
 
     @staticmethod
     def _is_app_name(words: str, app: str) -> bool:

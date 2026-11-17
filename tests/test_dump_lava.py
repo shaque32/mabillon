@@ -62,7 +62,13 @@ def test_counts_come_from_the_tables_with_attachments_deduped(lava: Path) -> Non
     assert r["counts"] == {"message": 2 + 2, "call": 3, "contact": 1}
     sms = r["tables"]["sms"]
     assert sms["rows"] == 4 and sms["count"] == 2 and sms["null_dedupe_rows"] == 1
-    assert r["tables"]["telegram_messages"] == {"kind": "message", "present": False, "count": 0}
+    assert r["tables"]["telegram_messages"] == {
+        "kind": "message",
+        "present": False,
+        "count": 0,
+        "manifest_record_count": None,
+        "in_manifest": False,
+    }
     assert r["leapp_name"] == "iLEAPP" and len(r["database_sha256"]) == 64
 
 
@@ -163,3 +169,17 @@ def test_only_ascii_letters_fold_as_sqlite_compares_names(lava: Path) -> None:
     r = dump_lava.read(lava, {"chats": {"kind": "message", "dedupe": "Ä"}})
     assert r["tables"]["chats"]["count"] == 2  # "Ä" is its own column, not "ä"
     assert dump_lava.fold("SMS") == "sms" and dump_lava.fold("Ä") == "Ä"
+
+
+def test_a_listed_table_the_database_does_not_hold_is_flagged(lava: Path) -> None:
+    manifest = json.loads((lava / dump_lava.MANIFEST).read_text("utf-8"))
+    manifest["artifacts"]["Telegram"] = [
+        {"name": "Telegram", "tablename": "telegram_messages", "module": "m", "column_map": {},
+         "record_count": 500, "source_path": "/x"}
+    ]  # fmt: skip
+    (lava / dump_lava.MANIFEST).write_text(json.dumps(manifest), "utf-8")
+    r = dump_lava.read(lava, KINDS)
+    t = r["tables"]["telegram_messages"]
+    assert (t["present"], t["count"], t["manifest_record_count"]) == (False, 0, 500)
+    assert "telegram_messages" in r["manifest_count_differs"]  # never a silent zero
+    assert r["tables_not_in_database"] == ["telegram_messages"]

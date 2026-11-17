@@ -128,12 +128,19 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
             if kind not in (*KINDS, SKIP):
                 raise SystemExit(f"dump_lava: {table!r} has kind {kind!r}, not one of {KINDS}")
             name = in_db.get(fold(table))
+            art = listed.get(fold(table), {})
             if name is None:
-                # A table the importer reads but this run did not write: zero, said so.
-                tables[table] = {"kind": kind, "present": False, "count": 0}
+                # A table the importer reads but this run did not write: zero, said so, with
+                # what the manifest says of it (a listed table with records is flagged below).
+                tables[table] = {
+                    "kind": kind,
+                    "present": False,
+                    "count": 0,
+                    "manifest_record_count": art.get("record_count"),
+                    "in_manifest": fold(table) in listed,
+                }
                 continue
             got = count(conn, name, spec.get("dedupe"))
-            art = listed.get(fold(table), {})
             tables[table] = {
                 "kind": kind,
                 "present": True,
@@ -148,6 +155,8 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
         # of the count without being reported.
         unread = sorted(in_db[t] for t in in_db.keys() - named)
         unlisted = sorted(in_db[t] for t in in_db.keys() - listed.keys())
+        # Every table the manifest lists that the database does not hold.
+        unwritten = sorted(listed[t]["tablename"] for t in listed.keys() - in_db.keys())
     finally:
         conn.close()
     parser = manifest.get("parser_info") or {}
@@ -163,10 +172,11 @@ def read(lava_dir: Path, kinds: dict[str, dict]) -> dict:
         "tables": tables,
         "tables_not_counted": unread,  # written, read as no kind
         "tables_not_in_manifest": unlisted,  # written, but the manifest lists no artifact
+        "tables_not_in_database": unwritten,  # listed in the manifest, but not written
         "manifest_count_differs": sorted(
             t
             for t, v in tables.items()
-            if v.get("present") and v.get("manifest_record_count") not in (None, v["rows"])
+            if v.get("manifest_record_count") not in (None, v["rows"] if v["present"] else 0)
         ),
     }
 

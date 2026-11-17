@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import LocalAssumptionFiller
+from core.audit.assumption_filler import LocalAssumptionFiller, _Account
 from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
 from core.audit.rules import decide_verdict
@@ -730,3 +730,38 @@ def test_an_identifier_that_begins_with_id_is_read_as_written(conn: sqlite3.Conn
     assert list(a.params.account_ids) == [acc], [d.reason for d in f.drops]
     (r,) = run_checks(a, conn)
     assert r.outcome is CheckOutcome.PASS
+
+
+def _parse(conn: sqlite3.Connection, words: str, app: str = "Instagram"):
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    return f.call_form(claim(f"{IG_AT} {words}"), app)
+
+
+def test_a_stated_length_after_the_id_is_read(conn: sqlite3.Connection) -> None:
+    _add_instagram(conn)
+    read = _parse(
+        conn,
+        'PETROV called the Instagram user "Marc Garage," user ID 49800011122, '
+        "that lasted about one minute.",
+    )
+    assert read is not None and read.one_account and read.length == "about one minute", read
+
+
+def test_the_app_tail_takes_the_app_s_alias(conn: sqlite3.Connection) -> None:
+    read = _parse(conn, 'PETROV called the Teams user "Ann Vole" on Teams.', "Microsoft Teams")
+    assert read is not None and read.caller == "a", read
+
+
+def test_an_id_touching_its_label_s_colon_gets_a_caller(conn: sqlite3.Connection) -> None:
+    made, f = ig_fill(conn, 'PETROV called the Instagram user "Marc Garage," user ID:49800011122.')
+    assert list(made["caller"].params.account_ids) == [GARAGE_IG], [d.reason for d in f.drops]
+
+
+def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection) -> None:
+    short_fill(conn, 'PETROV called the Instagram user "Lena Okafor" username lena.')
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    for written in ("username lena", "user name: lena"):
+        acc = _Account(as_written=written, app="Instagram")
+        assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
