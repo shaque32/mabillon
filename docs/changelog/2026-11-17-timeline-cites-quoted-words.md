@@ -14,8 +14,8 @@
 - Verified: `tests/test_timeline_case01.py::test_a_quoted_message_s_own_words_never_stop_the_report`
   plants the word in case01's paragraph 8 (a "Differs" row) and paragraph 9 (an "Order differs"
   row), and a forbidden word in the raw time a note quotes; it fails on main and passes with this
-  change. Timeline, report, invariant and UI tests
-  pass locally (69). The two-phone dry run on development LEAPP output (Android 13 and iOS 15,
+  change. The tests matching report, timeline, html or validation
+  pass locally (365, cloud container, 2026-11-17). The two-phone dry run on development LEAPP output (Android 13 and iOS 15,
   stand-in components, no model call, cloud container, 2026-11-17) now writes its report, and
   verify-bundle passes on its bundle with nothing failed.
 - Open: none known. Other report sections that quote source text were not swept beyond the
