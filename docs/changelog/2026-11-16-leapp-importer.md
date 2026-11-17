@@ -65,7 +65,7 @@
   are inconclusive. (8) The report's limitations name the LEAPP reader for a LEAPP import, not
   the UFDR reader.
 - Where: PR #264 (branch claude/project-thread-mtq9u7)
-- Verified: `tests/test_leapp.py` (45 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
+- Verified: `tests/test_leapp.py` (46 tests, synthetic LAVA pairs from `eval/synthetic/leapp.py`)
   and the contract, ingest and coverage tests pass locally (281 passed); full `make check` runs
   in CI. A development check on the public Android 13 test phone (ALEAPP 2026.4.6-dev, cloud
   container, 2026-11-16) against Mabillon's UFDR import of the same phone: 113 of 114 text

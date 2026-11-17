@@ -679,7 +679,9 @@ def _match_copies(
     match is (locator, seconds apart) of its pair. possible, when it has no pair, is the
     locator of the nearest candidate it may be a copy of: one whose other party cannot be
     compared or may be the same number written another way (`_maybe_same_party`), or a copy
-    left unpaired because attachments could not tell which is which."""
+    left unpaired because attachments could not tell which is which or its SMS or MMS was
+    paired with another Google Messages message. Any candidate counts, paired or not, so a
+    count over both is inconclusive (CodeRabbit on #264)."""
     cands: list[list[tuple[int, int, _Native]]] = []
     for m in msgs:
         out: list[tuple[int, int, _Native]] = []
@@ -720,12 +722,10 @@ def _match_copies(
             (
                 n.locator
                 for _a, _dt, n in cs
-                if (
-                    not copy(m, n)
-                    and n.locator not in used
-                    and (m.party is None or n.party is None or _maybe_same_party(m.party, n.party))
-                )
-                or (copy(m, n) and (m.media or m.inferred))
+                if copy(m, n)
+                or m.party is None
+                or n.party is None
+                or _maybe_same_party(m.party, n.party)
             ),
             None,
         )

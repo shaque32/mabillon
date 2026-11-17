@@ -73,7 +73,9 @@ three digits it makes a possible copy (below). Emails compare without case. When
 and text match but either side names no other party, or several, or the party was only inferred,
 or the two numbers may be one number written two ways, the Google Messages message is kept, flagged
 (`may_be_same_as_an_sms_or_mms_message`) and listed with the SMS or MMS as possible copies
-(`numbered_copy_records`), so a count over them is inconclusive. On the public Android 13 phone
+(`numbered_copy_records`), so a count over them is inconclusive. The same holds for a Google
+Messages message left over when its SMS or MMS was already paired with another one: the pair
+is skipped as before, and the one left over is kept and listed with that SMS or MMS. On the public Android 13 phone
 all 123 copies found by direction and text alone still match under this rule, with the same
 pairs; the 12 sent ones are confirmed by the contact's number. The coverage record and the import's audit log entry list each skipped one under
 `leapp.google_messages_skipped`: its locator, its part rows (LAVA rowids), the SMS or MMS it

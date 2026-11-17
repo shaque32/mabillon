@@ -676,8 +676,27 @@ def test_one_sms_stands_for_at_most_one_google_messages_message(tmp_path: Path) 
         [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": ALICE, "Body": "OK"}],
         [{"Message Timestamp": f"2024-03-01T12:00:0{s}Z", **gm} for s in (0, 1)],
     )
-    locs, _, _ = _gm_imported(tmp_path, lv)
+    locs, flags, _ = _gm_imported(tmp_path, lv)
     assert locs == ["get_googlemessages/rowid=2"]
+    assert flags["may_be_same_as_an_sms_or_mms_message"] == 1  # the SMS may be its copy
+
+
+def test_a_trunk_0_number_is_a_possible_copy_of_an_sms_already_paired(tmp_path: Path) -> None:
+    # CodeRabbit on #264: the SMS was paired with the "+44" Google Messages row, so the
+    # "07911" row with the same text was kept unflagged, and a count could take one message
+    # for two. A candidate already paired still makes a possible copy.
+    gm = {"Direction": "Incoming", "Message": "OK", "Conversation ID": "9",
+          "Message Timestamp": "2024-03-01T12:00:00Z"}  # fmt: skip
+    lv = _gm_lava(
+        [{"Date": "2024-03-01T12:00:00Z", "Type": "Received", "Address": "+447911123456",
+          "Body": "OK"}],
+        [{**gm, "Message Sender": "+44 7911 123456"},
+         {**gm, "Message Sender": "07911 123456", "Message Timestamp": "2024-03-01T12:00:01Z"}],
+    )  # fmt: skip
+    locs, flags, codes = _gm_imported(tmp_path, lv)
+    assert locs == ["get_googlemessages/rowid=2"]
+    flag = "may_be_same_as_an_sms_or_mms_message"
+    assert flags[flag] == 1 and flag in codes
 
 
 @pytest.mark.parametrize(
