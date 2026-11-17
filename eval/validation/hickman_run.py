@@ -733,12 +733,17 @@ def main(argv: list[str] | None = None) -> int:
                 + (f"the zones {was_zones}" if any(was_zones) else "no zone given")
                 + "; resume with the same zones, or use a new --out"
             )
-        given = {ph.source_id: ph.sha256 for ph in phones}
+        # Each package's bytes, not just its file name: two packages of one name swapped
+        # between phones must not resume a case built from the other (CodeRabbit on #267).
+        given = {ph.source_id: ph for ph in phones}
         for p in was["imported"]:
-            if (h := given[p["source_id"]]) and p["sha256"] != h:
+            ph = given[p["source_id"]]
+            h = ph.sha256 or sha256_file(ph.path)
+            if p["sha256"] != h:
                 raise SystemExit(
                     f"{a.out} was built from {p['file']} {p['sha256']}; use a new --out"
                 )
+        imported, report_sha = was["imported"], was.get("report_xml_sha256")
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -754,12 +759,7 @@ def main(argv: list[str] | None = None) -> int:
             report_sha = report_xml_sha256(a.ufdr)
             if a.report_sha256 and report_sha != a.report_sha256:
                 raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
-            run["report_xml_sha256"] = report_sha
         imported = build(phones, claims, a.out, log, defined)
-        run["phones"] = imported
-        run["phone_zone_given"] = phones[0].zone if len(phones) == 1 else None
-        run["source_id"] = setup["source_id"]
-        run["definitions"] = defs
         inputs = {
             "claims_sha256": claims_sha,
             "report_xml_sha256": report_sha,
@@ -768,6 +768,14 @@ def main(argv: list[str] | None = None) -> int:
             "imported": imported,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
+    # From the build, or from built.ok on a resume: a run that stopped before run.json was
+    # written still records what the case was built from (CodeRabbit on #267).
+    run["phones"] = imported
+    run["phone_zone_given"] = phones[0].zone if len(phones) == 1 else None
+    run["source_id"] = setup["source_id"]
+    run["definitions"] = defs
+    if report_sha is not None:
+        run["report_xml_sha256"] = report_sha
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing

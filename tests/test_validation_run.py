@@ -85,6 +85,13 @@ def test_the_run_builds_the_case_audits_it_and_zips_the_results(ufdr, tmp_path):
     assert conn.execute("SELECT id FROM sources ORDER BY id").fetchall() == sources
     assert conn.execute("SELECT COUNT(DISTINCT pipeline_run_id) FROM verdicts").fetchone()[0] == 2
     conn.close()
+    # A run that stopped after the build but before run.json still records what it was built
+    # from when it resumes (CodeRabbit on #267).
+    (out / "run.json").unlink()
+    assert hickman_run.main(args) == 0
+    again = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    for key in ("phones", "phone_zone_given", "source_id", "definitions", "report_xml_sha256"):
+        assert again[key] == run[key], key
 
 
 def test_a_claims_file_with_answers_is_refused(ufdr, tmp_path):
@@ -597,3 +604,18 @@ def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp
     with pytest.raises(SystemExit, match="half's own tables name the zone America/Chicago"):
         run("America/New_York", "out")
     assert run("America/Chicago", "out2") == 0
+
+
+def test_two_packages_of_one_name_swapped_between_phones_are_refused(pair, tmp_path):
+    # Report.zip in two folders: the file names match, so only the bytes tell them apart, and
+    # a resume without --phone-sha256 still checks them (CodeRabbit on #267).
+    one, two = tmp_path / "one", tmp_path / "two"
+    for d, src in ((one, pair[0]), (two, pair[1])):
+        d.mkdir()
+        (d / "Report.ufdr").write_bytes(src.read_bytes())
+    args = _two([one / "Report.ufdr", two / "Report.ufdr"], tmp_path, {"phones": PHONES})
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main(args) == 0  # the same packages resume
+    swapped = _two([two / "Report.ufdr", one / "Report.ufdr"], tmp_path, {"phones": PHONES})
+    with pytest.raises(SystemExit, match="was built from Report.ufdr"):
+        hickman_run.main(swapped)
