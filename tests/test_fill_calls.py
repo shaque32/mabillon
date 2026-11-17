@@ -612,7 +612,10 @@ def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(
                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
     read = f.call_form(claim(text), "Instagram")
     # the parser's own refusals leave the clause unread; the id case is read as one side
-    assert (read is not None and read.one_account) is form, read
+    if form:
+        assert read is not None and read.one_account, read
+    else:
+        assert read is None, read
     made, f = fill(conn, text, people=people, accounts=accounts,
                    channels=["call", "Instagram"], window=IG_W)  # fmt: skip
     # the proposal itself is kept (its time is checked), so only the caller guard is tested
