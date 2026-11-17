@@ -12,14 +12,15 @@
   accepted and not given again. `--ufdr` keeps working for one phone as before. run.json lists
   each phone's importer, file hash and recorded zone. Why: validation v5 is a two-phone case
   read through LEAPP, and without a zone every stated window on a LEAPP phone is refused.
-- Where: local only (opens as a PR after #263)
+- Where: PR from branch claude/project-thread-ds0ify, on main after #263 and #264
 - Verified: `tests/test_validation_run.py` (two synthetic case01 phones: names, owners, people,
   hash refusal, resume refusal, header refusals, flag mixes; a two-phone LEAPP case where one
   phone records its zone, one takes the given zone, and one with two zones stops the build).
-  The LEAPP test skips until #264 is merged; it passes locally on this branch merged with #264
-  (head 5346e5f), cloud container, 2026-11-16. `make check` runs on GitHub CI.
+  With #264 on main the LEAPP test always runs (its skip guard is gone); the file's 32 tests
+  pass locally on main c93e97d plus this change, cloud container, 2026-11-17. `make check` runs
+  on GitHub CI.
 - Open: not yet run end to end on a development LEAPP output (gate G2 of the v5 readiness
-  list). Third-party apps on LEAPP are still being added in #264.
+  list). Third-party chat apps and app calls on LEAPP come in the importer's follow-up PR.
 - Affects: the validation run driver only. No verdict, capability, privacy or network change,
   and no customer-facing claim.
 - Status doc: no change

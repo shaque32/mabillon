@@ -495,10 +495,8 @@ def test_phone_flags_do_not_mix(pair, tmp_path):
 
 
 def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
-    pytest.importorskip("core.ingest.leapp")
-    from eval.synthetic.leapp import Lava
-
     from core.zones import device_zones
+    from eval.synthetic.leapp import Lava
 
     def phone(name: str, zones: tuple[str, ...]) -> Path:
         lv = Lava(leapp="ALEAPP")
