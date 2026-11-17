@@ -189,7 +189,8 @@ def read(text: str, layout: Layout) -> Loaded:
             skipped["malformed"] += 1
             continue
         raw_duration = r[col[layout.duration_col]].strip()
-        if raw_duration and not re.fullmatch(r"[0-9]+", raw_duration):  # ASCII digits only
+        # ASCII digits only, at most 9 (about 31 years): longer would overflow SQLite's integer
+        if raw_duration and not re.fullmatch(r"[0-9]{1,9}", raw_duration):
             skipped["malformed"] += 1
             continue
         duration = int(raw_duration) if raw_duration else None  # blank: not stated, not 0

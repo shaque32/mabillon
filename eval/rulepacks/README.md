@@ -55,9 +55,9 @@ be a known zone word that stands alone at the end of a label in the time column'
 "Time (UTC-05:00)" and "Central Standard Time" are refused, and it must mean that zone). The
 list of zone words is human-owned.
 
-The reader skips and counts malformed rows (wrong field count, a length that is not whole
-seconds), stores a blank length as unknown rather than 0, and keeps a local time that daylight
-saving repeats or skips with its raw value and no UTC time.
+The reader skips and counts malformed rows (wrong field count, or a length that is not 1 to 9
+ASCII digits of whole seconds), stores a blank length as unknown rather than 0, and keeps a
+local time that daylight saving repeats or skips with its raw value and no UTC time.
 
 ## The reference claims
 
