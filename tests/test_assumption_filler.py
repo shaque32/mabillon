@@ -22,6 +22,7 @@ from core.audit.assumption_filler import (
     _Account,
     _in_quotes,
     _ProposalOut,
+    _states_seconds,
     check_window,
     count_op,
     coverage_gap,
@@ -243,6 +244,9 @@ CODE_ADDS: dict[str, list[tuple[str, CheckOutcome | None]]] = {
     # "two days after the seizure" is a part no check reads, so code adds an event only an
     # expert can carry (filler 12, `unread_words`); it has no check, so no outcome.
     "C04": [("event", None)],
+    # "the number saved as \"Marc Garage\"" is a contact entry this answer keeps no row for
+    # (Claude review on #265: "saved" is plain only beside a kept contact_entry row)
+    "C09": [("event", None)],
 }
 
 
@@ -310,7 +314,7 @@ def test_parameters_match_the_check_tests(conn):
     assert c03.params.window.raw == "From March 10 through March 31, 2026"
     c02 = {a.template_id: a for a in build(conn, "C02")[0]}
     assert c02["same_account"].params.handles == ("@alex92", "@northstar")
-    (c09,) = build(conn, "C09")[0]
+    c09 = next(a for a in build(conn, "C09")[0] if a.template_id == "record_time")
     assert c09.params.account_ids == tuple(MARC_0122)
     assert c09.params.person_ids == (PETROV,)  # named in the paragraph, not the claim
     assert c09.params.duration_s == (90, 150)
@@ -3344,6 +3348,13 @@ def test_a_plain_claim_gets_no_event(conn):
         ", while driving",
         " from a second phone",
         ", and sent it twice",
+        # Claude review on #265: an act timed from a call with no length, a person reading,
+        # and a count or a length no row of this answer reads
+        ", after a Telegram call between them",
+        ", during a call",
+        ", and @northstar was reading it",
+        ", one of two messages that day",
+        " over two hours",
     ],
 )
 def test_words_no_check_reads_add_an_event_only_an_expert_carries(conn, tail):
@@ -3353,6 +3364,77 @@ def test_words_no_check_reads_add_an_event_only_an_expert_carries(conn, tail):
     (event,) = [a for a in made if a.template_id == "event"]
     assert event.is_core and is_code_made(event.text)
     assert {"sender", "record_time"} <= {a.template_id for a in made}
+
+
+def test_a_message_reading_its_words_is_no_act(conn):
+    text = 'On March 12, 2026, PETROV sent @northstar a message reading: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+def test_a_spoken_length_is_plain_only_beside_a_row_that_tests_it(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV placed a call of about two minutes to REYES."
+    assert filler.unread_words(text, (), {"call", "length"}) == []
+    assert filler.unread_words(text, (), {"call"}) == ["two"]
+    assert "call" in filler.unread_words(text, (), ())
+    both = (
+        "At 2:08 p.m. on December 2, 2022, PETROV called REYES, and the two spoke for two minutes."
+    )
+    assert filler.unread_words(both, (), {"call", "length"}) == []
+    assert filler.unread_words(both.replace("the two spoke", "the two calls"), (), {"call"})
+
+
+def test_a_name_that_folds_longer_does_not_move_later_spans(conn):
+    # "ß" casefolds to "ss": spans found in folded text landed one letter late (Claude review
+    # on #265), leaving a stray letter of "Telegram" as a word no check reads.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = 'Near the Große Brücke, PETROV wrote to @northstar on Telegram: "need 2 more by friday".'
+    assert filler.unread_words(text) == ["near", "grosse", "brücke"]
+
+
+def _case_with(tmp_path, *sql: str) -> sqlite3.Connection:
+    db = tmp_path / "case01.db"
+    generate(tmp_path, db)
+    c = sqlite3.connect(db)
+    stipulate(c, PETROV, "Daniel Petrov", "dev:item1")
+    c.execute("PRAGMA foreign_keys = OFF")
+    for q in sql:
+        c.execute(q)
+    return c
+
+
+def test_a_text_on_a_case_with_two_phone_message_apps_searches_both(tmp_path):
+    # "texted" may be SMS or iMessage, as for a code-made sender (Codex on #164): message rows
+    # search both, and a count or an absence, which reads one app, is refused (Claude review
+    # on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    phone = filler._phone_message_apps()
+    assert len(phone) == 2
+    text = 'On March 12, 2026, PETROV texted @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {tuple(phone)}
+    assert filler.claim_apps(text) == frozenset(a.casefold() for a in phone)
+    absence = "PETROV and REYES never texted each other between March 20 and March 23, 2026."
+    made, filler = build_text(c, absence, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+
+
+def test_an_account_named_like_a_plain_word_hides_no_word(tmp_path):
+    # An account shown as "Photo" no longer blanks "sent a photo" (Claude review on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO accounts (id, source_id, locator, device_id, app, identifier, display_name)"
+        " VALUES ('acct:item1:Telegram:photo', 'item1', 'x', NULL, 'Telegram', '555', 'Photo')",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, PETROV sent @northstar a photo on Telegram: "need 2 more by friday".'
+    assert filler.unread_words(text) == ["photo"]
+    assert filler.unread_words(text.replace("a photo", "Photo's message")) == []
 
 
 def test_a_message_on_no_app_is_bound_to_the_app_the_claim_names(conn):
@@ -3370,6 +3452,21 @@ def test_a_message_on_an_app_the_case_does_not_hold_stays_unproven(conn, app):
     made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert made == []
     assert any("names an app no assumption" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    ("words", "seconds"),
+    [
+        ("at 9:31:04 p.m.", True),
+        ("at 21:14:05Z", True),  # Claude review on #265: a word boundary missed these two
+        ("at 2026-03-12T21:14:05", True),
+        ("in a call that lasted 0:12:45", False),  # a length, not a time of day
+        ("in a call lasting about 0:02:03", False),
+        ("at 9:31 p.m.", False),
+    ],
+)
+def test_a_time_of_day_to_the_second_is_told_from_a_length(words, seconds):
+    assert _states_seconds(words) is seconds
 
 
 def test_a_time_to_the_second_is_not_tested_by_a_range_in_minutes(conn):
@@ -3395,6 +3492,9 @@ def test_a_time_to_the_second_is_not_tested_by_a_range_in_minutes(conn):
         "never emailed each other",
         "never messaged each other",
         "had no contact by telephone",
+        # an app outside the calling apps the case does not hold (Claude review on #265)
+        "had no contact on TikTok",
+        "had no contact on GroupMe",
     ],
 )
 def test_an_absence_of_one_kind_of_contact_is_never_read_on_every_app(conn, words):

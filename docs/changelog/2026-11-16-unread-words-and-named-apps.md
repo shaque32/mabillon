@@ -12,26 +12,40 @@
     UNPROVEN until an expert accepts the event. A time range's own words are skipped only when they hold
     nothing more than dates and times ("On March 12, 2026, while driving" kept as a range is
     still read, Greptile on #265), and "PETROV read: ..." is a person's act, not a message's
-    words (CodeRabbit on #265).
+    words (CodeRabbit on #265). After the Claude review on #265: the words of a call ("called",
+    "after a Telegram call", "during a call"), of a count ("two", "exactly", "times") and of a
+    length ("lasted", "about two minutes") are plain only beside a kept row that tests a call,
+    a count or a call's length, and "saved as" only beside a contact entry; "reading",
+    "showed" and "displayed" are a person's acts except in "a message reading \"...\"", "the
+    records show" and "displayed as"; an account named like a plain word ("Photo") hides that
+    word only where the claim writes it as a name.
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
     beside an app it holds ("on Telegram and Signal", CodeRabbit on #265). An absence that names
     one kind of contact ("did not text", "never messaged on Telegram", "by telephone") is refused
-    whatever its app, since the absence check reads messages and calls alike. Before, "wrote on
+    whatever its app, since the absence check reads messages and calls alike. The missing-app
+    guard runs on every app row, also those the model scoped; it knows messaging, social and
+    mail apps beyond the calling apps ("no contact on TikTok"), reads a short name of a held
+    app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app. "Texted" on a
+    case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
+    as a code-made sender does, and reads no count or absence (Claude review on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
     #265).
-  - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04")
-    gets no minute range, so it is no longer tested by one wider than it states.
+  - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
+    "21:14:05Z", "T21:14:05") gets no minute range, so it is no longer tested by one wider than
+    it states. A length written so ("lasted 0:12:45") is not a time of day.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
     the count inconclusive, with a note for the expert. On the Android 13 development phone a
     chat of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and
     Google Messages), one copy often with the number written another way or no sender, so a
     true "exactly 12" failed. App, sender and direction are left out of the match on purpose
-    (CodeRabbit on #265): a look-alike only holds a count open.
+    (CodeRabbit on #265): a look-alike only holds a count open, and only when merging the
+    look-alikes could change the answer ("at least 5" over 10 rows with 2 look-alikes still
+    passes; `look_alikes_matter`, Claude review on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
@@ -39,15 +53,18 @@
     count. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
     instead of failing it on filler 12's new rows (CodeRabbit on #265).
 - Where: PR #265 (on top of #263)
-- Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, seven
-  unread tails, a named app bound, an app or email the case lacks, seconds, four absence
-  wordings, a plain-word app) and `tests/test_count_look_alike.py`. The filler, fill, replay,
-  override and check suites pass locally (1,020). Class batteries of new wordings with wrong
+- Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
+  unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
+  absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
+  `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
+  its fix. The filler, fill, replay, override and check suites pass locally (1,123), and
+  `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only) leaves
-  every check outcome unchanged and adds the expert-only event to 17 claims (4 of them false
-  claims in the v4 answer key); one message-only absence that was inconclusive is now refused.
+  every check outcome unchanged and adds the expert-only event to 18 claims (4 of them false
+  claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
+  Claude review); one message-only absence that was inconclusive is now refused.
   On case01, C11 (gold contradicted, its time check fails) also gains the event. `make check` runs on GitHub CI.
 - Open: the plain-word list is blunt in both directions. A true claim with an unlisted word
   loses the code-checked path and waits for an expert; a word on the list that carries meaning
@@ -62,4 +79,4 @@
   code-made event that only an expert can carry; a message row gets the app the claim names;
   a time stated to the second gets no minute range". Section on the count check: add "since
   1.3.0, rows repeating another row's words within 2 seconds, on any app and from any sender,
-  make the count inconclusive".
+  make the count inconclusive when merging them could change the answer".

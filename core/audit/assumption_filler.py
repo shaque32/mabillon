@@ -612,7 +612,22 @@ _WD_RE = "|".join(_WEEKDAYS)
 _NUM_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _YEAR_RE = re.compile(r"\b(19\d\d|20\d\d)\b")
 _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])", re.IGNORECASE)
-_SECONDS_RE = re.compile(r"\b\d{1,2}:[0-5]\d:[0-5]\d\b")
+# "9:31:04", "21:14:05Z", ISO "T21:14:05" (Claude review on #265: a word boundary missed the
+# last two)
+_SECONDS_RE = re.compile(r"(?<![\d:])\d{1,2}:[0-5]\d:[0-5]\d(?![\d:])")
+# "lasted 0:12:45": a length, not a time of day
+_LENGTH_BEFORE_RE = re.compile(
+    r"(?i)\b(?:lasted|lasting|lasts|duration(?:\s+of)?|length(?:\s+of)?|for)\s+"
+    r"(?:(?:about|approximately|roughly|nearly|almost|around)\s+)?$"
+)
+
+
+def _states_seconds(text: str) -> bool:
+    """True when the words state a time of day to the second ("at 9:31:04"), not a length
+    ("lasted 0:12:45")."""
+    return any(not _LENGTH_BEFORE_RE.search(text[: m.start()]) for m in _SECONDS_RE.finditer(text))
+
+
 _TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:a\.?m|p\.?m))", re.IGNORECASE)
 # The words code reads as "about" a time: 8 minutes either side (ABOUT_MINUTES).
 _ABOUT_W = r"(?:about|approximately|around)"
@@ -1191,7 +1206,7 @@ def check_window(
     """
     if end <= start:
         raise Reject("window ends before it starts")
-    if _SECONDS_RE.search(_unquoted(claim)):
+    if _states_seconds(_unquoted(claim)):
         # "at 9:21:45 a.m.": a range in whole minutes would pass a message at 9:21:10
         raise Reject(
             "the claim states a time to the second, which a range in minutes does not test"
@@ -1826,6 +1841,18 @@ _OTHER_CALL_APPS_RE = re.compile(
 _OTHER_CALL_APPS_CAP_RE = re.compile(
     r"\b(?:Signal|SIGNAL|Line|LINE|Wire|WIRE|Teams|TEAMS|Session|SESSION|Element|ELEMENT|"
     r"Messenger|MESSENGER|Duo|DUO|Meet|MEET)\b"
+)
+
+
+# Messaging, social and mail apps a claim may name, beyond the calling apps above, for the
+# missing-app guard only (`LocalAssumptionFiller._names_an_app_the_case_lacks`): "no contact on
+# TikTok" on a case with no TikTok was read on every app (Claude review on #265).
+_OTHER_MESSAGE_APPS_RE = re.compile(
+    r"\b(?:tik\s?tok|groupme|slack|gmail|outlook|hotmail|yahoo|twitter|reddit|tinder|"
+    r"grindr|hinge|bumble|linkedin|kakao\s?talk|wechat|imo|botim|zangi|briar|protonmail|"
+    r"proton\s+mail|google\s+chat|marco\s+polo|voxer|zello|pinterest|tumblr|twitch|"
+    r"steam|xbox|playstation|roblox|venmo|cash\s?app|paypal|zelle)\b",
+    re.IGNORECASE,
 )
 
 
@@ -2935,31 +2962,58 @@ _PLAIN_WORDS = frozenset(
     " wrote write writes writing written sent send sends sending texted text texts texting "
     "messaged message messages messaging told tell tells telling asked ask asks asking said "
     "say says saying replied reply replies replying responded respond responds answered "
-    "stating stated reading received receive receives receiving exchanged exchange exchanges "
-    "exchanging called call calls calling phoned phoning placed place places placing made "
-    "make dialed dialled rang spoke speak speaks spoken talked talk talks chatted chat chats "
+    "stating stated received receive receives receiving exchanged exchange exchanges "
+    "exchanging placed place places placing made make chatted chat chats "
     "communicated communication communications contact contacted contacting back dm dms "
     "outgoing incoming conversation user users account accounts id identifier handle username "
-    "name named names display displayed party number numbers telephone phone phones cellular "
+    "name named names party number numbers telephone phone phones cellular "
     "cell mobile line app application platform service thread messenger arrived"
     # the phone's own records
-    " record records recorded log logs logged hold holds held show shows showed contain "
-    "contains contained entry entries"
+    " record records recorded log logs logged hold holds held contain contains contained entry "
+    "entries"
     # times and lengths
     " about approximately approx around roughly nearly almost circa between until till "
     "during before after since prior am pm a.m p.m noon midnight morning afternoon evening "
     "night time local eastern central mountain pacific standard daylight zone utc gmt edt est "
     "cdt cst mdt mst pdt pst et ct mt pt day days date dates hour hours hr hrs minute minutes "
-    "min mins second seconds sec secs half quarter early late lasted lasting lasts last length "
-    "duration long saved "
+    "min mins second seconds sec secs half quarter early late last "
     "monday tuesday wednesday thursday friday saturday sunday january february march april "
     "may june july august september october november december jan feb mar apr jun jul aug "
     "sep sept oct nov dec"
-    # counts
-    " at least most more fewer less than exactly total over under some dozen dozens hundred "
-    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-    "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty "
-    "ninety times".split()
+    " at over under some one".split()
+)
+# Words plain only when a kept core row reads them (Claude review on #265: "after a Telegram
+# call", "one of two messages that day" or "over two hours" passed on a message's sender and
+# time checks alone): a call's words when a row tests a call, a count's when a row counts, a
+# length's when a row tests a call's length. Each set is keyed by what `unread_words` is told
+# the rows test.
+_GATED_WORDS = {
+    "call": frozenset(
+        "called call calls calling phoned phoning dialed dialled rang spoke speak speaks spoken "
+        "talked talk talks".split()
+    ),
+    "count": frozenset(
+        "least most more fewer less than exactly total dozen dozens hundred zero two three four "
+        "five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+        "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety times".split()
+    ),
+    "length": frozenset("lasted lasting lasts length duration long".split()),
+    # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
+    "contact": frozenset("saved stored listed".split()),
+}
+_SPOKEN_NUMBERS = "|".join(
+    sorted(
+        _GATED_WORDS["count"] - set("least most more fewer less than exactly total times".split()),
+        key=len,
+        reverse=True,
+    )
+)
+# "about two minutes", "one and a half hours": a length, plain when a row tests the call's
+# length
+_SPOKEN_LENGTH_RE = re.compile(
+    rf"\b(?:(?:{_SPOKEN_NUMBERS}|one|and|a|an|half)[\s-]+)+(?:seconds?|minutes?|hours?|"
+    r"secs?|mins?|hrs?)\b",
+    re.IGNORECASE,
 )
 # "last" is a length ("the call lasted"), never "the last message": that one is read below.
 # "a second phone", "another number", "a different account": a party or a phone no check binds.
@@ -2971,24 +3025,52 @@ _UNPLAIN_PHRASES_RE = re.compile(
     r"second(?=\s+(?:phone|call|message|text|number|account|line|device|time|handset|sim)s?\b)|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     r"(?:seconds?|minutes?|hours?|days?|moments?|shortly|soon|just|right|immediately)\s+"
-    r"(?:after|before|later|earlier|prior))\b",
+    r"(?:after|before|later|earlier|prior)|"
+    # "after a Telegram call", "during the call", "before their conversation": an act timed
+    # from another act no check reads (Claude review on #265)
+    r"(?:after|before|during|following|while)\s+(?:(?:a|an|the|their|his|her|its|that|this|"
+    r"another|one)\s+)?(?:\S+\s+){0,2}?(?:calls?|messages?|texts?|chats?|conversations?|"
+    r"meetings?|exchanges?))\b",
     re.IGNORECASE,
 )
 # A message "reading" or "that read" its quoted words: the words the record holds, not an act
 # of reading it.
 # "a message that read: ..." names the words, not anyone reading them; "PETROV read: ..." is
 # a person's act and stays a word no check reads (CodeRabbit on #265).
-_READ_QUOTE_RE = re.compile(r"\b(?:that|which)\s+read\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE)
+# "a message reading: ..." the same; "@northstar was reading it" is an act (Claude review on
+# #265).
+_READ_QUOTE_RE = re.compile(
+    r"\b(?:(?:that|which)\s+read|reading)\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE
+)
+# "the records show", "the account displayed as", "a display name": where the records are and
+# how an account is shown, not anyone showing or displaying anything; "the two" is both parties.
+_RECORDS_SAY_RE = re.compile(
+    r"\b(?:records?|logs?|data|extraction|reports?|phone|device)\s+(?:also\s+)?"
+    r"(?:shows?|showed)\b|\bdisplay(?:ed)?\s+(?:as|names?)\b|"
+    # "and the two spoke": both parties, not a count
+    r"\bthe\s+two\b(?!\s+(?:of\s+)?(?:messages?|calls?|texts?|times?|chats?))",
+    re.IGNORECASE,
+)
 # "seven text messages, all recorded on the KYOCERA": where the records are, not who sent them.
 _ALL_RECORDED_RE = re.compile(r"\ball\s+(?=(?:recorded|logged|stored|held|found)\b)", re.I)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
 
 
-def plain_tokens(words: str, phrases: str | None = None) -> list[str]:
-    """The words of `words` that `_PLAIN_WORDS` does not hold, casefolded, in order, once each.
-    A possessive "'s" is read off its word; a phrase of `_UNPLAIN_PHRASES_RE` is never plain,
-    read in `phrases` (the same text before app names were blanked: "a second phone" on a case
-    with an app called "Phone") when given."""
+def _blank(text: str, spans: Iterable[tuple[int, int]]) -> str:
+    """The text with each span written as spaces, so later spans keep their places."""
+    chars = list(text)
+    for a, b in spans:
+        chars[a:b] = " " * (b - a)
+    return "".join(chars)
+
+
+def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:
+    """The words of `words` that `_PLAIN_WORDS` does not hold, casefolded, in order, once each,
+    and the words of `_GATED_WORDS` under any key not in `tests`. A possessive "'s" is read off
+    its word; a phrase of `_UNPLAIN_PHRASES_RE` is never plain, read in `phrases` (the same
+    text before app names were blanked: "a second phone" on a case with an app called "Phone")
+    when given."""
+    plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
     for m in _UNPLAIN_PHRASES_RE.finditer(words if phrases is None else phrases):
         w = " ".join(m.group(0).casefold().split())
@@ -2998,7 +3080,7 @@ def plain_tokens(words: str, phrases: str | None = None) -> list[str]:
     for m in _WORD_RE.finditer(rest):
         w = m.group(0).casefold().replace("’", "'")
         w = re.sub(r"'s$", "", w).rstrip(".")
-        if w and w not in _PLAIN_WORDS and w not in out:
+        if w and w not in plain and w not in out:
             out.append(w)
     return out
 
@@ -3209,29 +3291,32 @@ class LocalAssumptionFiller:
                     )
         return None
 
-    def unread_words(self, text: str, raws: Iterable[str] = ()) -> list[str]:
+    def unread_words(
+        self, text: str, raws: Iterable[str] = (), tests: Iterable[str] = ()
+    ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
         apps it reads, every date and time code reads, and the time ranges `raws` (a kept
-        proposal's words) that hold nothing more. Empty when the claim states only what its
+        proposal's words) that hold nothing more. `tests` names what the kept rows test
+        ("call", "count", "length"; `_GATED_WORDS`). Empty when the claim states only what its
         checks test."""
+        tests = frozenset(tests)
         flat = _flat(_nfc(text))
-        flat = _READ_QUOTE_RE.sub(lambda m: " " * len(m.group(0)), flat)
-        flat = _ALL_RECORDED_RE.sub(lambda m: " " * len(m.group(0)), flat)
+        for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE):
+            flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
-        low = bare.casefold()
         for raw in raws:
             # A kept range's words are blanked only when they hold nothing past the dates and
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
-            if self.unread_words(raw):
+            if self.unread_words(raw, tests=tests):
                 continue
-            r = _flat(_nfc(raw)).casefold().strip()
-            at = low.find(r) if r else -1
-            while at >= 0:
-                cut.append((at, at + len(r)))
-                at = low.find(r, at + 1)
+            r = _flat(_nfc(raw)).strip()
+            if r:
+                # searched in the claim's own text, so a span is never off by a letter that
+                # casefolds longer ("ß"; Claude review on #265)
+                cut += [m.span() for m in re.finditer(re.escape(r), bare, re.IGNORECASE)]
         try:
             cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
@@ -3241,25 +3326,30 @@ class LocalAssumptionFiller:
         for rx in (_ADDRESS_RE, _HANDLE_RE, _PHONE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE,
                    _TIME24_RE, _YEAR_RE):  # fmt: skip
             cut += [m.span() for m in rx.finditer(bare)]
-        chars = list(bare)
-        for a, b in cut:
-            chars[a:b] = " " * (b - a)
-        phrases = "".join(chars)
-        names = {n for n in self._names(bare) if len(n) > 2}
-        names |= {c.casefold() for c in self.channels()}
-        names |= {a.casefold() for words in APP_ALIASES.values() for a in words}
-        names |= {k for k in APP_ALIASES}
-        for n in sorted(names, key=len, reverse=True):
-            for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", low):
-                cut.append(m.span())
-        chars = list(bare)
-        for a, b in cut:
-            chars[a:b] = " " * (b - a)
-        words = "".join(chars)
+        if "length" in tests:
+            cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
+        phrases = _blank(bare, cut)
+        # An account's or person's name in the case is read only where the claim writes it as
+        # a name, not as a plain lower-case word: an account shown as "Photo" never hides
+        # "sent a photo" (Claude review on #265).
+        for n in sorted({n for n in self._names(bare) if len(n) > 2}, key=len, reverse=True):
+            for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE):
+                if not re.fullmatch(r"[^\W\d_A-Z]+(?:\s+[^\W\d_A-Z]+)*", m.group(0)):
+                    cut.append(m.span())
+        # the call log's channel "call" is no app's name: "called" and "a call" are read by
+        # `_GATED_WORDS` (Claude review on #265)
+        apps = {c.casefold() for c in self.channels()} - {CALL_CHANNEL}
+        apps |= {a.casefold() for words in APP_ALIASES.values() for a in words}
+        apps |= set(APP_ALIASES)
+        for n in sorted(apps, key=len, reverse=True):
+            cut += [
+                m.span() for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
+            ]
+        words = _blank(bare, cut)
         words = _OTHER_CALL_APPS_RE.sub(" ", words)
         words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
         words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
-        return plain_tokens(words, phrases)
+        return plain_tokens(words, phrases, tests)
 
     def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
         """The phone numbers, handles and names the expert gave a number or an account that
@@ -4271,14 +4361,13 @@ class LocalAssumptionFiller:
 
     def claim_apps(self, claim_text: str) -> frozenset[str]:
         """The apps, casefolded, that `_bind_named_app` gives a message row the model left on no
-        app: those the claim names, else for a text message the case's one app of a phone's own
+        app: those the claim names, else for a text message the case's apps of a phone's own
         messages. Empty when the claim names none. The sheet check does not count them against
         a sheet that names no app (core/audit/testability.py), as they are the claim's own."""
         bare = _ADDRESS_RE.sub(" ", _unquoted(_nfc(claim_text)))
         apps = self._named_apps(claim_text)
         if not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
-            phone = self._phone_message_apps()
-            apps = phone if len(phone) == 1 else []
+            apps = self._phone_message_apps()
         return frozenset(a.casefold() for a in apps)
 
     def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
@@ -4351,11 +4440,16 @@ class LocalAssumptionFiller:
         if apps:
             found = apps  # "texted REYES on Telegram": the app the claim names
         elif texty:
+            # every app of a phone's own messages, as for a code-made sender ("texted" may be
+            # SMS or iMessage; `_message_apps`, Codex on #164); a count or an absence reads one
+            # app only (Claude review on #265)
             found = self._phone_message_apps()
-            if len(found) != 1:
+            if not found:
+                raise Reject("the claim names a text message and the case holds no such app")
+            if len(found) > 1 and any(out[i].template_id in WHOLE_APP_TEMPLATES for i in rows):
                 raise Reject(
                     f"the claim names a text message and the case holds {len(found)} apps of"
-                    " a phone's own messages, not one"
+                    " a phone's own messages, so no count or absence is read on one"
                 )
         else:
             return out  # the claim names no app: every app is searched, as it says
@@ -4395,7 +4489,24 @@ class LocalAssumptionFiller:
             and (w := p.params.get("window")) is not None
             and getattr(w, "raw", None)
         ]
-        words = self.unread_words(claim.text, raws)
+        core = [p for p in out if p.is_core and isinstance(p.params, Mapping)]
+        tests = set()
+        if any(
+            p.template_id == "caller"
+            or (p.template_id == "record_time" and not p.params.get("quoted_text"))
+            or CALL_CHANNEL in {str(c).strip().casefold() for c in p.params.get("channels") or ()}
+            for p in core
+        ):
+            # a record_time with no quote is a call (core/audit/assumptions.py), and a count on
+            # "call" counts calls (core/audit/checks/count.py)
+            tests.add("call")
+        if any(p.template_id == "message_count" for p in core):
+            tests.add("count")
+        if any(p.params.get("duration_s") for p in core):
+            tests.add("length")
+        if any(p.template_id == "contact_entry" for p in core):
+            tests.add("contact")
+        words = self.unread_words(claim.text, raws, tests)
         if not words:
             return out
         if "event" not in allowed_ids:
@@ -5111,7 +5222,7 @@ class LocalAssumptionFiller:
         account, not an app (CodeRabbit on #265)."""
         bare = _HANDLE_RE.sub(" ", bare)
         held = [" ".join(a.casefold().split()) for a in self._named_apps(bare)]
-        for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE):
+        for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE, _OTHER_MESSAGE_APPS_RE):
             for m in rx.finditer(bare):
                 word = " ".join(m.group(0).casefold().split())
                 if word == "video":

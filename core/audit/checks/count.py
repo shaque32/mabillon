@@ -25,7 +25,21 @@ from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 _OPS = {"eq": "exactly", "ge": "at least", "le": "at most"}
 
 
-TWIN_S = 2  # seconds within which two rows with one sender and the same words may be one message
+TWIN_S = 2  # seconds within which two rows with the same words may be one message
+
+
+def look_alikes_matter(n: int, twins: int, want: int, op: str) -> bool:
+    """True when the claim's answer differs somewhere between n - twins and n counted
+    messages, so look-alike rows must hold the count open: "exactly 12" over 17 rows with 5
+    look-alikes, but not "at least 5" over 10 rows with 2, nor "at most 20" over 17."""
+    lo = n - twins
+    if not twins:
+        return False
+    if op == "ge":
+        return lo < want <= n
+    if op == "le":
+        return lo <= want < n
+    return lo <= want <= n  # eq: below lo or above n the answer is the same at every number
 
 
 def look_alike(rows: list[Row]) -> int:
@@ -33,8 +47,9 @@ def look_alike(rows: list[Row]) -> int:
     empty) within TWIN_S seconds: rows a count may hold twice. The app, sender and direction
     are left out on purpose: one message's copies in two stores can carry different labels
     ("Native Messages" in one, a number written "9198887386" or no sender at all in the other,
-    as on the Android 13 development phone), and a look-alike only makes a count inconclusive,
-    never passes or fails it (CodeRabbit on #265)."""
+    as on the Android 13 development phone), and a look-alike only holds a count open, never
+    passes or fails it: the count passes or fails only when every number from n - look-alikes
+    to n gives that answer (CodeRabbit and the Claude review on #265)."""
     last: dict[str, datetime] = {}
     n = 0
     for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
@@ -182,20 +197,28 @@ class CountCheck(TemplateCheck):
                 "message twice; an expert must decide which rows are the same message"
             )
         twins = look_alike(counted)
+        # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no copy
+        # number, a live row and a recovered one or the SMS store and Google Messages (Android
+        # 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail. The messages
+        # number between n - twins and n; the count is held open only when that range spans
+        # the claim (Claude review on #265: "at least 5" over 10 rows, 2 of them look-alikes,
+        # still holds).
+        lo = n - twins
+        held_open = look_alikes_matter(n, twins, want, op)
         if twins:
-            # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no
-            # copy number, a live row and a recovered one or the SMS store and Google Messages
-            # (Android 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail.
             lines.append(
                 f"{twins} of the counted messages repeat another one's words and time "
-                f"(within {TWIN_S} seconds), so the count may hold one message twice; an "
-                "expert must decide which rows are the same message"
+                f"(within {TWIN_S} seconds), so the count may hold one message twice"
+                + (
+                    "; an expert must decide which rows are the same message"
+                    if held_open
+                    else f", and {lo} to {n} messages all give the same answer"
+                )
             )
-            copies += twins
 
-        if copies:
+        if copies or held_open:
             outcome = CheckOutcome.INCONCLUSIVE
-        elif op in ("eq", "le") and n > want:
+        elif op in ("eq", "le") and lo > want:
             outcome = CheckOutcome.FAIL
         elif no_time or one_side_silent or (unknown_sender and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE

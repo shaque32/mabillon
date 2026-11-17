@@ -332,8 +332,11 @@ def test_a_repair_naming_a_person_only_its_paragraph_names_is_outside_the_claim(
     outcome, reasons, _, kept = testability.check_answer(
         filler, claim("C09"), [CALL_C09], None, testability.CLAIM_CHECK
     )
+    # the call's row, and the event code adds for "the number saved as ..." (a contact entry
+    # no kept row reads, filler 12)
     assert (outcome, reasons) == ("proposed", []) and [a.template_id for a in kept] == [
-        "record_time"
+        "record_time",
+        "event",
     ]
 
 

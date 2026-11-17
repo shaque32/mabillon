@@ -7,8 +7,10 @@ app and from any sender, keep the count from passing or failing."""
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from core.audit.checks._common import Row
-from core.audit.checks.count import TWIN_S, look_alike
+from core.audit.checks.count import TWIN_S, look_alike, look_alikes_matter
 
 T0 = datetime(2021, 12, 13, 0, 14, 17, tzinfo=UTC)
 
@@ -54,3 +56,22 @@ def test_three_copies_count_twice_and_far_apart_ones_never() -> None:
 def test_rows_with_no_words_or_no_time_are_never_look_alikes() -> None:
     assert look_alike([row(1, "", T0), row(2, "", T0)]) == 0
     assert look_alike([row(1, "ok", None), row(2, "ok", None)]) == 0
+
+
+@pytest.mark.parametrize(
+    ("n", "twins", "want", "op", "matters"),
+    [
+        (17, 5, 12, "eq", True),  # Android 13: 12 messages stored as 17 rows
+        (17, 5, 11, "eq", False),  # more than 11 however the rows are merged: a FAIL stands
+        (10, 2, 5, "ge", False),  # at least 5 however merged (Claude review on #265)
+        (10, 2, 9, "ge", True),
+        (17, 5, 20, "le", False),  # merging only lowers the count
+        (17, 5, 14, "le", True),
+        (17, 5, 10, "le", False),  # more than 10 however merged
+        (12, 0, 12, "eq", False),
+    ],
+)
+def test_look_alikes_hold_a_count_open_only_when_merging_them_could_change_it(
+    n: int, twins: int, want: int, op: str, matters: bool
+) -> None:
+    assert look_alikes_matter(n, twins, want, op) is matters
