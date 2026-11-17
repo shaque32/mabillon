@@ -468,7 +468,8 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
             )
         else:
             counts = _counts(data, st)
-    note_parts: list[Parts] = []
+    # the notes so far are the tool's own; each keeps its place beside the printed-time ones
+    note_parts: list[Parts] = [((n, False),) for n in notes]
     for lk in links:
         for c in lk.shown:
             if c.printed_note and c.printed_note not in notes:

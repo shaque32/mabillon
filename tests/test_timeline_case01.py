@@ -283,6 +283,17 @@ def test_a_raw_time_that_matches_the_note_s_own_words_is_cited_where_it_stands(c
     assert 'clock the report printed (<span class="q">time</span>, UTC' in html
     assert 'The stated <span class="q">time</span>' not in html
     check_report_text(html)
+    # ...and so it is when the row has a note of its own before it (CodeRabbit on #267)
+    conn.execute(
+        "UPDATE govdoc_paragraphs SET text = replace(text, 'At 2:31 a.m.', 'At about 2:31 a.m.')"
+    )
+    conn.execute("UPDATE messages SET ts_raw = 'time deleted' WHERE body LIKE '%its done%'")
+    conn.commit()
+    (r,) = [x for x in rows_for(conn) if x.stated.para_label == "8" and x.stated.approx]
+    assert len(r.notes) == len(r.note_parts) == 2
+    html = render_report(conn)
+    assert 'clock the report printed (<span class="q">time deleted</span>, UTC' in html
+    check_report_text(html)
 
 
 def test_render_report_takes_default_settings(conn):
