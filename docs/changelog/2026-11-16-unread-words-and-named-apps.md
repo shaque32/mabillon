@@ -47,7 +47,8 @@
     one act ('texted REYES and asked: "..."') only when the later verb has no subject of its
     own (", and REYES wrote", ", who replied", "and REYES then asked" are a second act, while a bare
     "then" with no "and" before it joins one subject's verbs unless a pronoun before it
-    starts a clause ("texted REYES who then asked" is a second act); a
+    starts a clause ("texted REYES who then asked" is a second act, also after an address's
+    closing bracket or dash, while "@who" or "who@example.com" is an account, not a pronoun); a
     verb inside a handle or an address is no act; CodeRabbit on #265); so does a time of day outside every kept range
     ("at 9 p.m. and at 10 p.m."); "exchanged", "conversation" and "chatted" are plain only
     beside a count of both sides (each way, or with no one-way side, as case01 C03's "13
@@ -202,7 +203,7 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  1,716 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
+  1,717 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-18, final
   head). Class batteries of new wordings with wrong

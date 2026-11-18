@@ -3242,18 +3242,19 @@ def _later_clause(gap: str) -> str:
     if len(parts) > 1:
         return parts[-1]
     *before, after = re.split(r"\bthen\b", gap, flags=re.IGNORECASE)
-    # a handle or an address is an account, not a pronoun: "texted @who then asked"
-    said = " ".join(before)
-    for rx in (_HANDLE_RE, _WEB_ADDRESS_RE):
-        said = rx.sub(lambda m: " " * len(m.group(0)), said)
-    if before and _CLAUSE_PRONOUN_RE.search(said):
+    if before and _CLAUSE_PRONOUN_RE.search(" ".join(before)):
         return gap
     return after
 
 
-# A pronoun that starts a clause with a subject of its own: "REYES who then asked".
+# A pronoun that starts a clause with a subject of its own: "REYES who then asked". A word
+# joined to a handle or an address is part of that account, not a pronoun ("texted @who then
+# asked", "who@example.com", "example.com/who"), but a word after an address's closing bracket
+# or dash still is ("(https://example.com)—who then asked"; CodeRabbit on #265). Masking whole
+# address matches hid that pronoun, since an address match runs on to the next space.
 _CLAUSE_PRONOUN_RE = re.compile(
-    r"\b(?:who|whom|whose|which|that|he|she|they|it|we|i|you)\b", re.IGNORECASE
+    r"(?<![@./:\w-])(?:who|whom|whose|which|that|he|she|they|it|we|i|you)(?![\w@/]|[.-]\w)",
+    re.IGNORECASE,
 )
 
 
