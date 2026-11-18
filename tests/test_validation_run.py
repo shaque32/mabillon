@@ -668,11 +668,66 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
     assert not (tmp_path / "out" / "built.ok").exists()
     # A case built before the guard is not resumed either (CodeRabbit on #269).
     with monkeypatch.context() as m:
-        m.setattr(hickman_run, "unreadable_call_log", lambda conn, sid: None)
+        m.setattr(hickman_run, "call_log_check", lambda conn, sid: (None, None))
         assert hickman_run.main(args) == 0
     assert (tmp_path / "out" / "built.ok").exists()
     with pytest.raises(SystemExit, match=why):
         hickman_run.main(args)
+
+
+def _ios_calls(tmp_path: Path, rows: list[tuple[str, str]]) -> list[str]:
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="iLEAPP")
+    for i, (provider, direction) in enumerate(rows):
+        lv.add("callHistory", **{"Starting Timestamp": f"2024-03-01T15:0{i}:00Z",
+                                 "Service Provider": provider, "Call Direction": direction,
+                                 "Phone Number": "+19195550111", "Answered": "Yes"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+
+def test_facetime_calls_do_not_hide_a_phone_call_log_no_check_can_read(tmp_path):
+    # FaceTime rows in callHistory are stored with sides under their own app: they are not
+    # phone calls, so phone calls with no direction still stop the run (Claude review on #269).
+    rows = [
+        ("com.apple.Telephony", ""),
+        ("com.apple.Telephony", ""),
+        ("com.apple.FaceTime", "Outgoing"),
+    ]
+    with pytest.raises(SystemExit, match=r"callhistory\) has 3 rows.*direction_not_stated 2"):
+        hickman_run.main(_ios_calls(tmp_path, rows))
+
+
+def test_a_call_history_of_facetime_calls_only_is_not_stopped(tmp_path, capsys):
+    assert hickman_run.main(_ios_calls(tmp_path, [("com.apple.FaceTime", "Outgoing")])) == 0
+    assert "callhistory: 0 of 1 rows are phone calls a check can read" in capsys.readouterr().out
+
+
+def test_a_call_log_the_import_could_not_read_stops_the_build(tmp_path, monkeypatch):
+    # A call log table the importer could not read is listed only under not_imported: the run
+    # stops on it too (Claude review on #269).
+    import eval.synthetic.leapp as synth
+
+    monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+    lv = synth.Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Partner": "+19195550111", "Duration in Secs": "5"})
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"its call log \(get_calllog, 1 records\) was not read"):
+        hickman_run.main(args)
+
+
+def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    (tmp_path / "out" / "case.db").unlink()
+    with pytest.raises(SystemExit, match="built.ok is there but case.db is not"):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "case.db").exists()
 
 
 def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):

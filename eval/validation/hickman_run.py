@@ -390,8 +390,11 @@ def build(  # noqa: ANN001
             # A phone call log with rows but no call a check can read (each row placed by
             # another app, or of no direction) would leave every call claim on the phone
             # unreadable: the run stops here, before any model call (gate G5b).
-            if stop := unreadable_call_log(conn, ph.source_id):
+            stop, note = call_log_check(conn, ph.source_id)
+            if stop:
                 raise SystemExit(f"{ph.source_id}: {stop}")
+            if note:
+                log(f"{ph.source_id}: {note}")
             actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
         _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
             render_affidavit(claims, out / "affidavit.pdf"), conn
@@ -431,43 +434,60 @@ def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
     return sorted({z["zone"] for z in device.get("zones_seen", [])})
 
 
-# The phone's own call log tables, as a LEAPP import's coverage names them (the importer's
-# _NATIVE_CALL_KEYS, lowercased as its locators are).
-NATIVE_CALL_TABLES = {"get_calllog", "callhistory"}
+def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # noqa: ANN001
+    """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
 
-
-def unreadable_call_log(conn, source_id: str) -> str | None:  # noqa: ANN001
-    """Why the phone's own call log is unreadable, or None. It is unreadable when one of its
-    tables has rows but the import stored no call from it with a side: every row was placed by
-    another app (LEAPP flags call_placed_by_another_app; ALEAPP's Samsung samples name another
-    package) or had no direction, so no check could read any of the phone's calls. A UFDR's
-    coverage names no such table, so it is never stopped here."""
+    It stops when a call log table of the phone (LEAPP's `get_calllog` or `callHistory`) holds
+    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a side: every row was
+    placed by another app (ALEAPP's Samsung samples name another package), had no direction
+    or no party, so no check could read any of the phone's calls. Calls of a provider app in
+    the same table (FaceTime on iOS) are not phone calls and do not count. It stops too when
+    such a table holds records the import could not read at all. Otherwise it logs how many
+    phone calls a check can read. A UFDR's coverage names no such table: never stopped here."""
     from core.ingest import coverage
+    from core.ingest.leapp import NATIVE_CALL_KEYS
 
     cov = coverage.load(conn, source_id)
-    for t in (cov.payload.get("tables") or []) if cov else []:
-        if not isinstance(t, dict) or t.get("kind") != "calls":
+    if cov is None:
+        return None, None
+    p = cov.payload
+    read_arts = (p.get("leapp") or {}).get("artifacts_read") or []
+    # by the importer's own keys; an entry it could not read names only its table, which
+    # LEAPP names after the key
+    native = {str(a.get("table")) for a in read_arts if a.get("key") in NATIVE_CALL_KEYS}
+    native |= {k.lower() for k in NATIVE_CALL_KEYS}
+    for t in p.get("not_imported") or []:
+        if str(t.get("table") or "").lower() in native and int(t.get("records") or 0) > 0:
+            return (
+                f"its call log ({t.get('table')}, {t.get('records')} records) was not read"
+                f" ({t.get('reason')}); every call claim on this phone would go untested, so the"
+                " run stops before any model call"
+            ), None
+    notes = []
+    for t in p.get("tables") or []:
+        table = str(t.get("header_locator") or "") if isinstance(t, dict) else ""
+        read = int(t.get("rows_read") or 0) if table else 0
+        if t.get("kind") != "calls" or table.lower() not in native or read == 0:
             continue
-        table = str(t.get("header_locator") or "")
-        read = int(t.get("rows_read") or 0)
-        if table.lower() not in NATIVE_CALL_TABLES or read == 0:
-            continue
-        (sided,) = conn.execute(
-            "SELECT count(*) FROM calls WHERE source_id = ? AND substr(locator, 1, ?) = ?"
-            " AND (from_account_id IS NOT NULL OR to_account_id IS NOT NULL)",
+        rows, sided = conn.execute(
+            "SELECT count(*), coalesce(sum(from_account_id IS NOT NULL"
+            " OR to_account_id IS NOT NULL), 0) FROM calls"
+            " WHERE source_id = ? AND app = ? AND substr(locator, 1, ?) = ?",
+            (source_id, NATIVE_CALL_APP, len(table) + 1, f"{table}/"),
+        ).fetchone()
+        (stored,) = conn.execute(
+            "SELECT count(*) FROM calls WHERE source_id = ? AND substr(locator, 1, ?) = ?",
             (source_id, len(table) + 1, f"{table}/"),
         ).fetchone()
-        flags = t.get("flag_counts") or {}
-        other = int(flags.get("call_placed_by_another_app") or 0)
-        if sided == 0 or other == read:
+        if sided == 0 and (rows > 0 or stored == 0):
+            flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
-                f"its call log ({table}) has {read} rows but no call a check can read was stored"
-                f" ({other} placed by another app,"
-                f" {int(flags.get('call_type_not_incoming_outgoing_or_missed') or 0)} of no"
-                " direction); every call claim on this phone would go untested, so the run stops"
-                " before any model call"
-            )
-    return None
+                f"its call log ({table}) has {read} rows but no phone call a check can read was"
+                f" stored (flags: {flags or 'none'}); every call claim on this phone would go"
+                " untested, so the run stops before any model call"
+            ), None
+        notes.append(f"{table}: {sided} of {read} rows are phone calls a check can read")
+    return None, ("; ".join(notes) or None)
 
 
 def number_digits(identifier: str, app: str | None = None) -> str | None:
@@ -820,9 +840,11 @@ def main(argv: list[str] | None = None) -> int:
         # A case built before the call-log guard (gate G5b) resumes only when each phone's
         # stored import passes it too, so a paid resume never audits a phone whose calls no
         # check can read (CodeRabbit on #269).
+        if not (a.out / "case.db").exists():
+            raise SystemExit(f"{a.out}: built.ok is there but case.db is not; use a new --out")
         conn = connect(a.out / "case.db")
         try:
-            stops = [(p["source_id"], unreadable_call_log(conn, p["source_id"])) for p in imported]
+            stops = [(p["source_id"], call_log_check(conn, p["source_id"])[0]) for p in imported]
         finally:
             conn.close()
         for sid, stop in stops:

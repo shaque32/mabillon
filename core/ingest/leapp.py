@@ -1656,7 +1656,9 @@ def _not_read(art: Artifact, why: str) -> dict[str, Any]:
 
 
 _NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
-_NATIVE_CALL_KEYS = {"callHistory", "get_calllog"}
+# the phone's own call log, by artifact key (the validation driver's call-log check reads it too)
+NATIVE_CALL_KEYS = frozenset({"callHistory", "get_calllog"})
+_NATIVE_CALL_KEYS = NATIVE_CALL_KEYS
 
 
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
