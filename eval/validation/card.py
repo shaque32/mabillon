@@ -25,6 +25,7 @@ import sqlite3
 import sys
 from collections import Counter
 from collections.abc import Iterable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -126,7 +127,7 @@ def pick_run(conn: sqlite3.Connection, predictions: list[Prediction]) -> str:
 
 
 def load_run(db: Path, predictions: list[Prediction], run_id: str | None) -> tuple[str, dict]:
-    with _open_ro(db) as conn:
+    with closing(_open_ro(db)) as conn:  # closed, not only committed (Windows CI on #269)
         rid = run_id or pick_run(conn, predictions)
         return rid, _verdicts(conn, rid)
 
@@ -134,7 +135,7 @@ def load_run(db: Path, predictions: list[Prediction], run_id: str | None) -> tup
 def load_checks(db: Path, claim_ids: Iterable[str]) -> list[tuple[str, str, str]]:
     """(claim_id, check_name, outcome) for every check on a core assumption of these claims."""
     wanted = set(claim_ids)
-    with _open_ro(db) as conn:
+    with closing(_open_ro(db)) as conn:  # closed, not only committed (Windows CI on #269)
         rows = conn.execute(
             "SELECT a.claim_id, r.check_name, r.outcome FROM check_results r"
             " JOIN assumptions a ON a.id = r.assumption_id WHERE a.is_core = 1"

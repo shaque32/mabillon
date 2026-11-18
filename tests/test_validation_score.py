@@ -744,3 +744,24 @@ def test_a_failed_render_leaves_an_earlier_score_in_place(scored, tmp_path, monk
         score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
     assert {n: (out / n).read_bytes() for n in before} == before
     assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="reads open files from /proc")
+def test_no_connection_is_left_open_on_a_file_the_scorer_moves(scored, tmp_path, monkeypatch):
+    # Windows CI on #269: a file still open cannot be renamed there, so every connection on the
+    # scored copy must be closed before score() puts it in place. Linux allows the rename, so
+    # the open files are read from /proc here instead.
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    real = os.replace
+
+    def checked(src, dst):  # noqa: ANN001, ANN202
+        target = str(Path(src).resolve())
+        held = [fd.name for fd in Path("/proc/self/fd").iterdir() if os.path.realpath(fd) == target]
+        assert not held, f"{src} is still open"
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", checked)
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)

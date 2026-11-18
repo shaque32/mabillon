@@ -81,7 +81,9 @@
   is checked by its run id alone, and one with only one of the two is refused); a case.db on
   its own is refused. The scorer scores into a temporary copy, writes `score.json` and
   `score.md` in full beside it, and only then puts the three in place, so a refused zip or a
-  failed render leaves an earlier score in place. The final check tests that the
+  failed render leaves an earlier score in place; every connection on the copy, including the
+  check reader in `eval/validation/card.py`, is closed first, since Windows cannot move a file
+  that is still open. The final check tests that the
   case still passes the gates, not that it equals what the audit read: a change made and
   reversed while the audit ran, or one that leaves the gates passing (such as a call time moved
   to another readable time), is not detected, and model calls made before a refusal are still
@@ -194,7 +196,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 96 tests pass (with `tests/test_leapp.py`, 209; `tests/test_validation_score.py`'s 31 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 96 tests pass (with `tests/test_leapp.py`, 209; `tests/test_validation_score.py`'s 32 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
