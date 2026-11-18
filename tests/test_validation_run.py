@@ -1252,43 +1252,91 @@ def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypa
     assert "OTHER BUILD" in (other / "report.html").read_text(encoding="utf-8")
 
 
-def test_the_copy_holds_the_owners_the_final_check_passed(ufdr, tmp_path, monkeypatch):
+@pytest.mark.parametrize("journal", ["delete", "wal"])
+def test_the_copy_holds_the_owners_the_final_check_passed(ufdr, tmp_path, monkeypatch, journal):
     # CodeRabbit on #269: the final owner check and the copy read in one transaction, so an
-    # owner withdrawn by another connection between the two never reaches audited.db.
+    # owner withdrawn by another connection between the two never reaches audited.db. Under
+    # the default rollback journal the withdrawal waits on that read; under WAL it commits,
+    # and the copy still holds the snapshot the check passed.
+    from core import pipeline
+
     out = tmp_path / "out"
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
             "--fake"]  # fmt: skip
-    real, calls = hickman_run.owner_stop, []
+    if journal == "wal":  # build first, then resume on a WAL case.db
+        assert hickman_run.main(args) == 0
+        conn = sqlite3.connect(out / "case.db")
+        assert conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        conn.close()
+    real_check, real_audit, audited = hickman_run.owner_stop, pipeline.run_audit, []
+
+    def audit_then(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        r = real_audit(*a, **k)
+        audited.append(True)
+        return r
 
     def then_withdraw(conn, phones):  # noqa: ANN001, ANN202
-        r = real(conn, phones)
-        calls.append(r)
-        if len(calls) == 2:  # the check after the audit, before the copy
+        r = real_check(conn, phones)
+        if audited and len(audited) == 1:  # the check after the audit, before the copy
+            audited.append(True)
             other = sqlite3.connect(out / "case.db", timeout=0.2)
             try:
                 with other:
                     other.execute(
                         "UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'"
                     )
-            except sqlite3.OperationalError:
-                pass  # held off by the check's read transaction
+            except sqlite3.OperationalError as e:
+                assert journal == "delete" and "locked" in str(e)  # held off by the read
             finally:
                 other.close()
         return r
 
+    monkeypatch.setattr(pipeline, "run_audit", audit_then)
     monkeypatch.setattr(hickman_run, "owner_stop", then_withdraw)
     assert hickman_run.main(args) == 0
+    assert len(audited) == 2  # the withdrawal was tried
+
+    def owner(db: Path) -> str:
+        conn = sqlite3.connect(db)
+        try:
+            return conn.execute(
+                "SELECT status FROM stipulations WHERE kind = 'device_owner'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
     shipped = tmp_path / "shipped.db"
     with zipfile.ZipFile(out / "results.zip") as z, z.open("case.db") as src:
         shipped.write_bytes(src.read())
-    conn = sqlite3.connect(shipped)
-    try:
-        (status,) = conn.execute(
-            "SELECT status FROM stipulations WHERE kind = 'device_owner'"
-        ).fetchone()
-    finally:
-        conn.close()
-    assert status == "confirmed"
+    assert owner(shipped) == "confirmed"
+    assert owner(out / "case.db") == ("rejected" if journal == "wal" else "confirmed")
+
+
+def test_one_run_at_a_time_uses_an_out_dir(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert not (out / hickman_run.LOCK).exists()  # released when the run ends
+    (out / hickman_run.LOCK).write_text("12345\n", encoding="utf-8")  # another run holds it
+    with pytest.raises(SystemExit, match="another run is using"):
+        hickman_run.main(args)
+    assert (out / hickman_run.LOCK).exists()  # never taken from its holder
+    assert (out / "results.zip").exists()  # nor its files touched
+
+
+def test_a_refused_resume_leaves_no_earlier_results_zip(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0 and (out / "results.zip").exists()
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+    conn.close()
+    with pytest.raises(SystemExit, match="confirmed device owner"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists()
 
 
 def test_a_failed_attempt_leaves_no_earlier_results_zip(ufdr, tmp_path, monkeypatch):

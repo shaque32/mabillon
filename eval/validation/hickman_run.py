@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -51,6 +52,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -855,6 +857,7 @@ def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
     return None
 
 
+LOCK = "run.lock"  # held by the one invocation using DIR
 AUDITED = "audited.db"  # the copy of the audited case the report and results.zip are made from
 REFUSED = "the device owners changed during the audit, so it is not scored"
 
@@ -923,9 +926,8 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                 )
             raise SystemExit(f"{REFUSED}: {stop}")
         try:
-            with sqlite3.connect(out / AUDITED) as copy:
+            with closing(sqlite3.connect(out / AUDITED)) as copy:
                 conn.backup(copy)
-            copy.close()
         finally:
             conn.commit()
         tally: dict[str, int] = {}
@@ -1044,6 +1046,28 @@ def main(argv: list[str] | None = None) -> int:
         "phones": [ph.record() for ph in phones],
     }
     a.out.mkdir(parents=True, exist_ok=True)
+    # One invocation owns DIR at a time, from its first write through publication, so a
+    # results.zip never mixes two attempts' files (CodeRabbit on #269).
+    lock = a.out / LOCK
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit(
+            f"{lock} exists: another run is using {a.out}. If none is (a run killed outright"
+            " leaves it behind), delete that file and run again."
+        ) from None
+    os.write(fd, f"{os.getpid()}\n".encode())
+    os.close(fd)
+    try:
+        return _attempt(a, phones, defs, defined, setup)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
+    """One attempt on DIR, run while main() holds its lock."""
+    # an earlier attempt's results never stand for this one, even if this one is refused
+    (a.out / "results.zip").unlink(missing_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 
     def log(msg: str) -> None:
@@ -1201,8 +1225,6 @@ def main(argv: list[str] | None = None) -> int:
     if report_sha is not None:
         run["report_xml_sha256"] = report_sha
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
-    # an earlier attempt's results never stand for this one, even if this one stops early
-    (a.out / "results.zip").unlink(missing_ok=True)
     from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing
 

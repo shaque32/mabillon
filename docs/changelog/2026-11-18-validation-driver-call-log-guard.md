@@ -59,7 +59,11 @@
   report and `results.zip` are made from that copy, not from case.db read again by path, so they
   hold the audited build whatever case.db holds by then; the zip is written under a temporary
   name and published only once complete, never without the audited case, and an earlier
-  attempt's `results.zip` is removed before the audit starts. The resume and the audit open case.db without ever
+  attempt's `results.zip` is removed as the attempt starts, before any check can refuse it.
+  One invocation at a time owns the output directory: it creates `run.lock` exclusively
+  before its first write there and removes it when it ends, and a second invocation stops
+  while the lock exists (a run killed outright leaves the file, and the message says to
+  delete it). The resume and the audit open case.db without ever
   creating it, so a case.db moved away stops the run instead of leaving an empty file, and the
   run decides once whether it builds or resumes, so a `built.ok` that vanishes mid-run never
   starts a build. It also stops unless
@@ -98,9 +102,12 @@
     before any run; a case.db moved away is never recreated; another build's case.db put at
     case.db while the report reads it, or before the zip, never reaches `report.html` or
     `results.zip` (the other build's claim text is absent from the report); an owner withdrawn
-    by another connection between the final check and the copy never reaches the shipped copy;
+    by another connection between the final check and the copy never reaches the shipped copy,
+    under the default rollback journal and under WAL (where the withdrawal commits);
     a zip that fails to write, or lacks the audited case, is never published; a failed attempt
-    leaves no earlier `results.zip`; a `built.ok` removed mid-resume never starts a build.
+    leaves no earlier `results.zip`, and neither does a resume refused by its checks; a second
+    run on a held output directory stops without touching it; a `built.ok` removed mid-resume
+    never starts a build.
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
@@ -143,7 +150,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 78 tests pass (with `tests/test_leapp.py`, 186) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 81 tests pass (with `tests/test_leapp.py`, 189) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
