@@ -10,7 +10,7 @@
   would import with no readable phone call, and every call claim on it would stay unproven
   after a paid run. Stopping a paid run is run policy, so the check sits in the driver and not
   in the importer (agreed with the importer thread).
-- Where: branch claude/project-thread-ds0ify
+- Where: PR #269 (branch claude/project-thread-ds0ify)
 - Verified: `tests/test_validation_run.py::test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call`
   covers four cases. Every row placed by another package stops the build, and so does every row
   of no direction; both fail on main. One phone-package row among other-app rows passes, and so
