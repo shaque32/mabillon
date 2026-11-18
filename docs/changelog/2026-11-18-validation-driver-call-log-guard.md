@@ -73,9 +73,11 @@
   last completed audit in the zip's own case.db).
   After that, the same check runs again in the read
   transaction of the copy below, and a change made after the run completed still marks it
-  stopped; a failure there that also fails the stopped write leaves a run that passed the final
-  check. The scorer (`eval/validation/score_hickman.py`, version unchanged, no measure changed)
-  also now scores only a results.zip, and only when the case's last completed audit is the one
+  stopped (if that stopped write fails, the driver still exits with the refusal and its reason
+  and publishes nothing); a failure of the check itself that also fails the stopped write
+  leaves a run that passed the final check. The scorer (`eval/validation/score_hickman.py`,
+  1.5.1, no measure changed: 1.5.1 only narrows what it accepts) also now scores only a
+  results.zip that holds a case.db and a run.json, and only when the case's last completed audit is the one
   the zip's run.json names and the build id stamped in its case.db is the one run.json names
   (run.json now records it; a zip made before build ids, such as the v4 runs, has neither and
   is checked by its run id alone, and one with only one of the two is refused); a case.db on
@@ -83,7 +85,10 @@
   `score.md` in full beside it, and only then puts the three in place, all or none (each
   earlier file is moved aside and put back if a later move fails, and a put-back that fails is
   reported), so a refused zip, a failed render or a move that fails partway leaves an earlier
-  score in place; every connection on the copy, including the
+  score in place; a rollback journal a killed earlier copy left beside the scorer's copy is
+  removed before the copy is written (SQLite would roll it into the fresh copy and corrupt it;
+  the driver removes one beside `audited.db` too, though its backup rewrites every page
+  anyway); every connection on the copy, including the
   check reader in `eval/validation/card.py`, is closed first, since Windows cannot move a file
   that is still open. The final check tests that the
   case still passes the gates, not that it equals what the audit read: a change made and
@@ -198,7 +203,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 96 tests pass (with `tests/test_leapp.py`, 209; `tests/test_validation_score.py`'s 35 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 99 tests pass (with `tests/test_leapp.py`, 212; `tests/test_validation_score.py`'s 37 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -206,7 +211,8 @@
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
   not known. The caller check itself (`core/audit/checks/_common.py` `_ts`) still raises on a
-  stored call time it cannot parse; the driver now stops such a case before any model call,
+  stored call time it cannot parse (an empty one reads as no time); the driver now stops such a
+  case before any model call,
   but the app's own audit path does not, and that shared parser is used by every check and is
   not changed here. The importers store only parsed UTC times. A phone whose LEAPP output
   lists no call log at all always stops the driver, and no option lets it through, so such a

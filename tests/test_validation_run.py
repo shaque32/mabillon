@@ -1846,6 +1846,82 @@ def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_pa
         hickman_run.main(args)
 
 
+def test_an_empty_stored_call_time_reads_as_no_time_and_does_not_stop(tmp_path):
+    # Claude review on #269: the caller check reads '' as no time and goes on, so only a time
+    # it would fail to parse stops the run.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = '' WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    assert hickman_run.main(args) == 0
+
+
+def test_a_stale_journal_beside_the_audited_copy_is_removed_first(tmp_path):
+    # Claude review on #269: a hot journal a killed copy left beside audited.db goes before the
+    # next copy is made. SQLite's backup rewrites every page of the copy after rolling such a
+    # journal back, so the shipped copy is sound with or without the removal (checked by
+    # mutation); this pins that it stays so. The scorer's copy is the one a journal corrupts.
+    out = tmp_path / "out"
+    args = _android_args(tmp_path)
+    assert hickman_run.main(args) == 0
+    stale = out / f"{hickman_run.AUDITED}-journal"
+    from tests.test_validation_score import _hot_journal
+
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    assert hickman_run.main(args) == 0
+    assert not stale.exists()
+    with zipfile.ZipFile(out / "results.zip") as z:  # the shipped copy is a sound database
+        (tmp_path / "shipped.db").write_bytes(z.read("case.db"))
+    conn = sqlite3.connect(tmp_path / "shipped.db")
+    assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    conn.close()
+
+
+def test_a_stop_after_the_run_whose_stop_write_fails_gives_the_reason(tmp_path, monkeypatch):
+    # Claude review on #269: the check after the run stops it, and the write that stores it as
+    # stopped fails too: the reason is still what the operator sees, not a database traceback,
+    # and no copy is made for a report or zip.
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real, append = pipeline.run_audit, audit_log.append
+
+    def untimed_after(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        result = real(conn, *a, **k)
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        return result
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("disk I/O error")
+        return append(conn, at, actor, action, payload)
+
+    monkeypatch.setattr(pipeline, "run_audit", untimed_after)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    with pytest.raises(SystemExit, match=r"^" + hickman_run.REFUSED + r".*storing it as stopped"
+                       r" failed: disk I/O error"):  # fmt: skip
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    assert not (out / hickman_run.AUDITED).exists()
+
+
 def test_the_final_check_holds_its_lock_until_the_completed_write(tmp_path, monkeypatch):
     # Claude review on #269: the final check's guarantee rests on core/pipeline.py writing the
     # run as completed in the transaction the check opened, with no commit between the last

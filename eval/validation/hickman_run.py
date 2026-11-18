@@ -551,7 +551,7 @@ def call_log_check(  # noqa: ANN001
     # account (Claude review on #269)
     (bad_ts,) = conn.execute(
         "SELECT count(*) FROM calls WHERE source_id = ? AND ts_utc IS NOT NULL"
-        " AND NOT mabillon_ts_ok(ts_utc)",
+        " AND ts_utc != '' AND NOT mabillon_ts_ok(ts_utc)",  # '' reads as no time, no stop
         (source_id,),
     ).fetchone()
     if bad_ts:
@@ -907,6 +907,7 @@ def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
 
 LOCK = "run.lock"  # held by the one invocation using DIR
 AUDITED = "audited.db"  # the copy of the audited case the report and results.zip are made from
+SQLITE_SIDECARS = ("-journal", "-wal", "-shm")  # files SQLite keeps beside a database
 REFUSED = "the device owners or call log changed during the audit, so it is not scored"
 
 
@@ -932,7 +933,10 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
     from core import pipeline
     from core.review import audit_log
 
-    (out / AUDITED).unlink(missing_ok=True)  # never ship an earlier attempt's copy
+    # never ship an earlier attempt's copy; a journal a killed copy left goes too (the backup
+    # below rewrites every page anyway, so this is belt and braces; Claude review on #269)
+    for name in (AUDITED, *(f"{AUDITED}{s}" for s in SQLITE_SIDECARS)):
+        (out / name).unlink(missing_ok=True)
 
     # The case.db checked before the audit may have been swapped or changed since: the audit
     # runs only on the very case that record names, with the owners it was built with
@@ -1048,8 +1052,12 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                 unscored(f"the final check could not run, so it is not scored: {e}")
             raise
         if stop:
-            unscored(f"{REFUSED}: {stop}")
-            raise SystemExit(f"{REFUSED}: {stop}")
+            why = f"{REFUSED}: {stop}"
+            try:
+                unscored(why)
+            except sqlite3.Error as e:  # the reason, not a traceback (Claude review on #269)
+                raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
+            raise SystemExit(why)
         try:
             with closing(sqlite3.connect(out / AUDITED)) as copy:
                 conn.backup(copy)

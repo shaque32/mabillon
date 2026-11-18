@@ -531,7 +531,7 @@ def test_the_r1_card_scores_the_run_before_any_review(scored):
     assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
     assert bars["8_import_counts"]["pass"] is True
     assert "6" not in bars  # no pass 2 given
-    assert s["scorer_version"] == "1.5.0"
+    assert s["scorer_version"] == "1.5.1"
 
 
 def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
@@ -666,6 +666,55 @@ def test_only_the_published_results_zip_is_scored(scored, tmp_path):
             z.writestr(name, data)
     with pytest.raises(SystemExit, match="run.json names audit run:another"):
         score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out2")
+
+
+def test_a_zip_with_no_case_db_is_refused_by_name(scored, tmp_path):
+    # Claude review on #269: a refusal that names what is missing, not a KeyError
+    run, _ = scored
+    base = run.parent
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist() if n != "case.db"}
+    other = tmp_path / "results.zip"
+    with zipfile.ZipFile(other, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    with pytest.raises(SystemExit, match="holds no case.db"):
+        score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out")
+
+
+def test_a_stale_journal_beside_the_scored_copy_is_removed_first(scored, tmp_path):
+    # Claude review on #269: a hot journal a killed copy left beside scored.db.part would be
+    # rolled into the fresh copy when SQLite opens it
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    out.mkdir()
+    stale = out / "scored.db.part-journal"
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    result = score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert not stale.exists()
+    assert result["scorer_version"] == score_hickman.SCORER_VERSION  # scored from a sound copy
+
+
+def _hot_journal(work: Path) -> bytes:
+    """The rollback journal a process killed mid-write leaves: SQLite rolls it into whatever
+    database file it finds beside it."""
+    import subprocess
+    import sys
+
+    work.mkdir()
+    db = work / "x.db"
+    code = (
+        "import os, sqlite3, sys\n"
+        "c = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "c.execute('PRAGMA cache_size=1')\n"
+        "c.execute('CREATE TABLE t(v)')\n"
+        "c.executemany('INSERT INTO t VALUES (?)', [('x' * 500,) for _ in range(200)])\n"
+        "c.execute('BEGIN')\n"
+        "c.execute(\"UPDATE t SET v = 'y'\")\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", code, str(db)], check=True)  # noqa: S603 (fixed code)
+    return (work / "x.db-journal").read_bytes()
 
 
 def _rezip(run: Path, path: Path, edit) -> Path:  # noqa: ANN001

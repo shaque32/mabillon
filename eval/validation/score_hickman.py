@@ -54,7 +54,7 @@ from typing import Any
 
 from core.contracts import GoldClaim, Stance, Verdict
 from eval.validation.card import build_card, load_checks, rate, render_markdown
-from eval.validation.hickman_run import TYPE_ALIASES, stamped_build
+from eval.validation.hickman_run import SQLITE_SIDECARS, TYPE_ALIASES, stamped_build
 
 KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.0.0: #134. 1.1.0: coverage (#142). 1.2.0: a claim is tested only with a first-pass verdict,
@@ -66,7 +66,9 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # which merge two SMS chats with one counterpart into one thread (signed by Arsh 2026-11-16).
 # 1.5.0: validation v5's bar 4 measure beside v4's: no core assumption left open (Arsh's
 # card, 2026-11-16).
-SCORER_VERSION = "1.5.0"
+# 1.5.1: no measure changed; only the results.zip a run published is scored, and only when its
+# case's last completed audit is the one its run.json names, in the same build (#269).
+SCORER_VERSION = "1.5.1"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
@@ -705,6 +707,12 @@ def _copy_db(results: Path, db: Path) -> dict[str, Any]:
     with zipfile.ZipFile(results) as z:
         if "run.json" not in z.namelist():
             raise SystemExit(f"{results} holds no run.json, so its audit cannot be confirmed")
+        if "case.db" not in z.namelist():
+            raise SystemExit(f"{results} holds no case.db, so there is no audit to score")
+        # a journal a killed earlier copy left beside db would be rolled into the new copy
+        # when SQLite opens it, so it goes first (Claude review on #269)
+        for s in SQLITE_SIDECARS:
+            db.with_name(db.name + s).unlink(missing_ok=True)
         with z.open("case.db") as src, db.open("wb") as dst:
             shutil.copyfileobj(src, dst)
         return json.loads(z.read("run.json"))

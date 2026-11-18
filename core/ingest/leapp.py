@@ -1261,12 +1261,7 @@ def _whole_seconds(text: str | None) -> int | None:
     """A duration in whole seconds, or None when the text is not one: not isdigit, since int()
     refuses '²', and more digits than int() reads is unknown too; _add_call drops a value past
     SQLite's range (CodeRabbit on #269)."""
-    if not text or not text.isdecimal():
-        return None
-    try:
-        return int(text)
-    except ValueError:
-        return None
+    return _hms(text) if text and text.isdecimal() else None  # seconds only, never h:mm:ss
 
 
 def _add_call(
