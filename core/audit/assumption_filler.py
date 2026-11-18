@@ -3441,9 +3441,8 @@ class LocalAssumptionFiller:
         apps |= {a.casefold() for words in APP_ALIASES.values() for a in words}
         apps |= set(APP_ALIASES)
         for n in sorted(apps, key=len, reverse=True):
-            cut += [
-                m.span() for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
-            ]
+            # the same matcher as binding: "Line-Business" is Line Business (CodeRabbit on #265)
+            cut += self._app_mentions(bare, n)
         words = _blank(bare, cut)
         # "sent a video": a kind of message no check reads, not an app (CodeRabbit on #265)
         words = _OTHER_CALL_APPS_RE.sub(
@@ -4536,12 +4535,8 @@ class LocalAssumptionFiller:
         found: list[tuple[int, int, str]] = []
         missing: list[str] = []
         for app in apps:
-            names = (app, *APP_ALIASES.get(app.casefold(), ()))
-            mine = [
-                (*m.span(), app)
-                for n in names
-                for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
-            ]
+            # the same matcher as binding: "Line-Business" is Line Business (CodeRabbit on #265)
+            mine = [(st, en, app) for st, en in self._app_mentions(bare, app)]
             if not mine:
                 missing.append(app)
             found += mine

@@ -3914,6 +3914,27 @@ def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
     assert filler._apps_named_together(text.replace(" and Viber", "")) == []
 
 
+def test_a_hyphenated_app_name_reads_its_join_like_binding(tmp_path):
+    # "Telegram or Line-Business" binds both apps; the join scan read only "Line Business", so
+    # the app counted as unwritten and the claim got an event (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:lb', 'item1', 'x', 'dev:item1', 'Line Business', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram or Line-Business: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler._apps_named_together(text) == []
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Line Business"})
+    }
+    joined = text.replace(" or ", " and ")
+    assert filler._apps_named_together(joined) == ["Telegram and Line-Business"]
+    made, _ = build_text(c, joined, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
 @pytest.mark.parametrize(
     ("apps", "together"),
     [

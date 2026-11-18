@@ -53,7 +53,8 @@
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
     picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, and an app
     written only inside a longer app's name as no app ("Facebook Messenger" binds no
-    Facebook; a hyphen joins its words too, so "Line-Business" binds no Line), while "by phone"
+    Facebook; a hyphen joins its words too, so "Line-Business" binds no Line, and the join scan and the
+    unread-word scan read it the same way, so "Telegram or Line-Business" gets no event), while "by phone"
     is still one kind of contact on a case with a phone named "Phone" (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
