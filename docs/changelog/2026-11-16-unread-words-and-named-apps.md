@@ -83,7 +83,7 @@
     this, "texted" bound to SMS read as a mismatch on case01 C12. Other apps a try names still
     count. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
     instead of failing it on filler 12's new rows (CodeRabbit on #265).
-- Where: PR #265 (after #263 and #264, both merged; main merged in)
+- Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
