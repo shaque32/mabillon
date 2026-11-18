@@ -3659,15 +3659,10 @@ def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
 def test_a_plain_word_app_written_with_a_capital_is_named_however_the_export_spells_it(
     conn, monkeypatch, words, kept
 ):
-    # An export may store "recents"; "on Recents" still names it (CodeRabbit on #265).
-    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["recents"])
+    # An export may store "recents"; "on Recents" still names it (CodeRabbit on #265). Only
+    # the case's apps are patched, so the claim's app is read as it would be.
     held = LocalAssumptionFiller.channels
     monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "recents"])
-    monkeypatch.setattr(
-        LocalAssumptionFiller,
-        "_channels",
-        lambda self, text, names, template_id="": list(names),
-    )
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
     c = Claim(
         id="X1",
@@ -3683,6 +3678,30 @@ def test_a_plain_word_app_written_with_a_capital_is_named_however_the_export_spe
     else:
         with pytest.raises(Reject, match="plain word"):
             filler._bind_named_app(c, out)
+
+
+def test_a_plain_word_app_inside_a_longer_app_name_is_not_written_as_a_name(conn, monkeypatch):
+    # "Line" inside "Line Business" is the longer app's name, not a capital on Line, so a row
+    # the model put on Line gets no absence (CodeRabbit on #265).
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(
+        LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line", "Line Business"]
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV and REYES had no contact on Line Business between March 20 and 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    assert filler._written_as_name(c.text, "Line Business")
+    assert not filler._written_as_name(c.text, "Line")
+    out = [
+        Proposal("no_contact", {"person_ids": [PETROV, REYES], "channels": ["Line"]}, is_core=True)
+    ]
+    with pytest.raises(Reject, match="plain word"):
+        filler._bind_named_app(c, out)
 
 
 def test_words_inside_a_kept_range_are_still_read(conn):

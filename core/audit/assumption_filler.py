@@ -4599,9 +4599,7 @@ class LocalAssumptionFiller:
             # "his second line": a plain word that may name no app at all
             # written with a capital is a name, however the export spells the app ("Recents"
             # for an export's "recents"; CodeRabbit on #265)
-            return app.casefold() in _PLAIN_WORD_APPS and not any(
-                bare[st].isupper() for st, _ in self._app_mentions(bare, app)
-            )
+            return app.casefold() in _PLAIN_WORD_APPS and not self._written_as_name(bare, app)
 
         # "by phone" is read before a phone named "Phone" is blanked; the message and call
         # words after, so a phone named "Messages Phone" is no kind of contact (CodeRabbit on
@@ -4751,8 +4749,7 @@ class LocalAssumptionFiller:
         wide = [
             a
             for a in found
-            if a.casefold() not in _PLAIN_WORD_APPS
-            or any(bare[st].isupper() for st, _ in self._app_mentions(bare, a))
+            if a.casefold() not in _PLAIN_WORD_APPS or self._written_as_name(bare, a)
         ]
 
         def short(i: int) -> bool:
@@ -5623,6 +5620,22 @@ class LocalAssumptionFiller:
             for n in (app, *APP_ALIASES.get(app.casefold(), ()))
             for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", text, re.IGNORECASE)
         ]
+
+    def _written_as_name(self, text: str, app: str) -> bool:
+        """True when the words write the app with a capital at a mention of its own, never one
+        inside a longer app's name ("Line" in "Line Business" names no Line; CodeRabbit on
+        #265), however the export spells the app."""
+        longer = [
+            sp
+            for other in self.channels()
+            if other.casefold() != app.casefold()
+            for sp in self._app_mentions(text, other)
+        ]
+        return any(
+            text[st].isupper()
+            and not any(a <= st and en <= b and (a, b) != (st, en) for a, b in longer)
+            for st, en in self._app_mentions(text, app)
+        )
 
     def _longest_mentions(self, text: str, apps: list[str]) -> list[str]:
         """The apps less any whose every mention sits inside a longer named app's mention:
