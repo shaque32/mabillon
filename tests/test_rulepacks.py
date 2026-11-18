@@ -552,7 +552,7 @@ def test_only_traps_earn_a_guard_credit(pack: RulePack) -> None:
     assert "x-untagged" not in rep.rule_kill["voicemail-leg"]
 
 
-def test_a_wrong_row_says_why_and_a_right_row_does_not() -> None:
+def test_a_wrong_row_says_why_and_a_right_row_does_not(report: harness.Report) -> None:
     # the round 2 drafter gets a reference-only report and needs the reasons (DRAFTING.md)
     pack = load(REFERENCE)
     bare = pack.model_copy(update={"guards": ()})
@@ -561,4 +561,6 @@ def test_a_wrong_row_says_why_and_a_right_row_does_not() -> None:
     wrong = [r for r in rows if r["got"] != r["expected"]]
     assert wrong, "with no guards some trap should come out wrong"
     assert all(r["why"] for r in wrong)
-    assert all("why" not in r for r in rows if r["got"] == r["expected"])
+    right = [r for rows in report.layouts.values() for r in rows if r["got"] == r["expected"]]
+    assert right, "the guarded reference report should have matching rows"
+    assert all("why" not in r for r in right)
