@@ -4719,6 +4719,14 @@ class LocalAssumptionFiller:
                 )
             given = [str(c) for c in p.params.get("channels") or ()]
             scope = list(dict.fromkeys([*wide, *given])) if given else list(found)
+            if len(scope) > 1 and p.params.get("account_ids"):
+                # "Telegram or SMS" with a party the model put on accounts: an account holds one
+                # app's messages, so the row may search the other app for no one, and a copy
+                # outside the range on the first could fail a true claim sent on the other
+                # (CodeRabbit on #265). A party given as a person is read on every app.
+                raise Reject(
+                    "a party is given as accounts, which do not reach every app the claim names"
+                )
             made[i] = Proposal(
                 p.template_id, {**p.params, "channels": scope}, is_core=True, code_made=True
             )

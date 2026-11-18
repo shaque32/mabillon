@@ -67,8 +67,9 @@
     #265). A message row the model put on fewer apps than the claim names ("Telegram or SMS"
     read on Telegram alone) is searched on all of them: a Telegram copy outside the range could
     otherwise fail the time check of a true claim sent by SMS. Only apps the claim writes as
-    names widen it, never a plain word ("an account"), and a call keeps its own reading
-    (CodeRabbit on #265). Before, "wrote on
+    names widen it, never a plain word ("an account"), and a call keeps its own reading. A
+    row on several apps whose party the model gave as accounts is refused, since an account
+    holds one app's messages (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on

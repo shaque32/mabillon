@@ -4054,6 +4054,14 @@ def test_more_findings_on_37917c7(tmp_path):
     on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, on_telegram)
     assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
+    # ...but a party the model gave as a Telegram account reaches no SMS, so the claim stays
+    # unproven rather than read on Telegram alone
+    northstar = {"as_written": "5551234", "app": "Telegram"}
+    as_account = [on_telegram[0], {**on_telegram[1], "accounts": [northstar]}]
+    to_id = text.replace("@northstar", "Telegram user 5551234")
+    made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, as_account)
+    assert made == [], [a.params for a in made]
+    assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
     # SMS and MMS are two kinds, joined by "and" and alternatives by "or"
     text = 'On March 12, 2026, PETROV wrote to @northstar on SMS {} MMS: "need 2 more by friday".'
     assert filler._apps_named_together(text.format("and"))
