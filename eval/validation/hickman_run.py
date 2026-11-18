@@ -52,7 +52,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -932,6 +932,7 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
         t = time.monotonic()
         result = pipeline.run_audit(conn, comps, progress=progress)
+
         # The audit reads its stipulations and calls in its own reads, after the check above:
         # an owner or a call row changed in between (or during the run) and still changed now
         # leaves this run's verdicts on a case the gates did not pass. The run is then marked
@@ -939,22 +940,35 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         # (pipeline.last_run), while its finished claims stay reusable, and the run stops here
         # (CodeRabbit on #269). The check and the copy below read in one transaction, so the
         # copy holds the owners and call log the check passed.
-        conn.execute("BEGIN")
-        stop = case_stop(conn, built)
-        if stop:
-            conn.commit()  # end the read before the refusal is written
+        def unscored(why: str) -> None:
+            """Store the run as stopped with `why`, so it is never the case's completed audit."""
+            conn.rollback()  # end the read before the refusal is written
             with conn:
                 conn.execute(
                     "UPDATE pipeline_runs SET status = 'stopped', note = ? WHERE id = ?",
-                    (f"{REFUSED}: {stop}", result.run_id),
+                    (why, result.run_id),
                 )
                 audit_log.append(
                     conn,
                     datetime.now(UTC),
                     ACTOR,
                     pipeline.HALT_ACTION,
-                    {"run_id": result.run_id, "error": f"{REFUSED}: {stop}", "stopped": True},
+                    {"run_id": result.run_id, "error": why, "stopped": True},
                 )
+
+        try:
+            conn.execute("BEGIN")
+            stop = case_stop(conn, built)
+        except Exception as e:
+            # the check itself failed (such as a database locked by another writer): the run
+            # was never verified, so it is stored as stopped where the database allows it
+            # (CodeRabbit on #269); if even that write fails, the run keeps the pipeline's
+            # completed status, and no audited.db, report or zip is made from it
+            with suppress(sqlite3.Error):
+                unscored(f"the final check could not run, so it is not scored: {e}")
+            raise
+        if stop:
+            unscored(f"{REFUSED}: {stop}")
             raise SystemExit(f"{REFUSED}: {stop}")
         try:
             with closing(sqlite3.connect(out / AUDITED)) as copy:

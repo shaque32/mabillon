@@ -54,9 +54,16 @@
   the driver runs the same owner and call log checks once more on the same connection. An owner
   or call log change still in place at that moment marks the run stopped (with the reason in its note and a halt entry in the audit
   log), so `pipeline.last_run` and the scorer never take it as the case's completed audit, while
-  its finished claims stay reusable; a change made and reversed while the audit ran is not
-  detected, and the run is recorded as completed by the pipeline for the moment between its
-  return and that update (closing that needs a hook in `core/pipeline.py`, not made here).
+  its finished claims stay reusable. A final check that itself fails (such as on a database
+  locked by another writer) stores the run as stopped too where the database allows that
+  write, and no `audited.db`, report or zip is made. The final check tests that the case still
+  passes the gates, not that it equals what the audit read: a change made and reversed while
+  the audit ran, or one that leaves the gates passing (such as a call time moved to another
+  readable time), is not detected; model calls made before a refusal are still spent; and the
+  run is recorded as completed by the pipeline for the moment between its return and that
+  update. Closing these needs the pipeline to read in a snapshot the driver holds, a hook in
+  `core/pipeline.py` not made here; the driver owns its output directory through `run.lock`,
+  and nothing else is meant to write to case.db during a run.
   Otherwise the audit copies the case on that same connection, in the same read transaction as
   the check, to `audited.db`, and the
   report and `results.zip` are made from that copy, not from case.db read again by path, so they
@@ -155,7 +162,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 86 tests pass (with `tests/test_leapp.py`, 194) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 87 tests pass (with `tests/test_leapp.py`, 195) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -164,7 +171,8 @@
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
   not known. The caller check itself (`core/audit/checks/_common.py` `_ts`) still raises on a
   stored call time it cannot parse, so such a row beside readable ones fails the audit loudly
-  (the run is marked failed, no verdict is set) rather than reading as inconclusive; that
+  (the pipeline marks the run failed and sets no verdict for the claim that failed; verdicts
+  of claims finished before it stay in the case) rather than reading as inconclusive; that
   shared parser is used by every check and is not changed here. The importers store only
   parsed UTC times.
 - Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,

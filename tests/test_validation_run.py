@@ -1539,6 +1539,41 @@ def test_a_call_log_changed_during_the_audit_stops_the_run_unscored(tmp_path, mo
     assert not (out / hickman_run.AUDITED).exists()
 
 
+def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch):
+    # CodeRabbit on #269: the pipeline stores the run as completed before the final check, so
+    # a final check that raises (such as on a locked database) stores it as stopped, never the
+    # case's completed audit, with its finished claims kept.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    first = pipeline.last_run(conn)["run_id"]
+    conn.close()
+    real, calls = hickman_run.case_stop, []
+
+    def fails_after_the_audit(conn, built):  # noqa: ANN001, ANN202
+        calls.append(1)
+        if len(calls) == 2:  # the check after the audit
+            raise sqlite3.OperationalError("database is locked")
+        return real(conn, built)
+
+    monkeypatch.setattr(hickman_run, "case_stop", fails_after_the_audit)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        assert pipeline.last_run(conn)["run_id"] == first
+        ((status, note),) = conn.execute(
+            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert status == "stopped" and "final check could not run" in note
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
 def test_a_call_time_the_caller_check_cannot_parse_is_not_readable(tmp_path):
     # CodeRabbit on #269: the gate counts a time only when the caller check's own parser reads
     # it, so a stored value that is no time stops the run instead of failing in the audit.
