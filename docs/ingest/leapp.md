@@ -1,6 +1,6 @@
 # iLEAPP and ALEAPP import (unverified)
 
-Importer: `core/ingest/leapp.py` (`LeappImporter`, importer `leapp` 0.1.0). It implements
+Importer: `core/ingest/leapp.py` (`LeappImporter`, importer `leapp` 0.2.0). It implements
 `EvidenceImporter` and writes the same canonical rows as the other importers, through the same
 writer (`_Writer` in `core/ingest/cellebrite_common.py`), so retrieval, checks, rules, the review
 screen and the report work unchanged. `core/ingest/pick.py` chooses it for a `.zip` that holds a
@@ -98,14 +98,16 @@ LEAPP publishes, for each chat artifact, a conversation view (the manifest's
 `data_views.conversation`) naming its conversation, text, direction, time, sender and media
 columns. Mabillon reads a chat artifact through that view only when it is listed in
 `CHAT_SPECS`, which holds the artifacts checked record by record against Mabillon's UFDR import of
-the same public test phone (2026-11-16): every message with text matched a UFDR message on time
-(within a second), text and direction, and every sender id read matched the UFDR's.
+the same public test phone (2026-11-16, and 2026-11-17 for Telegram and iLEAPP Snapchat): every
+message with text matched a UFDR message on time (within a second), text and direction, and every
+sender id read matched the UFDR's.
 
 | Tool | Artifact | App | Sender id read from |
 |---|---|---|---|
 | ALEAPP | `instagramDirectMessages` | Instagram | Sender ID (sent and received) |
 | ALEAPP | `kik_messages` | Kik Messenger | Partner JID (received only) |
 | ALEAPP | `get_snapchat_arroyo_messages` | Snapchat | Sender ID (sent and received) |
+| ALEAPP | `get_telegramMessages` | Telegram | Sender ID (sent and received; read through Mabillon's own view, below) |
 | ALEAPP | `get_tikTok` | TikTok | none |
 | ALEAPP | `get_whatsapp_one_to_one_messages` | WhatsApp | Sending Party JID (received only) |
 | iLEAPP | `DiscordChatsA` | Discord | Sender ID (sent and received) |
@@ -114,6 +116,7 @@ the same public test phone (2026-11-16): every message with text matched a UFDR 
 | iLEAPP | `instagram_threads` | Instagram | Sender ID (sent and received) |
 | iLEAPP | `kikMessages` | Kik Messenger | none |
 | iLEAPP | `get_signalIOSMessages` | Signal | Author (received only) |
+| iLEAPP | `snapchatMessages` | Snapchat | Sender Username (sent and received; recovered rows are possible copies, below) |
 | iLEAPP | `telegramMessages` | Telegram | none |
 | iLEAPP | `tiktok_messages` | TikTok | Sender (sent and received) |
 | iLEAPP | `viber_chats` | Viber | Sender (Phone) (received only) |
@@ -124,18 +127,112 @@ and is flagged `sender_name_only`; a sent message whose table does not state the
 no sender. A direction other than the view's sent value or a plain received value is unknown
 and flagged. Other chat artifacts, including ones that did not match (iLEAPP `discordChats`,
 `facebook_messenger_client_chats`, `line`, `teamsMessages`, `twitterDirectMessages`,
-`snapchatMessages`, `threema_chats`, `session_messages`; ALEAPP `get_line_messages`,
+`threema_chats`, `session_messages`; ALEAPP `get_line_messages`,
 `get_Viber_messages`, `get_whatsapp_group_messages`), stay not imported.
+
+ALEAPP's `get_telegramMessages` has no conversation view, so Mabillon names its columns itself
+(`Message`, `Direction`, `Timestamp`, `Dialog ID`, `Chat`, `Sender`, `Recorded Media Path`). It
+also writes rows recovered from the database's free space or journal (`Record Origin` other than
+`Live`); such a row can repeat a live one, so it is imported, flagged
+(`recovered_record_may_repeat_another`) and listed as a possible copy (`numbered_copy_records`):
+a count over it is inconclusive. iLEAPP's `snapchatMessages` writes such rows too and is read
+the same way (3 of 21 on the iOS 15 phone). ALEAPP's Telegram table also writes each call as a
+row whose text is a call notice (`[Phone call (call id ..., outcome hung up, duration seconds
+N)]`); such a row is stored as a Telegram call, never as a message (`call_notice_read_as_call`),
+from its sender, with that length. Only a live notice of a call that was answered and hung up,
+in a stated direction, keeps its side; any other is stored with no sides and flagged, so
+Telegram's calls are not read in full. A placed call whose row names no sender is flagged
+`sent_without_own_account`. A recovered notice is listed as a possible copy, like a recovered
+message, so a count over it is inconclusive. Only a row whose whole text has the form ALEAPP
+writes for a notice (`[Phone call (call id N)]`, with `, outcome ...` and `, duration seconds N`
+when the record holds them) is read as a call; other text that starts with `[Phone call` stays a
+message. A row that opens like a notice (`[Phone call (call id N`) but is not in that whole form,
+such as an outcome or field not seen, is kept as a message, flagged
+`call_notice_shape_not_checked`, and keeps Telegram's calls from being read in full. The table
+marks no row as a notice, so a message typed in exactly that form cannot be told from one. On the Android 13 phone 2 of its 29 rows are recovered;
+its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, caller and length; 23
+of the other 25 matched the UFDR with their sender, and 2 have no text.
+
+A table is read only when it has every column its reader uses: the conversation view's columns
+and the sender id for a chat table, the columns below for a call table, and, for each phone
+table, every column that sets a record's time, direction, parties, text or attachment names.
+Only display columns may be missing, and are then read as empty: an iOS chat's name and contact
+label, an attachment's path beside its name, and the ALEAPP call log column that marks a call removed from the list (a call's
+status there is then unknown). A table missing any of them is not read at all, never in part: it is
+listed in `not_imported` with `read_failed` (`its table has no column ...`), and its app is not
+read in full. A LEAPP version that renames or drops a column is caught this way rather than read
+with that column empty. A phone message table refused this way is not used to find Google
+Messages copies either, so a Google Messages message is never skipped as a copy of an SMS or MMS
+that was not imported.
+
+### App calls
+
+`CALL_SPECS` lists the chat apps' call tables read as calls, each checked against the UFDR's calls
+for that app on the public test phones (2026-11-17, development data). On the Android 13 phone all
+4 WhatsApp, 4 Viber and 4 Line calls matched on time, direction and length (within a second), and
+on other party wherever LEAPP names one. On the iOS 15 phone all 4 WhatsApp calls matched the
+same way; the 4 Line calls matched the UFDR's CallKit calls on time, direction and length, and
+their ids matched the UFDR's record from Line's own database (which the UFDR times at the call's
+end).
+
+| Tool | Artifact | App | Other party | Length |
+|---|---|---|---|---|
+| ALEAPP | `get_whatsapp_call_logs` | WhatsApp | Caller JID | Call Duration |
+| ALEAPP | `get_Viber` | Viber | Phone Number | end time less start |
+| ALEAPP | `get_line_calls` | Line | From ID | End Time less Start Time |
+| iLEAPP | `whatsAppCallHistory` | WhatsApp | Contact ID | Duration H:M:S |
+| iLEAPP | `lineCalls` | Line | Contact MID (the owner from Account ID) | Duration (seconds) |
+
+An incoming call goes from the other party to the owner, an outgoing one from the owner to the
+other party; the owner's own id is stated only by iLEAPP Line. iLEAPP WhatsApp's `Missed` Yes
+makes an incoming call missed. A call the checks were not shown on is imported with direction
+unknown and no sides, and flagged: a group call (`group_call_parties_not_read`, since only one
+party is named), and a direction other than incoming or outgoing, a `Missed` value other than
+No (or Yes on an incoming call), an iLEAPP Line `Result` other than NORMAL or an ALEAPP Line call that names a `To ID`
+(`call_not_incoming_outgoing_or_missed`). A call stored with neither side, for these reasons or
+because the row names no other party, keeps its app from being read in full, as it does the
+phone's own call log. ALEAPP's WhatsApp call log names a group call only by the subject of the
+group chat it was placed from; a group call started outside a group chat has none, and ALEAPP
+does not read its participants, so it reads as a call with the caller alone. WhatsApp is
+therefore never read in full from ALEAPP output. An app can also place calls through Android's telecom service, which
+writes them to the phone's call log, where they are stored under the call log, not the app. So
+when an ALEAPP call log row names a `Phone Account Package` other than `com.android.phone`
+(flagged `call_placed_by_another_app`), or names none (flagged `call_package_not_stated`), or
+the call log was not read or is not in the run, or any call log entry in the manifest holds
+records that were not read, no chat app counts as read in full. A row from another package is
+stored with neither side, so no check reads it as a phone call, and the call log then does not
+count as read in full either; a row that names no package keeps its sides, since a phone call
+can be written that way too, but the call log then does not count as read in full. ALEAPP's
+package is the part of the account's component before the slash; on the Samsung images in
+ALEAPP's own sample data it names a Samsung messaging app, so on such a phone every call would
+be stored with no sides until that value is checked against a UFDR. Calls stored from a chat table's call notices count among the
+kinds the import read. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
+WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
+
+Other app call tables did not match a UFDR's calls one to one, so they stay not imported: ALEAPP
+`get_teams_calllog` (an incoming call names the caller only by display name),
+`get_telegramVoipLogs` (call log files, with no direction or party), `get_fb_msys_calls` (3 rows
+for 4 calls, no party id) and `instagramDirectCalls` (17 call events for 9 calls); iLEAPP
+`facebookMessengerCalls` (4 rows for 26 calls), `instagram_calls` (25 rows for 17 calls),
+`teamsCalls` (5 rows for 1 call) and `signalLogCallEvents` (164 log events for 8 calls).
 
 ### What an absence check may rest on
 
 The coverage record lists `apps_read_in_full`: the phone's own messages (`Native Messages`) and
-call log (`unknown`) when their tables were read, and a chat app only when no other artifact in
-its LEAPP category holds records Mabillon did not read. The absence check (1.0.2) treats any other
+call log (`unknown`) when their tables were read and no row of the phone's own call table, under
+whichever app it names (FaceTime included), was stored with neither side; and, on ALEAPP only, a
+chat app when one of its chat tables was read, every call table listed for it was read, its
+call table can hold every party of a call, no other artifact in its LEAPP category holds records
+Mabillon did not read, none of its calls was stored with neither side, and every call log entry
+was read and holds no row from another app or with no package (above). A call table alone, such
+as ALEAPP Viber's or Line's, holds none of the app's messages, so it never makes the app read in
+full. On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
+holds WhatsApp, Viber and other app calls from the phone's own call records (CallKit) that
+iLEAPP lists under no app, so no iLEAPP table holds every call of an app. The absence check (1.0.2) treats any other
 app, a search on every channel at once, and calls on every app as not covered by a LEAPP source,
 so "no contact" never passes on an app LEAPP read only in part. On both development phones every
-chat app was partial (each has other tables, such as WhatsApp's group messages), so only texts
-and the phone's own calls can show absence there.
+chat app is partial (each has other tables, such as WhatsApp's group messages, or calls with no
+sides), so only texts and the phone's own calls can show absence there.
 
 Every other artifact in the manifest (ALEAPP's combined `SMS and MMS Messages` included, which
 repeats the two tables above) is listed as not imported, with its record count, in one
@@ -243,6 +340,8 @@ iLEAPP (commit in the PR) on the public iOS 15 test phone, the same way and day:
 
 - No case data has been read with it. The public test phones are the only real LEAPP output it
   has read (`/mnt/project-files/baker/plans/public-image-benchmark.md`).
-- Chat apps outside `CHAT_SPECS`, and the calls apps record, are not read.
+- Chat tables outside `CHAT_SPECS`, and call tables outside `CALL_SPECS`, are not read.
+- No table list says which of an app's LEAPP tables hold no messages or calls, so an app with any
+  other table holding records is never read in full.
 - The device's model is not read.
 - Forwarded and quoted messages are not marked; iLEAPP's SMS table does not state them.

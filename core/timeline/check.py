@@ -50,14 +50,28 @@ _AFTER = re.compile(r"\b(?:after|afterwards?|later|then|following|subsequently)\
 _BEFORE = re.compile(r"\b(?:before|earlier|prior|previously)\b", re.I)
 
 
+# A text the tool prints, as segments: (text, True) is source text (a message's words, a call's
+# party, a raw time the report printed) that the renderer cites; (text, False) is the tool's own.
+Parts = tuple[tuple[str, bool], ...]
+
+
+def joined(parts: Parts, cite: Callable[[str], str] = str, own: Callable[[str], str] = str) -> str:
+    """The text, with each source segment passed through `cite` and the rest through `own`."""
+    return "".join(cite(t) if src else own(t) for t, src in parts)
+
+
 @dataclass(frozen=True)
 class Compared:
     record: Record
     status: Status
     delta_s: float | None  # signed: negative = before the stated time; 0 = inside
     zone: str | None  # the zone the stated time was read in for this record
-    printed_note: str | None = None
+    printed_parts: Parts = ()  # the note on the report's printed clock, when there is one
     order_conflict: bool = False
+
+    @property
+    def printed_note(self) -> str | None:
+        return joined(self.printed_parts) or None
 
 
 @dataclass(frozen=True)
@@ -85,9 +99,21 @@ class TimelineRow:
     nearby_total: int = 0
     counts: tuple[tuple[str, str, int], ...] = ()  # days and ranges: (phone, app, records)
     notes: tuple[str, ...] = field(default_factory=tuple)
+    note_parts: tuple[Parts, ...] = ()  # each note in `notes`, as segments (same order)
     # phones whose own zone is missing or unusable, by label: source text, so the renderer cites
     # each one (zoneless_note) rather than printing it inside a note in the tool's own words
     zoneless: tuple[str, ...] = ()
+    # the summary as segments: the tied record it names (`label_parts`) is source text, so the
+    # renderer cites it rather than printing a message's words as the tool's own
+    summary_parts: Parts = ()
+
+    def __post_init__(self) -> None:
+        # The segments are the text the renderer prints: any drift from `summary` or `notes`
+        # would print other words than the row holds, so a mismatch stops here (Claude review).
+        if self.summary_parts and joined(self.summary_parts) != self.summary:
+            raise ValueError("TimelineRow: summary_parts do not spell the summary")
+        if self.note_parts and tuple(joined(p) for p in self.note_parts) != self.notes:
+            raise ValueError("TimelineRow: note_parts do not spell the notes")
 
 
 def zoneless_note(labels: tuple[str, ...], cite: Callable[[str], str]) -> str:
@@ -150,7 +176,7 @@ def compare(st: StatedTime, rec: Record, tol_s: float, relation: Relation = "at"
     start, end = window_utc(st, tz)
     d = _distance(rec.ts_utc, start, end)
     status: Status = "inside" if d == 0 else "within" if abs(d) <= tol_s else "differs"
-    note = None
+    note: Parts = ()
     loc = rec.local()
     if st.zone is None and rec.offset_min is not None and loc is not None:
         own = loc.utcoffset()
@@ -159,16 +185,18 @@ def compare(st: StatedTime, rec: Record, tol_s: float, relation: Relation = "at"
             wall = (rec.ts_utc + printed).replace(tzinfo=None)
             pd = _naive_distance(wall, st)
             off = _offset_str(rec.offset_min)
+            # the source's own printed value, cited; with none kept, the tool's reading of it
+            raw = (str(rec.ts_raw), True) if rec.ts_raw else (f"{wall:%Y-%m-%d %H:%M:%S}", False)
             if status == "differs" and abs(pd) <= tol_s:
                 note = (
-                    f"The stated time agrees with the clock the report printed ({rec.ts_raw}, "
-                    f"UTC{off}), not with the phone's own zone ({rec.tz})."
-                )
+                    ("The stated time agrees with the clock the report printed (", False), raw,
+                    (f", UTC{off}), not with the phone's own zone ({rec.tz}).", False),
+                )  # fmt: skip
             elif status != "differs" and abs(pd) > tol_s:
                 note = (
-                    f"The report printed {rec.ts_raw} (UTC{off}); in the phone's own zone "
-                    f"({rec.tz}) it is {rec.when()}."
-                )
+                    ("The report printed ", False), raw,
+                    (f" (UTC{off}); in the phone's own zone ({rec.tz}) it is {rec.when()}.", False),
+                )  # fmt: skip
     conflict = False
     if relation == "after":
         conflict = start is not None and rec.ts_utc < start - timedelta(seconds=tol_s)
@@ -372,7 +400,8 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
         if st.readings:
             what += " (" + " or ".join(f"{d:%B} {d.day}, {d.year}" for d in st.readings) + ")"
         return TimelineRow(st, "not_compared", f"Not compared: {what}.", "", None,
-                           notes=tuple(notes))  # fmt: skip
+                           notes=tuple(notes),
+                           note_parts=tuple(((n, False),) for n in notes))  # fmt: skip
     if st.kind == "open":
         notes.append("One end of this range is open; only the stated end is compared.")
     # a phone whose own zone is missing or unusable: name it (comparing the number of distinct
@@ -388,24 +417,31 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
     differs = [lk for lk in at_links if lk.total and not lk.ok and _timed(lk)]
     weekday_bad = st.weekday_ok is False
 
+    parts: Parts = ()
     if differs:
         lk = differs[0]
         best = next(c for c in lk.shown if c.delta_s is not None)
         side = "before" if (best.delta_s or 0) < 0 else "after"
-        summary = (
-            f"No record the sentence names is within {tol} of the stated time. The nearest, "
-            f"{_label(lk)}, is {fmt_delta(best.delta_s or 0)} {side} it ({best.record.when()})."
-        )
+        parts = (
+            (f"No record the sentence names is within {tol} of the stated time. The nearest, ",
+             False),
+            *label_parts(lk),
+            (f", is {fmt_delta(best.delta_s or 0)} {side} it ({best.record.when()}).", False),
+        )  # fmt: skip
+        summary = joined(parts)
         status: RowStatus = "differs"
     elif flagged:
         c = flagged[0]
         lk = next(x for x in links if c in x.shown)
         want = "after" if lk.relation == "after" else "before"
         side = "before" if (c.delta_s or 0) < 0 else "after"
-        summary = (
-            f"The document places {_label(lk)} {want} the stated time; the record is "
-            f"{fmt_delta(c.delta_s or 0)} {side} it ({c.record.when()})."
-        )
+        parts = (
+            ("The document places ", False),
+            *label_parts(lk),
+            (f" {want} the stated time; the record is {fmt_delta(c.delta_s or 0)} {side} it"
+             f" ({c.record.when()}).", False),
+        )  # fmt: skip
+        summary = joined(parts)
         status = "order"
     elif weekday_bad:
         summary = st.weekday_note or "The weekday does not match the date."
@@ -442,13 +478,16 @@ def _row(st: StatedTime, data: CaseRecords, links: list[Link], s: Settings) -> T
             )
         else:
             counts = _counts(data, st)
+    # the notes so far are the tool's own; each keeps its place beside the printed-time ones
+    note_parts: list[Parts] = [((n, False),) for n in notes]
     for lk in links:
         for c in lk.shown:
             if c.printed_note and c.printed_note not in notes:
                 notes.append(c.printed_note)
+                note_parts.append(c.printed_parts)
     return TimelineRow(
         st, status, summary, zone_label, key, tuple(links), tuple(nearby), nearby_total,
-        tuple(counts), tuple(notes), zoneless,
+        tuple(counts), tuple(notes), tuple(note_parts), zoneless, parts,
     )  # fmt: skip
 
 
@@ -456,8 +495,13 @@ def _timed(lk: Link) -> bool:
     return any(c.delta_s is not None for c in lk.shown)
 
 
-def _label(lk: Link) -> str:
-    return f'the message "{lk.words}"' if lk.how == "quote" else f"the call with {lk.words}"
+def label_parts(lk: Link) -> Parts:
+    """How a row's summary names a tied record. Its words (a message's text, a call's party)
+    are source text, cited by the renderer, never the tool's own (a message "I deleted it."
+    stopped a report)."""
+    if lk.how == "quote":
+        return (('the message "', False), (lk.words, True), ('"', False))
+    return (("the call with ", False), (lk.words, True))
 
 
 def timeline(data: CaseRecords, stated: list[StatedTime], s: Settings) -> list[TimelineRow]:

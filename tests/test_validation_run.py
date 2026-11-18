@@ -4,12 +4,14 @@ with stand-in components. The real run is on the public Hickman phone with the l
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from core.db import connect
 from core.review.device_names import logged_names
 from eval.synthetic.generate import generate
 from eval.synthetic.ufdr import write_case01
@@ -85,6 +87,13 @@ def test_the_run_builds_the_case_audits_it_and_zips_the_results(ufdr, tmp_path):
     assert conn.execute("SELECT id FROM sources ORDER BY id").fetchall() == sources
     assert conn.execute("SELECT COUNT(DISTINCT pipeline_run_id) FROM verdicts").fetchone()[0] == 2
     conn.close()
+    # A run that stopped after the build but before run.json still records what it was built
+    # from when it resumes (CodeRabbit on #267).
+    (out / "run.json").unlink()
+    assert hickman_run.main(args) == 0
+    again = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    for key in ("phones", "phone_zone_given", "source_id", "definitions", "report_xml_sha256"):
+        assert again[key] == run[key], key
 
 
 def test_a_claims_file_with_answers_is_refused(ufdr, tmp_path):
@@ -290,11 +299,33 @@ def test_a_capped_run_on_a_model_without_a_price_is_refused(ufdr, tmp_path):
     assert not out.exists()
 
 
-def test_a_phone_zone_is_refused_when_the_package_records_one(ufdr, tmp_path):
+def test_a_phone_zone_must_be_the_one_the_package_records(ufdr, tmp_path, monkeypatch):
+    # case01's package records America/New_York: the source's zone is kept, never replaced.
     claims, out = _claims(tmp_path), tmp_path / "out"
     args = ["--ufdr", str(ufdr), "--claims", str(claims), "--out", str(out), "--fake"]
-    with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
-        hickman_run.main([*args, "--phone-zone", "America/New_York"])
+    opened = []
+
+    def tracked(path):  # noqa: ANN001, ANN202
+        conn = connect(path)
+        opened.append(conn)
+        return conn
+
+    with monkeypatch.context() as m:
+        m.setattr(hickman_run, "connect", tracked)
+        with pytest.raises(SystemExit, match="--phone-zone: the extraction records .* not Ameri"):
+            hickman_run.main([*args, "--phone-zone", "America/Chicago"])
+    # the refused build closed its case.db, which on Windows the next build must replace (CI)
+    for conn in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+    assert hickman_run.main([*args, "--phone-zone", "America/New_York"]) == 0
+    from core.zones import given_zones
+
+    conn = sqlite3.connect(out / "case.db")
+    assert given_zones(conn) == {}, "the same zone is not given again over the package's own"
+    conn.close()
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert run["phones"][0]["zone_recorded"] == "America/New_York"
 
 
 def _defs(tmp_path: Path, defs: dict) -> Path:
@@ -368,6 +399,291 @@ def test_the_headers_zone_is_the_examiners_and_a_different_one_is_refused(ufdr, 
             str(tmp_path / "out"), "--fake", "--definitions", str(defs)]  # fmt: skip
     with pytest.raises(SystemExit, match="differs from the definitions"):
         hickman_run.main([*args, "--phone-zone", "America/Chicago"])
-    # case01's package records its zone, so the header's zone is refused as --phone-zone is.
+    # case01's package records another zone, so the header's is refused as --phone-zone is.
+    other = _defs(tmp_path, {"phone_time_zone": "America/Chicago"})
     with pytest.raises(SystemExit, match="--phone-zone: the extraction records"):
+        hickman_run.main([*args[:-1], str(other)])
+    # ...but one zone written two ways is the same zone (Claude review on #267)
+    same = _defs(tmp_path, {"phone_time_zone": "(UTC-05:00) Eastern Time (US & Canada)"})
+    assert hickman_run.main([*args[:-1], str(same), "--phone-zone", "America/New_York"]) == 0
+
+
+def test_a_resume_whose_package_is_gone_says_so(ufdr, tmp_path):
+    copy = tmp_path / ufdr.name
+    shutil.copyfile(ufdr, copy)
+    args = ["--ufdr", str(copy), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    copy.unlink()
+    with pytest.raises(SystemExit, match="cannot read .* to resume"):
         hickman_run.main(args)
+
+
+# ---------------------------------------------------------------- two phones (validation v5)
+
+TWO = [
+    {"claim_id": "T01", "page": 1, "para_no": 1, "claim_type": "communication",
+     "text": "On April 28, 2023, SUBJECT-1 exchanged Signal messages with SUBJECT-2."},
+    {"claim_id": "T02", "page": 1, "para_no": 2, "claim_type": "communication",
+     "text": "The SECOND PHONE exchanged messages with SUBJECT-3."},
+]  # fmt: skip
+PHONES = {
+    "item1": {"name": "TARGET PHONE", "owner": "SUBJECT-1"},
+    "item2": {"name": "SECOND PHONE", "owner": "SUBJECT-2"},
+}
+
+
+@pytest.fixture(scope="module")
+def pair(tmp_path_factory) -> list[Path]:
+    out = tmp_path_factory.mktemp("case01pair")
+    generate(out)
+    return write_case01(out)
+
+
+def _two(pair: list[Path], tmp_path: Path, defs: dict, *extra: str) -> list[str]:
+    return [
+        "--phone", f"item1={pair[0]}", "--phone", f"item2={pair[1]}",
+        "--claims", str(_claims(tmp_path, TWO)), "--out", str(tmp_path / "out"), "--fake",
+        "--definitions", str(_defs(tmp_path, defs)), *extra,
+    ]  # fmt: skip
+
+
+def test_two_phones_each_take_their_name_and_user(pair, tmp_path):
+    defs = {"phones": PHONES, "SUBJECT-3": "(919) 888-7386"}
+    sha = {p.stem: hickman_run.sha256_file(p) for p in pair}
+    args = _two(pair, tmp_path, defs, *(f"--phone-sha256={k}={v}" for k, v in sha.items()))
+    assert hickman_run.main(args) == 0
+    out = tmp_path / "out"
+    conn = sqlite3.connect(out / "case.db")
+    assert logged_names(conn) == {"dev:item1": ["TARGET PHONE"], "dev:item2": ["SECOND PHONE"]}
+    owners = conn.execute(
+        "SELECT s.subject_id, p.name FROM stipulations s JOIN persons p ON p.id = s.person_id"
+        " ORDER BY s.subject_id"
+    ).fetchall()
+    assert owners == [("dev:item1", "SUBJECT-1"), ("dev:item2", "SUBJECT-2")]
+    # each phone's user is its stipulated owner, never a second person of the same name
+    people = [n for (n,) in conn.execute("SELECT name FROM persons ORDER BY name")]
+    assert people == ["SUBJECT-1", "SUBJECT-2", "SUBJECT-3"]
+    conn.close()
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert [(p["source_id"], p["importer"], p["sha256"]) for p in run["phones"]] == [
+        ("item1", "ufdr", sha["item1"]),
+        ("item2", "ufdr", sha["item2"]),
+    ]
+    assert "report_xml_sha256" not in run
+    # a resume names the same phones, in any order and with hashes in either case; swapping
+    # the packages is a new case
+    assert hickman_run.main(args) == 0
+    upper = [f"--phone-sha256={k}={v.upper()}" for k, v in sha.items()]
+    assert hickman_run.main([*_two(pair, tmp_path, defs)[2:4], *_two(pair, tmp_path, defs)[:2],
+                             *_two(pair, tmp_path, defs)[4:], *upper]) == 0  # fmt: skip
+    swapped = [a.replace("item1=", "itemX=").replace("item2=", "item1=") for a in args]
+    swapped = [a.replace("itemX=", "item2=") for a in swapped]
+    with pytest.raises(SystemExit, match="other phones"):
+        hickman_run.main(swapped)
+    plain = [a for a in args if not a.startswith("--phone-sha256")]
+    with pytest.raises(SystemExit, match="--phone-sha256: .*item1.ufdr has SHA-256"):
+        hickman_run.main([*plain, "--phone-sha256", "item1=" + "0" * 64])
+    # a package changed since the build is refused even with its original digest given, since
+    # a resume hashes the bytes (CodeRabbit on #267)
+    original = pair[0].read_bytes()
+    try:
+        pair[0].write_bytes(original + b"\0")
+        with pytest.raises(SystemExit, match="was built from item1.ufdr"):
+            hickman_run.main(args)
+    finally:
+        pair[0].write_bytes(original)
+
+
+@pytest.mark.parametrize(
+    ("defs", "why"),
+    [
+        ({}, "two phones need phones"),
+        ({"phones": {"item1": PHONES["item1"]}}, r"phones names \['item1'\]"),
+        ({"phones": {**PHONES, "item3": PHONES["item1"]}}, "the packages are"),
+        ({"phones": PHONES, "SUBJECT-2": "(919) 888-7386"}, "other than SUBJECT-1, SUBJECT-2"),
+        (
+            {"phones": {**PHONES, "item2": {"name": "TARGET PHONE", "owner": "SUBJECT-2"}}},
+            "same name",
+        ),
+        ({"phones": {**PHONES, "item2": {"name": "SECOND PHONE"}}}, "needs a name and an owner"),
+        (
+            {"phones": {**PHONES, "item2": {"name": "SECOND PHONE", "owner": "SUBJECT-1"}}},
+            "same user",
+        ),
+        (
+            {"phones": {**PHONES, "item2": {"name": "SECOND PHONE", "owner": "Jo"}}},
+            "owner is not a SUBJECT",
+        ),
+        ({"phones": {**PHONES, "item2": {**PHONES["item2"], "imei": "1"}}}, "needs a name"),
+        (
+            {
+                "phones": {**PHONES, "item2": {**PHONES["item2"], "zone": "America/Chicago"}},
+                "phone_time_zone": "America/New_York",
+            },
+            "item2.zone is America/Chicago, but the zone given for every phone",
+        ),
+    ],
+)
+def test_two_phones_with_a_header_that_does_not_define_both_are_refused(pair, tmp_path, defs, why):
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(_two(pair, tmp_path, defs))
+    assert not (tmp_path / "out" / "case.db").exists()
+
+
+def test_a_phone_package_with_other_bytes_is_refused(pair, tmp_path):
+    args = _two(pair, tmp_path, {"phones": PHONES}, "--phone-sha256", "item2=" + "0" * 64)
+    with pytest.raises(SystemExit, match="--phone-sha256: .*item2.ufdr"):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "built.ok").exists()
+
+
+def test_one_zone_written_two_ways_is_not_a_conflict(pair, tmp_path):
+    phones = {
+        **PHONES,
+        "item2": {**PHONES["item2"], "zone": "(UTC-05:00) Eastern Time (US & Canada)"},
+    }
+    defs = {"phones": phones, "phone_time_zone": "America/New_York"}
+    assert hickman_run.main(_two(pair, tmp_path, defs)) == 0
+
+
+@pytest.mark.parametrize("given", [["--phone-zone", "America/New_York"], []])
+def test_a_recorded_zone_no_tool_can_read_is_refused_even_when_the_same_is_given(
+    ufdr, tmp_path, monkeypatch, given
+):
+    import core.timeline.records as records
+
+    # the package's zone text reads as none; with no zone given the run stops too, before any
+    # model call, rather than score a phone whose every window is refused (Claude review)
+    monkeypatch.setattr(records, "zone", lambda name: None)
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", *given]  # fmt: skip
+    with pytest.raises(SystemExit, match="names no time zone this tool can read"):
+        hickman_run.main(args)
+
+
+def test_phone_flags_do_not_mix(pair, tmp_path):
+    claims = str(_claims(tmp_path, TWO))
+    base = ["--claims", claims, "--out", str(tmp_path / "out"), "--fake"]
+    for extra, why in (
+        (["--ufdr", str(pair[0]), "--phone", f"item2={pair[1]}"], "use --phone for each"),
+        ([], "name the phone"),
+        (["--phone", f"item1={pair[0]}", "--source-id", "a13"], "--source-id goes with --ufdr"),
+        (["--phone", f"item1={pair[0]}", "--report-sha256", "0" * 64], "use --phone-sha256"),
+        (["--phone", str(pair[0])], "SOURCE_ID=VALUE"),
+        (["--phone", f"item1={pair[0]}", "--phone", f"item1={pair[1]}"], "given twice"),
+        (["--phone", f"item1={pair[0]}", "--phone-sha256", "item9=00"], "no phone item9"),
+    ):
+        with pytest.raises(SystemExit, match=why):
+            hickman_run.main([*base, *extra])
+
+
+def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
+    from core.zones import device_zones
+    from eval.synthetic.leapp import Lava
+
+    def phone(name: str, zones: tuple[str, ...]) -> Path:
+        lv = Lava(leapp="ALEAPP")
+        lv.add(
+            "get_calllog",
+            **{
+                "Call Date": "2024-03-01T15:00:00Z",
+                "Partner": "+19195550111",
+                "Raw Call Type (as stored)": "1",
+                "Duration in Secs": "5",
+            },
+        )
+        for i, z in enumerate(zones):
+            lv.add(
+                "get_battery_usage_v4",
+                **{"Timestamp": f"2024-03-0{i + 1}T00:00:00Z", "Timezone": z},
+            )
+        return lv.write_zip(tmp_path / f"{name}.zip")  # fmt: skip
+
+    claims = str(_claims(tmp_path, TWO))
+    kept, given = phone("kept", ("America/New_York",)), phone("given", ())
+    defs = {"phones": {"kept": PHONES["item1"], "given": PHONES["item2"]},
+            "phone_time_zone": "America/New_York"}  # fmt: skip
+    args = ["--phone", f"kept={kept}", "--phone", f"given={given}", "--claims", claims,
+            "--out", str(tmp_path / "out"), "--fake",
+            "--definitions", str(_defs(tmp_path, defs))]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    assert device_zones(conn) == {"dev:given": "America/New_York", "dev:kept": "America/New_York"}
+    conn.close()
+    run = json.loads((tmp_path / "out" / "run.json").read_text(encoding="utf-8"))
+    assert [
+        (p["importer"], p["zone_recorded"], p["zone_set_by_examiner"]) for p in run["phones"]
+    ] == [("leapp", "America/New_York", False), ("leapp", None, True)]
+    # a phone that kept two zones records none, and one given zone would misread part of it
+    moved = phone("moved", ("America/New_York", "America/Chicago"))
+    defs["phones"] = {"kept": PHONES["item1"], "moved": PHONES["item2"]}
+    args = ["--phone", f"kept={kept}", "--phone", f"moved={moved}", "--claims", claims,
+            "--out", str(tmp_path / "out2"), "--fake",
+            "--definitions", str(_defs(tmp_path, defs))]  # fmt: skip
+    with pytest.raises(SystemExit, match="moved recorded 2 zones"):
+        hickman_run.main(args)
+    # ...and with no zone given the run stops too: none of its stated windows could be read
+    del defs["phone_time_zone"]
+    args[-1] = str(_defs(tmp_path, defs))
+    args[args.index("--out") + 1] = str(tmp_path / "out3")
+    with pytest.raises(SystemExit, match="moved recorded 2 zones"):
+        hickman_run.main(args)
+
+
+def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):
+    # One zone in the phone's tables plus a zone value the importer could not read: the
+    # package records no zone, but a given zone must still match the one its tables name.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add(
+        "get_calllog",
+        **{
+            "Call Date": "2024-03-01T15:00:00Z",
+            "Partner": "+19195550111",
+            "Raw Call Type (as stored)": "1",
+            "Duration in Secs": "5",
+        },
+    )
+    lv.add(
+        "get_battery_usage_v4",
+        **{"Timestamp": "2024-03-01T00:00:00Z", "Timezone": "America/Chicago"},
+    )
+    lv.add(
+        "get_battery_usage_v4", **{"Timestamp": "2024-03-02T00:00:00Z", "Timezone": "Mars/Olympus"}
+    )
+    pkg = lv.write_zip(tmp_path / "half.zip")
+    claims = str(_claims(tmp_path, TWO[:1]))
+
+    def run(zone: str, out: str) -> int:
+        defs = {"phones": {"half": PHONES["item1"]}, "phone_time_zone": zone}
+        return hickman_run.main(
+            ["--phone", f"half={pkg}", "--claims", claims, "--out", str(tmp_path / out),
+             "--fake", "--definitions", str(_defs(tmp_path, defs))]
+        )  # fmt: skip
+
+    with pytest.raises(SystemExit, match="half's own tables name the zone America/Chicago"):
+        run("America/New_York", "out")
+    assert run("America/Chicago", "out2") == 0
+    # with no zone given the run stops and names the zone to give, as with two zones
+    with pytest.raises(SystemExit, match="half's tables name the zone America/Chicago but"):
+        hickman_run.main(
+            ["--phone", f"half={pkg}", "--claims", claims, "--out", str(tmp_path / "out3"),
+             "--fake", "--definitions", str(_defs(tmp_path, {"phones": {"half": PHONES["item1"]}}))]
+        )  # fmt: skip
+
+
+def test_two_packages_of_one_name_swapped_between_phones_are_refused(pair, tmp_path):
+    # Report.zip in two folders: the file names match, so only the bytes tell them apart, and
+    # a resume without --phone-sha256 still checks them (CodeRabbit on #267).
+    one, two = tmp_path / "one", tmp_path / "two"
+    for d, src in ((one, pair[0]), (two, pair[1])):
+        d.mkdir()
+        (d / "Report.ufdr").write_bytes(src.read_bytes())
+    args = _two([one / "Report.ufdr", two / "Report.ufdr"], tmp_path, {"phones": PHONES})
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main(args) == 0  # the same packages resume
+    swapped = _two([two / "Report.ufdr", one / "Report.ufdr"], tmp_path, {"phones": PHONES})
+    with pytest.raises(SystemExit, match="was built from Report.ufdr"):
+        hickman_run.main(swapped)

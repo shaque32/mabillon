@@ -392,6 +392,47 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "account (two people can share one), so no sender was recorded and a claim about who "
         "sent {them} is not tested from {them}.",
     ),
+    "recovered_record_may_repeat_another": (
+        "attention",
+        "{n} {be} recovered from the app database's free space or journal, not read from its "
+        "live records, so each may repeat a live message; a count over {them} is inconclusive.",
+    ),
+    "call_notice_read_as_call": (
+        "info",
+        "{n} {be} call notices in the app's chat (\"[Phone call ...]\"), imported as the app's "
+        "calls, not as messages.",
+    ),
+    "call_placed_by_another_app": (
+        "attention",
+        "{n} {be} written to the phone's call log by an app other than the phone's own "
+        "telephony, so {them} may be that app's calls; {them} {be} kept in the call log with "
+        "neither side recorded, so no check reads {them} as phone calls, and neither the call "
+        "log nor any chat app's calls are treated as read in full.",
+    ),
+    "call_package_not_stated": (
+        "attention",
+        "{n} {be} in the phone's call log with no app package named, so {them} may be another "
+        "app's calls; {them} {be} kept as phone calls, and neither the call log nor any chat "
+        "app's calls are treated as read in full.",
+    ),
+    "call_notice_shape_not_checked": (
+        "attention",
+        "{n} open{s0} like a call notice in the app's chat but {be} not in the form checked "
+        "against a UFDR, so {them} {be} kept as messages, and the app's calls are not treated "
+        "as read in full.",
+    ),
+    "group_call_parties_not_read": (
+        "attention",
+        "{n} {be} group calls; their parties are not read, so {them} {be} imported with "
+        "direction unknown and neither side recorded, and the app's calls are not treated as "
+        "read in full.",
+    ),
+    "call_not_incoming_outgoing_or_missed": (
+        "attention",
+        "{n} {have} a direction or result other than the incoming, outgoing or missed calls "
+        "checked against a UFDR, so {them} {be} imported with direction unknown and neither "
+        "side recorded; the app's calls are not treated as read in full.",
+    ),
     "may_be_several_messages": (
         "attention",
         "{n} {be} grouped from parts with more than one text in the same second; LEAPP gives no "
