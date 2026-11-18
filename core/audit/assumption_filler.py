@@ -4664,27 +4664,49 @@ class LocalAssumptionFiller:
                 for c in out[i].params.get("channels") or ():
                     if c.casefold() in phone_apps and c.casefold() not in named_kinds:
                         raise Reject(f"the claim names a kind of text message {c!r} does not hold")
-        rows = [i for i in app_rows if not out[i].params.get("channels")]
+
+        # Rows on no app, and message rows the model put on fewer apps than the claim names:
+        # "Telegram or SMS" read on Telegram alone misses an SMS in the range, and a Telegram
+        # copy outside it would then fail the time check of a true claim (CodeRabbit on #265).
+        # A count or an absence on fewer apps is refused above.
+        unscoped = [i for i in app_rows if not out[i].params.get("channels")]
+        try:
+            found = self._claim_scope(apps, phone_named, kinds_named, texty, bare)
+        except Reject:
+            if unscoped:
+                raise
+            return out
+        if not found:
+            return out  # the claim names no app: every app is searched, as it says
+
+        # A row the model scoped is widened only by apps the claim writes as names ("Telegram
+        # or SMS"), never by a plain word that may name one ("an account", "a regular line"),
+        # and a call keeps `_call_app`'s reading.
+        named_apps = {a.casefold() for a in apps}
+        wide = [
+            a
+            for a in found
+            if a.casefold() not in named_apps
+            or any(bare[st].isupper() for st, _ in self._app_mentions(bare, a))
+        ]
+
+        def short(i: int) -> bool:
+            p = out[i]
+            given = {str(c).strip().casefold() for c in p.params.get("channels") or ()}
+            if not given:
+                return True
+            call = CALL_CHANNEL in given or (
+                p.template_id == "record_time" and not p.params.get("quoted_text")
+            )
+            return (
+                not call
+                and p.template_id not in WHOLE_APP_TEMPLATES
+                and any(a.casefold() not in given for a in wide)
+            )
+
+        rows = [i for i in app_rows if short(i)]
         if not rows:
             return out
-        if apps:
-            # "texted REYES on Telegram": the app the claim names
-            found = list(dict.fromkeys([*apps, *phone_named]))
-        elif kinds_named:
-            # "sent an iMessage", "an SMS": the apps of the kinds the words name, never an SMS
-            # app for an iMessage (CodeRabbit on #265)
-            found = self._phone_apps_named(bare)
-            if not found:
-                raise Reject("the claim names a phone's own messages app the case lacks")
-        elif texty:
-            # every app of a phone's own messages, as for a code-made sender ("texted" may be
-            # SMS or iMessage; `_message_apps`, Codex on #164); a count or an absence reads one
-            # app only (Claude review on #265)
-            found = self._phone_message_apps()
-            if not found:
-                raise Reject("the claim names a text message and the case holds no such app")
-        else:
-            return out  # the claim names no app: every app is searched, as it says
         made = list(out)
         for i in rows:
             p = out[i]
@@ -4695,10 +4717,39 @@ class LocalAssumptionFiller:
                     f"{found[0]!r} holds more than the claim's words name, so no count or"
                     " absence is read on it"
                 )
+            given = [str(c) for c in p.params.get("channels") or ()]
+            scope = list(dict.fromkeys([*wide, *given])) if given else list(found)
             made[i] = Proposal(
-                p.template_id, {**p.params, "channels": list(found)}, is_core=True, code_made=True
+                p.template_id, {**p.params, "channels": scope}, is_core=True, code_made=True
             )
         return made
+
+    def _claim_scope(
+        self, apps: list[str], phone_named: list[str], kinds_named: bool, texty: bool, bare: str
+    ) -> list[str]:
+        """The apps `_bind_named_app` gives the claim's message rows: those it names, else the
+        kinds of a phone's own messages it names, else for a text message every app of a
+        phone's own messages; empty when it names none. Raises Reject when it names a kind
+        the case has no app for."""
+        if apps:
+            # "texted REYES on Telegram": the app the claim names
+            return list(dict.fromkeys([*apps, *phone_named]))
+        if kinds_named:
+            # "sent an iMessage", "an SMS": the apps of the kinds the words name, never an SMS
+            # app for an iMessage (CodeRabbit on #265)
+            found = self._phone_apps_named(bare)
+            if not found:
+                raise Reject("the claim names a phone's own messages app the case lacks")
+            return found
+        if texty:
+            # every app of a phone's own messages, as for a code-made sender ("texted" may be
+            # SMS or iMessage; `_message_apps`, Codex on #164); a count or an absence reads one
+            # app only (Claude review on #265)
+            found = self._phone_message_apps()
+            if not found:
+                raise Reject("the claim names a text message and the case holds no such app")
+            return found
+        return []  # the claim names no app: every app is searched, as it says
 
     def _add_unread_event(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None

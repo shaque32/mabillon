@@ -64,7 +64,11 @@
     one kind alone ("sent an iMessage") is searched on that kind's apps, never on the SMS app,
     and a row on a phone's own messages app of another kind is refused, whether code or the
     model chose it. A handle ("to @sms") names no phone's own messages app (CodeRabbit on
-    #265). Before, "wrote on
+    #265). A message row the model put on fewer apps than the claim names ("Telegram or SMS"
+    read on Telegram alone) is searched on all of them: a Telegram copy outside the range could
+    otherwise fail the time check of a true claim sent by SMS. Only apps the claim writes as
+    names widen it, never a plain word ("an account"), and a call keeps its own reading
+    (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
@@ -97,7 +101,10 @@
     counted rows. A look-alike whose every row names one side as sender stays that side's
     message, so A's copy with no receiver never takes A's message away. Only the rows beside
     the side that may hold no message are cited, and the note for the expert is left off a
-    fail on the counted rows (CodeRabbit on #265).
+    fail on the counted rows. A count of both sides' messages also reads look-alikes beside
+    the rows that name no sender or no receiver: one such "ok" between two counted "ok" rows 4
+    seconds apart may join them into one message, so "at least 3" over them is held open
+    (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without

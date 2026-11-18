@@ -4046,6 +4046,14 @@ def test_more_findings_on_37917c7(tmp_path):
     assert filler.claim_apps(text) == {"telegram"}
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram"})}
+    # a message row the model put on Telegram alone for "Telegram or SMS" searches SMS too:
+    # a Telegram copy outside the range would fail a true claim sent by SMS
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram or SMS: "need 2 more by friday".'
+    )
+    on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, on_telegram)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
     # SMS and MMS are two kinds, joined by "and" and alternatives by "or"
     text = 'On March 12, 2026, PETROV wrote to @northstar on SMS {} MMS: "need 2 more by friday".'
     assert filler._apps_named_together(text.format("and"))

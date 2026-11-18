@@ -810,6 +810,36 @@ def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None
     assert r.outcome is CheckOutcome.PASS, r.detail
 
 
+def test_a_row_with_no_receiver_can_join_two_counted_rows_into_one_message() -> None:
+    # Ay's "ok" at 28 and 32 seconds are two messages, but Ay's "ok" at 30 seconds to no one
+    # named may join them into one, so "at least 3" over them and Bee's "sure" is held open,
+    # with the joining row cited (CodeRabbit on #265). Without that row it passes.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute("UPDATE messages SET body = 'sure' WHERE id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:10", "a:p1:own", "a:p1:b")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:32Z' WHERE id = 'msg:p1:10'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=3, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    _march_message(conn, "msg:p1:11", "a:p1:own")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:30Z' WHERE id = 'msg:p1:11'"
+    )
+    r = check(conn, "message_count", expected_count=3, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:11" in r.record_ids
+    # a copy beside one counted row alone takes no message away
+    conn.execute("DELETE FROM message_recipients WHERE message_id = 'msg:p1:10'")
+    conn.execute("DELETE FROM messages WHERE id = 'msg:p1:10'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
 @pytest.mark.parametrize(
     "extra",
     [

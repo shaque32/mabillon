@@ -84,6 +84,7 @@ def fewest_messages(
     rows: list[Row],
     groups: list[list[Row]] | None = None,
     senders: set[str] | None = None,
+    any_chosen: bool = False,
 ) -> int:
     """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
     side's) may hold: one for each row in no look-alike group of `rows`, and one for each
@@ -93,7 +94,9 @@ def fewest_messages(
     a side is chosen; `groups` passes them in when already read. With `senders` (the chosen
     side's accounts), a group holding a chosen row whose every row names that side as sender
     is that side's message too: a copy with no receiver never takes the direction away
-    (CodeRabbit on #265)."""
+    (CodeRabbit on #265). With `any_chosen` (a count of both sides' messages), a group holding
+    any chosen row is one message between them, whatever its other rows: a row that names no
+    sender or no receiver can only join chosen rows into one message (CodeRabbit on #265)."""
     if groups is None:
         groups = look_alike_groups(rows)
     ids = {r.id for r in chosen}
@@ -102,6 +105,7 @@ def fewest_messages(
         1
         for g in groups
         if all(r.id in ids for r in g)
+        or (any_chosen and any(r.id in ids for r in g))
         or (
             senders is not None
             and any(r.id in ids for r in g)
@@ -235,13 +239,12 @@ class CountCheck(TemplateCheck):
             and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
-        # Look-alikes are read over both sides, before a side is chosen, and, for one side's
-        # messages, beside the timed rows that name no sender or no receiver: a row of the side
-        # counted may be a copy of one of those (CodeRabbit on #265). Those rows are never
-        # counted, and a count of both sides' messages needs no such reading, since its copy
-        # already shows the message passed between them.
+        # Look-alikes are read over both sides, before a side is chosen, and beside the timed
+        # rows that name no sender or no receiver: a row of the side counted may be a copy of
+        # one of those, and one may join two counted rows into one message, "ok" at 0, 2 and 4
+        # seconds (CodeRabbit on #265). Those rows are never counted.
         timed_unplaced = [r for r in unplaced if r.ts_utc is not None]
-        between = counted + (timed_unplaced if p.sent_by else [])
+        between = counted + timed_unplaced
         groups = look_alike_groups(between)
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
@@ -306,9 +309,7 @@ class CountCheck(TemplateCheck):
             one_side_silent = not (by_a and by_b)
             if one_side_silent:
                 lines.append("Not finding a message each way does not mean one was never sent")
-            # each way is never one side's count, so `between` holds the counted rows alone;
-            # the timed rows with no sender or receiver are read beside them here
-            ew_groups = look_alike_groups(counted + timed_unplaced) if timed_unplaced else groups
+            ew_groups = groups  # read over the counted rows and those beside them
             open_sides = (
                 []
                 if one_side_silent
@@ -363,7 +364,7 @@ class CountCheck(TemplateCheck):
         # A row of the side counted may be a copy of the other side's message (CodeRabbit on
         # #265), so the fewest is read over both sides' rows; with no side chosen it is the
         # rows less their look-alikes (`look_alike`).
-        twins = n - fewest_messages(counted, between, groups, side_ids)
+        twins = n - fewest_messages(counted, between, groups, side_ids, not p.sent_by)
         # the other side's rows that make one side's rows look-alikes, cited when they hold the
         # count open (CodeRabbit on #265)
         mine_ids = {r.id for r in counted}
