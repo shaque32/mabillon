@@ -195,20 +195,15 @@ class Lava:
     calls_from_other_packages: int = 0
     # artifacts refused for their shape (ctx.failed): never read, never used as a copy source
     refused: set[int] = field(default_factory=set)
+    # manifest entries that name no table: never read, listed as not imported (Claude review)
+    tableless: list[dict[str, Any]] = field(default_factory=list)
     # each table's columns as stored; two manifest entries can share a table with other maps
     _columns: dict[str, list[str]] = field(default_factory=dict, repr=False)
     # record kinds stored from a table read as another kind (a chat table's call notices)
     extra_kinds: set[RecordKind] = field(default_factory=set)
 
     def has_table(self, art: Artifact) -> bool:
-        return bool(
-            self.db.execute(
-                # SQLite resolves table names without regard to case, so the catalog lookup
-                # does too: a manifest naming GET_CALLLOG finds get_calllog (CodeRabbit on #269)
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? COLLATE NOCASE",
-                (art.table,),
-            ).fetchone()
-        )
+        return _find_table(self.db, art.table) is not None
 
     def headers(self, art: Artifact) -> set[str]:
         """The artifact's columns, as LEAPP wrote their headers (none when the table is missing)."""
@@ -262,14 +257,20 @@ def _native_call_key(key: object) -> object:
     return key
 
 
-def _db_spelling(db: sqlite3.Connection, table: str) -> str:
-    """The table name as the database spells it, when a table matches the manifest's name the
-    way SQLite resolves names (ASCII letters in any case); else the manifest's name. Locators
-    then name the LAVA table itself (CodeRabbit on #269)."""
+def _find_table(db: sqlite3.Connection, table: str) -> str | None:
+    """The table matching this name the way SQLite resolves names (ASCII letters in any case),
+    as the database spells it; None when there is none. The one case-folding lookup, for
+    _db_spelling and Lava.has_table alike (CodeRabbit and Claude review on #269)."""
     row = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name = ? COLLATE NOCASE", (table,)
     ).fetchone()
-    return str(row[0]) if row else table
+    return str(row[0]) if row else None
+
+
+def _db_spelling(db: sqlite3.Connection, table: str) -> str:
+    """The table name as the database spells it, else the manifest's name. Locators then name
+    the LAVA table itself (CodeRabbit on #269)."""
+    return _find_table(db, table) or table
 
 
 def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
@@ -324,6 +325,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         )
     version = info.get("leapp_version")
     arts: list[Artifact] = []
+    tableless: list[dict[str, Any]] = []
     for category, entries in manifest["artifacts"].items():
         for e in entries if isinstance(entries, list) else []:
             if not isinstance(e, dict):
@@ -334,15 +336,13 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
             # a phone call log key in any ASCII case is the call log, read and checked as one
             key = _native_call_key(e.get("artifact_key"))
             if not e.get("tablename"):
-                # a phone call log listed with no table to read would leave no coverage record,
-                # so a run could not tell it was never read: unless it is known empty, the
-                # import stops (CodeRabbit on #269)
-                if isinstance(key, str) and key in NATIVE_CALL_KEYS and rc != 0:
-                    db.close()
-                    raise ValueError(
-                        f"{file_name}'s manifest lists the call log {key!r} with no table, so it"
-                        " cannot be read; the import stops"
-                    )
+                # an entry with no table to read is listed as not imported, so the coverage
+                # (and a run's call-log check) shows it was never read; unless the manifest
+                # counts it empty it may hold records (CodeRabbit and Claude review on #269)
+                tableless.append(
+                    {"name": str(e.get("name") or key or ""), "category": str(category),
+                     "key": key if isinstance(key, str) else None, "records": rc}
+                )  # fmt: skip
                 continue
             table = _db_spelling(db, str(e["tablename"]))
             arts.append(
@@ -350,7 +350,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     category=str(category),
                     name=str(e.get("name") or e["tablename"]),
                     # with no key, the table as the database spells it names the artifact
-                    key=str(key or _native_call_key(table) or table),
+                    key=str(key or _native_call_key(table)),
                     table=table,
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
@@ -363,8 +363,12 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     # two entries for one table, in any case, are the same name here: each row would be stored
     # twice. No LEAPP output seen lists a table twice, so such a manifest is refused, not
     # guessed at (CodeRabbit on #269).
+    # Only entries Mabillon reads count: a table shared by entries it never reads stores no row
+    # (Claude review on #269).
     seen: set[str] = set()
     for art in arts:
+        if not _reads(leapp, art.key):
+            continue
         if art.table in seen:
             db.close()
             raise ValueError(
@@ -380,7 +384,14 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         leapp_name=leapp,
         leapp_version=str(version) if version else None,
         artifacts=arts,
+        tableless=tableless,
     )
+
+
+def _reads(leapp: str, key: str) -> bool:
+    """Whether the import reads an artifact of this key (SPECS, CHAT_SPECS or CALL_SPECS)."""
+    k = (leapp, key)
+    return k in SPECS or k in CHAT_SPECS or k in CALL_SPECS
 
 
 def looks_like_leapp_zip(path: Path) -> bool:
@@ -1235,6 +1246,7 @@ def _add_call(
     w = c.w
     if duration is not None and not 0 <= duration <= _MAX_SQLITE_INT:
         duration = None  # SQLite cannot hold it; the call is kept (CodeRabbit on #269)
+        c.flag("duration_not_readable", loc)  # why its length is unknown (Claude review)
     scope = f"row:{loc}"
     from_id = w.account(app, frm, loc, scope) if frm and frm.identifier else None
     to_id = w.account(app, to, loc, scope) if to and to.identifier else None
@@ -1242,7 +1254,7 @@ def _add_call(
         # No check can find a call that names neither side (no direction, or no number on
         # either end), so the call log is then not held in full (CodeRabbit on #264).
         c.lava.calls_without_sides[app] += 1
-        if c.art.key in _NATIVE_CALL_KEYS:
+        if c.art.key in NATIVE_CALL_KEYS:
             # whichever app the row names (CallKit providers on iOS): the phone's own call
             # table is then not held in full (Claude review on #268)
             c.lava.native_calls_not_held += 1
@@ -1748,7 +1760,6 @@ def _not_read(lava: Lava, art: Artifact, why: str) -> dict[str, Any]:
 _NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
 # the phone's own call log, by artifact key (the validation driver's call-log check reads it too)
 NATIVE_CALL_KEYS = frozenset({"callHistory", "get_calllog"})
-_NATIVE_CALL_KEYS = NATIVE_CALL_KEYS
 
 
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
@@ -1763,15 +1774,17 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     done = {id(a) for _, a in read}
     keys = {a.key for _, a in read}
     unread = [a for a in lava.artifacts if id(a) not in done and _may_hold_records(lava, a)]
-    unread_keys = {a.key for a in unread}
+    # an entry naming no table holds records Mabillon did not read unless counted empty
+    no_table = [t for t in lava.tableless if t["records"] != 0]
+    unread_keys = {a.key for a in unread} | {t["key"] for t in no_table}
     apps: set[str] = set()
     if keys & _NATIVE_MESSAGE_KEYS and not unread_keys & _NATIVE_MESSAGE_KEYS:
         apps.add(NATIVE_MESSAGES_APP)
     # A call whose type names no direction is stored with neither side, so no check can find
     # it: the call log is then not held in full (Claude review on #264).
     if (
-        keys & _NATIVE_CALL_KEYS
-        and not unread_keys & _NATIVE_CALL_KEYS
+        keys & NATIVE_CALL_KEYS
+        and not unread_keys & NATIVE_CALL_KEYS
         and not lava.native_calls_not_held
     ):
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
@@ -1793,7 +1806,8 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     # whether or not that table was in this extraction.
     name = lava.leapp_name
     read_keys = {(name, a.key) for _, a in read}
-    unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
+    unread_words = {c.split()[0].lower() for c in [a.category for a in unread]
+                    + [t["category"] for t in no_table] if c.split()}  # fmt: skip
     chat_read = {v.app for k, v in CHAT_SPECS.items() if k[0] == name and k in read_keys}
     calls_unread = {v.app for k, v in CALL_SPECS.items() if k[0] == name and k not in read_keys}
     partial = {v.app for k, v in CALL_SPECS.items() if k[0] == name and not v.all_parties}
@@ -1894,6 +1908,11 @@ class LeappImporter:
                 )  # fmt: skip
                 continue
             read.append((spec, art))
+        for t in lava.tableless:
+            cov.not_imported.append(
+                {**t, "table": None, "reason": "the manifest names no table for it",
+                 "may_hold_records": t["records"] != 0}
+            )  # fmt: skip
         with conn:
             conn.execute(
                 "INSERT INTO sources (id, kind, fidelity, extraction_type, file_name, sha256,"

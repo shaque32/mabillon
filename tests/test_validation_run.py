@@ -902,6 +902,14 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
                 " WHERE locator NOT LIKE 'get_calllog/second/%'")  # fmt: skip
     assert "no phone call a check can read" in (check(sql=(no_sides,))[0] or "")
     assert "no phone call a check can read" in (check(sql=(other, no_sides))[0] or "")
+    # calls of an app not known as a provider, and no phone call: an iOS phone provider
+    # written another way would read so, so the check stops; FaceTime calls only pass
+    # (Claude review on #269)
+    voip = "UPDATE calls SET app = 'com.example.voip'"
+    assert "1 calls of an app not known as a call provider" in (check(sql=(voip,))[0] or "")
+    assert check(sql=("UPDATE calls SET app = 'FaceTime'",)) == (
+        None, "get_calllog: 0 of 1 rows are phone calls a check can read"
+    )  # fmt: skip
     # a call with a side but no time is no call a check can read (CodeRabbit on #269)
     no_time = "UPDATE calls SET ts_utc = NULL"
     assert "no phone call a check can read" in (check(sql=(no_time,))[0] or "")
@@ -1094,6 +1102,32 @@ def test_a_call_log_the_manifest_counts_but_whose_table_is_empty_stops_the_build
     args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
     with pytest.raises(SystemExit, match=r"item1: .*counts 3 records in its manifest but none"):
+        hickman_run.main(args)
+
+
+def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path):
+    # The importer lists a call log entry with no table as not imported; the build's check
+    # stops on it before any model call (Claude review on #269).
+    import zipfile
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    manifest, data = lv.build()
+    next(v for v in manifest["artifacts"].values() if v).append(
+        {"name": "Call logs", "artifact_key": "get_calllog", "record_count": 2}
+    )
+    zipped = tmp_path / "item1.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"item1: its call log \(no table named, 2 records\)"):
         hickman_run.main(args)
 
 

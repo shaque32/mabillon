@@ -1037,6 +1037,18 @@ def test_a_manifest_that_names_one_table_twice_is_refused(tmp_path: Path, spelli
         _lava_with(tmp_path, twice)
 
 
+def test_a_table_shared_by_entries_mabillon_never_reads_is_not_refused(tmp_path: Path) -> None:
+    # Two entries Mabillon does not read can name one table: no row of it is stored, so the
+    # import goes on (Claude review on #269).
+    def shared(manifest):  # noqa: ANN001, ANN202
+        entries = next(v for v in manifest["artifacts"].values() if v)
+        base = {**entries[0], "artifact_key": "notReadHere", "name": "Not read"}
+        entries.extend([base, {**base, "tablename": base["tablename"].upper()}])
+
+    lava = _lava_with(tmp_path, shared)
+    assert sum(a.key == "notReadHere" for a in lava.artifacts) == 2
+
+
 def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
     tmp_path: Path,
 ) -> None:
@@ -1077,30 +1089,50 @@ def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
 
 
 @pytest.mark.parametrize(
-    ("key", "count", "refused"),
-    [("get_calllog", 1, True), ("get_calllog", None, True), ("get_calllog", False, True),
-     ("get_calllog", 0.0, True), ("GET_CALLLOG", 1, True), ("CallHistory", 2, True),
-     ("get_calllog", 0, False), (["get_calllog"], 1, False), ("get_sms_mms", 1, False)],
+    ("key", "count", "stored_key", "holds"),
+    [("get_calllog", 1, "get_calllog", True), ("get_calllog", None, "get_calllog", True),
+     ("get_calllog", False, "get_calllog", True), ("get_calllog", 0.0, "get_calllog", True),
+     ("GET_CALLLOG", 1, "get_calllog", True), ("CallHistory", 2, "callHistory", True),
+     ("get_calllog", 0, "get_calllog", False), (["get_calllog"], 1, None, True),
+     ("get_sms_mms", 1, "get_sms_mms", True)],
 )  # fmt: skip
-def test_a_call_log_listed_with_no_table_stops_the_import_unless_empty(
+def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     tmp_path: Path,
     key,  # noqa: ANN001
     count,  # noqa: ANN001
-    refused,  # noqa: ANN001
+    stored_key,  # noqa: ANN001
+    holds,  # noqa: ANN001
 ) -> None:
-    # A call log entry with no table name would be skipped and leave no coverage record, so a
-    # run could not tell it went unread: it stops unless its count is the integer 0, whatever
-    # the ASCII case of its key. A key that is not a string, or not a call log's, is skipped as
-    # before (CodeRabbit on #269).
+    # An entry with no table name is never read: the import goes on, and the coverage lists it
+    # as not imported, holding records unless its count is the integer 0, so a run's call-log
+    # check can stop on it and the call log is not read in full (CodeRabbit and Claude review
+    # on #269).
     def tableless(manifest):  # noqa: ANN001, ANN202
         entries = next(v for v in manifest["artifacts"].values() if v)
         entries.append({"name": "Call logs", "artifact_key": key, "record_count": count})
 
-    if refused:
-        with pytest.raises(ValueError, match="with no table"):
-            _lava_with(tmp_path, tableless)
-    else:
-        _lava_with(tmp_path, tableless)
+    def imported(edit):  # noqa: ANN001, ANN202
+        lv = Lava(leapp="ALEAPP")
+        lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": BOB,
+                                 "Phone Account Address": OWNER, "Duration in Secs": "5",
+                                 "Raw Call Type (as stored)": "2",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+        manifest, data = lv.build()
+        edit(manifest)
+        path = tmp_path / "t.zip"
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+            z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+        conn = _db()
+        LeappImporter(source_id="t").import_source(path, conn)
+        return coverage.load(conn, "t").payload
+
+    assert "unknown" in imported(lambda m: None)["apps_read_in_full"]  # read in full as is
+    p = imported(tableless)
+    (entry,) = [t for t in p["not_imported"] if t["table"] is None]
+    assert (entry["key"], entry["may_hold_records"]) == (stored_key, holds)
+    native_unread = holds and stored_key in leapp.NATIVE_CALL_KEYS
+    assert ("unknown" in p["apps_read_in_full"]) is not native_unread
 
 
 def test_a_call_log_key_in_other_case_is_read_as_the_call_log(tmp_path: Path) -> None:
@@ -1155,6 +1187,9 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
     got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
     assert got == [(None,), (None,), (125,)]
+    # the one past SQLite's range is flagged, so the coverage says why its length is unknown
+    (t,) = coverage.load(conn, "ios").payload["tables"]
+    assert t["flag_counts"].get("duration_not_readable") == 1
 
 
 def test_an_app_call_duration_int_refuses_is_unknown_not_rounded() -> None:

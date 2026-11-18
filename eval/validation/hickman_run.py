@@ -467,6 +467,11 @@ def _one_line(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
 
 
+def _marks(values: list[str]) -> str:
+    """One SQL parameter mark per value."""
+    return ", ".join("?" * len(values))
+
+
 def call_log_check(  # noqa: ANN001
     conn, source_id: str, importer: str | None, *, owner_confirmed: bool = False
 ) -> tuple[str | None, str | None]:
@@ -486,8 +491,9 @@ def call_log_check(  # noqa: ANN001
     owner), the phone's own accounts count only on a device with exactly one confirmed
     device_owner stipulation, as the caller check reads them: a stipulation withdrawn since the
     build stops the run."""
+    from core.audit.checks.caller import _PLACED_BY_OTHER, _PLACED_BY_PHONE
     from core.ingest import coverage
-    from core.ingest.leapp import IMPORTER_NAME, NATIVE_CALL_KEYS
+    from core.ingest.leapp import IMPORTER_NAME, IOS_CALL_APPS, NATIVE_CALL_KEYS
 
     def is_native(key: object) -> bool:  # any ASCII case, as the importer reads it (CodeRabbit)
         return isinstance(key, str) and key.isascii() and key.lower() in native_keys
@@ -531,7 +537,8 @@ def call_log_check(  # noqa: ANN001
         rows = holds is True or (records or 0) > 0 or (holds is None and records is None)
         if is_native(t.get("key")) and rows:
             return (
-                f"its call log ({_one_line(t.get('table'))}, {records} records) was not read"
+                f"its call log ({_one_line(t.get('table') or 'no table named')}, {records}"
+                " records) was not read"
                 f" ({_one_line(t.get('reason'))}); claims about its phone calls would go"
                 " untested, so the run stops before any model call"
             ), None
@@ -574,34 +581,45 @@ def call_log_check(  # noqa: ANN001
         # this table's own rows only ("TABLE/rowid=N"), never another table whose name starts
         # with this one and a slash (CodeRabbit on #269)
         own = (len(table) + 1, f"{table}/", len(table) + 2)
-        # a call a check can read, as the caller check reads it (_placed_by): a known time, and
-        # the other side stored where the direction puts it (not the phone's own line, whose
-        # account carries the phone's device), the phone's side empty or its own (CodeRabbit)
-        rows, sided = conn.execute(
-            "SELECT count(*), coalesce(sum(c.ts_utc IS NOT NULL AND CASE"
-            " WHEN c.direction = 'outgoing' THEN t.id IS NOT NULL"
+        # a call a check can read, as the caller check reads it (_placed_by, by its own
+        # direction sets): a known time, and the other side stored where the direction puts it
+        # (not the phone's own line, whose account carries the phone's device), the phone's side
+        # empty or its own (CodeRabbit and Claude review on #269). One pass gives the phone
+        # calls, the readable ones, every call stored, and those of an app that is neither the
+        # phone nor a known provider app (FaceTime).
+        by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
+        known = sorted(set(IOS_CALL_APPS.values()))
+        rows, sided, stored, unknown_app = conn.execute(
+            "SELECT coalesce(sum(c.app = ?), 0), coalesce(sum(c.app = ? AND c.ts_utc IS NOT NULL"  # noqa: S608 (marks only; values bound)
+            " AND CASE"
+            f" WHEN c.direction IN ({_marks(by_phone)}) THEN t.id IS NOT NULL"
             " AND t.device_id IS NOT c.device_id"
             " AND (f.id IS NULL OR f.device_id IS c.device_id)"
-            " WHEN c.direction IN ('incoming', 'missed') THEN f.id IS NOT NULL"
+            f" WHEN c.direction IN ({_marks(by_other)}) THEN f.id IS NOT NULL"
             " AND f.device_id IS NOT c.device_id"
             " AND (t.id IS NULL OR t.device_id IS c.device_id)"
-            " ELSE 0 END), 0) FROM calls c"
+            f" ELSE 0 END), 0), count(*), coalesce(sum(c.app NOT IN ({_marks(known)})), 0)"
+            " FROM calls c"
             " LEFT JOIN accounts f ON f.id = c.from_account_id"
             " LEFT JOIN accounts t ON t.id = c.to_account_id"
-            " WHERE c.source_id = ? AND c.app = ?"
+            " WHERE c.source_id = ?"
             " AND substr(c.locator, 1, ?) = ? AND instr(substr(c.locator, ?), '/') = 0",
-            (source_id, NATIVE_CALL_APP, *own),
+            (NATIVE_CALL_APP, NATIVE_CALL_APP, *by_phone, *by_other, *known, source_id, *own),
         ).fetchone()
-        (stored,) = conn.execute(
-            "SELECT count(*) FROM calls WHERE source_id = ?"
-            " AND substr(locator, 1, ?) = ? AND instr(substr(locator, ?), '/') = 0",
-            (source_id, *own),
-        ).fetchone()
-        if sided == 0 and (rows > 0 or stored == 0):
+        # no phone call to read, and a row that is no phone call, no call at all, or a call of
+        # an app Mabillon does not know as a provider (an iOS phone provider written another
+        # way would read so): stop. A FaceTime-only history passes (Claude review on #269).
+        if sided == 0 and (rows > 0 or stored == 0 or unknown_app > 0):
             flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
                 f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
-                f" read was stored (flags: {_one_line(flags or 'none')}); claims about its phone"
+                f" read was stored (flags: {_one_line(flags or 'none')}"
+                + (
+                    f"; {unknown_app} calls of an app not known as a call provider"
+                    if unknown_app
+                    else ""
+                )
+                + "); claims about its phone"
                 " calls would go untested, so the run stops before any model call"
             ), None
         if sided and not owned:
