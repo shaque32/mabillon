@@ -5614,11 +5614,17 @@ class LocalAssumptionFiller:
 
     @staticmethod
     def _app_mentions(text: str, app: str) -> list[tuple[int, int]]:
-        """Where the words write the app by its name or a short name (APP_ALIASES)."""
+        """Where the words write the app by its name or a short name (APP_ALIASES). The words of
+        a name of several words may be joined by spaces or hyphens ("Line-Business" writes Line
+        Business; CodeRabbit on #265)."""
         return [
             m.span()
             for n in (app, *APP_ALIASES.get(app.casefold(), ()))
-            for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", text, re.IGNORECASE)
+            for m in re.finditer(
+                r"(?<!\w)" + r"[ -]+".join(map(re.escape, n.split())) + r"(?!\w)",
+                text,
+                re.IGNORECASE,
+            )
         ]
 
     def _written_as_name(self, text: str, app: str) -> bool:

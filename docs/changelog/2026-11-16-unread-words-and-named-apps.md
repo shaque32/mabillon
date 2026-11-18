@@ -53,7 +53,7 @@
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
     picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, and an app
     written only inside a longer app's name as no app ("Facebook Messenger" binds no
-    Facebook), while "by phone"
+    Facebook; a hyphen joins its words too, so "Line-Business" binds no Line), while "by phone"
     is still one kind of contact on a case with a phone named "Phone" (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
@@ -89,11 +89,12 @@
     that blank quoted words with `_unquoted` (the seconds guards, stated ranges, the time-of-day,
     month and year scans of coverage gaps, unread words and the app readers), a time, an app or
     any other word inside a quote that a line break wraps is the quote's, not the claim's:
-    `_unquoted` now masks a wrapped quote as one (CodeRabbit on #265). Two scans still read the
-    raw claim, quotes included, and both only refuse: the date scan of coverage gaps
-    (`date_mentions`), so a quoted date with no time range kept leaves the claim unproven, and
-    the weekday check in `check_window`, so a quoted weekday that is not that date's weekday
-    refuses the range.
+    `_unquoted` now masks a wrapped quote as one (CodeRabbit on #265). Three scans still read the
+    raw claim, quotes included, and all three only refuse: the date scan of coverage gaps
+    (`date_mentions`), so a quoted date with no time range kept leaves the claim unproven; the
+    numeric-date check in `stated_part_day`, so a quoted numeric date ("03/13/2026") builds no
+    part-of-day range; and the weekday check in `check_window`, so a quoted weekday that is not
+    that date's weekday refuses the range.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make

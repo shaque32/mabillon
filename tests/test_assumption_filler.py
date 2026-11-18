@@ -3704,6 +3704,24 @@ def test_a_plain_word_app_inside_a_longer_app_name_is_not_written_as_a_name(conn
         filler._bind_named_app(c, out)
 
 
+def test_a_hyphen_joins_the_words_of_a_longer_app_name(conn, monkeypatch):
+    # "Line-Business" writes Line Business, not Line; "Line or Line Business" names both
+    # (CodeRabbit on #265).
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(
+        LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line", "Line Business"]
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    hyphen = "PETROV wrote on Line-Business on March 20, 2026."
+    assert filler._app_mentions(hyphen, "Line Business")
+    assert filler._written_as_name(hyphen, "Line Business")
+    assert not filler._written_as_name(hyphen, "Line")
+    assert filler.claim_apps(hyphen) == {"line business"}
+    both = "PETROV wrote on Line or Line Business on March 20, 2026."
+    assert filler._written_as_name(both, "Line")
+    assert filler.claim_apps(both) == {"line", "line business"}
+
+
 def test_words_inside_a_kept_range_are_still_read(conn):
     # The model may keep "On March 12, 2026, while driving" as the day's range; "while
     # driving" is still a word no check reads (Greptile on #265).
