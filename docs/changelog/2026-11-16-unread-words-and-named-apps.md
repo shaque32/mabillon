@@ -113,8 +113,9 @@
     gets the expert-only event whenever code keeps a row for it and the claim's template allows
     an event; where it allows none, the claim is refused and stays unproven, as it does with no
     row to add the event to. The event only stops SUPPORTED on the checks: a failed check on a
-    kept core row still makes the claim CONTRADICTED (rule 1), and otherwise it stays unproven
-    until an expert reviews it. A check finds a quote's words inside a longer message, so one
+    kept core row still makes the claim CONTRADICTED (rule 1; on a row an agent proposed, only
+    once an expert confirms the failure), and otherwise it stays unproven until an expert
+    reviews it. A check finds a quote's words inside a longer message, so one
     record ("ok, thanks") may pass the rows for both 'wrote "ok" and then "thanks"', and code cannot show at fill time
     that two quotes are two records. A claim with one quoted message is unchanged. A quote that matches
     a person's or an account's name is left out as a party only where the claim writes it as
