@@ -120,6 +120,40 @@ def test_absence_with_an_unplaceable_row_is_inconclusive() -> None:
     assert r.record_ids == ("msg:p1:5", "msg:p1:7")
 
 
+def test_absence_with_a_row_naming_no_receiver_is_inconclusive() -> None:
+    # A message from B that records no receiver (an import that names the other side of a
+    # phone's own message but not the phone's line): it may be contact with A, so no PASS.
+    conn = without_undated_row(build())
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES ('msg:p1:8', 'p1', 'x', 't1', 'a:p1:b', 'incoming',"
+        " '2026-04-05T12:00:00Z', 'hi')"
+    )
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert r.record_ids == ("msg:p1:8",)
+
+
+def test_absence_on_a_source_that_read_only_some_apps_is_inconclusive() -> None:
+    # A LEAPP import lists the apps it read in full; any other app, and every channel at once,
+    # is not covered by that source, so absence cannot pass there.
+    conn = without_undated_row(build())
+    for sid in ("p1", "p2"):
+        conn.execute(
+            "INSERT INTO source_coverage (source_id, importer, importer_version, payload_json)"
+            " VALUES (?, 'leapp', '0.1.0', '{\"apps_read_in_full\": [\"SMS\"]}')",
+            (sid,),
+        )
+    assert check(conn, "no_contact", person_ids=[A, B], window=APRIL, channels=["SMS"]).outcome is (
+        CheckOutcome.PASS
+    )
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert "only some apps" in r.detail
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL, channels=["call"])
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+
+
 def test_absence_fails_on_contact_matching_numbers_across_formats() -> None:
     r = check(build(), "no_contact", person_ids=[A, B], window=MARCH)
     assert r.outcome is CheckOutcome.FAIL
@@ -168,8 +202,20 @@ def test_confirmed_identity_link_adds_an_account() -> None:
 
 
 def test_count_and_its_limits() -> None:
-    conn = build()
     common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    # msg:p1:5 went to A with no sender and no time: it may be a third message from B in
+    # March, so "exactly 2" and "at most 2" cannot pass while it is there (count 1.2.1), as
+    # "no contact" cannot (absence). "At least 2" still passes, and too many still fails.
+    with_row = build()
+    for op in ("eq", "le"):
+        r = check(with_row, "message_count", expected_count=2, count_op=op, **common)
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, op
+        assert "name no sender or no receiver" in r.detail and "msg:p1:5" in r.detail
+    r = check(with_row, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS
+    r = check(with_row, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL
+    conn = without_undated_row(build())
     assert check(conn, "message_count", expected_count=2, count_op="eq", **common).outcome is (
         CheckOutcome.PASS
     )
@@ -194,7 +240,7 @@ def test_count_over_rows_the_tool_numbered_as_copies_neither_passes_nor_fails() 
     for want in (1, 2):
         r = check(conn, "message_count", expected_count=want, count_op="eq", **common)
         assert r.outcome is CheckOutcome.INCONCLUSIVE
-        assert "1 of the matching messages is numbered by the extraction tool" in r.detail
+        assert "1 of the matching messages is listed by the import as a possible copy" in r.detail
         assert not FORBIDDEN_WORDS.search(r.detail), r.detail
 
 
@@ -271,7 +317,7 @@ def test_checks_never_write_to_the_database() -> None:
 def test_run_checks_ids_follow_the_contract() -> None:
     a = instantiate("C1", "no_contact", {"person_ids": [A, B], "window": MARCH})
     (r,) = run_checks(a, build())
-    assert r.id == f"chk:{a.id}|absence@1.0.1"
+    assert r.id == f"chk:{a.id}|absence@1.0.2"
     assert r.assumption_id == a.id and r.searched
 
 
@@ -474,15 +520,20 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     r = check(build(), "sender", quoted_text="see you at noon", person_ids=[B],
               device_ids=["dev:p2"])  # fmt: skip
     assert r.id.endswith("|sender@1.2.0")
-    assert {CHECKS[n].version for n in ("absence", "same_account")} == {"1.0.1"}
+    assert CHECKS["same_account"].version == "1.0.1"
+    # absence 1.0.2: a row with no recorded receiver is unplaced, never "none found" (#264)
+    assert CHECKS["absence"].version == "1.0.2"
     # The checks that match a quote's text record the fold (curly quotes, runs of spaces).
-    assert CHECKS["weekday"].version == "1.0.2"
+    # weekday 1.0.3, time 1.1.1 and count 1.2.1: a row that names no sender or no receiver
+    # keeps them from passing or failing as if it were not there (#264).
+    assert CHECKS["weekday"].version == "1.0.3"
     # The sender check fails only on a record or a confirmed fact (1.1.0), and neither it nor
     # the time check rests on words found only inside a longer sentence (1.2.0, 1.1.0).
     assert CHECKS["sender"].version == "1.2.0"
-    assert CHECKS["time"].version == "1.1.0"  # and a call is on the app named beside "call"
-    # and counts calls (validation fill f), and never passes or fails on look-alike rows (1.3.0)
-    assert CHECKS["count"].version == "1.3.0"
+    assert CHECKS["time"].version == "1.1.1"  # and a call is on the app named beside "call"
+    # and counts calls (validation fill f), holds "at most" and "exactly" open on rows that
+    # name no side (1.2.1), and never passes or fails on look-alike rows (1.3.0, 1.3.1)
+    assert CHECKS["count"].version == "1.3.1"
 
 
 def _typed(conn: sqlite3.Connection, body: str) -> sqlite3.Connection:
@@ -706,3 +757,165 @@ def test_sides_that_share_an_account_give_no_direction(direction) -> None:
               **direction)  # fmt: skip
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
     assert "share an account" in r.detail
+
+
+def _chat_row(conn: sqlite3.Connection, mid: str, sender: str | None, ts: str, body: str) -> None:
+    # A LEAPP chat row: a sender (or none, for the phone's own message) and no receiver.
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES (?, 'p1', 'x', 't1', ?, 'unknown', ?, ?)",
+        (mid, sender, ts, body),
+    )
+
+
+def test_a_count_over_chat_rows_that_name_no_receiver_never_passes() -> None:
+    # Greptile on #264: five LEAPP chat messages from Bee, none naming a receiver, counted
+    # zero, and "at most one" passed. Now they hold "at most" and "exactly" open (count 1.2.1).
+    conn = without_undated_row(build())
+    for i in range(5):
+        _chat_row(conn, f"msg:p1:c{i}", "a:p1:b", f"2026-03-20T15:0{i}:00Z", "hey")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    for op, want in (("le", 2), ("eq", 2)):
+        r = check(conn, "message_count", expected_count=want, count_op=op, **common)
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, (op, r.detail)
+        assert "5 messages name no sender or no receiver" in r.detail
+    # The phone's own message in that chat names neither side, and holds the count open too.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:c9" in r.detail
+    # A row from someone else entirely is no message between them.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c8", "a:p1:c", "2026-03-20T15:00:00Z", "unrelated")
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_a_chat_where_no_message_names_a_side_holds_counts_and_absence_open() -> None:
+    # CodeRabbit on #264: an iOS chat whose rows do not say who sent them stores no sender and
+    # no receiver on any row, so no party's chat led to it and "at most" and "no contact"
+    # passed. Nothing places such a message, so it may be between the parties.
+    conn = without_undated_row(build())
+    conn.execute(
+        "INSERT INTO threads (id, source_id, locator, device_id, app) VALUES"
+        " ('t9', 'p1', 'x', 'dev:p1', 'SMS')"
+    )
+    conn.execute(
+        "INSERT INTO messages (id, source_id, locator, thread_id, sender_account_id, direction,"
+        " ts_utc, body) VALUES ('msg:p1:o1', 'p1', 'x', 't9', NULL, 'unknown',"
+        " '2026-03-20T15:00:00Z', 'see you'), ('msg:p1:o2', 'p1', 'x', 't9', NULL, 'unknown',"
+        " '2026-04-05T12:00:00Z', 'see you')"
+    )
+    r = check(conn, "message_count", person_ids=[A, B], device_ids=["dev:p1"], window=MARCH,
+              expected_count=2, count_op="le")  # fmt: skip
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:o1" in r.detail, r.detail
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and r.record_ids == ("msg:p1:o2",), r.detail
+
+
+def test_a_call_count_over_calls_that_name_no_other_side_never_passes() -> None:
+    conn = _with_calls(without_undated_row(build()), ["2026-03-10T15:00:00Z"])
+    conn.execute(
+        "INSERT INTO calls (id, source_id, locator, device_id, app, from_account_id,"
+        " to_account_id, direction, ts_utc, duration_s) VALUES ('call:p1:x', 'p1', 'x', 'dev:p1',"
+        " 'SMS', 'a:p1:b', NULL, 'incoming', '2026-03-12T15:00:00Z', 60)"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, channels=["call"])
+    r = check(conn, "message_count", expected_count=1, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "call:p1:x" in r.detail
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_absence_reads_the_phones_own_message_in_a_chat_with_a_party() -> None:
+    # A LEAPP chat with Bee holds the phone's own message with no sender and no receiver: it
+    # may be contact with Bee, so "no contact" cannot pass.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-04-05T12:00:00Z", "on my way")
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE
+    assert r.record_ids == ("msg:p1:c9",)
+
+
+def test_a_message_with_the_words_that_names_no_receiver_keeps_time_from_failing() -> None:
+    # The quoted words are on a message Bee sent at 15:00Z on March 10 (outside this window),
+    # and on a chat row from Bee that names no receiver: that row may be the one described.
+    w = window(D(2026, 3, 20, 11), D(2026, 3, 20, 12), "11 a.m. on March 20")
+    conn = without_undated_row(build())
+    common = dict(quoted_text="see you at noon", person_ids=[B, A], device_ids=["dev:p1"])
+    assert check(conn, "record_time", window=w, **common).outcome is CheckOutcome.FAIL
+    _chat_row(conn, "msg:p1:c7", "a:p1:b", "2026-03-20T15:30:00Z", "see you at noon")
+    r = check(conn, "record_time", window=w, **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "name no sender or no receiver" in r.detail
+
+
+def test_absence_is_not_held_open_by_a_third_partys_message_in_the_chat() -> None:
+    # CodeRabbit on #264: Cee's message naming no receiver, in a chat that also holds Bee's,
+    # cannot be contact between Ay and Bee.
+    conn = without_undated_row(build())
+    assert check(conn, "no_contact", person_ids=[A, B], window=APRIL).outcome is CheckOutcome.PASS
+    _chat_row(conn, "msg:p1:c8", "a:p1:c", "2026-04-05T12:00:00Z", "hi all")
+    r = check(conn, "no_contact", person_ids=[A, B], window=APRIL)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_with_one_party_a_message_from_anyone_naming_no_receiver_holds_the_check_open() -> None:
+    # CodeRabbit on #264: with only Bee named, Cee's message with no receiver may be to Bee.
+    conn = build()
+    _chat_row(conn, "msg:p1:c6", "a:p1:c", "2026-03-07T02:00:00Z", "brunch saturday")
+    day = window(D(2026, 3, 7), D(2026, 3, 8), "Saturday, March 7")
+    r = check(conn, "weekday_date", quoted_text="brunch saturday", person_ids=[B], window=day)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and r.record_ids == ("msg:p1:c6",)
+    w = window(D(2026, 3, 20, 11), D(2026, 3, 20, 12), "11 a.m. on March 20")
+    conn = without_undated_row(build())
+    common = dict(quoted_text="see you at noon", person_ids=[B], device_ids=["dev:p1"])
+    assert check(conn, "record_time", window=w, **common).outcome is CheckOutcome.FAIL
+    _chat_row(conn, "msg:p1:c7", "a:p1:c", "2026-03-20T15:30:00Z", "see you at noon")
+    r = check(conn, "record_time", window=w, **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:c7" in r.record_ids  # the outcome rests on it
+
+
+def test_a_count_held_open_cites_the_rows_that_hold_it_open() -> None:
+    # CodeRabbit on #264: record_ids name every record the outcome rests on.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=2, count_op="le", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE and "msg:p1:c9" in r.record_ids
+    assert len(r.record_ids) == len(set(r.record_ids))
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS and "msg:p1:c9" not in r.record_ids
+
+
+def test_at_most_and_exactly_need_every_app_counted_to_be_read_in_full() -> None:
+    # CodeRabbit on #264: a source that read only some apps in full may hold more messages.
+    import json
+
+    conn = without_undated_row(build())
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    assert check(conn, "message_count", expected_count=2, count_op="le", **common).outcome is (
+        CheckOutcome.PASS
+    )
+    conn.execute(
+        "INSERT INTO source_coverage VALUES ('p1', 'leapp', '0', ?)",
+        (json.dumps({"apps_read_in_full": ["Native Messages"]}),),
+    )
+    for op, channels in (("le", []), ("eq", []), ("le", ["SMS"])):
+        r = check(conn, "message_count", expected_count=2, count_op=op, channels=channels,
+                  **common)  # fmt: skip
+        assert r.outcome is CheckOutcome.INCONCLUSIVE, (op, channels, r.detail)
+        assert "only some apps" in r.detail
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS
+
+
+def test_a_count_that_fails_cites_only_the_rows_it_counted() -> None:
+    # CodeRabbit on #264: too many counted is a FAIL that rests on the counted rows alone, so a
+    # row that names no receiver is not cited.
+    conn = without_undated_row(build())
+    _chat_row(conn, "msg:p1:c9", None, "2026-03-20T15:00:00Z", "on my way")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=1, count_op="le", **common)
+    assert r.outcome is CheckOutcome.FAIL and "msg:p1:c9" not in r.record_ids

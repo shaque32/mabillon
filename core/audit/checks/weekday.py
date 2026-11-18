@@ -16,6 +16,7 @@ from core.audit.checks._common import (
     TEXT_MATCH,
     CaseData,
     channel_ok,
+    incomplete,
     involves_all,
     local_str,
     messages_with_text,
@@ -34,7 +35,9 @@ _QUALIFIED = re.compile(
 
 class WeekdayCheck(TemplateCheck):
     name = "weekday"
-    version = "1.0.2"  # 1.0.2: curly quotes and runs of spaces fold (TEXT_MATCH)
+    # 1.0.2: curly quotes and runs of spaces fold (TEXT_MATCH). 1.0.3: a message with the words
+    # that names no sender or no receiver keeps it from passing (Greptile on #264).
+    version = "1.0.3"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None or not p.quoted_text:
@@ -76,10 +79,27 @@ class WeekdayCheck(TemplateCheck):
         rows = [
             r
             for r in messages_with_text(data, text)
-            if r.source_id in sources
-            and channel_ok(r, p.channels)
-            and (not party_ids or involves_all(r, party_ids))
+            if r.source_id in sources and channel_ok(r, p.channels)
         ]
+        everyone = set().union(*party_ids) if party_ids else set()
+        unplaced = [
+            r.id
+            for r in rows
+            if party_ids
+            and incomplete(r)
+            # With one party named, a message from anyone may be to that party (CodeRabbit on
+            # #264); with two, a known sender must be one of them.
+            and (len(party_ids) == 1 or r.sender is None or r.sender in everyone)
+        ]
+        if unplaced:
+            # A LEAPP chat names a sender only: such a message may be the one meant, on
+            # another day.
+            return inconclusive(
+                f"{len(unplaced)} messages with the words name no sender or no receiver, so one"
+                f" may be the message meant: {', '.join(unplaced)}",
+                tuple(unplaced),
+            )
+        rows = [r for r in rows if not party_ids or involves_all(r, party_ids)]
         if not rows:
             return inconclusive("None found. Not found does not mean the message was never sent")
 

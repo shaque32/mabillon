@@ -1,101 +1,81 @@
 """Selection (/selection, /selection/context).
 
-This page's own CSS, scoped to its markup (see ui/css/__init__.py). Both pages show fragments of
-the report (core/report/selection.py, paired.py, restore.py); they are restyled here under the
-page's wrapper (.pg-selection, .pg-context), so the exported report keeps its own look.
+This page's own CSS, scoped to its markup (see ui/css/__init__.py). Every value comes from the
+tokens in ui/theme.py. Both pages show fragments of the report (core/report/selection.py,
+paired.py, restore.py); the app styles them here, and the exported report keeps its own look.
 """
 
-from ui.css.exhibits import MARK_CSS, context_table_css
-
-CSS = (
-    """
-.pg-selection > p, .pg-context > p { max-width: 64ch; text-wrap: pretty; }
-.pg-context p.back { margin: 0 0 14px; font-size: 13px; }
-.pg-context p.back a { color: var(--muted); }
-.pg-context p.back a:hover { color: var(--fg); }
-.pg-context p.picked { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.pg-context p.tiers { font-size: 12.5px; margin: 0 0 24px; }
-.pg-context > p:not([class]) { font-size: 13px; color: var(--ink-2); }
+CSS = """
+.pg-context p.picked { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.pg-context > p:not([class]) { color: var(--muted); }
 
 /* the opening: one paragraph, the definitions and the coverage notice folded, then what was
-   found as ledger rows (the site's mock panel), not a bulleted wall */
-.pg-selection details.terms { margin: -4px 0 16px; }
-.pg-selection details.terms > summary { font-size: 13px; }
-.pg-selection details.terms[open] > summary { margin-bottom: 8px; }
-.pg-selection details.terms > p { max-width: 64ch; font-size: 13px; }
-.pg-selection > .banner { max-width: 64ch; }
-.pg-selection > ul { list-style: none; padding: 0; margin: 4px 0 8px; max-width: 860px; }
-.pg-selection > ul > li { padding: 8px 0; border-bottom: 1px solid var(--line);
-  font-size: 13.5px; line-height: 1.5; }
+   found as ruled rows */
+.pg-selection details.terms { margin: 0 0 var(--s4); }
+.pg-selection details.terms > p { color: var(--muted); }
+.pg-selection > ul { list-style: none; padding: 0; margin: var(--s1) 0 var(--s2);
+  max-width: 860px; border-top: 1px solid var(--line); }
+.pg-selection > ul > li { margin: 0; max-width: none; padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line); }
 
 /* section headings read as headings, not small labels */
-.pg-selection > h3.eyebrow, .pg-selection > h3#paired-audit { font: 600 18px/1.35 var(--sans);
-  letter-spacing: 0; color: var(--fg); margin: 72px 0 8px; }
-.pg-selection > h4 { font: 600 15px/1.4 var(--sans); margin: 36px 0 8px; }
+.pg-selection > h3.eyebrow, .pg-selection > h3#paired-audit {
+  font: 600 var(--t3)/var(--l3) var(--sans); margin: var(--s8) 0 var(--s2); }
+.pg-selection > h4 { margin: var(--s6) 0 var(--s2); }
 
 /* one paragraph, exhibit or tag set */
-.pg-selection .sel-unit { margin: 32px 0 44px; }
-.pg-selection .sel-unit > h3 { font-size: 17px; }
-.pg-selection .sel-n { height: 20px; padding: 0 7px; border: 0; border-radius: 4px;
-  font: 500 12px var(--sans); }
-.pg-selection .sel-unit > blockquote { background: none; border: 0;
-  border-left: 2px solid var(--line-strong); border-radius: 0; padding: 2px 0 2px 16px;
-  margin: 10px 0 12px; font-size: 15px; line-height: 1.6; max-width: 64ch; }
-.pg-selection ul.sel-quotes li { font-size: 13px; color: var(--ink-2); max-width: 62ch; }
+.sel-unit { margin: var(--s6) 0 var(--s7); }
+.sel-unit > h3 { display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: var(--s1) var(--s3); font: 600 var(--t3)/var(--l3) var(--sans); margin: 0 0 var(--s2);
+  padding-top: var(--s4); border-top: 1px solid var(--ink); }
+.sel-unit > h3 .muted { font: 400 var(--t1)/var(--l1) var(--sans); }
+.sel-unit > blockquote { margin: var(--s2) 0 var(--s3); }
+ul.sel-quotes { list-style: none; padding: 0; margin: var(--s2) 0 var(--s3); }
+ul.sel-quotes li { margin: 0 0 var(--s2); color: var(--muted); }
+.sel-claims { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4);
+  margin: var(--s2) 0; font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
+.sel-claims .verdict { font-size: var(--t1); line-height: var(--l1); }
 
 /* a passage: the summary, the exchange as a conversation, then what else is near */
-.pg-selection .sel-passage { border-radius: var(--radius); margin: 16px 0; }
-.pg-selection .sel-passage > .in { padding: 14px 18px; }
-.pg-selection .sel-passage .where { margin-bottom: 4px; }
-.pg-selection .sel-passage ul.sum { font-size: 13px; }
-.pg-selection .sel-passage > .foot { font-size: 13px; }
-.pg-selection .sel-passage > .foot > p { margin: 8px 0 0; }
-.pg-selection .sel-convo { background: var(--panel); gap: 6px; padding: 16px 18px; }
-/* a copy of the exchange on another source: a ruled section, not a card in the card */
-.pg-selection .sel-passage .sel-passage { border: 0; border-top: 1px solid var(--line);
-  border-radius: 0; background: none; margin: 14px 0 0; overflow: visible; }
-.pg-selection .sel-passage .sel-passage > .in { padding: 14px 0 12px; }
-.pg-selection .sel-passage .sel-passage > .sel-convo { border-top: 0;
-  border-radius: var(--radius); }
-.pg-selection .sel-passage .sel-passage > .foot { border-top: 0; padding: 8px 0 0; }
+.sel-passage { margin: var(--s4) 0; }
+.sel-passage .where { margin-bottom: var(--s1); overflow-wrap: anywhere; }
+.sel-passage ul.sum { margin: var(--s1) 0 0; }
+.sel-passage ul.sum li { margin: 0; }
+.sel-passage > .foot > p { margin: var(--s2) 0 0; }
+.sel-passage .sel-passage { margin: var(--s4) 0 0; padding-top: var(--s3);
+  border-top: 1px solid var(--line); }
+.sel-convo { display: flex; flex-direction: column; gap: var(--s1); margin: var(--s3) 0;
+  padding: var(--s3) 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
-/* messages: flat tinted shapes, no outlines. Messages left out of the exchange take the page
-   tint and muted text. The chip text names each state; a picked message keeps the report's
-   soft yellow fill and its ring. */
-.pg-selection .bub { border: 0; border-radius: 12px; padding: 8px 12px; box-shadow: none; }
-.pg-selection .bub:not(.pick) { background: var(--card); }
-.pg-selection .bub.out:not(.pick) { background: var(--accent-bg); }
-.pg-selection .bub.dim:not(.pick) { background: var(--bg); }
-.pg-selection .bub.dim .body { color: var(--muted); }
-.pg-selection .bub.pick { border: 0; box-shadow: inset 0 0 0 1.5px var(--amber); }
-.pg-selection .bub.left { border: 0; outline: 1.5px dashed var(--con); outline-offset: -1.5px; }
-.pg-selection .bub .who2 { font-size: 12px; }
-.pg-selection .bub .body { font-size: 14px; line-height: 1.5; margin: 1px 0 2px; }
-.pg-selection .bub .t { font-size: 12px; gap: 4px 8px; }
-.pg-selection .tag { border-radius: 4px; padding: 2px 7px; font-weight: 500; font-size: 12px; }
-.pg-selection .divider { border: 0; background: none; padding: 2px 0; border-radius: 0;
-  font-size: 12px; color: var(--muted); }
+/* messages. Received ones are filled, sent ones outlined and set right, as on the claim page.
+   A quoted message takes an ink edge; one the document left out takes a dashed signal edge.
+   The tag names each state, so none rests on the edge alone. Messages outside the exchange
+   recede to muted text. */
+.bub { max-width: 76%; align-self: flex-start; padding: var(--s1) var(--s3);
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--line);
+  overflow-wrap: anywhere; }
+.bub.out { align-self: flex-end; background: var(--paper); }
+.bub.dim .body { color: var(--muted); }
+.bub.pick { border-color: var(--ink); outline: 1px solid var(--ink); }
+.bub.left { border: 1px dashed var(--signal); }
+.bub .who2, .bub .att { font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
+.bub .t { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline;
+  gap: 0 var(--s2); font-size: var(--t1); line-height: var(--l1); color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.bub:not(.out) .t { justify-content: flex-start; }
+.divider { align-self: center; padding: var(--s1) 0; font-size: var(--t1);
+  line-height: var(--l1); color: var(--muted); text-align: center; }
 
-/* the paired check: a ruled section, its tables keep their own frame */
-.pg-selection .pair { background: none; border: 0; border-top: 1px solid var(--line);
-  border-radius: 0; padding: 20px 0 0; margin: 24px 0; }
-.pg-selection .pair > p, .pg-selection .pair-claim > p { max-width: 62ch; }
-.pg-selection .pair h4 { font: 600 15px/1.4 var(--sans); margin: 4px 0 6px; }
-.pg-selection .pair > h4:not(:first-child) { margin-top: 28px; }
-.pg-selection .pair > h4 + p.where { margin-bottom: 12px; }
-.pg-selection .pair-claim { padding: 14px 0 4px; }
-.pg-selection .pair-claim tr.thr td { font-size: 12.5px; }
-.pg-selection .pair td.mono { font-size: 12px; word-break: normal; overflow-wrap: break-word;
-  white-space: nowrap; }
-.pg-selection p.letter-link { margin-top: 32px; }
+/* the paired check: a ruled section */
+.pair { margin: var(--s5) 0; padding: var(--s4) 0 0; border-top: 1px solid var(--line); }
+.pair h4 { margin: var(--s1) 0; }
+.pair > h4:not(:first-child) { margin-top: var(--s5); }
+.pair > h4 + p.where { margin-bottom: var(--s3); }
+.pair-claim { border-top: 1px solid var(--line); padding: var(--s3) 0 var(--s1); }
+.pair-claim tr.thr td { font-weight: 600; background: var(--line); }
+.pair td.mono { word-break: normal; overflow-wrap: break-word; white-space: nowrap; }
+.pg-selection p.letter-link { margin-top: var(--s6); }
 @media (max-width: 600px) {
-  .pg-selection .sel-passage > .in { padding: 12px 14px; }
-  .pg-selection .sel-convo { padding: 12px 10px; }
-  .pg-selection > ul > li { padding: 8px 0; }
+  .bub { max-width: 92%; }
 }
 """
-    + context_table_css(".pg-context")
-    + context_table_css(".pg-selection")
-    + MARK_CSS.replace("{s}", ".pg-selection")
-    + MARK_CSS.replace("{s}", ".pg-context")
-)

@@ -1846,3 +1846,33 @@ Diff (Data safety, the "Files never leave the examiner's machine" bullet):
 +  ordinary case cloud AI is the default choice at setup. A case marked as concerning sexual
 +  material or conduct involving a minor or someone presented as one (CSAM included), or whose
 +  order does not allow it, stays local. Never describe Mabillon as "offline".
+
+## 2026-11-16 claude/project-thread-mtq9u7: a source kind for iLEAPP and ALEAPP output (contracts and schema 0.9.0)
+SIGNED by Arsh on 2026-11-16 22:22Z ("approve" in the thread "Benchmark Mabillon on public
+forensic images", answering the request to approve this exact diff). APPLIED verbatim on branch
+claude/project-thread-mtq9u7 with the importer that needs it, with <date> filled in as 2026-11-16.
+File: core/contracts.py, core/schema.sql
+Why: Arsh chose to read iLEAPP and ALEAPP output (2026-11-16, decision card in that thread) so
+the public iOS 17 and Android 14 test phones, which have no Cellebrite report, can be imported.
+Every stored source needs a `sources.kind`, and no existing kind fits: `raw_zip` would say the
+examiner gave a raw extraction, and the records come from LEAPP's parsing of one. Without this,
+`core/ingest/leapp.py` cannot store a source. Nothing else changes: no table, column or other
+enum. A case made before 0.9.0 keeps its old CHECK, so a LEAPP import into it fails closed with
+the CHECK error; a new case takes LEAPP output.
+Diff:
+core/contracts.py
+-CONTRACTS_VERSION = "0.8.0"
++CONTRACTS_VERSION = "0.9.0"
+@@ class SourceKind(StrEnum):
+     AXIOM = "axiom"
++    LEAPP = "leapp"  # iLEAPP or ALEAPP output (the LAVA manifest and database)
+     RAW_ZIP = "raw_zip"
+core/schema.sql
+--- Baker canonical schema v0.8.0 (matches CONTRACTS_VERSION in core/contracts.py).
++-- Baker canonical schema v0.9.0 (matches CONTRACTS_VERSION in core/contracts.py).
++-- 0.9.0: sources.kind 'leapp', iLEAPP and ALEAPP output (signed by Arsh <date>).
+ -- 0.8.0: counsel reviews and the checked and counsel_reviewed bases (signed by Arsh 2026-11-06).
+@@ CREATE TABLE sources (
+     kind             TEXT NOT NULL CHECK (kind IN ('ufdr', 'cellebrite_excel', 'cellebrite_pdf',
+-                         'cellebrite_html', 'axiom', 'raw_zip', 'govdoc', 'synthetic')),
++                         'cellebrite_html', 'axiom', 'leapp', 'raw_zip', 'govdoc', 'synthetic')),

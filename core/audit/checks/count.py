@@ -9,10 +9,14 @@ from core.audit.checks._common import (
     CaseData,
     Party,
     Row,
+    apps_not_read,
     calls_for_accounts,
     channel_ok,
     in_window,
+    incomplete,
+    incomplete_beside,
     involves_all,
+    may_be_between,
     messages_for_accounts,
     parties,
     sentences,
@@ -113,7 +117,11 @@ class CountCheck(TemplateCheck):
     """
 
     name = "count"
-    version = "1.3.0"
+    # 1.2.1: a message or call that names no sender or no receiver, with a party on it or in a
+    # chat with one, keeps "at most" and "exactly" from passing (Greptile on #264).
+    # 1.3.0: look-alike rows hold a count open when merging them could change the answer.
+    # 1.3.1: both guards together (#264 and #265 merged).
+    version = "1.3.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None or p.expected_count is None or p.count_op is None:
@@ -153,6 +161,21 @@ class CountCheck(TemplateCheck):
             if r.source_id == source_id and channel_ok(r, p.channels)
         ]
         rows = [r for r in pool if involves_all(r, [a_ids, b_ids])]
+        seen = {r.id for r in pool}
+        beside = [
+            r
+            for r in incomplete_beside(data, a_ids | b_ids)
+            if r.id not in seen and r.source_id == source_id and channel_ok(r, p.channels)
+        ]
+        # Rows that may be messages between the two sides but name no sender or no receiver
+        # (a LEAPP chat names a sender only, and a phone's own message often neither side).
+        unplaced = [
+            r
+            for r in pool + beside
+            if incomplete(r)
+            and may_be_between(r, a_ids, b_ids)
+            and (r.ts_utc is None or in_window(r.ts_utc, p.window))
+        ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
@@ -193,6 +216,13 @@ class CountCheck(TemplateCheck):
                 and (r.ts_utc is None or in_window(r.ts_utc, p.window))
             ]
             counted = [r for r in counted if r.sender in mine]
+            # Only a row the sending side may have sent can be one of its messages.
+            unplaced = [
+                r
+                for r in unplaced
+                if (r.sender is None and (not r.recipients or set(r.recipients) & theirs))
+                or r.sender in mine
+            ]
             no_time = [r for r in no_time if r.sender in mine]
             searched += f" Only messages {side.describe()} sent."
             if unknown_sender:
@@ -221,16 +251,29 @@ class CountCheck(TemplateCheck):
             lines.append(f"{deleted} of them carry the source's deletion flag")
         if no_time:
             lines.append(f"{len(no_time)} matching messages have no usable time")
+        named_already = {r.id for r in unknown_sender}
+        extra = [r for r in unplaced if r.id not in named_already]
+        if extra:
+            lines.append(
+                f"{len(extra)} messages name no sender or no receiver, so they may be among "
+                f"them: {', '.join(r.id for r in extra)}"
+            )
         full = source.fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit messages")
+        # "At most" and "exactly" need every record on the apps counted (CodeRabbit on #264).
+        unread = apps_not_read(data, source_id, {c.strip().lower() for c in p.channels})
+        if unread and op != "ge":
+            lines.append(unread)
 
         copies = sum(1 for r in counted + no_time if r.id in data.numbered_copies)
         if copies:
             lines.append(
-                f"{copies} of the matching messages {'is' if copies == 1 else 'are'} numbered "
-                "by the extraction tool as a copy of another row, so the count may hold one "
-                "message twice; an expert must decide which rows are the same message"
+                f"{copies} of the matching messages {'is' if copies == 1 else 'are'} listed "
+                "by the import as a possible copy of another row (numbered as a copy by the "
+                "extraction tool, or with the same direction, time and text as another) or as "
+                "possibly several messages joined, so the count may hold one message twice or "
+                "several as one; an expert must decide which rows are which messages"
             )
         twins = look_alike(counted)
         # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no copy
@@ -240,23 +283,28 @@ class CountCheck(TemplateCheck):
         # the claim (Claude review on #265: "at least 5" over 10 rows, 2 of them look-alikes,
         # still holds).
         lo = n - twins
-        held_open = look_alikes_matter(n, twins, want, op)
+        twins_open = look_alikes_matter(n, twins, want, op)
         if twins:
             lines.append(
                 f"{twins} of the counted messages repeat another one's words and time "
                 f"(within {TWIN_S} seconds), so the count may hold one message twice"
                 + (
                     "; an expert must decide which rows are the same message"
-                    if held_open
+                    if twins_open
                     else f", and {lo} to {n} messages all give the same count answer"
                 )
             )
 
-        if copies or held_open:
+        if copies or twins_open:
             outcome = CheckOutcome.INCONCLUSIVE
         elif op in ("eq", "le") and lo > want:
             outcome = CheckOutcome.FAIL
-        elif no_time or one_side_silent or each_way_open or (unknown_sender and op != "ge"):
+        elif (
+            no_time
+            or one_side_silent
+            or each_way_open
+            or ((unknown_sender or unplaced or unread) and op != "ge")
+        ):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -266,9 +314,18 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.PASS if full else CheckOutcome.INCONCLUSIVE
         if outcome is CheckOutcome.INCONCLUSIVE and n < want:
             lines.append("Finding fewer than claimed does not mean the others never existed")
-        ids = [r.id for r in counted + no_time]
+        # The outcome rests on the rows that may be among them too (CodeRabbit on #264).
+        # ...but not when too many were counted: that FAIL rests on the counted rows alone.
+        held_open = outcome is CheckOutcome.INCONCLUSIVE and (unplaced or unknown_sender)
+        held_open = held_open and op != "ge"
+        ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
         return self.done(
-            assumption_id, outcome, searched, sentences(lines, notes), ids, [source_id]
+            assumption_id,
+            outcome,
+            searched,
+            sentences(lines, notes),
+            list(dict.fromkeys(ids)),
+            [source_id],
         )
 
     def _calls(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
@@ -302,12 +359,20 @@ class CountCheck(TemplateCheck):
                 sources,
             )
         (source_id,) = sources
-        rows = [
+        pool = [
             r
             for r in calls_for_accounts(data, a_ids | b_ids)
-            if r.source_id == source_id
-            and (not apps or r.app.strip().lower() in apps)
-            and involves_all(r, [a_ids, b_ids])
+            if r.source_id == source_id and (not apps or r.app.strip().lower() in apps)
+        ]
+        rows = [r for r in pool if involves_all(r, [a_ids, b_ids])]
+        # A call with a party on it that names no other side (LEAPP names the other side of a
+        # phone's call but not the phone's own line) may be a call between them.
+        unplaced = [
+            r
+            for r in pool
+            if incomplete(r)
+            and may_be_between(r, a_ids, b_ids)
+            and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
         no_time = [r for r in rows if r.ts_utc is None]
@@ -323,6 +388,11 @@ class CountCheck(TemplateCheck):
             )
         if no_time:
             lines.append(f"{len(no_time)} matching calls have no usable time")
+        if unplaced:
+            lines.append(
+                f"{len(unplaced)} calls with a party on them name no other side, so they may "
+                f"be among them: {', '.join(r.id for r in unplaced)}"
+            )
         # A row with no length, or a zero length, may be a call that never connected, so it
         # cannot count toward "spoke N times".
         unconnected = sum(1 for r in counted if not r.duration_s)
@@ -337,7 +407,10 @@ class CountCheck(TemplateCheck):
         full = data.sources[source_id].fidelity is Fidelity.FULL_EXTRACTION
         if not full:
             lines.append(f"{source_id} is a curated report, so it may omit calls")
-        if twins or no_time or unconnected:
+        unread = apps_not_read(data, source_id, apps)
+        if unread and op != "ge":
+            lines.append(unread)
+        if twins or no_time or unconnected or ((unplaced or unread) and op != "ge"):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -350,9 +423,15 @@ class CountCheck(TemplateCheck):
                 "A call count never fails: the log keeps calls that did not connect, and one call"
                 " can be stored twice"
             )
-        ids = [r.id for r in counted + no_time]
+        held_open = outcome is CheckOutcome.INCONCLUSIVE and unplaced and op != "ge"
+        ids = [r.id for r in counted + no_time + (unplaced if held_open else [])]
         return self.done(
-            assumption_id, outcome, searched, sentences(lines, notes), ids, [source_id]
+            assumption_id,
+            outcome,
+            searched,
+            sentences(lines, notes),
+            list(dict.fromkeys(ids)),
+            [source_id],
         )
 
 

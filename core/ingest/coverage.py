@@ -15,7 +15,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from core.contracts import SourceCoverage
 
@@ -52,6 +52,11 @@ _SKIP_REASON_WORDS = {
     "same_id_as_an_earlier_record": (
         "repeated the record id of an earlier record (the same record listed twice); the "
         "earlier one was imported"
+    ),
+    "same_as_an_sms_or_mms_message": (
+        "are the same messages as SMS or MMS messages already imported from the phone's message "
+        "store (the same direction, text, other party and number of attachments within two "
+        "seconds, each SMS or MMS matched once), so each was imported once"
     ),
 }
 _TIME_PROBLEM_WORDS = {
@@ -189,15 +194,90 @@ FORMAT_UNVERIFIED_AXIOM = (
     "portable case) and compare (each record's locator gives its artifact and hit, or its sheet "
     "and row)."
 )
+FORMAT_UNVERIFIED_LEAPP = (
+    "Mabillon's iLEAPP and ALEAPP reader is not yet verified. It was built from LEAPP's published "
+    "source and run on public test phones only, never on case data, and reads only the messages, "
+    "calls and contacts tables. Before relying on a record, open the same record in the LEAPP "
+    "report or LAVA and compare (each record's locator gives its table and row id)."
+)
 # Per importer: the unverified notice, the tool to compare records in, and what the file is.
 READERS: dict[str, tuple[str, str, str]] = {
     "ufdr": (FORMAT_UNVERIFIED, "Cellebrite Reader", "package"),
     "axiom": (FORMAT_UNVERIFIED_AXIOM, "AXIOM Examine", "report"),
+    "leapp": (FORMAT_UNVERIFIED_LEAPP, "the LEAPP report", "output"),
 }
 
 
 def reader_words(importer: str) -> tuple[str, str, str]:
     return READERS.get(importer, READERS["ufdr"])
+
+
+def _leapp_device_items(device: dict[str, Any]) -> list[CoverageItem]:
+    """What a LEAPP import read of the phone's time zone (core/ingest/leapp.device_facts)."""
+    seen = device.get("zones_seen") or []
+    fix = (
+        " A claim with a time window is not tested until the phone's zone is set on the case "
+        "screen (or with mabillon set-device-zone)."
+    )
+
+    def span(z: dict[str, Any]) -> str:
+        tables = ", ".join(z.get("tables") or [])
+        when = f", {z['first']} to {z['last']}" if z.get("first") and z.get("last") else ""
+        return f"{z['zone']} ({_n(int(z.get('rows') or 0), 'records')} in {tables}{when})"
+
+    if device.get("timezone") and len(seen) == 1:
+        return [
+            CoverageItem(
+                "info",
+                "leapp_timezone",
+                (
+                    _t(
+                        "The phone's time zone was read from the LEAPP output: "
+                        + span(seen[0])
+                        + ". It places every record from this phone, including any from times "
+                        "the phone did not record its zone."
+                    ),
+                ),
+            )
+        ]
+    if len(seen) > 1:
+        return [
+            CoverageItem(
+                "attention",
+                "leapp_timezones_differ",
+                (
+                    _t(
+                        f"The phone recorded {len(seen)} time zones, so none was set: "
+                        + "; ".join(span(z) for z in seen)
+                        + "."
+                        + fix
+                    ),
+                ),
+            )
+        ]
+    unread = device.get("zones_not_read") or {}
+    if unread:
+        values = "; ".join(f"{v!r} ({_n(int(n), 'records')})" for v, n in sorted(unread.items()))
+        read = f" Beside them it recorded {'; '.join(span(z) for z in seen)}." if seen else ""
+        return [
+            CoverageItem(
+                "attention",
+                "leapp_timezone_not_read",
+                (
+                    _t(
+                        "The phone recorded time zone values that are not zone names this "
+                        f"reader knows, so no zone was set: {values}.{read}{fix}"
+                    ),
+                ),
+            )
+        ]
+    return [
+        CoverageItem(
+            "attention",
+            "leapp_no_timezone",
+            (_t("No time zone for the phone was found in the LEAPP output." + fix),),
+        )
+    ]
 
 
 # Record flags a UFDR import lists by locator: (level, words). {n} is the count with its noun;
@@ -274,6 +354,62 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
         "import {them}; open each one in {tool}.",
     ),
     "duration_unread": ("attention", "{n} {have} a call duration Mabillon could not read."),
+    "not_sent_or_received": (
+        "attention",
+        "{n} {be} stored as neither sent nor received (a draft, queued, outbox or failed "
+        "message), so {them} {be} imported with direction unknown and none counts as sent.",
+    ),
+    "direction_not_stated": (
+        "attention",
+        "{n} {have} no direction in the {container}, so {them} {be} imported with direction "
+        "unknown.",
+    ),
+    "call_type_not_incoming_outgoing_or_missed": (
+        "attention",
+        "{n} {have} a call type other than incoming, outgoing, missed or rejected (such as "
+        "voicemail, blocked or answered elsewhere), so {them} {be} imported with direction "
+        "unknown and neither side recorded; no check finds {them}, so the call log is not "
+        "treated as read in full.",
+    ),
+    "sent_without_own_account": (
+        "attention",
+        "{n} {be} sent from the phone but name no account or number for it, so no sender was "
+        "recorded.",
+    ),
+    "received_without_sender": (
+        "attention",
+        "{n} {be} received but name no sender, so no sender was recorded.",
+    ),
+    "received_without_own_account": (
+        "attention",
+        "{n} {be} received but do not name the phone's own number or account, so the receivers "
+        "are not all known; none were recorded, and a check holds {them} open as possibly to "
+        "anyone.",
+    ),
+    "sender_name_only": (
+        "info",
+        "{n} name{s0} the sender by display name only. A display name is not taken as an "
+        "account (two people can share one), so no sender was recorded and a claim about who "
+        "sent {them} is not tested from {them}.",
+    ),
+    "may_be_several_messages": (
+        "attention",
+        "{n} {be} grouped from parts with more than one text in the same second; LEAPP gives no "
+        "message id, so each may be several messages joined, and a count over {them} is "
+        "inconclusive.",
+    ),
+    "may_be_same_as_an_sms_or_mms_message": (
+        "attention",
+        "{n} {have} the same direction and text as an SMS or MMS within two seconds, but the "
+        "other party of one of them is not named or is a group, so it cannot be compared; {them} "
+        "{be} imported, and a count over them may count one message twice.",
+    ),
+    "media_file_not_in_extraction": (
+        "attention",
+        "{n} name{s0} a media file that the parser did not find in the extraction, so only its "
+        "name was recorded as the attachment.",
+    ),
+    "no_body_or_attachment": ("info", "{n} {have} neither text nor an attachment."),
     "no_time": ("attention", "{n} {have} no time in the {container}, so no time was set."),
 }
 
@@ -680,7 +816,48 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
         notice = reader_words(str(p.get("importer", "")))[0]
         items.append(CoverageItem("attention", "format_unverified", (_t(notice),)))
     tables = [t for t in p.get("tables", []) if isinstance(t, dict)]
-    for entry in p.get("not_imported", []) or []:
+    not_imported = [e for e in p.get("not_imported", []) or [] if isinstance(e, dict)]
+    if p.get("importer") == "leapp":
+        items += _leapp_device_items((p.get("leapp") or {}).get("device") or {})
+    if p.get("importer") == "leapp":
+        # A table Mabillon reads that could not be read through: its app is not read in full.
+        failed = [e for e in not_imported if e.get("read_failed")]
+        not_imported = [e for e in not_imported if not e.get("read_failed")]
+        for e in failed:
+            items.append(
+                CoverageItem(
+                    "attention",
+                    "leapp_artifact_not_read",
+                    (
+                        _q(e.get("name")),
+                        _t(
+                            f" could not be read: {e.get('reason')}. None of its records were "
+                            "imported, so a claim resting on its app is not tested from this "
+                            "source, and an absence there is not shown."
+                        ),
+                    ),
+                )
+            )
+    if p.get("importer") == "leapp" and not_imported:
+        # LEAPP parses hundreds of artifacts; one line names every one Mabillon did not read.
+        # One with no stated count may hold records too (Claude review on #264).
+        with_rows = [
+            e for e in not_imported if e.get("may_hold_records", (e.get("records") or 0) > 0)
+        ]
+        names = sorted({str(e.get("name")) for e in with_rows})
+        parts: list[Segment] = [
+            _t(
+                f"{_n(len(not_imported), 'other artifacts')} in the LEAPP output were not "
+                "imported: Mabillon reads only its messages, calls and contacts tables, so a "
+                "claim resting on any other app or artifact is not tested from this source, and a "
+                "record missing from them is not shown to be absent from the phone."
+            )
+        ]
+        if names:
+            parts += [_t(f" Those holding records ({len(names)}): "), *_names(names), _t(".")]
+        items.append(CoverageItem("attention", "not_imported", tuple(parts)))
+        not_imported = []
+    for entry in not_imported:
         reason = str(entry.get("reason", ""))
         deliberate = reason == "category not imported" or reason.startswith("section '")
         rows, lines = entry.get("rows"), entry.get("lines")

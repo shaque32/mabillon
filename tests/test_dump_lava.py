@@ -5,6 +5,7 @@ import ast
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,7 @@ KINDS = {
 
 
 @pytest.fixture
-def lava(tmp_path):
+def lava(tmp_path: Path) -> Path:
     db = sqlite3.connect(tmp_path / dump_lava.DATABASE)
     db.executescript(
         "CREATE TABLE sms (message_row_id INTEGER, body TEXT, attachment TEXT);"
@@ -56,16 +57,22 @@ def lava(tmp_path):
     return tmp_path
 
 
-def test_counts_come_from_the_tables_with_attachments_deduped(lava):
+def test_counts_come_from_the_tables_with_attachments_deduped(lava: Path) -> None:
     r = dump_lava.read(lava, KINDS)
     assert r["counts"] == {"message": 2 + 2, "call": 3, "contact": 1}
     sms = r["tables"]["sms"]
     assert sms["rows"] == 4 and sms["count"] == 2 and sms["null_dedupe_rows"] == 1
-    assert r["tables"]["telegram_messages"] == {"kind": "message", "present": False, "count": 0}
+    assert r["tables"]["telegram_messages"] == {
+        "kind": "message",
+        "present": False,
+        "count": 0,
+        "manifest_record_count": None,
+        "in_manifest": False,
+    }
     assert r["leapp_name"] == "iLEAPP" and len(r["database_sha256"]) == 64
 
 
-def test_the_manifest_count_is_reported_never_used(lava):
+def test_the_manifest_count_is_reported_never_used(lava: Path) -> None:
     r = dump_lava.read(lava, KINDS)
     assert r["tables"]["whatsapp_messages"]["count"] == 2
     assert r["tables"]["whatsapp_messages"]["manifest_record_count"] == 5
@@ -73,20 +80,20 @@ def test_the_manifest_count_is_reported_never_used(lava):
     assert r["tables_not_counted"] == ["wifi"]
 
 
-def test_a_bad_kind_or_dedupe_column_stops_the_reader(lava):
+def test_a_bad_kind_or_dedupe_column_stops_the_reader(lava: Path) -> None:
     with pytest.raises(SystemExit, match="not one of"):
         dump_lava.read(lava, {"sms": {"kind": "note"}})
     with pytest.raises(SystemExit, match="no column"):
         dump_lava.read(lava, {"sms": {"kind": "message", "dedupe": "row"}})
 
 
-def test_the_database_is_opened_read_only(lava):
+def test_the_database_is_opened_read_only(lava: Path) -> None:
     before = (lava / dump_lava.DATABASE).read_bytes()
     dump_lava.read(lava, KINDS)
     assert (lava / dump_lava.DATABASE).read_bytes() == before
 
 
-def test_the_reader_imports_only_the_standard_library():
+def test_the_reader_imports_only_the_standard_library() -> None:
     tree = ast.parse(open(dump_lava.__file__, encoding="utf-8").read())
     names = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)
              for a in n.names}  # fmt: skip
@@ -94,7 +101,7 @@ def test_the_reader_imports_only_the_standard_library():
     assert names <= set(sys.stdlib_module_names), names
 
 
-def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
+def test_a_folder_name_with_uri_marks_still_opens_read_only(lava: Path, tmp_path: Path) -> None:
     # "?" cannot be in a Windows folder name; "#" and "%" can, and break a URI as well
     odd = tmp_path / ("phone#1 x%20" if sys.platform == "win32" else "phone#1 ?x%20")
     odd.mkdir()
@@ -105,7 +112,7 @@ def test_a_folder_name_with_uri_marks_still_opens_read_only(lava, tmp_path):
     assert sorted(p.name for p in odd.parent.iterdir()) == before  # no stray file made
 
 
-def test_a_composite_dedupe_key_and_a_skipped_table(lava):
+def test_a_composite_dedupe_key_and_a_skipped_table(lava: Path) -> None:
     db = sqlite3.connect(lava / dump_lava.DATABASE)
     db.executescript(
         "CREATE TABLE parts (conv INTEGER, ts INTEGER, dir TEXT, body TEXT);"
@@ -122,3 +129,78 @@ def test_a_composite_dedupe_key_and_a_skipped_table(lava):
     assert r["tables"]["parts"]["count"] == 2 and r["tables"]["parts"]["null_dedupe_rows"] == 1
     assert r["tables"]["combined"]["count"] == 2
     assert r["counts"]["message"] == 2  # the skipped table repeats another and is not counted
+
+
+def test_a_skipped_table_s_dedupe_columns_are_never_read(lava: Path) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.executescript("CREATE TABLE combined2 (body TEXT); INSERT INTO combined2 VALUES ('hi');")
+    db.commit()
+    db.close()
+    r = dump_lava.read(lava, {"combined2": {"kind": "skip", "dedupe": "old_col"}})
+    assert r["tables"]["combined2"]["rows"] == 1  # reported, not stopped by a column it lacks
+    assert r["counts"] == {"message": 0, "call": 0, "contact": 0}
+
+
+def test_a_kinds_file_that_writes_one_table_twice_stops_the_reader(
+    lava: Path, tmp_path: Path
+) -> None:
+    kinds = tmp_path / "kinds.json"
+    kinds.write_text(
+        '{"sms": {"kind": "message"}, "sms": {"kind": "skip"}}', "utf-8"
+    )  # json.loads alone would keep only the second
+    with pytest.raises(SystemExit, match="twice"):
+        dump_lava.main([str(lava), str(kinds), str(tmp_path / "out.json")])
+
+
+def test_table_names_match_whatever_their_case_and_no_written_table_goes_unreported(
+    lava: Path,
+) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.execute("CREATE TABLE stray_chats (body TEXT)")  # written, but no manifest entry
+    db.execute("INSERT INTO stray_chats VALUES ('x')")
+    db.commit()
+    db.close()
+    kinds = {
+        "SMS": {"kind": "message", "dedupe": "MESSAGE_ROW_ID"},
+        "Call_History": {"kind": "call"},
+    }
+    r = dump_lava.read(lava, kinds)
+    assert r["counts"] == {"message": 2, "call": 3, "contact": 0}
+    assert r["tables"]["SMS"]["present"] and r["tables"]["SMS"]["in_manifest"]
+    assert r["tables_not_counted"] == ["contacts", "stray_chats", "whatsapp_messages", "wifi"]
+    assert r["tables_not_in_manifest"] == ["stray_chats"]
+
+
+def test_one_table_named_twice_in_kinds_stops_the_reader(lava: Path) -> None:
+    kinds = {
+        "sms": {"kind": "message", "dedupe": "message_row_id"},
+        "SMS": {"kind": "message", "dedupe": "message_row_id"},
+    }
+    with pytest.raises(SystemExit, match="twice"):
+        dump_lava.read(lava, kinds)  # read once each, the two would count 4 messages, not 2
+
+
+def test_only_ascii_letters_fold_as_sqlite_compares_names(lava: Path) -> None:
+    db = sqlite3.connect(lava / dump_lava.DATABASE)
+    db.executescript(
+        'CREATE TABLE chats ("Ä" INTEGER, "ä" INTEGER); INSERT INTO chats VALUES (1, 7), (2, 7);'
+    )
+    db.commit()
+    db.close()
+    r = dump_lava.read(lava, {"chats": {"kind": "message", "dedupe": "Ä"}})
+    assert r["tables"]["chats"]["count"] == 2  # "Ä" is its own column, not "ä"
+    assert dump_lava.fold("SMS") == "sms" and dump_lava.fold("Ä") == "Ä"
+
+
+def test_a_listed_table_the_database_does_not_hold_is_flagged(lava: Path) -> None:
+    manifest = json.loads((lava / dump_lava.MANIFEST).read_text("utf-8"))
+    manifest["artifacts"]["Telegram"] = [
+        {"name": "Telegram", "tablename": "telegram_messages", "module": "m", "column_map": {},
+         "record_count": 500, "source_path": "/x"}
+    ]  # fmt: skip
+    (lava / dump_lava.MANIFEST).write_text(json.dumps(manifest), "utf-8")
+    r = dump_lava.read(lava, KINDS)
+    t = r["tables"]["telegram_messages"]
+    assert (t["present"], t["count"], t["manifest_record_count"]) == (False, 0, 500)
+    assert "telegram_messages" in r["manifest_count_differs"]  # never a silent zero
+    assert r["tables_not_in_database"] == {"telegram_messages": 500}  # with its count

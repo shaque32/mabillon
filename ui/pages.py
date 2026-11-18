@@ -61,17 +61,11 @@ from core.report.html import (
     sources,
     stand_in_banner,
 )
-from core.report.html import CSS as REPORT_CSS
-from core.report.hypotheses import CSS as ALTERNATIVES_CSS
 from core.report.hypotheses import alternatives_html
 from core.report.names import Names, plain_ids
-from core.report.paired import CSS as PAIRED_CSS
 from core.report.paired import claim_line
-from core.report.restore import CSS as RESTORE_CSS
-from core.report.selection import CSS as SELECTION_CSS
 from core.report.selection import anchor as selection_anchor
 from core.report.selection import claim_note, direction_words, sender_words, shows_side
-from core.report.timeline import CSS as TIMELINE_CSS
 from core.review import activity, device_names
 from core.review import flags as F
 from core.review import withheld as W
@@ -99,11 +93,6 @@ from ui.css import PAGE_CSS
 from ui.theme import FONT_CSS, MARK, THEME_CSS
 
 CONTEXT_WINDOW = 10  # messages either side: about 20 messages of context
-
-UI_CSS = """
-tr.target td { font-weight: bold; background: var(--warn); }
-.ctx td { font-size: 12px; }
-"""
 
 
 def link(path: str, **params: str) -> str:
@@ -209,7 +198,7 @@ class Page:
             "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             f"<meta name='viewport' content='width=device-width, initial-scale=1'>{meta}"
             f"<title>{e(title)} · Mabillon</title>"
-            f"<style>{FONT_CSS}{REPORT_CSS}{RESTORE_CSS}{SELECTION_CSS}{TIMELINE_CSS}{PAIRED_CSS}{ALTERNATIVES_CSS}{UI_CSS}{THEME_CSS}{PAGE_CSS}</style>"
+            f"<style>{FONT_CSS}{THEME_CSS}{PAGE_CSS}</style>"
             "</head><body>"
             "<header class='top'><div class='bar'>"
             f"<a class='brand' href='{'/' if self.case_name is not None else '/cases'}'>"
@@ -376,9 +365,10 @@ def overview(conn: sqlite3.Connection, page: Page) -> str:
         out.append(
             page.form(
                 "/expert",
-                "<p><strong>Your name</strong></p><input type='text' name='name' required "
-                "maxlength='60' placeholder='Your name'> <button type='submit' class='primary'>"
-                "Start reviewing</button>",
+                "<p><strong>Your name</strong></p><div class='row'><input type='text' name='name' "
+                "required maxlength='60' placeholder='Your name' aria-label='Your name'> "
+                "<button type='submit' class='primary'>Start reviewing</button></div>",
+                "box nameform",
             )
         )
     out.append("<section id='audit'>")
@@ -1455,13 +1445,6 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         + "</div>",
         f"<blockquote class='claimtext'>{q(c.text)}</blockquote>",
     ]
-    if st.paragraph_text:
-        out.append(
-            "<div class='claim-src'>"
-            f"<details><summary>Paragraph as printed ({e(st.where)})</summary>"
-            f"<blockquote>{q(st.paragraph_text)}</blockquote></details>"
-            f"{_selection_note(conn, st)}</div>"
-        )
     out.append(
         "<div class='card' id='verdict'><div class='in'><div class='vhead'><h2>Verdict</h2>"
         f"<span class='verdict {_vcls(st)}'>{e(st.label)}</span></div>"
@@ -1491,6 +1474,13 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
             f"{_flag_verdict_form(conn, page, st, back)}"
         )
     out.append("</div></div>")
+    if st.paragraph_text:  # after the verdict, so the answer sits right under the claim
+        out.append(
+            "<div class='claim-src'>"
+            f"<details><summary>Paragraph as printed ({e(st.where)})</summary>"
+            f"<blockquote>{q(st.paragraph_text)}</blockquote></details>"
+            f"{_selection_note(conn, st)}</div>"
+        )
     out.append(_must_be_true(conn, st, testability.used_repairs(conn, pipeline.view_run(conn))))
     out.append(_alternatives(conn, st))
     if st.agent_fails:
@@ -2762,8 +2752,8 @@ def setup_page(
         )
         + "</details>"
     )
-    audited = conn.execute("SELECT 1 FROM pipeline_runs LIMIT 1").fetchone() is not None
-    if srcs and not audited:
+    has_run = conn.execute("SELECT 1 FROM pipeline_runs LIMIT 1").fetchone() is not None
+    if srcs and not has_run:
         options = "".join(
             f"<option value='{e(s[0])}'>{e(s[4])}</option>" for s in srcs
         )  # s = (id, kind, fidelity, extraction, file name, ...)
@@ -3131,7 +3121,7 @@ def recovery_box(page: Page, key: str | None, unconfirmed: bool = False) -> str:
         "passphrase is lost. Mabillon keeps no copy anywhere: once you press the button below, "
         "it cannot be shown again. Keep it away from this computer (on paper, or in your "
         "password manager). Until then, this case cannot be locked.</p>"
-        f"<p class='mono' style='font-size:1.25em'>{e(key)}</p>"
+        f"<p class='mono recovery-key'>{e(key)}</p>"
         + page.form(
             "/case/recovery/done",
             "<button type='submit'>I have written it down</button>",

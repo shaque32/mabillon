@@ -44,7 +44,8 @@
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, so it is no longer tested by one wider than
     it states. A length written so ("lasted 0:12:45") is not a time of day.
-  - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0). Rows
+  - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then 1.3.1 on merging #264's
+    count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
     the count inconclusive, with a note for the expert. On the Android 13 development phone a
     chat of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and
@@ -84,7 +85,7 @@
 - Affects: verdicts (fewer code-checked SUPPORTED; claims naming an app the case lacks, or
   naming one kind of contact in an absence, go untested; counts over look-alike rows go
   inconclusive); customer-facing claims: none. No privacy or network change.
-- Status doc: pending: header "Other versions": filler 12, count 1.3.0, testability step 0.3.0. Section 2, step 5
+- Status doc: pending: header "Other versions": filler 12, count 1.3.1 (this entry's 1.3.0 plus #264's 1.2.1 guard; it replaces #264's count 1.2.1), testability step 0.3.0. Section 2, step 5
   (Assumptions): add "a communication, timing or count claim with words no check reads gets a
   code-made event that only an expert can carry; a message row gets the app the claim names;
   a time stated to the second gets no minute range". Section on the count check: add "since

@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import LocalAssumptionFiller
+from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, _Account
 from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
 from core.audit.rules import decide_verdict
@@ -539,7 +539,9 @@ def _add_instagram(c: sqlite3.Connection) -> None:
     )
 
 
-def ig_fill(conn, words: str, written: str = "49800011122"):
+def ig_fill(
+    conn: sqlite3.Connection, words: str, written: str = "49800011122"
+) -> tuple[dict, LocalAssumptionFiller]:
     _add_instagram(conn)
     return fill(conn, f"{IG_AT} {words}", people=["PETROV"],
                 accounts=[{"as_written": written, "app": "Instagram"}],
@@ -554,8 +556,11 @@ def ig_fill(conn, words: str, written: str = "49800011122"):
         'PETROV called "Marc Garage," user ID 49800011122, on Instagram.',
     ],
 )
-def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, words):
+def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(
+    conn: sqlite3.Connection, words: str
+) -> None:
     made, f = ig_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
     a = made["caller"]
     assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
     assert list(a.params.account_ids) == [GARAGE_IG]
@@ -563,7 +568,9 @@ def test_a_side_named_by_its_app_and_its_id_beside_its_name_gets_a_caller(conn, 
     assert r.outcome is CheckOutcome.PASS
 
 
-def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(conn):
+def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(
+    conn: sqlite3.Connection,
+) -> None:
     made, _ = ig_fill(conn, 'the Instagram user "Marc Garage," user ID 49800011122, called PETROV.')
     # a side described by its app is read only after the verb, so no caller is read here
     assert "caller" not in made
@@ -571,19 +578,246 @@ def test_a_side_described_or_given_an_id_before_the_verb_names_no_caller(conn):
     assert "caller" not in made  # an id beside the first side is not read either
 
 
+NAMED = [{"as_written": "Marc Garage", "app": "Instagram"}]
+
+
+@pytest.mark.parametrize(
+    ("words", "people", "accounts", "form"),
+    [
+        # the id is another account than the name: the clause is read as one side, and the
+        # caller is refused when the name and the id are not one account
+        ('PETROV called the Instagram user "Marc Garage," user ID 49800099999.', ["PETROV"],
+         [{"as_written": "49800099999", "app": "Instagram"}], True),
+        ('PETROV called the Instagram user "Marc Garage," user ID 49800099999.', ["PETROV"],
+         [*NAMED, {"as_written": "49800099999", "app": "Instagram"}], True),
+        # another app's name describes the side
+        ('PETROV called the Telegram user "Marc Garage," user ID 49800011122, on Instagram.',
+         ["PETROV"], [{"as_written": "49800011122", "app": "Instagram"}], False),
+        # a person, not an account, described as an app's user
+        ("PETROV called the Instagram user REYES.", ["PETROV", "REYES"], [], False),
+        # other words describe the side
+        ('PETROV called the old Instagram user "Marc Garage."', ["PETROV"], NAMED, False),
+    ],
+)  # fmt: skip
+def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(
+    conn: sqlite3.Connection,
+    words: str,
+    people: list[str],
+    accounts: list[dict[str, str]],
+    form: bool,
+) -> None:
+    _add_instagram(conn)
+    text = f"{IG_AT} {words}"
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    read = f.call_form(claim(text), "Instagram")
+    # the parser's own refusals leave the clause unread; the id case is read as one side
+    if form:
+        assert read is not None and read.one_account, read
+    else:
+        assert read is None, read
+    made, f = fill(conn, text, people=people, accounts=accounts,
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    # the proposal itself is kept (its time is checked), so only the caller guard is tested
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made
+
+
 @pytest.mark.parametrize(
     "words",
     [
-        # the id is another account than the name: two parties, not one side
-        'PETROV called the Instagram user "Marc Garage," user ID 49800099999.',
-        # another app's name describes the side
-        'PETROV called the Telegram user "Marc Garage," user ID 49800011122.',
-        # a person, not an account, described as an app's user
-        "PETROV called the Instagram user REYES.",
-        # other words describe the side
-        'PETROV called the old Instagram user "Marc Garage."',
+        'PETROV called "Marc Garage," user ID 49800011122) on Instagram.',
+        'PETROV called "Marc Garage" (user ID 49800011122 on Instagram.',
+        'PETROV called the Instagram user "Marc Garage" (user ID 49800011122.',
     ],
 )
-def test_a_description_or_id_that_is_not_the_one_account_names_no_caller(conn, words):
-    made, _ = ig_fill(conn, words)
+def test_an_id_in_unbalanced_brackets_names_no_caller(conn: sqlite3.Connection, words: str) -> None:
+    made, f = ig_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
     assert "caller" not in made
+
+
+SHORT_IG = "acct:item1:Instagram:lena"
+LENA = [{"as_written": "Lena Okafor", "app": "Instagram"}]
+
+
+def short_fill(conn: sqlite3.Connection, words: str) -> tuple[dict, LocalAssumptionFiller]:
+    # "Lena Okafor" holds the short username lena; the phone called her at 9:00 p.m. as well.
+    c = conn
+    c.execute("PRAGMA foreign_keys = OFF")
+    c.execute(
+        "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'Instagram', 'lena',"
+        " 'Lena Okafor')",
+        (SHORT_IG, SHORT_IG),
+    )
+    c.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:ig:lena', 'item1', 'c:ig:lena', 'dev:item1',"
+        " 'Instagram', NULL, ?, 'outgoing', '2026-06-16T01:00:00Z', 0, NULL, 60, 0)",
+        (SHORT_IG,),
+    )
+    return fill(conn, f"{IG_AT} {words}", people=["PETROV"], accounts=LENA,
+                channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the Instagram user "Lena Okafor" username lena.',
+        'PETROV called the Instagram user "Lena Okafor" (username: lena).',
+    ],
+)
+def test_a_short_username_is_read_after_its_label(conn: sqlite3.Connection, words: str) -> None:
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.account_ids) == [SHORT_IG]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the Instagram user "Lena Okafor" lena.',  # no label: a plain word
+        'PETROV called the Instagram user "Lena Okafor" username Lena.',  # not the identifier
+    ],
+)
+def test_a_short_username_without_its_label_names_no_caller(
+    conn: sqlite3.Connection, words: str
+) -> None:
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made
+    _, tokens = f._party_tokens(f"{IG_AT} {words}", "Instagram")
+    assert ("acct", "lena") not in tokens.values()  # an unlabelled short word is no party
+
+
+def test_a_short_username_of_another_account_names_no_caller(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO accounts VALUES ('acct:item1:Instagram:zoe1', 'item1',"
+        " 'acct:item1:Instagram:zoe1', NULL, 'Instagram', 'zoe1', 'Zoe Brandt')"
+    )
+    # the name is Lena's account and the id is Zoe's: two accounts, so no caller is read
+    words = 'PETROV called the Instagram user "Lena Okafor" username zoe1.'
+    made, f = short_fill(conn, words)
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made
+
+
+def test_an_identifier_that_begins_with_id_is_read_as_written(conn: sqlite3.Connection) -> None:
+    acc = "acct:item1:Instagram:id42"
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'Instagram', 'id42',"
+        " 'Ivy Dunmore')",
+        (acc, acc),
+    )
+    conn.execute(  # an account "42": "id42" must never be read as it
+        "INSERT OR IGNORE INTO accounts VALUES ('acct:item1:Instagram:42', 'item1',"
+        " 'acct:item1:Instagram:42', NULL, 'Instagram', '42', 'Forty Two')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:ig:ivy', 'item1', 'c:ig:ivy', 'dev:item1',"
+        " 'Instagram', NULL, ?, 'outgoing', '2026-06-16T01:00:00Z', 0, NULL, 60, 0)",
+        (acc,),
+    )
+    made, f = fill(conn, f'{IG_AT} PETROV called the Instagram user "Ivy Dunmore" username id42.',
+                   people=["PETROV"], accounts=[{"as_written": "Ivy Dunmore", "app": "Instagram"}],
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.account_ids) == [acc], [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+def _parse(conn: sqlite3.Connection, words: str, app: str = "Instagram") -> CallForm | None:
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    return f.call_form(claim(f"{IG_AT} {words}"), app)
+
+
+def test_a_stated_length_after_the_id_is_read(conn: sqlite3.Connection) -> None:
+    _add_instagram(conn)
+    read = _parse(
+        conn,
+        'PETROV called the Instagram user "Marc Garage," user ID 49800011122, '
+        "that lasted about one minute.",
+    )
+    assert read is not None and read.one_account and read.length == "about one minute", read
+
+
+def test_the_app_tail_takes_the_app_s_alias(conn: sqlite3.Connection) -> None:
+    read = _parse(conn, 'PETROV called the Teams user "Ann Vole" on Teams.', "Microsoft Teams")
+    assert read is not None and read.caller == "a", read
+
+
+def test_an_id_touching_its_label_s_colon_gets_a_caller(conn: sqlite3.Connection) -> None:
+    made, f = ig_fill(conn, 'PETROV called the Instagram user "Marc Garage," user ID:49800011122.')
+    assert list(made["caller"].params.account_ids) == [GARAGE_IG], [d.reason for d in f.drops]
+
+
+def test_a_written_id_keeps_no_label_the_id_tail_reads(conn: sqlite3.Connection) -> None:
+    short_fill(conn, 'PETROV called the Instagram user "Lena Okafor" username lena.')
+    _add_instagram(conn)  # before the filler reads its accounts
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    for written in ("username lena", "user name: lena"):
+        acc = _Account(as_written=written, app="Instagram")
+        assert f._accounts(acc, ["dev:item1"]) == {SHORT_IG}, written
+    for written in ("user ID number 49800011122", "ID number: 49800011122"):
+        # every label the id tail reads (`_ID_LABEL`), "number" after it included
+        acc = _Account(as_written=written, app="Instagram")
+        assert f._accounts(acc, ["dev:item1"]) == {GARAGE_IG}, written
+
+
+@pytest.mark.parametrize(
+    "ident",
+    [
+        "username:lena.2",
+        "username lena.2",
+        "username lena:x",
+        "username lena..2",
+        "username lena.-x",
+    ],
+)
+def test_an_id_that_only_begins_with_a_known_id_names_no_caller(
+    conn: sqlite3.Connection, ident: str
+) -> None:
+    made, f = short_fill(conn, f'PETROV called the Instagram user "Lena Okafor" {ident}.')
+    assert "record_time" in made, [d.reason for d in f.drops]
+    assert "caller" not in made  # lena.2 is not lena
+
+
+# One WhatsApp number held under two keys, its display name on one of them (ruling R6: one party).
+DUNN_WA = ["acct:item1:WhatsApp:+19195550142", "acct:item1:WhatsApp:19195550142@s.whatsapp.net"]
+
+
+def test_a_name_and_its_number_held_under_two_keys_get_a_caller(conn: sqlite3.Connection) -> None:
+    c = conn
+    c.execute("PRAGMA foreign_keys = OFF")
+    for acc, name in [(DUNN_WA[0], "Owen Dunn"), (DUNN_WA[1], None)]:
+        c.execute(
+            "INSERT OR IGNORE INTO accounts VALUES (?, 'item1', ?, NULL, 'WhatsApp', ?, ?)",
+            (acc, acc, acc.split(":", 3)[3], name),
+        )
+    c.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:wa:dunn', 'item1', 'c:wa:dunn', 'dev:item1',"
+        " 'WhatsApp', NULL, ?, 'outgoing', '2026-06-21T01:00:00Z', 0, NULL, 60, 0)",
+        (DUNN_WA[1],),
+    )
+    made, f = fill(
+        conn,
+        'On June 20, 2026, at about 9:00 p.m. EDT, PETROV called the WhatsApp user "Owen Dunn,"'
+        " ID +1 919 555 0142.",
+        people=["PETROV"],
+        accounts=[{"as_written": "+1 919 555 0142", "app": "WhatsApp"}],
+        channels=["call", "WhatsApp"],
+        window=W("June 20, 2026", "2026-06-20T20:52", "2026-06-20T21:09"),
+    )
+    assert "record_time" in made, [d.reason for d in f.drops]
+    a = made["caller"]
+    assert sorted(a.params.account_ids) == sorted(DUNN_WA), [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS

@@ -45,8 +45,10 @@ FORMATS: dict[str, tuple[str, str]] = {
     "cellebrite_excel": ("Cellebrite Excel export", "version"),
     "cellebrite_pdf": ("Cellebrite PDF report", "version"),
     "axiom": ("Magnet AXIOM report", "version"),
+    "leapp": ("iLEAPP or ALEAPP output", "version"),
 }
 _AXIOM_FORMATS = {"xml": "Magnet AXIOM XML report", "xlsx": "Magnet AXIOM Excel report"}
+_LEAPP_FORMATS = {"iLEAPP": "iLEAPP output", "ALEAPP": "ALEAPP output"}
 
 # record id prefix -> the query for the record's source (core/enrich/records.py, the importers)
 _RECORD_SOURCE = {
@@ -106,6 +108,8 @@ def format_name(importer: str, axiom_format: str | None = None) -> tuple[str, st
     name, kind = FORMATS.get(importer, (importer, "version"))
     if importer == "axiom" and axiom_format in _AXIOM_FORMATS:
         name = _AXIOM_FORMATS[axiom_format]
+    if importer == "leapp" and axiom_format in _LEAPP_FORMATS:
+        name = _LEAPP_FORMATS[axiom_format]
     return name, kind
 
 
@@ -151,6 +155,9 @@ def for_source(conn: sqlite3.Connection, source_id: str) -> FormatCheck | None:
         stated = _stated(importer, payload, tool_version)
     ax = payload.get("axiom")
     axiom_format = ax.get("format") if isinstance(ax, dict) else None
+    lp = payload.get("leapp")
+    if isinstance(lp, dict):
+        axiom_format = lp.get("leapp_name")
     return at_import(importer, source_id, str(file_name), stated, axiom_format)
 
 

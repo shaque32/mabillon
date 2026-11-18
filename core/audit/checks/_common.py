@@ -25,7 +25,7 @@ from core.contracts import (
     check_id,
 )
 from core.ingest import forwarded as forwarded_records
-from core.ingest.cellebrite_common import NUMBERED_COPIES_KEY
+from core.ingest.cellebrite_common import APPS_READ_KEY, NUMBERED_COPIES_KEY
 from core.zones import device_zones, resolve_zone
 
 # Accounts are matched across phones by (namespace, identifier). SMS and phone calls share a
@@ -92,6 +92,20 @@ class Account:
         return self.device_id is not None
 
 
+def apps_read_in_full(conn: sqlite3.Connection) -> dict[str, frozenset[str]]:
+    """Source id -> the apps (lowercase) whose records it read in full, for each source that
+    imported only some apps (APPS_READ_KEY). A source missing here read every app it holds."""
+    out: dict[str, frozenset[str]] = {}
+    for sid, payload_json in conn.execute("SELECT source_id, payload_json FROM source_coverage"):
+        try:
+            apps = json.loads(payload_json).get(APPS_READ_KEY)
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if isinstance(apps, list):
+            out[sid] = frozenset(str(a).strip().lower() for a in apps)
+    return out
+
+
 def numbered_copies(conn: sqlite3.Connection) -> set[str]:
     """Every message id an import listed as numbered by the tool as a copy of another row."""
     out: set[str] = set()
@@ -136,6 +150,10 @@ class CaseData:
         # twice, so no count may pass or fail on them
         self.numbered_copies: set[str] = (
             numbered_copies(conn) if "source_coverage" in tables else set()
+        )
+        # source id -> the apps it read in full, for a source that read only some apps
+        self.apps_read: dict[str, frozenset[str]] = (
+            apps_read_in_full(conn) if "source_coverage" in tables else {}
         )
         self.has_sender_raw = any(
             r[1] == "sender_raw" for r in conn.execute("PRAGMA table_info(messages)")
@@ -403,6 +421,71 @@ def messages_for_accounts(data: CaseData, account_ids: set[str]) -> list[Row]:
         + " WHERE (m.sender_account_id IN (SELECT value FROM json_each(?))"  # noqa: S608  (constant SQL; values are bound)
         " OR m.id IN (SELECT r.message_id FROM message_recipients r"
         "  WHERE r.account_id IN (SELECT value FROM json_each(?))))"
+        f" AND {NOT_COPY} ORDER BY m.id",
+        (ids, ids),
+    )
+    return [_message_row(r) for r in rows]
+
+
+def incomplete(row: Row) -> bool:
+    """True when the row records no sender or no receiver: it may be contact between any two
+    parties, so a check never treats it as no contact (LEAPP names the other side of a phone's
+    message or call but often not the phone's own line, and a chat app's rows name a sender
+    only)."""
+    return row.sender is None or not row.recipients
+
+
+def may_be_between(row: Row, a: set[str], b: set[str]) -> bool:
+    """True when a row that names no sender or no receiver (`incomplete`) may still be a
+    message or call between a side in `a` and one in `b`: its known sender is on one side, or
+    it has none and its known receivers, if any, include a side."""
+    if row.sender is not None:
+        return row.sender in a or row.sender in b
+    recips = set(row.recipients)
+    return not recips or bool(recips & (a | b))
+
+
+def apps_not_read(data: CaseData, source_id: str, apps: set[str]) -> str | None:
+    """Why the source cannot hold every record on the named apps (lowercase; every app when
+    empty), when it read only some apps in full (APPS_READ_KEY); None when it can."""
+    read = data.apps_read.get(source_id)
+    if read is None:
+        return None
+    if not apps:
+        return (
+            f"{source_id} holds the records of only some apps ({', '.join(sorted(read)) or 'none'}"
+            "), so records on any other app were not counted"
+        )
+    missing = sorted(apps - read)
+    if missing:
+        return (
+            f"{source_id} did not read every {', '.join(missing)} record (only some apps' "
+            "records were imported from it), so some may not have been counted"
+        )
+    return None
+
+
+def incomplete_beside(data: CaseData, account_ids: set[str]) -> list[Row]:
+    """Every message with no sender or no receiver in a chat that holds a message an account in
+    the set sent or received: a phone's own message in that chat often names neither side. Also
+    every message in a chat where no message names any side (such as an iOS chat whose rows do
+    not say who sent them): nothing places it, so it may be between anyone (CodeRabbit on #264).
+    """
+    if not account_ids:
+        return []
+    ids = json.dumps(sorted(account_ids))
+    rows = data.conn.execute(
+        _MSG_SQL  # noqa: S608  (constant SQL; values are bound)
+        + " WHERE ((m.thread_id IN"  # noqa: S608  (constant SQL; values are bound)
+        " (SELECT x.thread_id FROM messages x"
+        "  WHERE x.sender_account_id IN (SELECT value FROM json_each(?))"
+        "  OR x.id IN (SELECT r.message_id FROM message_recipients r"
+        "   WHERE r.account_id IN (SELECT value FROM json_each(?))))"
+        " AND (m.sender_account_id IS NULL"
+        "  OR NOT EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = m.id)))"
+        " OR NOT EXISTS (SELECT 1 FROM messages x WHERE x.thread_id = m.thread_id"
+        "  AND (x.sender_account_id IS NOT NULL"
+        "   OR EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = x.id))))"
         f" AND {NOT_COPY} ORDER BY m.id",
         (ids, ids),
     )

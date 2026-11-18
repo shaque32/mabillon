@@ -19,7 +19,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Bump on every change to this file or core/schema.sql. pipeline_runs records it.
-CONTRACTS_VERSION = "0.8.0"
+CONTRACTS_VERSION = "0.9.0"
 
 # ---------------------------------------------------------------- enums
 
@@ -71,6 +71,7 @@ class SourceKind(StrEnum):
     CELLEBRITE_PDF = "cellebrite_pdf"
     CELLEBRITE_HTML = "cellebrite_html"
     AXIOM = "axiom"
+    LEAPP = "leapp"  # iLEAPP or ALEAPP output (the LAVA manifest and database)
     RAW_ZIP = "raw_zip"
     GOVDOC = "govdoc"
     SYNTHETIC = "synthetic"
