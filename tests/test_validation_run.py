@@ -934,10 +934,12 @@ def test_a_resume_stops_when_case_db_holds_another_import(tmp_path):
         hickman_run.main(args)
 
 
-def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path):
-    # Two builds of one package under one phone name, with other claims: the second build's
-    # case.db restored into the first's output passes the phone check, but holds the affidavit
-    # of other claims, so the resume stops (CodeRabbit on #269).
+@pytest.mark.parametrize("change", ["text", "claim_id", "zone"])
+def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path, change):
+    # Two builds of one package under one phone name that differ in a claim's text, only in
+    # a claim id, or only in the zone given: the second build's case.db restored into the
+    # first's output passes the phone check, but is not the case built.ok records, so the
+    # resume stops (CodeRabbit on #269).
     import shutil
 
     from eval.synthetic.leapp import Lava
@@ -950,19 +952,24 @@ def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path):
     zipped = lv.write_zip(tmp_path / "item1.zip")
     other = tmp_path / "other"
     other.mkdir()
-    other_claims = _claims(other, [{**CLAIMS[0], "text": CLAIMS[0]["text"] + " again"}])
+    row = {**CLAIMS[0]}
+    if change == "text":
+        row["text"] = row["text"].replace("Signal", "WhatsApp")
+    elif change == "claim_id":
+        row["claim_id"] = "C99"
+    other_claims = _claims(other, [row, *CLAIMS[1:]]) if change != "zone" else _claims(other)
 
-    def args(claims: Path, out: str) -> list[str]:
+    def args(claims: Path, out: str, zone: str) -> list[str]:
         return ["--phone", f"item1={zipped}", "--claims", str(claims), "--out",
-                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+                str(tmp_path / out), "--fake", "--phone-zone", zone]  # fmt: skip
 
-    first = args(_claims(tmp_path), "a")
+    first = args(_claims(tmp_path), "a", "America/New_York")
+    zone_b = "America/Chicago" if change == "zone" else "America/New_York"
     assert hickman_run.main(first) == 0
-    assert hickman_run.main(args(other_claims, "b")) == 0
-    built = json.loads((tmp_path / "a" / "built.ok").read_text(encoding="utf-8"))
-    assert [sid for sid, _ in built["sources"]][:1] == ["item1"]  # the phone, then the affidavit
+    assert hickman_run.main(args(other_claims, "b", zone_b)) == 0
+    assert hickman_run.main(first) == 0  # its own case.db resumes
     shutil.copy(tmp_path / "b" / "case.db", tmp_path / "a" / "case.db")
-    with pytest.raises(SystemExit, match=r"case.db holds other sources than built.ok records"):
+    with pytest.raises(SystemExit, match=r"case.db is not the case built.ok records"):
         hickman_run.main(first)
 
 

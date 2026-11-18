@@ -84,16 +84,32 @@ RESULT_FILES = ("case.db", "run.json", "report.html", "progress.log")
 # How build() sets the case up. A case built by an earlier setup is not resumed: run 1's case
 # (setup 1) had no phone name and no SUBJECT-2; run 2's (setup 2) had no account for SUBJECT-2;
 # setup 3 (v4) held one phone and did not record what its import read (setup 4 records each);
-# setup 4 did not record the case's sources, so a case.db restored from another build of the
-# same packages with other claims could not be told apart (setup 5 does; CodeRabbit on #269).
+# setup 4 did not tie the case.db to its build, so a case.db restored from another build of the
+# same packages (other claims, ids, types or zones) could not be told apart (setup 5 does, by a
+# build id in both built.ok and the case's audit log; CodeRabbit on #269).
 SETUP = 5
+BUILD_ACTION = "validation.build"
 
 
-def case_sources(conn) -> list[list[str]]:  # noqa: ANN001
-    """Every source the case holds, as [id, SHA-256]: each phone package and the rendered
-    affidavit (its claims). built.ok records them, and a resume refuses a case.db that holds
-    others: one restored from another build of the same packages with other claims."""
-    return [[r[0], r[1]] for r in conn.execute("SELECT id, sha256 FROM sources ORDER BY id")]
+def stamp_build(conn) -> str:  # noqa: ANN001
+    """Write a new build id to the case's audit log and return it, for built.ok to record."""
+    import uuid
+
+    from core.review import audit_log
+
+    build_id = uuid.uuid4().hex
+    audit_log.append(conn, datetime.now(UTC), ACTOR, BUILD_ACTION, {"build_id": build_id})
+    conn.commit()
+    return build_id
+
+
+def stamped_build(conn) -> str | None:  # noqa: ANN001
+    """The build id the case's audit log holds (the last one written), or None."""
+    row = conn.execute(
+        "SELECT payload_json FROM audit_log WHERE action = ? ORDER BY seq DESC LIMIT 1",
+        (BUILD_ACTION,),
+    ).fetchone()
+    return json.loads(row[0]).get("build_id") if row else None
 
 
 def sha256_file(path: Path) -> str:
@@ -935,13 +951,12 @@ def main(argv: list[str] | None = None) -> int:
                         f" records ({p['file']} {p['sha256']}); restore the case.db it was built"
                         " with, or use a new --out"
                     )
-            # ...and no other source: the affidavit rendered from other claims, from another
-            # build of the same packages, is refused too (CodeRabbit on #269)
-            if case_sources(conn) != was.get("sources"):
+            # ...and is this very build's: another build of the same packages may hold other
+            # claims, claim ids or types, or zones, none of which the sources show (CodeRabbit)
+            if stamped_build(conn) != was.get("build_id"):
                 raise SystemExit(
-                    f"{a.out}/case.db holds other sources than built.ok records (another"
-                    " build's case, or other claims); restore the case.db it was built with,"
-                    " or use a new --out"
+                    f"{a.out}/case.db is not the case built.ok records (another build's case.db);"
+                    " restore the case.db it was built with, or use a new --out"
                 )
             checks = [
                 (p["source_id"], *call_log_check(conn, p["source_id"], p.get("importer")))
@@ -972,7 +987,7 @@ def main(argv: list[str] | None = None) -> int:
         imported = build(phones, claims, a.out, log, defined)
         conn = connect(a.out / "case.db")
         try:
-            sources = case_sources(conn)
+            build_id = stamp_build(conn)
         finally:
             conn.close()
         inputs = {
@@ -981,7 +996,7 @@ def main(argv: list[str] | None = None) -> int:
             "setup": SETUP,
             **setup,
             "imported": imported,
-            "sources": sources,
+            "build_id": build_id,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
