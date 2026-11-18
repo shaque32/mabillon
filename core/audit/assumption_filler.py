@@ -3386,13 +3386,13 @@ class LocalAssumptionFiller:
         lengths: list[str] = []
         if "length" in tests:
             cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
-        else:
-            # "over one hour", "an hour after the call": a length no row tests, whose words
-            # are each plain alone (CodeRabbit on #265)
-            for m in _UNTESTED_LENGTH_RE.finditer(_blank(bare, cut)):
-                w = " ".join(m.group(0).casefold().split())
-                if w not in lengths:
-                    lengths.append(w)
+        # "over one hour", "an hour after the call": a length no row tests, whose words are
+        # each plain alone; beside a tested length, what is left of it ("one minute and a
+        # quarter hour", where the row tests "one minute") (CodeRabbit on #265)
+        for m in _UNTESTED_LENGTH_RE.finditer(_blank(bare, cut)):
+            w = " ".join(m.group(0).casefold().split())
+            if w not in lengths:
+                lengths.append(w)
         phrases = _blank(bare, cut)
         # An account's or person's name in the case is read only where the claim writes it as
         # a name, not as a plain lower-case word: an account shown as "Photo" never hides
@@ -4597,11 +4597,32 @@ class LocalAssumptionFiller:
                     f"the claim names a text message and the case holds {len(phone_apps)} apps"
                     " of a phone's own messages, so no count or absence is read on one"
                 )
+        phone_named: list[str] = []
+        if apps and (words := _PHONE_APP_WORD_RE.findall(bare)):
+            # "on Telegram or SMS": a phone's own messages app written by name beside another
+            # app, which `_named_apps` leaves out. Its rows search the phone apps that word
+            # names too, and no count or absence reads the mix (CodeRabbit on #265).
+            kinds = {"imessage" if "imessage" in w.casefold().replace("-", "") else "sms"
+                     for w in words}  # fmt: skip
+            phone_named = [
+                a
+                for a in self._phone_message_apps()
+                if a.strip().casefold() in WIDER_APPS
+                or ("imessage" if "imessage" in a.casefold() else "sms") in kinds
+            ]
+            if not phone_named:
+                raise Reject("the claim also names a phone's own messages app the case lacks")
+            if any(out[i].template_id in WHOLE_APP_TEMPLATES for i in app_rows):
+                raise Reject(
+                    "the claim names a phone's own messages app beside another app, so no"
+                    " count or absence is read"
+                )
         rows = [i for i in app_rows if not out[i].params.get("channels")]
         if not rows:
             return out
         if apps:
-            found = apps  # "texted REYES on Telegram": the app the claim names
+            # "texted REYES on Telegram": the app the claim names
+            found = list(dict.fromkeys([*apps, *phone_named]))
         elif texty:
             # every app of a phone's own messages, as for a code-made sender ("texted" may be
             # SMS or iMessage; `_message_apps`, Codex on #164); a count or an absence reads one
@@ -5421,7 +5442,33 @@ class LocalAssumptionFiller:
             except Reject:
                 continue
             named.append(app)
-        return named
+        return self._longest_mentions(words, named)
+
+    @staticmethod
+    def _app_mentions(text: str, app: str) -> list[tuple[int, int]]:
+        """Where the words write the app by its name or a short name (APP_ALIASES)."""
+        return [
+            m.span()
+            for n in (app, *APP_ALIASES.get(app.casefold(), ()))
+            for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", text, re.IGNORECASE)
+        ]
+
+    def _longest_mentions(self, text: str, apps: list[str]) -> list[str]:
+        """The apps less any whose every mention sits inside a longer named app's mention:
+        "Facebook Messenger" names one app, not Facebook beside it, while "Facebook and
+        Facebook Messenger" keeps both (CodeRabbit on #265). An app found but never written
+        literally is kept."""
+        spans = {a: self._app_mentions(text, a) for a in apps}
+
+        def inside(st: int, en: int, app: str) -> bool:
+            return any(
+                a <= st and en <= b and (a, b) != (st, en)
+                for other in apps
+                if other != app
+                for a, b in spans[other]
+            )
+
+        return [a for a in apps if not spans[a] or not all(inside(*sp, a) for sp in spans[a])]
 
     def _call_app(self, claim_text: str, channels: list[str]) -> str:
         """The one app the claim names for a call ("a Signal call"), which any app the

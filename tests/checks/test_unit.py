@@ -765,6 +765,30 @@ def test_a_count_of_one_sides_messages_reads_look_alikes_on_rows_with_no_receive
     assert r.outcome is CheckOutcome.FAIL, r.detail
 
 
+def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None:
+    # Ay's "ok" to Bee, Bee's "ok" a second later to no one named, and Bee's "sure": "they
+    # exchanged at least 2" passed, though both "ok" rows may be Bee's message and Ay sent
+    # none (CodeRabbit on #265). Bee's row is never counted; it is read for look-alikes and
+    # cited. With other words in it, a message each way stands.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute("UPDATE messages SET body = 'sure' WHERE id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:8", "a:p1:b")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:8'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, each_way=True)
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "an expert must decide" in r.detail
+    assert "msg:p1:8" in r.record_ids
+    conn.execute("UPDATE messages SET body = 'fine' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
 @pytest.mark.parametrize(
     "extra",
     [

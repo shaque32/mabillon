@@ -34,8 +34,9 @@
     and each mention is read as the longest app name written there ("Facebook Messenger" is
     one app). A reply ("replied", "wrote back") is plain only when it is the quoted message;
     ", and REYES replied" after the quote states a second message no row tests and gets the
-    event. "Answered" is plain only beside a row that tests a call's length (CodeRabbit on
-    #265).
+    event. "Answered" is plain only beside a row that tests a call's length, and a length a
+    row does not test is read beside one it tests ("one minute and a quarter hour")
+    (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -47,11 +48,15 @@
     guard runs on every app row, also those the model scoped; it knows messaging, social and
     mail apps beyond the calling apps ("no contact on TikTok"), reads a short name of a held
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
-    picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, while "by phone"
+    picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, and an app
+    written only inside a longer app's name as no app ("Facebook Messenger" binds no
+    Facebook), while "by phone"
     is still one kind of contact on a case with a phone named "Phone" (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
-    alone (Claude review and CodeRabbit on #265). Before, "wrote on
+    alone (Claude review and CodeRabbit on #265). A phone's own messages app written by name
+    beside another app ("on Telegram or SMS") is searched too, on the case's apps that word
+    names, and no count or absence reads the mix (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
@@ -76,7 +81,9 @@
     apart is held open: both rows may be B's message. A count of one side's messages also reads
     look-alikes beside rows that name no receiver, so "A sent exactly 1" over A's "ok" and "hi"
     no longer fails when B's "ok" a second later names no receiver; the other side's rows that
-    hold such a count open are cited beside the counted rows (CodeRabbit on #265).
+    hold such a count open are cited beside the counted rows. A message each way reads those
+    rows too, so "exchanged at least 2" over A's "ok", B's "ok" a second later to no one
+    named, and B's "sure" is held open, and B's row is cited (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without

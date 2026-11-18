@@ -3783,7 +3783,9 @@ def test_a_spoken_length_no_row_tests_is_read(conn, tail):
         f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more by friday".'
     )
     assert filler.unread_words(text)
-    if "after" not in tail:  # "after the call" is read by a row that tests a call
+    if "after" not in tail and "quarter" not in tail:
+        # "after the call" is read by a row that tests a call; a quarter hour is no length a
+        # row tests (`duration_range` reads none), so it stays unread beside one
         assert filler.unread_words(text, (), {"length"}) == []
     made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert "event" in {a.template_id for a in made}
@@ -3939,3 +3941,65 @@ def test_an_answered_call_is_plain_only_beside_a_tested_length(conn):
     text = "At 7:58 p.m. on March 9, 2026, PETROV placed a call to REYES that was answered."
     assert filler.unread_words(text, (), {"call", "length"}) == []
     assert filler.unread_words(text, (), {"call"}) == ["answered"]
+
+
+def test_a_tested_length_does_not_hide_a_second_untested_one(conn):
+    # "one minute and a quarter hour": the row tests "one minute"; "a quarter hour" is left,
+    # and each of its words is plain alone (CodeRabbit on #265). "One minute" alone is read.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV called REYES for one minute{}."
+    assert filler.unread_words(text.format(""), (), {"call", "length"}) == []
+    assert filler.unread_words(text.format(" and a quarter hour"), (), {"call", "length"}) == [
+        "and a quarter hour"
+    ]
+
+
+def test_a_name_inside_a_longer_app_name_binds_no_second_app(tmp_path):
+    # "Telegram or Facebook Messenger" bound Facebook too, so a Facebook message could pass
+    # it (CodeRabbit on #265). A Facebook written apart is kept.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:fb', 'item1', 'x', 'dev:item1', 'Facebook', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'y', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert sorted(filler._named_apps(claim.format("Telegram or Facebook Messenger"))) == [
+        "Facebook Messenger",
+        "Telegram",
+    ]
+    assert sorted(filler._named_apps(claim.format("Facebook or Facebook Messenger"))) == [
+        "Facebook",
+        "Facebook Messenger",
+    ]
+    text = f"On March 12, 2026, {claim.format('Telegram or Facebook Messenger')}"
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Facebook Messenger"})
+    }
+
+
+def test_a_phone_app_named_beside_another_app_is_searched_too(tmp_path):
+    # "on Telegram or SMS" bound Telegram alone, as `_named_apps` leaves SMS out, so a count
+    # read Telegram only (CodeRabbit on #265). Message rows search SMS too; a count or an
+    # absence of the mix is refused; a case with no SMS refuses the claim.
+    c = _case_with(tmp_path)
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram or SMS: "need 2 more by friday".'
+    )
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    absence = (
+        "PETROV and REYES had no contact on Telegram or SMS between March 20 and March 23, 2026."
+    )
+    (prop,) = GOOD["C14"]
+    made, filler = build_text(c, absence, ClaimType.ABSENCE, [prop])
+    assert made == []
+    assert any("phone's own messages app beside" in d.reason for d in filler.drops)
+    c.execute("UPDATE threads SET app = 'Signal' WHERE app = 'SMS'")
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
