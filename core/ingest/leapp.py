@@ -188,8 +188,14 @@ class Lava:
     # calls stored with neither side, by app: no check finds them, so that app's calls are not
     # held in full
     calls_without_sides: Counter[str] = field(default_factory=Counter)
+    # rows of the phone's own call table that keep it from being held in full: stored with
+    # neither side (under whichever app the row names), or naming no package on ALEAPP
+    native_calls_not_held: int = 0
     # ALEAPP call log rows written by a package other than the phone's own telephony
     calls_from_other_packages: int = 0
+    # artifacts refused for their shape (ctx.failed): never read, never used as a copy source
+    refused: set[int] = field(default_factory=set)
+    _headers: dict[str, set[str]] = field(default_factory=dict, repr=False)
     # record kinds stored from a table read as another kind (a chat table's call notices)
     extra_kinds: set[RecordKind] = field(default_factory=set)
 
@@ -202,11 +208,11 @@ class Lava:
 
     def headers(self, art: Artifact) -> set[str]:
         """The artifact's columns, as LEAPP wrote their headers (none when the table is missing)."""
-        if not self.has_table(art):
-            return set()
-        quoted = art.table.replace(chr(34), chr(34) * 2)
-        cols = [r[1] for r in self.db.execute(f'PRAGMA table_info("{quoted}")')]
-        return {art.column_map.get(c, c) for c in cols}
+        if art.table not in self._headers:
+            quoted = art.table.replace(chr(34), chr(34) * 2)
+            cols = [r[1] for r in self.db.execute(f'PRAGMA table_info("{quoted}")')]
+            self._headers[art.table] = {art.column_map.get(c, c) for c in cols}
+        return self._headers[art.table]
 
     def rows(self, art: Artifact) -> Iterator[tuple[int, dict[str, Any]]]:
         """(rowid, {header as LEAPP wrote it: value}) for each row of the artifact's table; none
@@ -653,9 +659,9 @@ def _native_keys(c: _Ctx) -> dict[tuple[int, str, str], list[_Native]]:
         spec = SPECS.get((c.lava.leapp_name, art.key))
         if spec is None or not c.lava.has_table(art):
             continue
-        if not set(spec.required) <= c.lava.headers(art):
-            # a table refused for its columns is not imported, so it never stands for a copy
-            # (CodeRabbit on #268)
+        if id(art) in c.lava.refused or not set(spec.required) <= c.lava.headers(art):
+            # a table refused is not imported, so it never stands for a copy (CodeRabbit and
+            # Claude review on #268); the column test covers a table read after this one
             continue
         if art.key == "get_sms_mms":
             for rowid, r in c.lava.rows(art):
@@ -1058,9 +1064,12 @@ def _chat_messages(c: _Ctx) -> None:
             sender = None
         recovered = bool(spec.live) and _text(r.get(spec.live[0])) != spec.live[1]
         text = str(r.get(h_text) or "")
-        if spec.call_notices and _CALL_NOTICE_FORM.match(text):
-            _call_notice(c, spec.app, loc, text, direction, sender, recovered, r.get(h_time))
+        if spec.call_notices and (notice := _CALL_NOTICE_FORM.match(text)):
+            _call_notice(c, spec.app, loc, notice, direction, sender, recovered, r.get(h_time))
             continue
+        if spec.call_notices and _CALL_NOTICE_LEAD.match(text):
+            c.flag("call_notice_shape_not_checked", loc)
+            c.lava.calls_without_sides[spec.app] += 1
         convo = _text(r.get(h_convo)) if h_convo else None
         chat_key = f"chat:{convo}" if convo else f"row:{loc}"
         title = (_text(r.get(h_label)) if h_label else None) or convo
@@ -1084,21 +1093,23 @@ def _chat_messages(c: _Ctx) -> None:
 # cannot be told from a notice.
 _CALL_NOTICE_FORM = re.compile(
     r"^\[Phone call \(call id -?\d+"
-    r"(?:, outcome (?:missed|disconnected|hung up|busy|unknown))?"
-    r"(?:, duration seconds -?\d+)?\)\]$"
+    r"(?:, outcome (?P<outcome>missed|disconnected|hung up|busy|unknown))?"
+    r"(?:, duration seconds (?P<seconds>-?\d+))?\)\]$"
 )
-# ALEAPP Telegram's call notice; on the public Android 13 phone each one matched a UFDR Telegram
-# call on time, direction, caller and length.
-_CALL_NOTICE_RE = re.compile(
-    r"^\[Phone call \(call id -?\d+, outcome hung up, duration seconds (\d+)\)\]$"
-)
+# Text that opens like a notice: one not in the whole form above is kept as a message, flagged,
+# and keeps the app's calls from being held in full (Claude review on #268).
+_CALL_NOTICE_LEAD = re.compile(r"^\[Phone call \(call id -?\d+\b")
+# Only a notice of a call that was answered and hung up, with its length, was checked: on the
+# public Android 13 phone each one matched a UFDR Telegram call on time, direction, caller and
+# length.
+_CHECKED_OUTCOME = "hung up"
 
 
 def _call_notice(
     c: _Ctx,
     app: str,
     loc: str,
-    text: str,
+    notice: re.Match[str],
     direction: MessageDirection,
     sender: Party | None,
     recovered: bool,
@@ -1108,15 +1119,17 @@ def _call_notice(
     live notice of a call that was answered and hung up, in a stated direction, keeps its sides:
     the sender places the call. Any other notice is stored with no sides and flagged, so the
     app's calls are not held in full."""
-    m = _CALL_NOTICE_RE.match(text)
+    seconds = notice["seconds"]
+    checked = notice["outcome"] == _CHECKED_OUTCOME and seconds is not None
     kind = {MessageDirection.OUTGOING: CallDirection.OUTGOING,
             MessageDirection.INCOMING: CallDirection.INCOMING}.get(direction)  # fmt: skip
     frm: Party | None = sender
     if recovered:
         c.flag("recovered_record_may_repeat_another", loc)
         c.w.cov.numbered_copy_records.append(f"call:{c.w.src}:{loc}")
-    if m is None or kind is None or recovered or sender is None:
-        if m is None or kind is None:
+    if not checked or kind is None or recovered or sender is None:
+        if not checked:
+            # a notice with no direction is flagged direction_not_stated with the chat's rows
             c.flag("call_not_incoming_outgoing_or_missed", loc)
         elif sender is None and kind is CallDirection.OUTGOING:
             # an incoming one is flagged received_without_sender with the chat's rows
@@ -1125,7 +1138,7 @@ def _call_notice(
             c.w.account(app, sender, loc, f"row:{loc}")
         kind, frm = CallDirection.UNKNOWN, None
     c.flag("call_notice_read_as_call", loc)
-    length = int(m.group(1)) if m else None
+    length = int(seconds) if checked and seconds is not None else None
     _add_call(c, app, loc, frm, None, kind, _time(raw_time), length, None)
     c.lava.extra_kinds.add(RecordKind.CALLS)
 
@@ -1156,7 +1169,7 @@ def _add_call(
         if c.art.key in _NATIVE_CALL_KEYS:
             # whichever app the row names (CallKit providers on iOS): the phone's own call
             # table is then not held in full (Claude review on #268)
-            c.lava.calls_without_sides[_NATIVE_CALL_TABLE] += 1
+            c.lava.native_calls_not_held += 1
     w.calls.append(
         (f"call:{w.src}:{loc}", w.src, loc, w.dev, app, from_id, to_id, direction.value,
          *_ts_cols(ts), duration, _db_bool(deleted))
@@ -1242,6 +1255,8 @@ def _android_calls(c: _Ctx) -> None:
                 other_app = True
                 c.flag("call_placed_by_another_app", loc)
             else:
+                # kept as a phone call, but the call log is not held in full (Claude review)
+                c.lava.native_calls_not_held += 1
                 c.flag("call_package_not_stated", loc)
         frm, to = _call_sides(
             c, "unknown", loc, CallDirection.UNKNOWN if other_app else direction, other, owner
@@ -1637,9 +1652,6 @@ def _not_read(art: Artifact, why: str) -> dict[str, Any]:
 
 _NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
 _NATIVE_CALL_KEYS = {"callHistory", "get_calllog"}
-# The key that counts the phone's own call log's calls stored with neither side; the leading
-# space keeps it from ever matching an app name (Claude review on #268).
-_NATIVE_CALL_TABLE = " native call table"
 
 
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
@@ -1663,7 +1675,7 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     if (
         keys & _NATIVE_CALL_KEYS
         and not unread_keys & _NATIVE_CALL_KEYS
-        and not lava.calls_without_sides.get(_NATIVE_CALL_TABLE)
+        and not lava.native_calls_not_held
     ):
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
     if lava.leapp_name == "iLEAPP":
@@ -1821,7 +1833,8 @@ class LeappImporter:
                         spec.read(ctx)
                     if ctx.failed:
                         # listed only as not read, never as a table read with 0 rows
-                        cov.tables.remove(tc)
+                        cov.tables.pop()
+                        lava.refused.add(id(art))
                         cov.not_imported.append(_not_read(art, ctx.failed))
                         continue
                     done.append((spec, art))

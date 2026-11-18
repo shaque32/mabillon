@@ -146,8 +146,10 @@ Telegram's calls are not read in full. A placed call whose row names no sender i
 message, so a count over it is inconclusive. Only a row whose whole text has the form ALEAPP
 writes for a notice (`[Phone call (call id N)]`, with `, outcome ...` and `, duration seconds N`
 when the record holds them) is read as a call; other text that starts with `[Phone call` stays a
-message. The table marks no row as a notice, so a message typed in exactly that form cannot be
-told from one. On the Android 13 phone 2 of its 29 rows are recovered;
+message. A row that opens like a notice (`[Phone call (call id N`) but is not in that whole form,
+such as an outcome or field not seen, is kept as a message, flagged
+`call_notice_shape_not_checked`, and keeps Telegram's calls from being read in full. The table
+marks no row as a notice, so a message typed in exactly that form cannot be told from one. On the Android 13 phone 2 of its 29 rows are recovered;
 its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, caller and length; 23
 of the other 25 matched the UFDR with their sender, and 2 have no text.
 
@@ -200,7 +202,10 @@ the call log was not read or is not in the run, or any call log entry in the man
 records that were not read, no chat app counts as read in full. A row from another package is
 stored with neither side, so no check reads it as a phone call, and the call log then does not
 count as read in full either; a row that names no package keeps its sides, since a phone call
-can be written that way too. Calls stored from a chat table's call notices count among the
+can be written that way too, but the call log then does not count as read in full. ALEAPP's
+package is the part of the account's component before the slash; on the Samsung images in
+ALEAPP's own sample data it names a Samsung messaging app, so on such a phone every call would
+be stored with no sides until that value is checked against a UFDR. Calls stored from a chat table's call notices count among the
 kinds the import read. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
 WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
 

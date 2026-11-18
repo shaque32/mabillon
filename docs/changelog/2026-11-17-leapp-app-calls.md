@@ -8,13 +8,15 @@
   `get_telegramMessages` (no LEAPP conversation view, so Mabillon names its columns) and iLEAPP
   `snapchatMessages`. A row of either recovered from the database's free space or journal is
   flagged and listed as a possible copy, so a count over it is inconclusive. A Telegram row that
-  is a call notice is stored as a Telegram call, not a message. (3) Fail closed: a
+  is a call notice is stored as a Telegram call, not a message; one that only opens like a
+  notice is kept as a message, flagged, and keeps Telegram partial. (3) Fail closed: a
   table missing any column its reader uses (phone messages, calls, chat and call tables) is not
   read at all and is listed as not read, so a LEAPP version that renames a column is never read
   with that column empty. (4) Apps read in full: a call stored with neither side keeps its own
   app (not only the phone's call log) from being read in full, and any such row in the phone's
   own call table keeps the call log partial whichever app it names; on ALEAPP a call log row
-  written by another app's package (a VoIP call, stored with neither side) or naming no package,
+  written by another app's package (a VoIP call, stored with neither side) or naming no package
+  (kept as a phone call, but the call log is then partial),
   or a call log table that is missing, was not read, or has an entry holding records that were
   not read, keeps every chat app from being read in full; a chat
   app counts as read in full only when one of its chat tables and every call table listed for it
@@ -27,14 +29,15 @@
   the next held-out public test (`/mnt/project-files/baker/plans/leapp-chat-apps.md`); each
   table was added only after it matched Mabillon's UFDR import of the same development phone.
 - Where: PR #268
-- Verified: `tests/test_leapp.py` 77 tests (23 new: app calls on each platform, Telegram recovered
+- Verified: `tests/test_leapp.py` 79 tests (25 new: app calls on each platform, Telegram recovered
   rows and call notices, iLEAPP Snapchat with a recovered row, a call log row from another app, a
   length that is not a finite number, ALEAPP WhatsApp never read in full, an outgoing call with an
   unchecked Missed value, a refused SMS table never standing for a Google Messages copy, a run
   with no call log, an unread call log entry beside a read one, a missing column on a phone, chat
   and call table, text that only starts like a call notice, a recovered call notice, a placed
   notice with no sender, an iOS FaceTime row with no sides, a call log row with no package, a
-  chat app whose listed call table was not read). On the public development
+  chat app whose listed call table was not read, notices in a shape not checked, a notice with
+  no direction flagged once). On the public development
   phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development data, not a
   scored run): Android 13 WhatsApp, Viber and Line calls 4 of 4 each match the UFDR
   on time, direction and length, and on other party where LEAPP names one; iOS 15 WhatsApp calls
@@ -49,7 +52,10 @@
   calls would make such a list unsafe on its own. Other app call tables (Teams, Telegram VoIP
   logs, Facebook Messenger, Instagram, Signal) did not match the UFDR one to one and stay not
   imported. ALEAPP leaves `Caller JID` empty on outgoing WhatsApp calls, so those calls have no
-  sides. Format support stays unverified.
+  sides. Only `com.android.phone` was seen as a call log package (one Android 13 phone); any
+  other value, such as the Samsung messaging app ALEAPP's sample data shows, stores the call with
+  no sides, so such a phone's call log would show no phone calls until checked. Format support
+  stays unverified.
 - Affects: capabilities (more apps' calls and messages read from LEAPP output; fewer apps can
   show absence on iOS)
 - Status doc: pending: in "Importers (main)", the LEAPP line becomes "iLEAPP and ALEAPP output

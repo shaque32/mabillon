@@ -1322,6 +1322,40 @@ def test_a_message_that_only_starts_like_a_call_notice_stays_a_message(tmp_path:
         " WHERE t.app = 'Telegram' ORDER BY m.locator"
     ).fetchall()
     assert bodies == [(t,) for t in typed]
+    # Claude review on #268: one that opens like a notice is flagged and keeps Telegram partial
+    payload = coverage.load(conn, "and").payload
+    assert _telegram_flags(payload)["call_notice_shape_not_checked"] == 1
+    assert "Telegram" not in payload["apps_read_in_full"]
+
+
+def test_a_notice_in_a_shape_not_checked_stays_a_message_and_keeps_the_app_partial(
+    tmp_path: Path,
+) -> None:
+    # Claude review on #268: an outcome or field ALEAPP may write that was not checked.
+    lv = _android()
+    for text in (
+        "[Phone call (call id 77, outcome declined, duration seconds 0)]",
+        "[Phone call (call id 78, video, outcome hung up, duration seconds 40)]",
+    ):
+        _telegram(lv, text)
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert _calls(conn, "Telegram") == []
+    payload = coverage.load(conn, "and").payload
+    assert _telegram_flags(payload)["call_notice_shape_not_checked"] == 2
+    assert "Telegram" not in payload["apps_read_in_full"]
+
+
+def test_a_notice_with_no_direction_is_flagged_once(tmp_path: Path) -> None:
+    # Claude review on #268: direction_not_stated already says why it has no sides.
+    lv = _android()
+    _telegram(lv, "[Phone call (call id 638, outcome hung up, duration seconds 105)]",
+              direction="")  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    flags = _telegram_flags(coverage.load(conn, "and").payload)
+    assert flags["direction_not_stated"] == 1
+    assert "call_not_incoming_outgoing_or_missed" not in flags
 
 
 def test_a_recovered_call_notice_is_a_possible_copy(tmp_path: Path) -> None:
@@ -1369,11 +1403,17 @@ def test_a_call_log_row_naming_no_package_keeps_its_sides_and_is_flagged(
     # read in full, but it is kept as a phone call.
     lv = _android()
     _telegram(lv, "hi")
+    del lv.tables["get_calllog"][2:]  # the fixture's call with no direction
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "base.zip"), conn)
+    assert "unknown" in coverage.load(conn, "and").payload["apps_read_in_full"]
     lv.tables["get_calllog"][0] = {**lv.tables["get_calllog"][0], "Phone Account Package": None}
     conn = _db()
     LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
     payload = coverage.load(conn, "and").payload
     assert "Telegram" not in payload["apps_read_in_full"]
+    # nor is the call log itself held in full (Claude review on #268)
+    assert "unknown" not in payload["apps_read_in_full"]
     flags = {t["name"]: t for t in payload["tables"]}["Call logs "]["flag_counts"]
     assert flags["call_package_not_stated"] == 1
     assert "call_placed_by_another_app" not in flags

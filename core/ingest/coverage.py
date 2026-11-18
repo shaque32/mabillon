@@ -412,8 +412,14 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
     "call_package_not_stated": (
         "attention",
         "{n} {be} in the phone's call log with no app package named, so {them} may be another "
-        "app's calls; {them} {be} kept as phone calls, and no chat app's calls are treated as "
-        "read in full.",
+        "app's calls; {them} {be} kept as phone calls, and neither the call log nor any chat "
+        "app's calls are treated as read in full.",
+    ),
+    "call_notice_shape_not_checked": (
+        "attention",
+        "{n} open{s0} like a call notice in the app's chat but {be} not in the form checked "
+        "against a UFDR, so {them} {be} kept as messages, and the app's calls are not treated "
+        "as read in full.",
     ),
     "group_call_parties_not_read": (
         "attention",
