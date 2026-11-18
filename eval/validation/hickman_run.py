@@ -1245,11 +1245,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
             for name in RESULT_FILES:
-                src = a.out / (AUDITED if name == "case.db" else name)
-                if name == "case.db" and not src.exists():  # never a zip without the case
-                    raise SystemExit(f"{src} is missing; results.zip not published")
-                if src.exists():
-                    z.write(src, name)
+                if name == "case.db":  # always written, so a missing case stops the zip
+                    try:
+                        z.write(a.out / AUDITED, name)
+                    except FileNotFoundError as e:
+                        raise SystemExit(
+                            f"{a.out / AUDITED} is missing; results.zip not published"
+                        ) from e
+                elif (a.out / name).exists():
+                    z.write(a.out / name, name)
         part.replace(a.out / "results.zip")
     finally:
         part.unlink(missing_ok=True)
