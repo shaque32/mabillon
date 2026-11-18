@@ -689,17 +689,39 @@ def r2(db: Path, run: dict, mapped: list[GoldClaim], tested: list[str]) -> dict[
     }
 
 
-def _copy_db(results: Path, db: Path) -> dict[str, Any] | None:
-    """Copy the run's case.db out of results.zip (or as given) and return its run.json."""
-    if results.suffix == ".zip":
-        with zipfile.ZipFile(results) as z:
-            with z.open("case.db") as src, db.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-            if "run.json" in z.namelist():
-                return json.loads(z.read("run.json"))
-        return None
-    shutil.copyfile(results, db)
-    return None
+def _copy_db(results: Path, db: Path) -> dict[str, Any]:
+    """Copy the run's case.db out of results.zip and return its run.json.
+
+    Only a results.zip is scored: the driver publishes one only after its final check passed
+    on the case it audited, so a case.db on its own may hold a completed run the driver never
+    verified (one whose final check failed) and is refused (CodeRabbit on #269)."""
+    if results.suffix != ".zip":
+        raise SystemExit(
+            f"{results}: score the results.zip the run published, not a case.db on its own"
+        )
+    with zipfile.ZipFile(results) as z:
+        if "run.json" not in z.namelist():
+            raise SystemExit(f"{results} holds no run.json, so its audit cannot be confirmed")
+        with z.open("case.db") as src, db.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+        return json.loads(z.read("run.json"))
+
+
+def _published_run(conn: sqlite3.Connection, results: Path, record: dict[str, Any]) -> dict:
+    """The case's last completed audit, refused unless it is the one the run's run.json names
+    (the audit the driver checked before publishing)."""
+    from core import pipeline
+
+    run = pipeline.last_run(conn)
+    if run is None:
+        raise SystemExit(f"{results}: no completed audit in case.db")
+    named = (record.get("audit") or {}).get("run_id")
+    if named != run["run_id"]:
+        raise SystemExit(
+            f"{results}: run.json names audit {named}, but the case's last completed audit is"
+            f" {run['run_id']}; score only the results.zip the run published"
+        )
+    return run
 
 
 def r1_card(
@@ -726,11 +748,9 @@ def last_verdicts(results: Path, work: Path) -> dict[str, str]:
     from core.db import connect
 
     db = work / "repeat.db"
-    _copy_db(results, db)
+    record = _copy_db(results, db)
     conn = connect(db)
-    run = pipeline.last_run(conn)
-    if run is None:
-        raise SystemExit(f"{results}: no completed audit in case.db")
+    run = _published_run(conn, results, record)
     out = {}
     for claim_id in run["manifest"]:
         v = pipeline.load_verdict(conn, claim_id, run["run_id"])
@@ -825,7 +845,6 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
 def score(
     results: Path, keys: Path, dump: Path, out: Path, repeat_of: Path | None = None
 ) -> dict[str, Any]:
-    from core import pipeline
     from core.db import connect
 
     out.mkdir(parents=True, exist_ok=True)
@@ -835,9 +854,7 @@ def score(
     by_index, chats, dump_counts = load_dump(dump)
 
     conn = connect(db)
-    run = pipeline.last_run(conn)
-    if run is None:
-        raise SystemExit(f"{results}: no completed audit in case.db")
+    run = _published_run(conn, results, run_record)
     check_key_covers(conn, gold)
     mapped, mapping = map_keys(conn, gold, by_index, chats)
     r1 = r1_measures(conn, run, mapped)
@@ -1053,7 +1070,7 @@ def render(s: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--results", type=Path, required=True, help="results.zip, or a case.db")
+    ap.add_argument("--results", type=Path, required=True, help="the results.zip the run published")
     ap.add_argument("--keys", type=Path, required=True, help="the folder holding the keys")
     ap.add_argument("--dump", type=Path, required=True, help="the independent dump's folder")
     ap.add_argument("--out", type=Path, required=True)

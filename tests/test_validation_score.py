@@ -645,3 +645,24 @@ def test_an_open_core_assumption_is_one_no_check_or_item_settles():
     # inconclusive only, or no check and no supporting item; a context row never counts
     assert score_hickman._open_core(conn, manifest, "C", items) == ["a:inc", "a:none"]
     conn.close()
+
+
+def test_only_the_published_results_zip_is_scored(scored, tmp_path):
+    # CodeRabbit on #269: the driver publishes results.zip only after its final check passed,
+    # so a case.db on its own, or a zip whose case's last completed audit is not the one its
+    # run.json names, may hold an audit the driver never verified and is refused.
+    run, _ = scored
+    base = run.parent
+    with pytest.raises(SystemExit, match="not a case.db on its own"):
+        score_hickman.score(run / "case.db", base / "keys", base / "dump", tmp_path / "out")
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    record = json.loads(members["run.json"])
+    record["audit"]["run_id"] = "run:another"
+    members["run.json"] = json.dumps(record).encode()
+    other = tmp_path / "results.zip"
+    with zipfile.ZipFile(other, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    with pytest.raises(SystemExit, match="run.json names audit run:another"):
+        score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out2")

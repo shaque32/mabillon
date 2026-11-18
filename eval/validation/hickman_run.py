@@ -974,11 +974,12 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                 conn.commit()
             conn.execute("BEGIN")
             stop = case_stop(conn, built)
-        except Exception as e:
-            # the check itself failed (such as a database locked by another writer): the run
-            # was never verified, so it is stored as stopped where the database allows it
-            # (CodeRabbit on #269); if even that write fails, the run keeps the pipeline's
-            # completed status, and no audited.db, report or zip is made from it
+        except BaseException as e:
+            # the check itself failed or was interrupted (a database locked by another writer,
+            # Ctrl+C): the run was never verified, so it is stored as stopped where the database
+            # allows it (CodeRabbit on #269); if even that write fails, the run keeps the
+            # pipeline's completed status, but no audited.db, report or zip is made from it, and
+            # the scorer scores only a published results.zip whose run.json names the audit
             with suppress(sqlite3.Error):
                 unscored(f"the final check could not run, so it is not scored: {e}")
             raise

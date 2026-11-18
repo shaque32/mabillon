@@ -1580,10 +1580,19 @@ def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch)
     conn = sqlite3.connect(out / "case.db")
     try:
         assert pipeline.last_run(conn)["run_id"] == first
-        ((status, note),) = conn.execute(
-            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        ((rid, status, note),) = conn.execute(
+            "SELECT id, status, note FROM pipeline_runs"
+            " ORDER BY started_at_utc DESC, id DESC LIMIT 1"
         )
+        assert rid != first
         assert status == "stopped" and "final check could not run" in note
+        # its halt entry names the failure, and its finished claims stay for reuse
+        rows = conn.execute(
+            "SELECT payload_json FROM audit_log WHERE action = ?", (pipeline.HALT_ACTION,)
+        )
+        halts = [json.loads(p) for (p,) in rows]
+        assert any(h["run_id"] == rid and "final check could not run" in h["error"] for h in halts)
+        assert pipeline.finished_claims(conn, rid)
     finally:
         conn.close()
     assert not (out / hickman_run.AUDITED).exists()

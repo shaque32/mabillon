@@ -56,9 +56,14 @@
   the driver runs the same owner and call log checks once more on the same connection. An owner
   or call log change still in place at that moment marks the run stopped (with the reason in its note and a halt entry in the audit
   log), so `pipeline.last_run` and the scorer never take it as the case's completed audit, while
-  its finished claims stay reusable. A final check that itself fails (such as on a database
-  locked by another writer) stores the run as stopped too where the database allows that
-  write, and no `audited.db`, report or zip is made. The final check tests that the case still
+  its finished claims stay reusable. A final check that itself fails or is interrupted (such as
+  on a database locked by another writer, or Ctrl+C) stores the run as stopped too where the
+  database allows that write, and no `audited.db`, report or zip is made; if even that write
+  fails, the run keeps the pipeline's completed status in case.db. So the scorer
+  (`eval/validation/score_hickman.py`, version unchanged, no measure changed) now scores only
+  a results.zip, which the driver publishes only after the final check passed, and only when
+  the case's last completed audit is the one the zip's run.json names; a case.db on its own is
+  refused. The final check tests that the case still
   passes the gates, not that it equals what the audit read: a change made and reversed while
   the audit ran, or one that leaves the gates passing (such as a call time moved to another
   readable time), is not detected; model calls made before a refusal are still spent; and the
@@ -164,7 +169,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 88 tests pass (with `tests/test_leapp.py`, 198) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 88 tests pass (with `tests/test_leapp.py`, 198; `tests/test_validation_score.py`'s 28 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -177,11 +182,11 @@
   of claims finished before it stay in the case) rather than reading as inconclusive; that
   shared parser is used by every check and is not changed here. The importers store only
   parsed UTC times.
-- Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,
+- Affects: the validation driver and scorer (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at
   all; a manifest entry with no table is listed as not imported instead of skipped, two read
-  entries naming one table are refused; a call log key in other ASCII case is read as the call log, and a call duration that is
+  entries naming one table the database holds are refused; a key Mabillon reads in other ASCII case is read under its own spelling, a tableless entry of such a key is shown as a failed read, and a call duration that is
   not a decimal number or is past SQLite's integer range is stored as unknown instead of
   stopping the import. The verdict rules do not change, but the coverage that feeds them can: when such a table
   of an app holds rows Mabillon did not read (for example a refused native-message table with
