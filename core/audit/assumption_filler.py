@@ -101,7 +101,7 @@ import json
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -3224,6 +3224,12 @@ _ACT_VERB_RE = re.compile(
 _LEADS_TO_QUOTE_RE = re.compile(
     r"(?:(?!,\s*(?:and|but|then)\b|;|[.!?]\s)[^\"“”])*?[\"“]", re.IGNORECASE
 )
+# What may stand between two verbs that lead to one quote when they share a subject: nothing,
+# or an adverb ('texted REYES and then asked: "..."'). A name, a handle or a pronoun is a
+# subject of its own.
+_SAME_SUBJECT_RE = re.compile(
+    r"\s*(?:(?:also|later|first|just|immediately|quickly|soon|afterwards?)\s*)*", re.IGNORECASE
+)
 # A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
 _CLOCK_WORD_RE = re.compile(r"\b(?:noon|midnight)\b", re.IGNORECASE)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
@@ -3475,19 +3481,34 @@ class LocalAssumptionFiller:
         return None
 
     def unread_words(
-        self, text: str, raws: Iterable[str] = (), tests: Iterable[str] = (), counts: int = 1
+        self,
+        text: str,
+        raws: Iterable[str] = (),
+        tests: Iterable[str] = (),
+        counts: int = 1,
+        expected: Collection[int] | None = None,
     ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
         apps it reads, every date and time code reads, and the time ranges `raws` (a kept
         proposal's words) that hold nothing more. `tests` names what the kept rows test
-        ("call", "count", "length", "contact", "each_way"; `_GATED_WORDS`), and `counts` how
-        many kept rows count. A second act ("and @northstar wrote to PETROV"), a time of day
-        outside every kept range, or more numbers than counting rows, is a part no row tests.
+        ("call", "count", "length", "contact", "each_way"; `_GATED_WORDS`), `counts` how many
+        distinct kept rows count, and `expected` (when given) the numbers they count. A second
+        act ("and @northstar wrote to PETROV"), a time of day outside every kept range, more
+        numbers than counting rows, or a number no counting row counts, is a part no row tests.
         Empty when the claim states only what its checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
+        replies: list[re.Match[str]] = []  # a quoted reply's words are plain, yet still an act
         for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE, _REPLY_QUOTED_RE):
+            if rx is _REPLY_QUOTED_RE:
+                said = _unquoted(flat)
+                replies = [
+                    m
+                    for m in rx.finditer(flat)
+                    if _ACT_VERB_RE.fullmatch(m.group(0))
+                    and said[m.start() : m.end()] == m.group(0)
+                ]
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
@@ -3501,7 +3522,7 @@ class LocalAssumptionFiller:
             # A kept range's words are blanked only when they hold nothing past the dates and
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
-            if not self.unread_words(raw, tests=tests, counts=counts):
+            if not self.unread_words(raw, tests=tests, counts=counts, expected=expected):
                 cut += found
         extra: list[str] = []
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
@@ -3569,15 +3590,31 @@ class LocalAssumptionFiller:
         # acts: each verb, or each set of verbs leading to one quoted message, read on the
         # claim's words with kept ranges, names, numbers and addresses blanked
         acts = set()
-        for m in _ACT_VERB_RE.finditer(acted):
+        last: dict[int, int] = {}  # a quote's end -> where the last verb leading to it ends
+        verbs = sorted([*_ACT_VERB_RE.finditer(acted), *replies], key=lambda m: m.start())
+        for m in verbs:
             q = _LEADS_TO_QUOTE_RE.match(flat, m.end())
-            acts.add(("quote", q.end()) if q else ("verb", m.start()))
+            if not q:
+                acts.add(("verb", m.start()))
+                continue
+            # verbs leading to one quote are one act only with one subject: 'PETROV texted
+            # REYES and asked: "..."'. A later verb with any subject of its own ("and REYES
+            # wrote", ", who replied") is another act (CodeRabbit on #265).
+            if q.end() not in last or not _SAME_SUBJECT_RE.fullmatch(
+                re.split(r"\b(?:and|but|then|or)\b|[,;]", bare[last[q.end()] : m.start()])[-1]
+            ):
+                acts.add(("quote", q.end(), m.start()))
+            last[q.end()] = m.end()
         if len(acts) > 1:
             extra.append("a second act")
-        if "count" in tests and self._count_mentions(words) > counts:
+        if "count" in tests:
+            stated = self._count_mentions(words)
             # "sent REYES 3 messages and REYES sent PETROV 5": a number no counting row tests
-            # (Claude review on #265)
-            extra.append("a second count")
+            # (Claude review on #265), or one no counting row counts (CodeRabbit on #265)
+            if len(stated) > counts or (
+                expected is not None and any(n not in expected for n in stated)
+            ):
+                extra.append("a second count")
         words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
         return [
@@ -3587,23 +3624,25 @@ class LocalAssumptionFiller:
         ]
 
     @staticmethod
-    def _count_mentions(words: str) -> int:
-        """How many numbers the words state as counts: digits and spoken numbers, a run of
-        spoken ones ("twenty-one", "one hundred") as one, "one" only as a count ("at least
-        one", "one message"), and never a length ("two minutes", "2 hours")."""
+    def _count_mentions(words: str) -> list[int | None]:
+        """The numbers the words state as counts: digits and spoken numbers, a run of spoken
+        ones ("twenty-one", "one hundred") as one, "one" only as a count ("at least one", "one
+        message"), and never a length ("two minutes", "2 hours"). A number code cannot read
+        ("one hundred", "dozens") is None, which no counting row counts."""
         words = _UNTESTED_LENGTH_RE.sub(" ", words)
         words = re.sub(r"(?<![\w.,:/])\d+(?:[.,]\d+)?" + _UNIT_AFTER_RE.pattern, " ", words,
                        flags=re.IGNORECASE)  # fmt: skip
         spoken = rf"(?:{_SPOKEN_NUMBERS}|dozens?|hundreds?|one)"
-        n = 0
+        out: list[int | None] = []
         for m in re.finditer(rf"\b(?:\d+(?:[.,]\d+)?|{spoken}(?:[\s-]+{spoken})*)\b", words, re.I):
             run = m.group(0)
             if run.casefold() != "one" or re.search(
                 r"\b(?:least|most|than|exactly|only|just)\s+$", words[: m.start()], re.I
             ) or re.match(r"\s+(?:[^\W\d_]+\s+)?(?:messages?|texts?|calls?|times?)\b",
                           words[m.end():], re.I):  # fmt: skip
-                n += 1
-        return n
+                said = " ".join(run.casefold().replace("-", " ").split())
+                out.append(12 if said in ("dozen", "a dozen") else _number(said))
+        return out
 
     def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
         """The phone numbers, handles and names the expert gave a number or an account that
@@ -5082,6 +5121,12 @@ class LocalAssumptionFiller:
             # "call" counts calls (core/audit/checks/count.py)
             tests.add("call")
         counting = [p for p in core if p.template_id == "message_count"]
+        # two copies of one count test one number: rows are counted once each by what they
+        # test, so a duplicate never covers another number the claim states (CodeRabbit on #265)
+        distinct = {repr(sorted((k, repr(v)) for k, v in p.params.items())) for p in counting}
+        expected = {
+            int(n) for p in counting if isinstance(n := p.params.get("expected_count"), int)
+        }
         if counting:
             tests.add("count")
         if any(p.params.get("each_way") or not p.params.get("sent_by") for p in counting):
@@ -5093,7 +5138,7 @@ class LocalAssumptionFiller:
             tests.add("length")
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
-        words = self.unread_words(claim.text, raws, tests, counts=len(counting))
+        words = self.unread_words(claim.text, raws, tests, counts=len(distinct), expected=expected)
         if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
             # either, and no check reads that it was on each (CodeRabbit on #265)

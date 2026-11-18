@@ -44,12 +44,14 @@
     when he arrived", "told him what he had"), nor is a possessive number ("his phone
     number"); a second act in plain words (", and @northstar wrote to PETROV", "called REYES
     before REYES called him") gets the event, while verbs that lead to one quoted message are
-    one act ('texted REYES and asked: "..."'); so does a time of day outside every kept range
+    one act ('texted REYES and asked: "..."') only when the later verb has no subject of its
+    own (", and REYES wrote", ", who replied" are a second act; CodeRabbit on #265); so does a time of day outside every kept range
     ("at 9 p.m. and at 10 p.m."); "exchanged", "conversation" and "chatted" are plain only
     beside a count of both sides (each way, or with no one-way side, as case01 C03's "13
     Telegram messages exchanged between"), never beside a sender row alone; and beside a kept
-    count, a claim that states more numbers than counting rows gets the event ("sent REYES 3
-    messages and 5 calls").
+    count, a claim that states more numbers than distinct counting rows, or a number no
+    counting row counts, gets the event ("sent REYES 3 messages and 5 calls"); two copies of
+    one count row count once (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -197,7 +199,7 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  1,713 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
+  1,715 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-18, final
   head). Class batteries of new wordings with wrong

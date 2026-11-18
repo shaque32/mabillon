@@ -4739,3 +4739,41 @@ def test_claude_review_on_9f84acb_acts_and_counts(conn):
     assert "exchanged" in filler.unread_words(
         "PETROV and @northstar exchanged 13 messages.", (), {"count"}
     )
+
+
+def test_coderabbit_on_822d9d7_subjects_and_count_copies(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # two verbs leading to one quote are one act only with one subject
+    for one in (
+        'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @northstar and then asked: "need 2 more by friday".',
+    ):
+        assert "a second act" not in filler.unread_words(one), one
+    for two in (
+        'On March 12, 2026, PETROV wrote to @northstar and @northstar wrote to PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @northstar, who replied: "ok".',
+        'On March 12, 2026, PETROV texted @northstar and he asked: "ok".',
+    ):
+        assert "a second act" in filler.unread_words(two), two
+    # a number no counting row counts, however many rows there are
+    two = "From March 10 through March 31, 2026, PETROV sent @northstar 3 messages and 5 calls."
+    assert "a second count" in filler.unread_words(two, (), {"count"}, counts=2, expected={3})
+    assert "a second count" not in filler.unread_words(
+        two, (), {"count"}, counts=2, expected={3, 5}
+    )
+    dozen = "From March 10 through March 31, 2026, PETROV sent @northstar a dozen messages."
+    assert "a second count" not in filler.unread_words(dozen, (), {"count"}, expected={12})
+
+
+def test_coderabbit_on_822d9d7_two_copies_of_one_count_cover_one_number(conn):
+    def kept(text: str) -> list[str]:
+        copy = P("message_count", count={"value": 3}, people=["PETROV", "REYES"], window=MAR21,
+                 channels=["call"], phones=["dev:item1"])  # fmt: skip
+        assumptions, filler = build_text(conn, text, ClaimType.COUNT, [copy, copy])
+        return [a.template_id for a in assumptions]
+
+    # two copies of the row for 3 calls never cover the 5 calls the claim also states
+    two = "On March 21, 2026, on dev:item1, PETROV and REYES had 3 Telegram calls and 5 more calls."
+    assert kept(two) == ["message_count", "event"]
+    one = "On March 21, 2026, on dev:item1, PETROV and REYES had 3 Telegram calls."
+    assert kept(one) == ["message_count"]
