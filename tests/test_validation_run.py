@@ -1665,7 +1665,8 @@ def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeyp
     from core.review import audit_log
 
     out = tmp_path / "out"
-    assert hickman_run.main(_android_args(tmp_path)) == 0
+    args = _android_args(tmp_path)  # one set of inputs: a rewritten zip would change its hash
+    assert hickman_run.main(args) == 0
     assert (out / "results.zip").exists()  # the earlier attempt published one
     real, append = pipeline.load_claims, audit_log.append
 
@@ -1685,7 +1686,7 @@ def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeyp
     monkeypatch.setattr(audit_log, "append", no_halt)
     monkeypatch.setattr(hickman_run, "report", lambda *a, **k: reports.append(a))
     with pytest.raises(SystemExit, match="storing it as stopped failed"):
-        hickman_run.main(_android_args(tmp_path))
+        hickman_run.main(args)
     monkeypatch.undo()
     assert reports == []  # no report was made
     assert not (out / "results.zip").exists()
