@@ -4461,6 +4461,12 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     assert kinds(two, rows(full, "I'm on my way now")) == {"sender", "record_time"}
     assert "event" in kinds(two, rows(full, "on my way"))  # a part of the second quote
     assert "event" in kinds(two, rows(full, full))  # one quote's rows never stand for both
+    # two rows on one quote's words may both pass on one message
+    twice = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok".'
+    assert "event" in kinds(twice, rows("ok", "ok"))
+    # a name after a semicolon is a message, not a party
+    semi = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday"; "Petrov".'
+    assert "event" in kinds(semi, C05_ANSWER)
     # 5. a quote is a party's name only where the claim writes it as a party
     said = (
         'On March 12, 2026, PETROV wrote to @northstar: "Petrov" and then "need 2 more by friday".'

@@ -100,7 +100,9 @@
     written so ("lasted 0:12:45") is not a time of day, but one with a zone or a.m./p.m. after
     it ("for 09:31:04 UTC") is. A claim that quotes more than one message gets the expert-only
     event unless each quote has a sender or time row of its own whose tested quote holds all of
-    it: a shorter tested quote, or one row for two quotes, is not enough. A quote that matches
+    it: a shorter tested quote, or one row for two quotes, is not enough, and a sender row and
+    a time row with the same words count once, since both may pass on one message ('wrote
+    "ok" and then "ok"' always gets the event). A quote that matches
     a person's or an account's name is left out as a party only where the claim writes it as
     one: in brackets, after "to", "as", "user", "account" and the like, or at the start of a
     clause ('On November 6, 2022, "ThisIs DfirTwo" asked'); 'wrote to REYES: "Petrov"' is a

@@ -655,16 +655,18 @@ def _app_text(text: str) -> str:
 # 'displayed as "Josh Hickman,"'), or the start of the sentence or a clause ('On November 6,
 # 2022, "ThisIs DfirTwo" asked'); never 'wrote to @northstar: "Petrov"'
 _PARTY_BEFORE_QUOTE_RE = re.compile(
-    r"(?i)(?:^|[(,;]|\b(?:to|from|with|by|as|user|account|contact|handle|user\s*name|username|"
+    r"(?i)(?:^|[(,]|\b(?:to|from|with|by|as|user|account|contact|handle|user\s*name|username|"
     r"name|named|called|alias|aka|known\s+as|display\s+name))\s*$"
 )
 
 
 def _each_quote_tested(quotes: list[str], tested: list[str]) -> bool:
-    """True when each quoted message has a row of its own whose tested quote holds all of it:
-    a shorter tested quote ("on my way" for "I'm on my way now") tests only part of it, and one
-    row never stands for two quotes (CodeRabbit on #265)."""
-    free = [t for t in tested if t]
+    """True when each quoted message has a tested quote of its own that holds all of it: a
+    shorter tested quote ("on my way" for "I'm on my way now") tests only part of it, and one
+    tested quote never stands for two quotes. A sender row and a time row with the same quote
+    may both pass on one message, so a quote's words count once however many rows test them:
+    'wrote "ok" and then "ok"' always needs an expert (CodeRabbit on #265)."""
+    free = sorted({t for t in tested if t})
     for q in sorted(quotes, key=len, reverse=True):
         hit = next((i for i, t in enumerate(free) if q in t), None)
         if hit is None:
