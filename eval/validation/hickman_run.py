@@ -882,6 +882,13 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
         if stop:
             raise SystemExit(stop)
+        # ...and each phone's call log still passes gate G5b on this connection, so a call row
+        # changed since the build or resume check never reaches the model calls. This narrows
+        # the window; a write while the audit runs is not caught here (CodeRabbit on #269).
+        for p in sorted(built.get("imported") or [], key=_sid):
+            stop, _ = call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True)
+            if stop:
+                raise SystemExit(f"{p['source_id']}: {stop}")
         if fake:
             from eval.pipeline_fakes import fake_components
 

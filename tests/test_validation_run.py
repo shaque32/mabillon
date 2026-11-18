@@ -672,7 +672,7 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
     assert not (tmp_path / "out" / "built.ok").exists()
     # A case built before the guard is not resumed either (CodeRabbit on #269).
     with monkeypatch.context() as m:
-        m.setattr(hickman_run, "call_log_check", lambda conn, sid, importer: (None, None))
+        m.setattr(hickman_run, "call_log_check", lambda conn, sid, importer, **_k: (None, None))
         assert hickman_run.main(args) == 0
     assert (tmp_path / "out" / "built.ok").exists()
     with pytest.raises(SystemExit, match=why):
@@ -1191,6 +1191,38 @@ def test_a_resume_audits_with_the_record_it_checked_not_built_ok_read_again(
 
     monkeypatch.setattr(hickman_run, "machine", swapped_first)
     with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.main(args)
+    conn = sqlite3.connect(out / "case.db")  # refused by the audit, not after it: no new run
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    conn.close()
+
+
+def test_the_audit_checks_the_call_log_again_before_any_model_call(tmp_path, monkeypatch):
+    # CodeRabbit on #269: call rows made unreadable after the resume's checks are refused by
+    # the audit itself, on the connection it audits with, before the pipeline runs.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    real = hickman_run.machine
+
+    def untimed_first():  # noqa: ANN202  # called after the resume's checks, before the audit
+        conn = sqlite3.connect(out / "case.db")
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        conn.close()
+        return real()
+
+    monkeypatch.setattr(hickman_run, "machine", untimed_first)
+    with pytest.raises(SystemExit, match=r"item1: .*no phone call a check can read"):
         hickman_run.main(args)
     conn = sqlite3.connect(out / "case.db")  # refused by the audit, not after it: no new run
     assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
