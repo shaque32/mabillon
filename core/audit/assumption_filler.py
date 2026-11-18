@@ -4669,15 +4669,31 @@ class LocalAssumptionFiller:
         # "Telegram or SMS" read on Telegram alone misses an SMS in the range, and a Telegram
         # copy outside it would then fail the time check of a true claim (CodeRabbit on #265).
         # A count or an absence on fewer apps is refused above.
+        def _parties_reach(rows_out: list[Proposal]) -> list[Proposal]:
+            # "Telegram or SMS" with a party the model put on accounts: an account holds one
+            # app's messages, so a row on several apps may search one of them for no one, and a
+            # copy outside the range on the other could fail a true claim (CodeRabbit on #265).
+            # A party given as a person is read on every app. Whether code or the model put the
+            # row on several apps.
+            for i in app_rows:
+                p = rows_out[i]
+                chans = {str(c).strip().casefold() for c in p.params.get("channels") or ()}
+                if len(chans) > 1 and CALL_CHANNEL not in chans and p.params.get("account_ids"):
+                    raise Reject(
+                        "a party is given as accounts, which do not reach every app the row"
+                        " searches"
+                    )
+            return rows_out
+
         unscoped = [i for i in app_rows if not out[i].params.get("channels")]
         try:
             found = self._claim_scope(apps, phone_named, kinds_named, texty, bare)
         except Reject:
             if unscoped:
                 raise
-            return out
+            return _parties_reach(out)
         if not found:
-            return out  # the claim names no app: every app is searched, as it says
+            return _parties_reach(out)  # the claim names no app: every app is searched
 
         # A row the model scoped is widened only by apps the claim writes as names ("Telegram
         # or SMS"), never by a plain word that may name one ("an account", "a regular line"),
@@ -4706,7 +4722,7 @@ class LocalAssumptionFiller:
 
         rows = [i for i in app_rows if short(i)]
         if not rows:
-            return out
+            return _parties_reach(out)
         made = list(out)
         for i in rows:
             p = out[i]
@@ -4719,18 +4735,10 @@ class LocalAssumptionFiller:
                 )
             given = [str(c) for c in p.params.get("channels") or ()]
             scope = list(dict.fromkeys([*wide, *given])) if given else list(found)
-            if len(scope) > 1 and p.params.get("account_ids"):
-                # "Telegram or SMS" with a party the model put on accounts: an account holds one
-                # app's messages, so the row may search the other app for no one, and a copy
-                # outside the range on the first could fail a true claim sent on the other
-                # (CodeRabbit on #265). A party given as a person is read on every app.
-                raise Reject(
-                    "a party is given as accounts, which do not reach every app the claim names"
-                )
             made[i] = Proposal(
                 p.template_id, {**p.params, "channels": scope}, is_core=True, code_made=True
             )
-        return made
+        return _parties_reach(made)
 
     def _claim_scope(
         self, apps: list[str], phone_named: list[str], kinds_named: bool, texty: bool, bare: str

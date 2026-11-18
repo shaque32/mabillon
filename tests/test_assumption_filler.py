@@ -4062,6 +4062,10 @@ def test_more_findings_on_37917c7(tmp_path):
     made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, as_account)
     assert made == [], [a.params for a in made]
     assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
+    on_both = [{**p, "channels": ["Telegram", "SMS"]} for p in as_account]
+    made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, on_both)
+    assert made == [], [a.params for a in made]
+    assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
     # SMS and MMS are two kinds, joined by "and" and alternatives by "or"
     text = 'On March 12, 2026, PETROV wrote to @northstar on SMS {} MMS: "need 2 more by friday".'
     assert filler._apps_named_together(text.format("and"))
