@@ -670,7 +670,7 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
     assert not (tmp_path / "out" / "built.ok").exists()
     # A case built before the guard is not resumed either (CodeRabbit on #269).
     with monkeypatch.context() as m:
-        m.setattr(hickman_run, "call_log_check", lambda conn, sid: (None, None))
+        m.setattr(hickman_run, "call_log_check", lambda conn, sid, importer: (None, None))
         assert hickman_run.main(args) == 0
     assert (tmp_path / "out" / "built.ok").exists()
     with pytest.raises(SystemExit, match=why):
@@ -728,6 +728,57 @@ def test_a_call_log_the_import_could_not_read_stops_the_build(tmp_path, monkeypa
     assert (entry["key"], entry["may_hold_records"]) == ("get_calllog", True)
 
 
+def test_a_refused_call_log_with_rows_stops_the_build_when_the_manifest_counts_none(
+    tmp_path, monkeypatch
+):
+    # A manifest count of 0 is not taken on trust when the table is there: a refused call log
+    # with a row may hold records, and one with none is empty (CodeRabbit on #269).
+    import zipfile
+
+    import eval.synthetic.leapp as synth
+
+    monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+
+    def built(rows: int, out: str) -> list[str]:
+        lv = synth.Lava(leapp="ALEAPP")
+        lv.tables["get_calllog"] = [{"Partner": "+19195550111", "Duration in Secs": "5"}] * rows
+        manifest, data = lv.build()
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_calllog":
+                    e["record_count"] = 0
+        zipped = tmp_path / f"{out}.zip"
+        with zipfile.ZipFile(zipped, "w") as z:
+            z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+            z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+            z.writestr("LEAPP_Reports_x/_HTML/index.html", "<html></html>")
+        return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+    with pytest.raises(SystemExit, match=r"its call log \(get_calllog, 0 records\) was not read"):
+        hickman_run.main(built(1, "one"))
+    assert hickman_run.main(built(0, "none")) == 0  # a refused table with no row is empty
+
+
+def test_a_call_log_of_untimed_calls_stops_the_build(tmp_path):
+    # A sided phone call whose time cannot be read is no call a check can read (CodeRabbit on
+    # #269): the same import with a readable time passes.
+    from eval.synthetic.leapp import Lava
+
+    def args(when: object, out: str) -> list[str]:
+        lv = Lava(leapp="ALEAPP")
+        lv.add("get_calllog", **{"Call Date": when, "Partner": "+19195550111",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+        zipped = lv.write_zip(tmp_path / f"{out}.zip")
+        return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+    with pytest.raises(SystemExit, match=r"no phone call a check can read"):
+        hickman_run.main(args(10**18, "untimed"))  # past any date Python can hold
+    assert hickman_run.main(args("2024-03-01T15:00:00Z", "timed")) == 0
+
+
 @pytest.mark.parametrize("unread", [False, True])
 def test_the_call_log_is_found_by_its_key_when_its_table_is_named_otherwise(
     tmp_path, monkeypatch, unread
@@ -767,10 +818,11 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     assert hickman_run.main(args) == 0
     built = (tmp_path / "out" / "case.db").read_bytes()
 
-    def check(edit_payload=None, sql=()):  # noqa: ANN001, ANN202
+    def check(edit_payload=None, sql=(), source="item1", importer="leapp"):  # noqa: ANN001, ANN202
         db = tmp_path / "check.db"
         db.write_bytes(built)
         conn = sqlite3.connect(db)
+        conn.execute("PRAGMA foreign_keys = ON")  # as core.db.connect opens it
         (raw,) = conn.execute(
             "SELECT payload_json FROM source_coverage WHERE source_id = 'item1'"
         ).fetchone()
@@ -785,7 +837,7 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
             conn.execute(q)
         conn.commit()
         try:
-            return hickman_run.call_log_check(conn, "item1")
+            return hickman_run.call_log_check(conn, source, importer)
         finally:
             conn.close()
 
@@ -806,15 +858,25 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
         p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
 
     assert "build it again" in (check(keyless)[0] or "")
-    # the call log's own row loses its sides; a call stored under "get_calllog/second" is
-    # another table's and must not make it readable
-    no_sides = "UPDATE calls SET from_account_id = NULL, to_account_id = NULL"
+    # the call log's own row loses its sides; a sided call stored under "get_calllog/second"
+    # (a copy of that row, with its real accounts) is another table's and must not make it
+    # readable
     other = ("INSERT INTO calls (id, source_id, locator, device_id, app, from_account_id,"
              " to_account_id, direction, ts_utc) SELECT id || 'b', source_id,"
-             " 'get_calllog/second/rowid=9', device_id, app, 'x', 'y', direction, ts_utc"
-             " FROM calls")  # fmt: skip
+             " 'get_calllog/second/rowid=9', device_id, app, from_account_id, to_account_id,"
+             " direction, ts_utc FROM calls")  # fmt: skip
+    no_sides = ("UPDATE calls SET from_account_id = NULL, to_account_id = NULL"
+                " WHERE locator NOT LIKE 'get_calllog/second/%'")  # fmt: skip
     assert "no phone call a check can read" in (check(sql=(no_sides,))[0] or "")
-    assert "no phone call a check can read" in (check(sql=(no_sides, other))[0] or "")
+    assert "no phone call a check can read" in (check(sql=(other, no_sides))[0] or "")
+    # a call with a side but no time is no call a check can read (CodeRabbit on #269)
+    no_time = "UPDATE calls SET ts_utc = NULL"
+    assert "no phone call a check can read" in (check(sql=(no_time,))[0] or "")
+    # a LEAPP phone whose coverage is not in the case, or whose importer the build did not
+    # record, fails closed; another importer's phone is not checked (CodeRabbit on #269)
+    assert "left no coverage record" in (check(source="item9")[0] or "")
+    assert "did not record which importer" in (check(source="item9", importer=None)[0] or "")
+    assert check(source="item9", importer="ufdr") == (None, None)
 
     def newline(p):  # noqa: ANN001, ANN202
         for t in [*p["tables"], *p["leapp"]["artifacts_read"]]:

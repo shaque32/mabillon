@@ -1640,12 +1640,14 @@ def device_facts(lava: Lava) -> dict[str, Any]:
 
 
 def _may_hold_records(lava: Lava, art: Artifact) -> bool:
-    """False only when the artifact is known to be empty: the manifest states 0 records, or it
-    states no count and its table is in the database with no rows (CodeRabbit on #264)."""
-    if art.record_count is not None:
-        return art.record_count > 0
-    if not lava.has_table(art):
+    """False only when the artifact is known to be empty: the manifest counts no records and
+    its table has no rows, or the table is not there and the manifest states 0 (CodeRabbit on
+    #264). A table that is there is read for a row even when the manifest states 0: a count can
+    be wrong, and a refused call log with rows must not pass as empty (CodeRabbit on #269)."""
+    if art.record_count is not None and art.record_count > 0:
         return True
+    if not lava.has_table(art):
+        return art.record_count is None
     quoted = art.table.replace(chr(34), chr(34) * 2)
     return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
 

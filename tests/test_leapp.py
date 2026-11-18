@@ -940,8 +940,10 @@ def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_pa
     from dataclasses import replace
 
     assert leapp._may_hold_records(lava, replace(sms, record_count=None))
-    assert not leapp._may_hold_records(lava, replace(sms, record_count=0))
+    # a count of 0 is not taken on trust when the table holds a row (CodeRabbit on #269)
+    assert leapp._may_hold_records(lava, replace(sms, record_count=0))
     assert leapp._may_hold_records(lava, replace(sms, record_count=None, table="not_there"))
+    assert not leapp._may_hold_records(lava, replace(sms, record_count=0, table="not_there"))
     lv.tables["get_sms_mms"] = []  # the table is written with no rows
     z = lv.write_zip(tmp_path / "b.zip")
     with z.open("rb") as f:

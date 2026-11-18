@@ -388,9 +388,9 @@ def build(  # noqa: ANN001
                     f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated"
                 )
             # A phone call log with rows but no call a check can read (each row placed by
-            # another app, or of no direction) would leave every call claim on the phone
-            # unreadable: the run stops here, before any model call (gate G5b).
-            stop, note = call_log_check(conn, ph.source_id)
+            # another app, or of no direction or time) would leave the claims about its phone
+            # calls unreadable: the run stops here, before any model call (gate G5b).
+            stop, note = call_log_check(conn, ph.source_id, importer.name)
             if stop:
                 raise SystemExit(f"{ph.source_id}: {stop}")
             if note:
@@ -440,25 +440,41 @@ def _one_line(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
 
 
-def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # noqa: ANN001
+def call_log_check(  # noqa: ANN001
+    conn, source_id: str, importer: str | None
+) -> tuple[str | None, str | None]:
     """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
 
     It stops when a call log table of the phone (LEAPP's `get_calllog` or `callHistory`) holds
-    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a side: every row was
-    placed by another app (ALEAPP's Samsung samples name another package), had no direction
-    or no party, so no check could read any of the phone's calls. Calls of a provider app in
-    the same table (FaceTime on iOS) are not phone calls and do not count. It stops too when
-    such a table holds records the import could not read at all. Otherwise it logs how many
-    phone calls a check can read. A UFDR's coverage names no such table: never stopped here."""
+    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a side and a time:
+    every row was placed by another app (ALEAPP's Samsung samples name another package), had no
+    direction, no party or no readable time, so no check could read any of the phone's calls.
+    Calls of a provider app in the same table (FaceTime on iOS) are not phone calls and do not
+    count. It stops too when such a table holds records the import could not read at all.
+    Otherwise it logs how many phone calls a check can read, with a known time and a side. A
+    UFDR's coverage names no such table: never stopped here. A LEAPP phone (by `importer`, as
+    the build recorded it) whose case holds no LEAPP coverage record stops: its call log
+    cannot be checked."""
     from core.ingest import coverage
-    from core.ingest.leapp import NATIVE_CALL_KEYS
+    from core.ingest.leapp import IMPORTER_NAME, NATIVE_CALL_KEYS
 
     cov = coverage.load(conn, source_id)
-    if cov is None:
-        return None, None
-    p = cov.payload
+    p = cov.payload if cov else {}
     leapp = p.get("leapp")
     if leapp is None:
+        # a LEAPP phone whose record is gone (a case.db swapped on resume), or a phone whose
+        # importer was not recorded, fails closed (CodeRabbit on #269)
+        if importer == IMPORTER_NAME:
+            return (
+                "its LEAPP import left no coverage record in this case, so its call log cannot"
+                " be checked; restore the case.db it was built with, or build it again with a"
+                " new --out"
+            ), None
+        if importer is None:
+            return (
+                "the build did not record which importer read it, so its call log cannot be"
+                " checked; build it again with a new --out"
+            ), None
         return None, None  # another importer: no LEAPP call log tables
     unread = p.get("not_imported") or []
     if any(not t.get("key") for t in unread):
@@ -480,7 +496,7 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
         if t.get("key") in NATIVE_CALL_KEYS and rows:
             return (
                 f"its call log ({_one_line(t.get('table'))}, {records} records) was not read"
-                f" ({_one_line(t.get('reason'))}); every call claim on this phone would go"
+                f" ({_one_line(t.get('reason'))}); claims about its phone calls would go"
                 " untested, so the run stops before any model call"
             ), None
     notes = []
@@ -495,8 +511,9 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
         # with this one and a slash (CodeRabbit on #269)
         own = (len(table) + 1, f"{table}/", len(table) + 2)
         rows, sided = conn.execute(
-            "SELECT count(*), coalesce(sum(from_account_id IS NOT NULL"
-            " OR to_account_id IS NOT NULL), 0) FROM calls WHERE source_id = ? AND app = ?"
+            "SELECT count(*), coalesce(sum((from_account_id IS NOT NULL"
+            " OR to_account_id IS NOT NULL) AND ts_utc IS NOT NULL), 0)"
+            " FROM calls WHERE source_id = ? AND app = ?"
             " AND substr(locator, 1, ?) = ? AND instr(substr(locator, ?), '/') = 0",
             (source_id, NATIVE_CALL_APP, *own),
         ).fetchone()
@@ -509,8 +526,8 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
             flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
                 f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
-                f" read was stored (flags: {_one_line(flags or 'none')}); every call claim on this"
-                " phone would go untested, so the run stops before any model call"
+                f" read was stored (flags: {_one_line(flags or 'none')}); claims about its phone"
+                " calls would go untested, so the run stops before any model call"
             ), None
         notes.append(f"{_one_line(table)}: {sided} of {read} rows are phone calls a check can read")
     return None, ("; ".join(notes) or None)
@@ -870,7 +887,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{a.out}: built.ok is there but case.db is not; use a new --out")
         conn = connect(a.out / "case.db")
         try:
-            checks = [(p["source_id"], *call_log_check(conn, p["source_id"])) for p in imported]
+            checks = [
+                (p["source_id"], *call_log_check(conn, p["source_id"], p.get("importer")))
+                for p in imported
+            ]
         finally:
             conn.close()
         for sid, stop, note in checks:
