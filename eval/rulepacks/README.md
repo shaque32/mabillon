@@ -18,7 +18,7 @@ app loads a pack. Records load as `SourceKind.SYNTHETIC`.
 ```
 python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-reference.json
 python -m eval.rulepacks.harness <pack.json> --json   # the full report
-python -m eval.rulepacks.harness <pack.json> --claims reference,blind --cards
+python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-draft.json --claims reference,blind --cards
 ```
 
 | File | What it is |
@@ -45,7 +45,9 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
 2. **Rule-kill:** removing each guard in turn lets some trap through as a false supported that
    the full pack holds, including every trap it names. A guard that blocks nothing, or that
    names a trap no claim has, fails the gate. A draft's guards name no traps (its drafter never
-   saw them); `--cards` prints what each one blocks, for the people who sign it.
+   saw them); `--cards` prints what each one blocks, for the people who sign it. A named trap
+   must be a trap in some registered claim set, but whether the guard blocks it is tested only
+   when its set is in the run: a pass on one set says nothing about traps named from another.
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
    are mutated, once with the time moved six hours and once (for a claim about who placed a
    call) with the direction flipped.

@@ -13,7 +13,7 @@
   sets together and prints one sign-off card per guard (`--claims`, `--cards`). Second step of
   `baker/plans/rule-drafting.md`.
 - Where: PR #270 (branch claude/project-thread-zweeky)
-- Verified: `pytest tests/test_rulepacks.py` (41 tests) on the cloud container, 2026-11-18.
+- Verified: `pytest tests/test_rulepacks.py` (44 tests) on the cloud container, 2026-11-18.
   Harness on the drafted pack, reference and blind sets together: 28/28 claims as expected in
   each layout, 0 false supported, both guards earn their place (voicemail-leg blocks 4 traps,
   forwarded-leg 3), no insensitive supported claim. The drafter took about 2.5 minutes and the

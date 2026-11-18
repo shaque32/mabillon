@@ -121,7 +121,8 @@ def test_signing_a_draft_keeps_the_hash_the_harness_tested(pack: RulePack) -> No
     body.update(status="signed", signatures=[s.model_dump(mode="json") for s in sigs])
     signed = RulePack.model_validate(body)
     assert signed.sha256() == h
-    changed = {**body, "guards": [{**body["guards"][0], "record_types": ["forwarded"]}]}
+    first = {**body["guards"][0], "record_types": ["forwarded"]}
+    changed = {**body, "guards": [first, *body["guards"][1:]]}
     with pytest.raises(ValidationError, match="another version"):
         RulePack.model_validate(changed)
 
@@ -451,3 +452,35 @@ def test_the_check_tool_hashes_the_samples_bytes(pack: RulePack, tmp_path: Path)
         raw = carrier.render(lid).replace("\n", "\r\n").encode()
         (tmp_path / f"{lid}.csv").write_bytes(raw)
         assert check_layout.check(pack, tmp_path)[lid]["sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_a_guard_naming_a_true_claim_names_no_trap(pack: RulePack) -> None:
+    body = pack.model_dump(mode="json")
+    body["guards"][0]["blocks"] = ["t-voicemail", "g-in-call"]
+    rep = harness.evaluate(RulePack.model_validate(body), harness.claim_set("blind"))
+    assert rep.unknown_traps == ["voicemail-leg:g-in-call"]
+
+
+def test_a_card_says_when_rule_kill_never_ran(pack: RulePack) -> None:
+    short = pack.model_copy(update={"layouts": (pack.layout("carrier-a"),)})
+    rep = harness.evaluate(short)
+    assert rep.layout_errors == ["missing:carrier-b"]
+    assert harness.cards(short, rep)[0].endswith("not tested (the gate stopped before rule-kill)")
+
+
+def test_the_check_tool_reports_an_unreadable_sample_and_goes_on(
+    pack: RulePack, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for lid in carrier.LAYOUTS:
+        (tmp_path / f"{lid}.csv").write_text(carrier.render(lid))
+    real = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self.name == "carrier-a.csv":
+            raise PermissionError("denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    res = check_layout.check(pack, tmp_path)
+    assert res["carrier-a"] == {"error": "denied"}
+    assert "coverage" in res["carrier-b"]

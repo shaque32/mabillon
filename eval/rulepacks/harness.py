@@ -200,7 +200,10 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
     # no claim's, in this run or any registered set, fails the gate, so a misspelled trap
     # cannot skip its test; a named trap from a set not in this run is not tested here.
     # Only traps the full pack holds count: one that gets through anyway is not this guard's.
-    known = set(ids) | {c.id for name in CLAIM_SETS for c in claim_set(name)}
+    # only traps: a guard naming a true claim names no trap (CodeRabbit on #270)
+    known = {c.id for c in claims if c.trap} | {
+        c.id for name in CLAIM_SETS for c in claim_set(name) if c.trap
+    }
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
@@ -287,11 +290,12 @@ def cards(pack: RulePack, rep: Report) -> list[str]:
     record types it covers, and the traps that get through without it."""
     out = []
     for g in pack.guards:
-        blocked = rep.rule_kill.get(g.id, [])
-        out.append(
-            f"Guard {g.id} ({', '.join(g.record_types)}): {g.text}\n"
-            f"    Without it: {', '.join(blocked) if blocked else 'nothing gets through'}"
-        )
+        if g.id not in rep.rule_kill:  # the gate stopped before rule-kill ran
+            without = "not tested (the gate stopped before rule-kill)"
+        else:
+            without = ", ".join(rep.rule_kill[g.id]) or "nothing gets through"
+        head = f"Guard {g.id} ({', '.join(g.record_types)}): {g.text}"
+        out.append(f"{head}\n    Without it: {without}")
     return out
 
 

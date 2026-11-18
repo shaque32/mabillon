@@ -34,7 +34,7 @@ def check(pack: RulePack, samples: Path = SAMPLES) -> dict[str, dict[str, object
             # decode the bytes ourselves: read_text would turn CRLF into LF, and the reader
             # hashes the text it is given, which must be the file's bytes (code review on #270)
             loaded = read(path.read_bytes().decode("utf-8"), x)
-        except ValueError as e:
+        except (OSError, ValueError) as e:  # unreadable, not UTF-8, or the wrong header
             out[x.id] = {"error": str(e)}
             continue
         rows = loaded.conn.execute(
