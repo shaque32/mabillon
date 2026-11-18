@@ -4449,7 +4449,8 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     assert _states_seconds("for 09:31:04 Eastern Time")
     assert not _states_seconds("lasted 0:12:45")
     assert not _states_seconds("for 0:12:45 at most")
-    # 4. each quoted message needs its own row whose quote holds all of it
+    # 4. two quoted messages always need an expert: a check finds a quote's words inside a
+    # longer message, so one record may pass the rows for both, whatever the rows quote
     two = (
         'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then'
         ' "I\'m on my way now".'
@@ -4463,15 +4464,21 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
         return {a.template_id for a in made}
 
     full = "need 2 more by friday"
-    assert kinds(two, rows(full, "I'm on my way now")) == {"sender", "record_time"}
+    assert "event" in kinds(two, rows(full, "I'm on my way now"))
     assert "event" in kinds(two, rows(full, "on my way"))  # a part of the second quote
     assert "event" in kinds(two, rows(full, full))  # one quote's rows never stand for both
-    # two rows on one quote's words may both pass on one message
     twice = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok".'
     assert "event" in kinds(twice, rows("ok", "ok"))
-    # nor two rows whose words one holds the other's: one "ok, thanks" passes for both
     thanks = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok, thanks".'
     assert "event" in kinds(thanks, rows("ok", "ok, thanks"))
+    # distinct quotes too: one record "ok, thanks" passes a row for "ok" and one for "thanks"
+    apart = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "thanks".'
+    assert "event" in kinds(apart, rows("ok", "thanks"))
+    # one quoted message stays code's to test
+    assert kinds('On March 12, 2026, PETROV wrote to @northstar: "ok".', rows("ok", "ok")) == {
+        "sender",
+        "record_time",
+    }
     # a name after a semicolon is a message, not a party
     semi = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday"; "Petrov".'
     assert "event" in kinds(semi, C05_ANSWER)

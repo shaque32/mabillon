@@ -653,35 +653,6 @@ _PARTY_BEFORE_QUOTE_RE = re.compile(
 )
 
 
-def _each_quote_tested(quotes: list[str], tested: list[str]) -> bool:
-    """True when each quoted message has a tested quote of its own that holds all of it, and
-    no record can pass for two of them. A shorter tested quote ("on my way" for "I'm on my way
-    now") tests only part of a message. A check finds a quote's words inside a longer message
-    ("ok" in "ok, thanks"), so two rows whose words one holds the other's, or two quotes alike,
-    may both pass on one record: 'wrote "ok" and then "ok"' and 'wrote "ok" and then "ok,
-    thanks"' always need an expert. Words are read without punctuation (CodeRabbit on
-    #265)."""
-
-    def words(x: str) -> str:
-        return " ".join(re.findall(r"\w+", x.casefold()))
-
-    def within(a: str, b: str) -> bool:
-        return f" {a} " in f" {b} "
-
-    qs = [words(q) for q in quotes]
-    ts = sorted({w for t in tested if (w := words(t))})
-    for group in (qs, ts):
-        if any(within(a, b) for i, a in enumerate(group) for j, b in enumerate(group) if i != j):
-            return False
-    free = list(ts)
-    for q in sorted(qs, key=len, reverse=True):
-        hit = next((i for i, t in enumerate(free) if q and within(q, t)), None)
-        if hit is None:
-            return False
-        free.pop(hit)
-    return True
-
-
 def _states_seconds(text: str) -> bool:
     """True when the words state a time of day to the second ("at 9:31:04", "for 09:31:04
     UTC"), not a length ("lasted 0:12:45")."""
@@ -4983,15 +4954,11 @@ class LocalAssumptionFiller:
             if wider:
                 words = [named.group(0).casefold()]
         if not words:
-            # 'PETROV wrote "ok" and then "on my way"': each quoted message is a part of the
-            # claim, and quoted words are never read as unread words, so one that no sender or
-            # time row tests needs an expert (CodeRabbit on #265)
-            tested = [
-                " ".join(_nfc(str(p.params.get("quoted_text") or "")).casefold().split())
-                for p in core
-                if p.template_id in ("sender", "record_time")
-            ]
-
+            # 'PETROV wrote "ok" and then "thanks"': each quoted message is a part of the
+            # claim, and a check finds a quote's words inside a longer message, so one record
+            # ("ok, thanks") may pass the rows for both. Code cannot show at fill time that two
+            # quotes are two records, so two quoted messages always need an expert (CodeRabbit
+            # on #265).
             # a quote that only names a party ('to the Kik user "ThisIs DFIRTwo,"') is no
             # message: a person's or an account's name, read without spaces or punctuation
             def key(x: str) -> str:
@@ -5007,7 +4974,7 @@ class LocalAssumptionFiller:
                 # "user", "account" and the like, never 'wrote "ok"' (CodeRabbit on #265)
                 and not (key(q) in names and _PARTY_BEFORE_QUOTE_RE.search(flat[: m.start()]))
             ]
-            if len(quotes) > 1 and not _each_quote_tested(quotes, tested):
+            if len(quotes) > 1:
                 words = ["a second quoted message"]
         if not words:
             return out
