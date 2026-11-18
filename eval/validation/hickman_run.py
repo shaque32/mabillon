@@ -468,7 +468,7 @@ def _one_line(value: object) -> str:
 
 
 def call_log_check(  # noqa: ANN001
-    conn, source_id: str, importer: str | None
+    conn, source_id: str, importer: str | None, *, owner_confirmed: bool = False
 ) -> tuple[str | None, str | None]:
     """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
 
@@ -482,7 +482,10 @@ def call_log_check(  # noqa: ANN001
     Otherwise it logs how many phone calls a check can read. A
     UFDR's coverage names no such table: never stopped here. A LEAPP phone (by `importer`, as
     the build recorded it) whose case holds no LEAPP coverage record stops: its call log
-    cannot be checked."""
+    cannot be checked. With `owner_confirmed` (on resume, after the build stipulated the
+    owner), the phone's own accounts count only on a device with exactly one confirmed
+    device_owner stipulation, as the caller check reads them: a stipulation withdrawn since the
+    build stops the run."""
     from core.ingest import coverage
     from core.ingest.leapp import IMPORTER_NAME, NATIVE_CALL_KEYS
 
@@ -530,10 +533,14 @@ def call_log_check(  # noqa: ANN001
     # The caller check puts the phone's owner on a call only through the phone's own accounts
     # (person_party: the accounts on the device a confirmed device_owner stipulation names):
     # with none, no call on it can be read, whatever its rows hold (CodeRabbit on #269).
+    # On resume the owner was stipulated at build: it must still be one confirmed owner, since
+    # a withdrawn stipulation leaves the accounts but no owner a check can read (CodeRabbit).
     (owned,) = conn.execute(
         "SELECT count(*) FROM accounts a JOIN devices d ON d.id = a.device_id"
-        " WHERE d.source_id = ?",
-        (source_id,),
+        " WHERE d.source_id = ? AND (? = 0 OR (SELECT count(DISTINCT s.person_id)"
+        " FROM stipulations s WHERE s.kind = 'device_owner' AND s.subject_id = d.id"
+        " AND s.status = 'confirmed') = 1)",
+        (source_id, int(owner_confirmed)),
     ).fetchone()
     notes = []
     for t in p.get("tables") or []:
@@ -580,7 +587,9 @@ def call_log_check(  # noqa: ANN001
             return (
                 f"its call log ({_one_line(table)}) has {sided} phone calls with the other party"
                 " stored, but the phone has no account of its own in the case (no line or handle"
-                " the import tied to it), so no check can put its owner on a call; claims about"
+                " the import tied to it"
+                + (", or no one confirmed device owner" if owner_confirmed else "")
+                + "), so no check can put its owner on a call; claims about"
                 " its phone calls would go untested, so the run stops before any model call"
             ), None
         notes.append(f"{_one_line(table)}: {sided} of {read} rows are phone calls a check can read")
@@ -966,7 +975,10 @@ def main(argv: list[str] | None = None) -> int:
                     " restore the case.db it was built with, or use a new --out"
                 )
             checks = [
-                (p["source_id"], *call_log_check(conn, p["source_id"], p.get("importer")))
+                (
+                    p["source_id"],
+                    *call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True),
+                )
                 for p in imported
             ]
         finally:

@@ -825,7 +825,7 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     assert hickman_run.main(args) == 0
     built = (tmp_path / "out" / "case.db").read_bytes()
 
-    def check(edit_payload=None, sql=(), source="item1", importer="leapp"):  # noqa: ANN001, ANN202
+    def check(edit_payload=None, sql=(), source="item1", importer="leapp", owner=False):  # noqa: ANN001, ANN202
         db = tmp_path / "check.db"
         db.write_bytes(built)
         conn = sqlite3.connect(db)
@@ -844,7 +844,7 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
             conn.execute(q)
         conn.commit()
         try:
-            return hickman_run.call_log_check(conn, source, importer)
+            return hickman_run.call_log_check(conn, source, importer, owner_confirmed=owner)
         finally:
             conn.close()
 
@@ -896,6 +896,15 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     # ...and with no account of its own, no check can put its owner on a call (CodeRabbit)
     unowned = "UPDATE accounts SET device_id = NULL"
     assert "no account of its own" in (check(sql=(no_line, unowned))[0] or "")
+    # on resume the build's owner stipulation must still be one confirmed owner: withdrawn,
+    # the accounts stay but no check can read the owner's side (CodeRabbit on #269)
+    assert check(owner=True)[0] is None
+    withdrawn = (
+        "UPDATE stipulations SET status = 'rejected', decided_by = 'expert:x',"
+        " decided_at_utc = '2026-11-18T00:00:00Z'"
+    )
+    assert check(sql=(withdrawn,))[0] is None  # at build, before the owner is stipulated
+    assert "no one confirmed device owner" in (check(sql=(withdrawn,), owner=True)[0] or "")
     # a LEAPP phone whose coverage is not in the case, or whose importer the build did not
     # record, fails closed; another importer's phone is not checked (CodeRabbit on #269)
     assert "left no coverage record" in (check(source="item9")[0] or "")

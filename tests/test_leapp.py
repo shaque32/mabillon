@@ -975,6 +975,21 @@ def test_a_table_that_cannot_be_read_may_hold_records(tmp_path: Path) -> None:
     assert leapp._may_hold_records(broken, replace(sms, record_count=0))
 
 
+def test_a_manifest_table_name_matches_the_table_whatever_its_case(tmp_path: Path) -> None:
+    # SQLite names are not case-sensitive: a manifest naming the table in other case still finds
+    # it, so a count of 0 does not hide its rows (CodeRabbit on #269).
+    from dataclasses import replace
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    sms = next(a for a in lava.artifacts if a.key == "get_sms_mms")
+    upper = replace(sms, table=sms.table.upper(), record_count=0)
+    assert upper.table != sms.table
+    assert lava.has_table(upper)
+    assert leapp._may_hold_records(lava, upper)
+
+
 def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
     # A count below 0 says nothing about the table: it is read as unknown, so a missing table
     # with it may hold records (CodeRabbit on #269).

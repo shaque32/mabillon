@@ -203,7 +203,10 @@ class Lava:
     def has_table(self, art: Artifact) -> bool:
         return bool(
             self.db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (art.table,)
+                # SQLite resolves table names without regard to case, so the catalog lookup
+                # does too: a manifest naming GET_CALLLOG finds get_calllog (CodeRabbit on #269)
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? COLLATE NOCASE",
+                (art.table,),
             ).fetchone()
         )
 
