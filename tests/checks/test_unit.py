@@ -738,6 +738,7 @@ def test_a_count_of_one_sides_messages_reads_look_alikes_on_the_other_side() -> 
     r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
     assert "or the other side's message" in r.detail
+    assert {"msg:p1:2", "msg:p1:3"} <= set(r.record_ids)  # both "ok" rows are cited
     conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
     r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
     assert r.outcome is CheckOutcome.PASS, r.detail

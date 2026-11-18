@@ -27,7 +27,9 @@
     other is read: only "or" or "/" alone keeps them alternatives, so "on Telegram and on either
     Viber or WhatsApp", "Telegram, Viber or WhatsApp" and "on Telegram and SMS" (a phone's
     own messages app written by name, never "texted") get the event too, while "Telegram or
-    Wickr" on a case holding Wickr Pro stays alternatives (CodeRabbit on #265).
+    Wickr" on a case holding Wickr Pro stays alternatives (CodeRabbit on #265). "Sent an SMS"
+    or "an iMessage" searched on Native Messages, which holds both, gets the event too: no check
+    reads which of the two a row was (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -67,7 +69,8 @@
     (`fewest_messages`, 1.3.1), so "A sent at least 1" over A's "ok" and B's "ok" a second
     apart is held open: both rows may be B's message. A count of one side's messages also reads
     look-alikes beside rows that name no receiver, so "A sent exactly 1" over A's "ok" and "hi"
-    no longer fails when B's "ok" a second later names no receiver (CodeRabbit on #265).
+    no longer fails when B's "ok" a second later names no receiver; the other side's rows that
+    hold such a count open are cited beside the counted rows (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
@@ -80,7 +83,7 @@
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
-  main (1,240), and
+  main, and the full local test run passes (4,702 passed, 9 skipped), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
@@ -97,7 +100,11 @@
   loses the code-checked path and waits for an expert; a word on the list that carries meaning
   in some sentence still passes. These are tests of code's guards, not of the model: a model
   can still propose something unexpected that code accepts. Look-alike rows within 2 seconds
-  that are really two messages make a count inconclusive.
+  that are really two messages make a count inconclusive, and the rows chain, so a long run of
+  copies is one group. Not fixed here (CodeRabbit on #265, outside this change): the Axiom
+  importer labels iMessage rows with app "SMS" while the Cellebrite importer keeps "iMessage",
+  so on an Axiom case an SMS-only claim can rest on an iMessage row; settling one label at
+  import is a follow-up. The v5 phones use the LEAPP importer.
 - Affects: verdicts (fewer code-checked SUPPORTED; claims naming an app the case lacks, or
   naming one kind of contact in an absence, go untested; counts over look-alike rows go
   inconclusive); customer-facing claims: none. No privacy or network change.

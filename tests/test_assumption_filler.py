@@ -3856,3 +3856,23 @@ def test_a_phone_app_or_a_short_name_is_read_in_the_joins(tmp_path):
     # "texted" names no app of its own
     texted = 'On March 12, 2026, PETROV texted @northstar on Telegram: "need 2 more by friday".'
     assert filler._apps_named_together(texted) == []
+
+
+@pytest.mark.parametrize("said", ["sent @northstar an SMS", "sent @northstar an iMessage"])
+def test_one_phone_app_on_an_app_holding_both_waits_for_an_expert(tmp_path, said):
+    # "Native Messages" holds iMessage and SMS together, as LEAPP and a UFDR store them: a row
+    # searched there finds an iMessage for "sent an SMS", and no check reads which of the two a
+    # row was (CodeRabbit on #265). The claim's word is shown to the expert as an event.
+    c = _case_with(
+        tmp_path,
+        "UPDATE threads SET app = 'Native Messages' WHERE app = 'Telegram'",
+    )
+    answer = [{**p, "channels": ["Native Messages"]} for p in C05_ANSWER]
+    text = f'On March 12, 2026, PETROV {said}: "need 2 more by friday".'
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, answer)
+    assert {a.template_id for a in made} == {"record_time", "sender", "event"}
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert event.is_core and is_code_made(event.text)
+    plain = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, plain, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]

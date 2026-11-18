@@ -4650,6 +4650,18 @@ class LocalAssumptionFiller:
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
             # either, and no check reads that it was on each (CodeRabbit on #265)
             words = self._apps_named_together(claim.text)
+        if not words and (named := _PHONE_APP_WORD_RE.search(_unquoted(_nfc(claim.text)))):
+            # "sent an SMS" searched on an app that holds more than SMS ("Native Messages":
+            # iMessage and SMS together, as LEAPP and a UFDR store them) may pass on an
+            # iMessage; no check reads which of the two a row was (CodeRabbit on #265)
+            wider = {
+                str(c).casefold()
+                for p in core
+                for c in p.params.get("channels") or ()
+                if str(c).casefold() in WIDER_APPS
+            }
+            if wider:
+                words = [named.group(0).casefold()]
         if not words:
             return out
         if "event" not in allowed_ids:

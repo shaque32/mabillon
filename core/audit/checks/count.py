@@ -299,7 +299,14 @@ class CountCheck(TemplateCheck):
         # A row of the side counted may be a copy of the other side's message (CodeRabbit on
         # #265), so the fewest is read over both sides' rows; with no side chosen it is the
         # rows less their look-alikes (`look_alike`).
-        twins = n - fewest_messages(counted, between)
+        groups = look_alike_groups(between)
+        twins = n - fewest_messages(counted, between, groups)
+        # the other side's rows that make one side's rows look-alikes, cited when they hold the
+        # count open (CodeRabbit on #265)
+        mine_ids = {r.id for r in counted}
+        peers = [
+            r for g in groups if any(x.id in mine_ids for x in g) for r in g if r.id not in mine_ids
+        ]
         # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no copy
         # number, a live row and a recovered one or the SMS store and Google Messages (Android
         # 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail. The messages
@@ -348,6 +355,8 @@ class CountCheck(TemplateCheck):
         held_open = outcome is CheckOutcome.INCONCLUSIVE and (unplaced or unknown_sender)
         held_open = held_open and op != "ge"
         ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
+        if twins_open:
+            ids += [r.id for r in peers]
         return self.done(
             assumption_id,
             outcome,
