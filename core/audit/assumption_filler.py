@@ -3249,11 +3249,13 @@ def _later_clause(gap: str) -> str:
 
 # A pronoun that starts a clause with a subject of its own: "REYES who then asked". A word
 # joined to a handle or an address is part of that account, not a pronoun ("texted @who then
-# asked", "who@example.com", "example.com/who"), but a word after an address's closing bracket
-# or dash still is ("(https://example.com)—who then asked"; CodeRabbit on #265). Masking whole
+# asked", "who@example.com", "example.com/who", "@north-who"), but a word after an address's
+# closing bracket or a dash still is ("(https://example.com)—who then asked", "...)-who";
+# CodeRabbit on #265). A hyphen joins an account only between word characters. Masking whole
 # address matches hid that pronoun, since an address match runs on to the next space.
 _CLAUSE_PRONOUN_RE = re.compile(
-    r"(?<![@./:\w-])(?:who|whom|whose|which|that|he|she|they|it|we|i|you)(?![\w@/]|[.-]\w)",
+    r"(?<![@./:\w])(?<!\w-)(?:who|whom|whose|which|that|he|she|they|it|we|i|you)"
+    r"(?![\w@/]|[.-]\w)",
     re.IGNORECASE,
 )
 

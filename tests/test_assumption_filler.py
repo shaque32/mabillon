@@ -4819,6 +4819,10 @@ def test_coderabbit_on_087536e_pronoun_after_an_address(conn):
         'On March 12, 2026, PETROV texted @ns (https://example.com)—who then asked PETROV: "ok".',
         'On March 12, 2026, PETROV texted @northstar (example.com/x) who then asked PETROV: "ok".',
         'On March 12, 2026, PETROV texted who@example.com, she then asked PETROV: "ok".',
+        # an ASCII hyphen after a bracket or a space is a dash (CodeRabbit on 1e863fe)
+        'On March 12, 2026, PETROV texted @ns (https://example.com)-who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @ns (example.com/x) -who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @ns (example.com/x) - who then asked PETROV: "ok".',
     ):
         assert "a second act" in filler.unread_words(two), two
     # a word joined to a handle or an address is part of that account
@@ -4827,5 +4831,6 @@ def test_coderabbit_on_087536e_pronoun_after_an_address(conn):
         'On March 12, 2026, PETROV texted who@example.com then asked: "need 2 more by friday".',
         'On March 12, 2026, PETROV texted example.com/who then asked: "need 2 more by friday".',
         'On March 12, 2026, PETROV texted www.who.int then asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @north-who then asked: "need 2 more by friday".',
     ):
         assert "a second act" not in filler.unread_words(one), one

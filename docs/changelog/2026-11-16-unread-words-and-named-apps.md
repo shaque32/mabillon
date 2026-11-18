@@ -48,7 +48,7 @@
     own (", and REYES wrote", ", who replied", "and REYES then asked" are a second act, while a bare
     "then" with no "and" before it joins one subject's verbs unless a pronoun before it
     starts a clause ("texted REYES who then asked" is a second act, also after an address's
-    closing bracket or dash, while "@who" or "who@example.com" is an account, not a pronoun); a
+    closing bracket or a dash (an ASCII hyphen too), while "@who" or "who@example.com" is an account, not a pronoun); a
     verb inside a handle or an address is no act; CodeRabbit on #265); so does a time of day outside every kept range
     ("at 9 p.m. and at 10 p.m."); "exchanged", "conversation" and "chatted" are plain only
     beside a count of both sides (each way, or with no one-way side, as case01 C03's "13
