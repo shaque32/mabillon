@@ -826,13 +826,14 @@ def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
     return None
 
 
-def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
+def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
+    """Audit the case in out/case.db. `built` is the build record main() checked or wrote, not
+    read again from disk, so a built.ok swapped together with its case.db is refused too."""
     from core import pipeline
 
     # The case.db checked before the audit may have been swapped or changed since: the audit
-    # runs only on the very case built.ok records, with the owners it was built with
+    # runs only on the very case that record names, with the owners it was built with
     # (CodeRabbit on #269).
-    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
     conn = connect(out / "case.db")
     try:
         if not built.get("build_id") or stamped_build(conn) != built["build_id"]:
@@ -1127,6 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
             "build_id": build_id,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
+        was = inputs  # the record the audit checks the case.db against
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
     # written still records what the case was built from (CodeRabbit on #267).
     run["phones"] = imported
@@ -1152,7 +1154,7 @@ def main(argv: list[str] | None = None) -> int:
         run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": ["assumptions", "stance"]}
     try:
         try:
-            run["audit"] = audit(a.out, a.fake, log, cloud_model)
+            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was)
         finally:
             if cloud_model is not None:
                 total = run.setdefault("cloud", {"sessions": []})

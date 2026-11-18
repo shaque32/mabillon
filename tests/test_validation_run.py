@@ -1026,7 +1026,7 @@ def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path
     with pytest.raises(SystemExit, match="built.ok records no build id"):
         hickman_run.main(args)
     with pytest.raises(SystemExit, match="is not the case built.ok records"):
-        hickman_run.audit(out, True, lambda _m: None)
+        hickman_run.audit(out, True, lambda _m: None, built=built)
 
 
 @pytest.mark.parametrize(
@@ -1149,26 +1149,27 @@ def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path, entry, stop):
 
 def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
     # CodeRabbit on #269: a case.db swapped after the resume's checks, before the audit opens
-    # it, is refused by the audit itself.
-    out = tmp_path / "out"
+    # it, is refused by the audit itself, against the record the run checked, so swapping
+    # built.ok along with it is refused too.
+    out, other = tmp_path / "out", tmp_path / "other"
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
             "--fake"]  # fmt: skip
     assert hickman_run.main(args) == 0
-    raw = (out / "built.ok").read_text(encoding="utf-8")
-    built = json.loads(raw)
+    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
     assert [p.get("owner") for p in built["phones"]] == ["SUBJECT-1"]  # the owners it rechecks
-    built["build_id"] = "0" * 32
-    (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
+    for name in ("case.db", "built.ok"):  # another build's files, both swapped in
+        shutil.copy(other / name, out / name)
     with pytest.raises(SystemExit, match="is not the case built.ok records"):
-        hickman_run.audit(out, True, lambda _m: None)
+        hickman_run.audit(out, True, lambda _m: None, built=built)
     # the very build, but its owner stipulation withdrawn after the resume's checks
-    (out / "built.ok").write_text(raw, encoding="utf-8")
+    built = json.loads((other / "built.ok").read_text(encoding="utf-8"))
     conn = sqlite3.connect(out / "case.db")
     conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
     conn.commit()
     conn.close()
     with pytest.raises(SystemExit, match="its confirmed device owner is no one, not SUBJECT-1"):
-        hickman_run.audit(out, True, lambda _m: None)
+        hickman_run.audit(out, True, lambda _m: None, built=built)
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):

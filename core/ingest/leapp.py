@@ -335,6 +335,8 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
             rc = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
             # a phone call log key in any ASCII case is the call log, read and checked as one
             key = _native_call_key(e.get("artifact_key"))
+            if isinstance(key, str) and not key.strip():
+                key = None  # a key of only spaces names nothing: as no key (CodeRabbit on #269)
             if not e.get("tablename"):
                 # an entry with no table to read is listed as not imported, so the coverage
                 # (and a run's call-log check) shows it was never read; unless the manifest

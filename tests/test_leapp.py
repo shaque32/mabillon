@@ -1179,6 +1179,25 @@ def test_a_call_log_key_in_other_case_is_read_as_the_call_log(tmp_path: Path) ->
     ]
 
 
+@pytest.mark.parametrize("blank", ["", " ", "\t"])
+def test_a_key_of_only_spaces_takes_its_tables_name(tmp_path: Path, blank: str) -> None:
+    # CodeRabbit on #269: a blank key names nothing, so the entry is keyed by its table, as one
+    # with no key is, and a call log so listed is read as the call log.
+    def blanked(manifest):  # noqa: ANN001, ANN202
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_calllog":
+                    e["artifact_key"] = blank
+
+    conn = _db()
+    LeappImporter(source_id="b").import_source(_lava_zip(tmp_path, blanked), conn)
+    p = coverage.load(conn, "b").payload["leapp"]
+    assert "get_calllog" in {a["key"] for a in p["artifacts_read"]}
+    assert conn.execute("SELECT count(*) FROM calls WHERE locator LIKE 'get_calllog/%'").fetchone()[
+        0
+    ]
+
+
 def test_a_call_duration_that_is_not_a_decimal_number_is_unknown(tmp_path: Path) -> None:
     # "²" passes str.isdigit but int() refuses it: the call is kept with no duration, and the
     # import goes on (CodeRabbit on #269).
