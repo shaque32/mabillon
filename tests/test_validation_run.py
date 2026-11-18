@@ -1539,6 +1539,54 @@ def test_a_call_log_changed_during_the_audit_stops_the_run_unscored(tmp_path, mo
     assert not (out / hickman_run.AUDITED).exists()
 
 
+def test_a_final_check_and_stopped_write_that_both_fail_leave_no_completed_run(
+    tmp_path, monkeypatch
+):
+    # CodeRabbit on #269: the final check runs before the pipeline stores the run as completed,
+    # so when the check fails and the write that stores the run as stopped fails too, the run
+    # is still not the case's completed audit, and its finished claims stay for reuse.
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    first = pipeline.last_run(conn)["run_id"]
+    conn.close()
+    real_stop, real_append, calls = hickman_run.case_stop, audit_log.append, []
+
+    def fails_at_the_final_check(conn, built):  # noqa: ANN001, ANN202
+        calls.append(1)
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        return real_stop(conn, built)
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("database is locked")
+        return real_append(conn, at, actor, action, payload)
+
+    monkeypatch.setattr(hickman_run, "case_stop", fails_at_the_final_check)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        assert pipeline.last_run(conn)["run_id"] == first
+        ((rid, status),) = conn.execute(
+            "SELECT id, status FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert rid != first and status == "running"
+        assert pipeline.finished_claims(conn, rid)
+        monkeypatch.setattr(audit_log, "append", real_append)
+        assert pipeline.mark_stale_runs_stopped(conn) == [rid]  # the next start stops it
+        assert pipeline.last_run(conn)["run_id"] == first
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
 def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
     # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
     # before any model call instead of passing without a word.
@@ -1554,10 +1602,16 @@ def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
         hickman_run.main(args)
 
 
-def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch):
-    # CodeRabbit on #269: the pipeline stores the run as completed before the final check, so
-    # a final check that raises (such as on a locked database) stores it as stopped, never the
-    # case's completed audit, with its finished claims kept.
+@pytest.mark.parametrize(
+    ("failing", "raised"),
+    [
+        (2, SystemExit),  # the final check, before the pipeline stores the run as completed
+        (3, sqlite3.OperationalError),  # the copy's check, after it is stored as completed
+    ],
+)
+def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch, failing, raised):
+    # CodeRabbit on #269: a final check that raises (such as on a locked database) stores the
+    # run as stopped, never the case's completed audit, with its finished claims kept.
     from core import pipeline
 
     out = tmp_path / "out"
@@ -1570,12 +1624,12 @@ def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch)
 
     def fails_after_the_audit(conn, built):  # noqa: ANN001, ANN202
         calls.append(1)
-        if len(calls) == 2:  # the check after the audit
+        if len(calls) == failing:
             raise sqlite3.OperationalError("database is locked")
         return real(conn, built)
 
     monkeypatch.setattr(hickman_run, "case_stop", fails_after_the_audit)
-    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+    with pytest.raises(raised, match="database is locked"):
         hickman_run.audit(out, True, lambda _m: None, built=built)
     conn = sqlite3.connect(out / "case.db")
     try:

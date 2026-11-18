@@ -52,23 +52,27 @@
   opens case.db, against the build record the run checked or wrote (not built.ok read again), so
   a case.db swapped (with or without its built.ok), an owner withdrawn, or call rows made
   unreadable after those checks is refused too. The audit
-  reads its stipulations and calls in its own reads after that check, so when the audit returns
-  the driver runs the same owner and call log checks once more on the same connection. An owner
-  or call log change still in place at that moment marks the run stopped (with the reason in its note and a halt entry in the audit
-  log), so `pipeline.last_run` and the scorer never take it as the case's completed audit, while
-  its finished claims stay reusable. A final check that itself fails or is interrupted (such as
-  on a database locked by another writer, or Ctrl+C) stores the run as stopped too where the
-  database allows that write, and no `audited.db`, report or zip is made; if even that write
-  fails, the run keeps the pipeline's completed status in case.db. So the scorer
-  (`eval/validation/score_hickman.py`, version unchanged, no measure changed) now scores only
-  a results.zip, which the driver publishes only after the final check passed, and only when
-  the case's last completed audit is the one the zip's run.json names; a case.db on its own is
-  refused. The final check tests that the case still
-  passes the gates, not that it equals what the audit read: a change made and reversed while
-  the audit ran, or one that leaves the gates passing (such as a call time moved to another
-  readable time), is not detected; model calls made before a refusal are still spent; and the
-  run is recorded as completed by the pipeline for the moment between its return and that
-  update. Closing these needs the pipeline to read in a snapshot the driver holds, a hook in
+  reads its stipulations and calls in its own reads after that check, so once every claim is
+  saved, and before the pipeline stores the run as completed, the driver runs the same owner
+  and call log checks once more on the same connection (from the pipeline's progress callback,
+  no change to `core/pipeline.py`). The check holds the write lock, and the pipeline's
+  completed write joins that transaction, so nothing changes between the check and that write.
+  An owner or call log change in place at that moment, or a check that itself fails (such as on
+  a database locked by another writer), stores the run as stopped (with the reason in its note
+  and a halt entry in the audit log), so `pipeline.last_run` and the scorer never take it as the
+  case's completed audit, while its finished claims stay reusable. If even that stopped write
+  fails, or the check is interrupted (Ctrl+C), the run stays running, which `pipeline.last_run`
+  never takes either, and the next start marks it stopped. So a run is stored as completed only
+  after it passed the final check. After that, the same check runs again in the read
+  transaction of the copy below, and a change made after the run completed still marks it
+  stopped; a failure there that also fails the stopped write leaves a run that passed the final
+  check. The scorer (`eval/validation/score_hickman.py`, version unchanged, no measure changed)
+  also now scores only a results.zip, and only when the case's last completed audit is the one
+  the zip's run.json names; a case.db on its own is refused. The final check tests that the
+  case still passes the gates, not that it equals what the audit read: a change made and
+  reversed while the audit ran, or one that leaves the gates passing (such as a call time moved
+  to another readable time), is not detected, and model calls made before a refusal are still
+  spent. Closing these needs the pipeline to read in a snapshot the driver holds, a hook in
   `core/pipeline.py` not made here; the driver owns its output directory through `run.lock`,
   and nothing else is meant to write to case.db during a run.
   Otherwise the audit copies the case on that same connection, in the same read transaction as
@@ -117,7 +121,9 @@
   - The audit stops when built.ok's build id is not the one case.db holds, or is missing, and
     when a phone's call log no longer passes gate G5b or the phone's owner stipulation was
     withdrawn, after the resume's checks or while the audit ran (the run is stored as stopped, `pipeline.last_run` keeps the earlier completed
-    run, and no `audited.db` is left); through `main()` too, with the audit itself refusing
+    run, and no `audited.db` is left); a final check that fails while the write that stores the
+    run as stopped fails too leaves the run running, never completed, with its finished claims
+    kept; through `main()` too, with the audit itself refusing
     before any run; a case.db moved away is never recreated; another build's case.db put at
     case.db while the report reads it, or before the zip, never reaches `report.html` or
     `results.zip` (the other build's claim text is absent from the report); an owner withdrawn
@@ -169,7 +175,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 88 tests pass (with `tests/test_leapp.py`, 198; `tests/test_validation_score.py`'s 28 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 90 tests pass (with `tests/test_leapp.py`, 200; `tests/test_validation_score.py`'s 28 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

@@ -942,17 +942,40 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         def progress(done: int, total: int, d) -> None:  # noqa: ANN001
             spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
             log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
+            if done == total:
+                final_check()
+
+        def final_check() -> None:
+            """The gates again once every claim is saved, before the pipeline stores the run as
+            completed. The audit reads its stipulations and calls after the check above, so an
+            owner or call row changed in between (or during the run) leaves its verdicts on a
+            case the gates did not pass. The check holds the write lock (BEGIN IMMEDIATE), and
+            the pipeline's completed write joins that transaction, so nothing changes between
+            the check and that write. A stop or a failed check raises RunStopped: the pipeline
+            stores the run as stopped, never completed, and its finished claims stay reusable.
+            If even that write fails, or the check is interrupted (Ctrl+C), the run stays
+            running, which no scorer or report takes either (pipeline.last_run), and the next
+            start marks it stopped (CodeRabbit on #269)."""
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                stop = case_stop(conn, built)
+            except Exception as e:
+                why = f"the final check could not run, so it is not scored: {e}"
+                raise pipeline.RunStopped(why) from e
+            if stop:
+                raise pipeline.RunStopped(f"{REFUSED}: {stop}")
 
         t = time.monotonic()
-        result = pipeline.run_audit(conn, comps, progress=progress)
+        try:
+            result = pipeline.run_audit(conn, comps, progress=progress)
+        except pipeline.RunStopped as e:
+            raise SystemExit(str(e)) from e
 
-        # The audit reads its stipulations and calls in its own reads, after the check above:
-        # an owner or a call row changed in between (or during the run) and still changed now
-        # leaves this run's verdicts on a case the gates did not pass. The run is then marked
-        # stopped, so no scorer or report takes it as the case's completed audit
-        # (pipeline.last_run), while its finished claims stay reusable, and the run stops here
-        # (CodeRabbit on #269). The check and the copy below read in one transaction, so the
-        # copy holds the owners and call log the check passed.
+        # The run passed the final check before it was stored as completed. The copy below is
+        # taken after that write, so the same check runs again in the copy's read transaction:
+        # the copy then holds the owners and call log a check passed. A change made after the
+        # run completed still stops the run here and marks it stopped, so no scorer or report
+        # takes it (pipeline.last_run), while its finished claims stay reusable.
         def unscored(why: str) -> None:
             """Store the run as stopped with `why`, so it is never the case's completed audit."""
             conn.rollback()  # end the read before the refusal is written
@@ -976,10 +999,9 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             stop = case_stop(conn, built)
         except BaseException as e:
             # the check itself failed or was interrupted (a database locked by another writer,
-            # Ctrl+C): the run was never verified, so it is stored as stopped where the database
-            # allows it (CodeRabbit on #269); if even that write fails, the run keeps the
-            # pipeline's completed status, but no audited.db, report or zip is made from it, and
-            # the scorer scores only a published results.zip whose run.json names the audit
+            # Ctrl+C): it is stored as stopped where the database allows it; if even that write
+            # fails, the run keeps its completed status, which the final check above earned,
+            # but no audited.db, report or zip is made from it
             with suppress(sqlite3.Error):
                 unscored(f"the final check could not run, so it is not scored: {e}")
             raise
