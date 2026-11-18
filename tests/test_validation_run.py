@@ -1677,7 +1677,33 @@ def test_a_call_history_with_a_row_read_but_no_longer_stored_stops_the_run(tmp_p
     with conn:
         conn.execute("DELETE FROM calls WHERE id = (SELECT max(id) FROM calls)")
     conn.close()
-    with pytest.raises(SystemExit, match=r"callhistory\) has 2 rows.*; 1 calls stored\)"):
+    with pytest.raises(SystemExit, match=r"callhistory\) has 2 rows read but 1 calls stored"):
+        hickman_run.main(args)
+
+
+def test_a_call_log_with_a_row_no_longer_stored_stops_beside_readable_calls(tmp_path):
+    # CodeRabbit on #269: fewer calls stored than rows read stops the run even when the phone
+    # still has phone calls a check can read, since the missing one may be the call a claim
+    # rests on.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("DELETE FROM calls WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"get_calllog\) has 2 rows read but 1 calls stored"):
         hickman_run.main(args)
 
 

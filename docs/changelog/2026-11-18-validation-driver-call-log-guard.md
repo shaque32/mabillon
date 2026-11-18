@@ -9,7 +9,7 @@
   The LEAPP coverage's `not_imported` entries now carry their artifact key and whether they may
   hold records (`may_hold_records`). That flag, and the importer's
   own test of whether an unread artifact may hold records, now reads a table that is there for a
-  row even when the manifest counts 0, takes a manifest count only as a JSON integer of 0 or more (a negative number, a bool, or a number such as 1.0 or 0.0 reads as unknown), and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key (or a key of only spaces) takes that spelling as its key, except a phone call log table (`get_calllog` or `callHistory` in any ASCII case), whose key is the canonical spelling while its locator keeps the database's. It refuses a manifest in which two entries Mabillon reads name one table that is in the database (in any ASCII case), which would store each of its rows twice; entries it never reads, or entries naming a table the database does not hold, may share a name. An entry that names no table is no longer skipped without a trace: it is listed under `not_imported` (no table, its key, `may_hold_records` true unless its count is the integer 0; one of a key Mabillon reads is marked as a failed read, so the coverage shows it as not read rather than as an artifact Mabillon does not read), so a call log or app listed that way that may hold records is not counted as read in full; one counted 0 is not. The run's check stops only on such an entry of the call log, or one with no key at all; an app's entry alone does not stop it. An unread entry of a key Mabillon reads for a chat app marks that app as not read in full whatever its category says (before, only the category's first word was compared with the app's name). Neither development manifest (Android 13, iOS 15) has such entries. A call length the row states but its reader cannot read (on the phone's own call log, not whole seconds; on any path that takes the length, more digits than Python reads or past SQLite's integer range) is stored as unknown and flagged `duration_not_readable` at its row, and the coverage summary lists those rows for the examiner. A chat app's call length with a fraction of a second (such as `83.9`) is read, as before, and stored truncated to whole seconds without the flag. A Telegram call notice of an outcome other than hung up keeps no length and is flagged `call_not_incoming_outgoing_or_missed` instead, whatever length it states, so no `duration_not_readable` flag does not mean no length was stated. Only the table's own rows (`TABLE/rowid=N`) are
+  row even when the manifest counts 0, takes a manifest count only as a JSON integer of 0 or more (a negative number, a bool, or a number such as 1.0 or 0.0 reads as unknown), and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key (a key of only spaces, or one that is not text such as a list, counts as none) takes its key from the table name: a table name that matches a key Mabillon knows (any phone call log key, or a key it reads for this LEAPP) in any ASCII case takes that key's canonical spelling, any other keeps the database's spelling, and the locator always keeps the database's spelling. It refuses a manifest in which two entries Mabillon reads name one table that is in the database (in any ASCII case), which would store each of its rows twice; entries it never reads, or entries naming a table the database does not hold, may share a name. An entry that names no table is no longer skipped without a trace: it is listed under `not_imported` (no table, its key, `may_hold_records` true unless its count is the integer 0; one of a key Mabillon reads is marked as a failed read, so the coverage shows it as not read rather than as an artifact Mabillon does not read), so a call log or app listed that way that may hold records is not counted as read in full; one counted 0 is not. The run's check stops only on such an entry of the call log, or one with no key at all; an app's entry alone does not stop it. An unread entry of a key Mabillon reads for a chat app marks that app as not read in full whatever its category says (before, only the category's first word was compared with the app's name). Neither development manifest (Android 13, iOS 15) has such entries. A call length the row states but its reader cannot read (on the phone's own call log, not whole seconds; on any path that takes the length, more digits than Python reads or past SQLite's integer range) is stored as unknown and flagged `duration_not_readable` at its row, and the coverage summary lists those rows for the examiner. A chat app's call length with a fraction of a second (such as `83.9`) is read, as before, and stored truncated to whole seconds without the flag. A Telegram call notice of an outcome other than hung up keeps no length and is flagged `call_not_incoming_outgoing_or_missed` instead, whatever length it states, so no `duration_not_readable` flag does not mean no length was stated. Only the table's own rows (`TABLE/rowid=N`) are
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
   - The table has rows but no phone call from it can be read as the caller check reads one: a
@@ -35,10 +35,10 @@
   The messages say that claims about the phone's calls would go untested; calls of another app
   are checked apart.
   FaceTime calls in the same table are not phone calls, so they neither hide an unreadable
-  call log nor stop a phone that has only those calls, as long as every row read is stored
-  (the importer stores one call per row, so fewer calls stored than rows read means a phone
-  call may be gone, and the run stops); calls of any other app with no phone call beside them
-  stop the run.
+  call log nor stop a phone that has only those calls; calls of any other app with no phone
+  call beside them stop the run. Fewer calls stored than rows read stops the run whatever
+  else the log holds, readable phone calls included (the importer stores one call per row, so
+  a call may be gone).
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
   check on the stored case, so a case built before this change never resumes into an audit of
   such a phone; on resume the phone's accounts count only while its device has one confirmed
@@ -68,7 +68,12 @@
   stopped; a failure there that also fails the stopped write leaves a run that passed the final
   check. The scorer (`eval/validation/score_hickman.py`, version unchanged, no measure changed)
   also now scores only a results.zip, and only when the case's last completed audit is the one
-  the zip's run.json names; a case.db on its own is refused. The final check tests that the
+  the zip's run.json names and the build id stamped in its case.db is the one run.json names
+  (run.json now records it; a zip made before build ids, such as the v4 runs, has neither and
+  is checked by its run id alone, and one with only one of the two is refused); a case.db on
+  its own is refused. The scorer scores into a temporary copy and replaces `scored.db`,
+  `score.json` and `score.md` only once scoring succeeds, so a refused zip leaves an earlier
+  score in place. The final check tests that the
   case still passes the gates, not that it equals what the audit read: a change made and
   reversed while the audit ran, or one that leaves the gates passing (such as a call time moved
   to another readable time), is not detected, and model calls made before a refusal are still
@@ -113,7 +118,7 @@
     FaceTime call beside them.
   - An iOS call history of FaceTime calls only passes; on a stored case, calls of an app not
     known as a call provider and no phone call stop the check, and so does a history with fewer
-    calls stored than rows read. A stored call time the caller check cannot parse is not a
+    calls stored than rows read, with or without a readable phone call beside them. A stored call time the caller check cannot parse is not a
     readable time.
   - A call log entry with no table name stops the build (`no table named`); an entry with
     neither a key nor a table stops it as a manifest problem when it may hold records and
@@ -175,7 +180,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 90 tests pass (with `tests/test_leapp.py`, 200; `tests/test_validation_score.py`'s 28 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 91 tests pass (with `tests/test_leapp.py`, 204; `tests/test_validation_score.py`'s 30 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -192,7 +197,7 @@
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at
   all; a manifest entry with no table is listed as not imported instead of skipped, two read
-  entries naming one table the database holds are refused; a key Mabillon reads in other ASCII case is read under its own spelling, a tableless entry of such a key is shown as a failed read, and a call duration that is
+  entries naming one table the database holds are refused; a key Mabillon reads in other ASCII case is read under its own spelling, a tableless entry of such a key is shown as a failed read (an attention item when it may hold records; a failed read of an entry the LEAPP output counts empty is an info line, without saying claims are untested), and a call duration that is
   not a decimal number or is past SQLite's integer range is stored as unknown instead of
   stopping the import. The verdict rules do not change, but the coverage that feeds them can: when such a table
   of an app holds rows Mabillon did not read (for example a refused native-message table with

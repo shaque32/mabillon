@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -51,7 +52,7 @@ from typing import Any
 
 from core.contracts import GoldClaim, Stance, Verdict
 from eval.validation.card import build_card, load_checks, rate, render_markdown
-from eval.validation.hickman_run import TYPE_ALIASES
+from eval.validation.hickman_run import TYPE_ALIASES, stamped_build
 
 KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.0.0: #134. 1.1.0: coverage (#142). 1.2.0: a claim is tested only with a first-pass verdict,
@@ -709,9 +710,20 @@ def _copy_db(results: Path, db: Path) -> dict[str, Any]:
 
 def _published_run(conn: sqlite3.Connection, results: Path, record: dict[str, Any]) -> dict:
     """The case's last completed audit, refused unless it is the one the run's run.json names
-    (the audit the driver checked before publishing)."""
+    (the audit the driver checked before publishing), in the build run.json names.
+
+    Run ids are unique only within one case, so the build id the driver stamps in case.db must
+    match run.json's too, or one build's run.json with another's case.db would pass. A zip made
+    before build ids (the v4 runs) has neither, and is checked by its run id alone; one with
+    only one of the two is refused (CodeRabbit on #269)."""
     from core import pipeline
 
+    stamped, named_build = stamped_build(conn), record.get("build_id")
+    if stamped != named_build:
+        raise SystemExit(
+            f"{results}: run.json names build {named_build}, but its case.db holds build"
+            f" {stamped}; score only the results.zip the run published"
+        )
     run = pipeline.last_run(conn)
     if run is None:
         raise SystemExit(f"{results}: no completed audit in case.db")
@@ -845,10 +857,25 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
 def score(
     results: Path, keys: Path, dump: Path, out: Path, repeat_of: Path | None = None
 ) -> dict[str, Any]:
+    out.mkdir(parents=True, exist_ok=True)
+    # scored under a temporary name, put in place with the score files only once scoring
+    # succeeds, so a refused or failed zip leaves an earlier score as it was (CodeRabbit)
+    db = out / "scored.db.part"
+    try:
+        result = _score(results, keys, dump, out, db, repeat_of)
+        os.replace(db, out / "scored.db")
+    finally:
+        db.unlink(missing_ok=True)
+    (out / "score.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    (out / "score.md").write_text(render(result), encoding="utf-8")
+    return result
+
+
+def _score(
+    results: Path, keys: Path, dump: Path, out: Path, db: Path, repeat_of: Path | None
+) -> dict[str, Any]:
     from core.db import connect
 
-    out.mkdir(parents=True, exist_ok=True)
-    db = out / "scored.db"
     run_record = _copy_db(results, db)  # the run's own run.json: versions, machine, times
     gold, key_hashes = load_keys(keys)
     by_index, chats, dump_counts = load_dump(dump)
@@ -885,8 +912,6 @@ def score(
         result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of, out))
         result["repeat_results_sha256"] = _sha256(repeat_of)
     result["v4_bars"] = v4_bars(result)
-    (out / "score.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-    (out / "score.md").write_text(render(result), encoding="utf-8")
     return result
 
 

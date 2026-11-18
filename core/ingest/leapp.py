@@ -341,15 +341,17 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
             rc = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
             # a phone call log key in any ASCII case is the call log, read and checked as one
             key = _known_key(leapp, e.get("artifact_key"))
-            if isinstance(key, str) and not key.strip():
-                key = None  # a key of only spaces names nothing: as no key (CodeRabbit on #269)
+            if not isinstance(key, str) or not key.strip():
+                # a key of only spaces, or one that is not text (a list, a number), names
+                # nothing: as no key, so the table name names the artifact (CodeRabbit on #269)
+                key = None
             if not e.get("tablename"):
                 # an entry with no table to read is listed as not imported, so the coverage
                 # (and a run's call-log check) shows it was never read; unless the manifest
                 # counts it empty it may hold records (CodeRabbit and Claude review on #269)
                 tableless.append(
                     {"name": str(e.get("name") or key or ""), "category": str(category),
-                     "key": key if isinstance(key, str) else None, "records": rc}
+                     "key": key, "records": rc}
                 )  # fmt: skip
                 continue
             table = _db_spelling(db, str(e["tablename"]))

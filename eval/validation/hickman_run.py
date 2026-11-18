@@ -676,12 +676,18 @@ def call_log_check(  # noqa: ANN001
             " AND substr(c.locator, 1, ?) = ? AND instr(substr(c.locator, ?), '/') = 0",
             (NATIVE_CALL_APP, NATIVE_CALL_APP, *by_phone, *by_other, *known, source_id, *own),
         ).fetchone()
-        # no phone call to read, and a row that is no phone call, no call at all, a call of an
-        # app Mabillon does not know as a provider (an iOS phone provider written another way
-        # would read so), or fewer calls stored than rows read (the importer stores one call
-        # per row, so a phone call may be gone): stop. A FaceTime-only history whose every row
-        # is stored passes (Claude review and CodeRabbit on #269).
-        if sided == 0 and (rows > 0 or stored < read or unknown_app > 0):
+        # fewer calls stored than rows read: the importer stores one call per row, so a call
+        # may be gone, whatever the rest of the log holds (CodeRabbit on #269)
+        if stored < read:
+            return (
+                f"its call log ({_one_line(table)}) has {read} rows read but {stored} calls"
+                " stored, so a call may be missing; claims about its phone calls would go"
+                " untested, so the run stops before any model call"
+            ), None
+        # no phone call to read, and a row that is no phone call or a call of an app Mabillon
+        # does not know as a provider (an iOS phone provider written another way would read
+        # so): stop. A FaceTime-only history passes (Claude review and CodeRabbit on #269).
+        if sided == 0 and (rows > 0 or unknown_app > 0):
             flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
                 f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
@@ -691,7 +697,6 @@ def call_log_check(  # noqa: ANN001
                     if unknown_app
                     else ""
                 )
-                + (f"; {stored} calls stored" if stored < read else "")
                 + "); claims about its phone"
                 " calls would go untested, so the run stops before any model call"
             ), None
@@ -1296,6 +1301,8 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
     # written still records what the case was built from (CodeRabbit on #267).
     run["phones"] = imported
+    # the build whose case.db the zip holds, so the scorer can tie the two (CodeRabbit on #269)
+    run["build_id"] = was["build_id"]
     run["phone_zone_given"] = phones[0].zone if len(phones) == 1 else None
     run["source_id"] = setup["source_id"]
     run["definitions"] = defs

@@ -666,3 +666,58 @@ def test_only_the_published_results_zip_is_scored(scored, tmp_path):
             z.writestr(name, data)
     with pytest.raises(SystemExit, match="run.json names audit run:another"):
         score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out2")
+
+
+def _rezip(run: Path, path: Path, edit) -> Path:  # noqa: ANN001
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    record = json.loads(members["run.json"])
+    edit(record)
+    members["run.json"] = json.dumps(record).encode()
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    return path
+
+
+def test_a_zip_whose_case_db_is_another_builds_is_refused(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: run ids are unique only within one case, so run.json must name the
+    # build stamped in its case.db too; another build's run.json with the same run id is refused
+    run, _ = scored
+    base = run.parent
+    record = json.loads((run / "run.json").read_text("utf-8"))
+    assert record["build_id"]  # the driver records it
+
+    def other_build(r: dict) -> None:
+        r["build_id"] = "another"
+
+    def no_build(r: dict) -> None:
+        r.pop("build_id")
+
+    swapped = _rezip(run, tmp_path / "swapped.zip", other_build)
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(swapped, base / "keys", base / "dump", tmp_path / "out")
+    older = _rezip(run, tmp_path / "older.zip", no_build)
+    with pytest.raises(SystemExit, match="run.json names build None"):
+        score_hickman.score(older, base / "keys", base / "dump", tmp_path / "out")
+    # a zip made before build ids (the v4 runs) has neither, and is scored by its run id alone
+    monkeypatch.setattr(score_hickman, "stamped_build", lambda _conn: None)
+    assert score_hickman.score(older, base / "keys", base / "dump", tmp_path / "old")["r1"]
+
+
+def test_a_refused_zip_leaves_an_earlier_score_in_place(scored, tmp_path):
+    # CodeRabbit on #269: the zip is checked and scored on a temporary copy, so a refused one
+    # never replaces scored.db or leaves it beside another run's score files
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "score.json", "score.md")}
+
+    def other_build(r: dict) -> None:
+        r["build_id"] = "another"
+
+    swapped = _rezip(run, tmp_path / "swapped.zip", other_build)
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(swapped, base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)

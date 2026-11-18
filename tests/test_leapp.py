@@ -1115,12 +1115,16 @@ def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
 
 
 @pytest.mark.parametrize(
-    ("key", "count", "stored_key", "holds"),
-    [("get_calllog", 1, "get_calllog", True), ("get_calllog", None, "get_calllog", True),
-     ("get_calllog", False, "get_calllog", True), ("get_calllog", 0.0, "get_calllog", True),
-     ("GET_CALLLOG", 1, "get_calllog", True), ("CallHistory", 2, "callHistory", True),
-     ("get_calllog", 0, "get_calllog", False), (["get_calllog"], 1, None, True),
-     ("get_sms_mms", 1, "get_sms_mms", True)],
+    ("key", "count", "stored_key", "holds", "failed"),
+    [("get_calllog", 1, "get_calllog", True, True),
+     ("get_calllog", None, "get_calllog", True, True),
+     ("get_calllog", False, "get_calllog", True, True),
+     ("get_calllog", 0.0, "get_calllog", True, True),
+     ("GET_CALLLOG", 1, "get_calllog", True, True),
+     ("CallHistory", 2, "callHistory", True, False),  # iLEAPP's key: ALEAPP does not read it
+     ("get_calllog", 0, "get_calllog", False, True),
+     (["get_calllog"], 1, None, True, False),
+     ("get_sms_mms", 1, "get_sms_mms", True, True)],
 )  # fmt: skip
 def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     tmp_path: Path,
@@ -1128,6 +1132,7 @@ def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     count,  # noqa: ANN001
     stored_key,  # noqa: ANN001
     holds,  # noqa: ANN001
+    failed: bool,
 ) -> None:
     # An entry with no table name is never read: the import goes on, and the coverage lists it
     # as not imported, holding records unless its count is the integer 0, so a run's call-log
@@ -1158,7 +1163,7 @@ def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     (entry,) = [t for t in p["not_imported"] if t["table"] is None]
     assert (entry["key"], entry["may_hold_records"]) == (stored_key, holds)
     # an entry of a key Mabillon reads is a failed read, shown as one (Claude review on #269)
-    assert bool(entry.get("read_failed")) is leapp._reads("ALEAPP", stored_key or "")
+    assert bool(entry.get("read_failed")) is failed
     native_unread = holds and stored_key in leapp.NATIVE_CALL_KEYS
     assert ("unknown" in p["apps_read_in_full"]) is not native_unread
 
@@ -1871,3 +1876,50 @@ def test_an_unread_call_log_entry_keeps_every_chat_app_partial(
     LeappImporter(source_id="and").import_source(_zip_with(tmp_path, lv, change), conn)
     payload = coverage.load(conn, "and").payload
     assert ("Telegram" in payload["apps_read_in_full"]) is not second
+
+
+@pytest.mark.parametrize(("count", "level"), [(0, "info"), (1, "attention")])
+def test_a_failed_read_says_claims_are_untested_only_when_it_may_hold_records(
+    tmp_path: Path,
+    count: int,
+    level: str,
+) -> None:
+    # CodeRabbit on #269: a read key's entry with no table is a failed read either way, but
+    # one the LEAPP output counts empty holds no records a claim could rest on.
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": BOB,
+                             "Phone Account Address": OWNER, "Duration in Secs": "5",
+                             "Raw Call Type (as stored)": "2",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+
+    def tableless(m: dict) -> None:
+        entries = next(v for v in m["artifacts"].values() if v)
+        entries.append({"name": "SMS", "artifact_key": "get_sms_mms", "record_count": count})
+
+    conn = _db()
+    LeappImporter(source_id="t").import_source(_zip_with(tmp_path, lv, tableless), conn)
+    codes = ("leapp_artifact_not_read", "leapp_artifact_empty_not_read")
+    items = [i for i in coverage.summary(conn, "t").items if i.code in codes]
+    assert [i.level for i in items] == [level]
+    assert items[0].plain.startswith("SMS")
+    assert "could not be read" in items[0].plain
+    assert ("not tested" in items[0].plain) is (level == "attention")
+
+
+def test_an_artifact_key_that_is_not_text_takes_its_key_from_the_table(tmp_path: Path) -> None:
+    # CodeRabbit on #269: a list or number as the key names nothing, so the table name gives
+    # the key and the call log is read as one, never stored as an unread "['get_calllog']".
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": BOB,
+                             "Phone Account Address": OWNER, "Duration in Secs": "5",
+                             "Raw Call Type (as stored)": "2",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+
+    def listed(m: dict) -> None:
+        _artifact(m, "get_calllog")["artifact_key"] = ["get_calllog"]
+
+    conn = _db()
+    LeappImporter(source_id="t").import_source(_zip_with(tmp_path, lv, listed), conn)
+    payload = coverage.load(conn, "t").payload
+    assert [a["key"] for a in payload["leapp"]["artifacts_read"]] == ["get_calllog"]
+    assert conn.execute("SELECT count(*) FROM calls").fetchone()[0] == 1
