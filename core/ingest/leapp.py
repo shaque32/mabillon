@@ -1650,9 +1650,10 @@ def _may_hold_records(lava: Lava, art: Artifact) -> bool:
     return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
 
 
-def _not_read(art: Artifact, why: str) -> dict[str, Any]:
+def _not_read(lava: Lava, art: Artifact, why: str) -> dict[str, Any]:
     return {"name": art.name, "category": art.category, "table": art.table, "key": art.key,
-            "records": art.record_count, "reason": why, "read_failed": True}  # fmt: skip
+            "records": art.record_count, "reason": why, "read_failed": True,
+            "may_hold_records": _may_hold_records(lava, art)}  # fmt: skip
 
 
 _NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
@@ -1830,7 +1831,9 @@ class LeappImporter:
                     if spec.kind is not kind:
                         continue
                     if not lava.has_table(art):
-                        cov.not_imported.append(_not_read(art, "its table is not in the database"))
+                        cov.not_imported.append(
+                            _not_read(lava, art, "its table is not in the database")
+                        )
                         continue
                     tc = TableCoverage(name=art.name, kind=kind.value)
                     tc.header_locator = art.table
@@ -1842,7 +1845,7 @@ class LeappImporter:
                         # listed only as not read, never as a table read with 0 rows
                         cov.tables.pop()
                         lava.refused.add(id(art))
-                        cov.not_imported.append(_not_read(art, ctx.failed))
+                        cov.not_imported.append(_not_read(lava, art, ctx.failed))
                         continue
                     done.append((spec, art))
                     if art.record_count is not None and art.record_count != tc.rows_read:

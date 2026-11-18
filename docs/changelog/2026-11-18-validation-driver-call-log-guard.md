@@ -3,12 +3,17 @@
   readiness list in project files; not pilot gate 5b). After each phone's import, the build
   checks the phone's own call log, found by the importer's artifact keys (`NATIVE_CALL_KEYS`:
   `get_calllog` or `callHistory`, now public in `core/ingest/leapp.py`), not by table name.
-  The LEAPP coverage's `not_imported` entries now carry their artifact key too. The build stops before the audit, so no
+  The LEAPP coverage's `not_imported` entries now carry their artifact key and, for a table that
+  failed to read, whether it may hold records. Only the table's own rows (`TABLE/rowid=N`) are
+  counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in two cases:
   - The table has rows but no phone call from it was stored with a side. This happens when
     every row was placed by another app, or had no direction or no party. The message lists the
     table's import flags.
-  - The table holds records the import could not read at all (listed under `not_imported`).
+  - The table may hold records the import could not read at all (listed under `not_imported`;
+    an entry with neither a count nor a row check fails closed, one known empty passes).
+  - The case was imported before unread entries kept their artifact key, so an unread call
+    log cannot be ruled out: it is built again.
   Calls of a provider app in the same table, such as FaceTime on iOS, are not phone calls, so
   they neither hide an unreadable call log nor stop a phone that has only those calls.
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
@@ -33,7 +38,10 @@
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
-  The file's 50 tests pass locally (cloud container, 2026-11-18). On the G2 development case
+  - On a stored case: an unread entry with no count stops unless known empty, an entry with no
+    key asks for a rebuild, another table's calls do not count, and a line break in a table name
+    stays escaped. A resume logs the readable count as a build does.
+  The file's 51 tests pass locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped: 70 of 108
   and 13 of 22 call log rows are phone calls a check can read. `make check` runs on GitHub CI.
 - Open: a call log where only a few rows are readable passes and is only logged; no share is

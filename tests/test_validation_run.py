@@ -661,7 +661,9 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
     why = rf"item1: its call log \(get_calllog\) has {len(rows)} rows"
     if not stops:
         assert hickman_run.main(args) == 0
-        assert hickman_run.main(args) == 0  # and a resume passes it too
+        assert hickman_run.main(args) == 0  # and a resume passes it too, and logs the count
+        logged = (tmp_path / "out" / "progress.log").read_text(encoding="utf-8")
+        assert logged.count("rows are phone calls a check can read") == 2
         return
     with pytest.raises(SystemExit, match=why):
         hickman_run.main(args)
@@ -718,6 +720,12 @@ def test_a_call_log_the_import_could_not_read_stops_the_build(tmp_path, monkeypa
             str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
     with pytest.raises(SystemExit, match=r"its call log \(get_calllog, 1 records\) was not read"):
         hickman_run.main(args)
+    # the importer keeps the entry's key and whether it may hold rows (CodeRabbit on #269)
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    (raw,) = conn.execute("SELECT payload_json FROM source_coverage").fetchone()
+    conn.close()
+    (entry,) = [t for t in json.loads(raw)["not_imported"] if t["table"] == "get_calllog"]
+    assert (entry["key"], entry["may_hold_records"]) == ("get_calllog", True)
 
 
 @pytest.mark.parametrize("unread", [False, True])
@@ -742,6 +750,79 @@ def test_the_call_log_is_found_by_its_key_when_its_table_is_named_otherwise(
     why = r"\(calls_t, 1 records\) was not read" if unread else r"\(calls_t\) has 1 rows"
     with pytest.raises(SystemExit, match=why):
         hickman_run.main(args)
+
+
+def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
+    # CodeRabbit on #269: unread entries with no count, entries with no key, another table
+    # whose name starts with the call log's, and a table name with a line break.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = (tmp_path / "out" / "case.db").read_bytes()
+
+    def check(edit_payload=None, sql=()):  # noqa: ANN001, ANN202
+        db = tmp_path / "check.db"
+        db.write_bytes(built)
+        conn = sqlite3.connect(db)
+        (raw,) = conn.execute(
+            "SELECT payload_json FROM source_coverage WHERE source_id = 'item1'"
+        ).fetchone()
+        p = json.loads(raw)
+        if edit_payload:
+            edit_payload(p)
+        conn.execute(
+            "UPDATE source_coverage SET payload_json = ? WHERE source_id = 'item1'",
+            (json.dumps(p),),
+        )
+        for q in sql:
+            conn.execute(q)
+        conn.commit()
+        try:
+            return hickman_run.call_log_check(conn, "item1")
+        finally:
+            conn.close()
+
+    assert check() == (None, "get_calllog: 1 of 1 rows are phone calls a check can read")
+
+    def unread(holds):  # noqa: ANN001, ANN202
+        def edit(p):  # noqa: ANN001, ANN202
+            entry = {"table": "calls_x", "key": "get_calllog", "records": None}
+            p["not_imported"].append({**entry, "reason": "bad", "may_hold_records": holds})
+
+        return edit
+
+    assert "was not read" in (check(unread(True))[0] or "")
+    assert check(unread(False))[0] is None  # known to be empty
+    assert "was not read" in (check(unread(None))[0] or "")  # nothing known: fails closed
+
+    def keyless(p):  # noqa: ANN001, ANN202
+        p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
+
+    assert "build it again" in (check(keyless)[0] or "")
+    # the call log's own row loses its sides; a call stored under "get_calllog/second" is
+    # another table's and must not make it readable
+    no_sides = "UPDATE calls SET from_account_id = NULL, to_account_id = NULL"
+    other = ("INSERT INTO calls (id, source_id, locator, device_id, app, from_account_id,"
+             " to_account_id, direction, ts_utc) SELECT id || 'b', source_id,"
+             " 'get_calllog/second/rowid=9', device_id, app, 'x', 'y', direction, ts_utc"
+             " FROM calls")  # fmt: skip
+    assert "no phone call a check can read" in (check(sql=(no_sides,))[0] or "")
+    assert "no phone call a check can read" in (check(sql=(no_sides, other))[0] or "")
+
+    def newline(p):  # noqa: ANN001, ANN202
+        for t in [*p["tables"], *p["leapp"]["artifacts_read"]]:
+            if (t.get("header_locator") or t.get("table")) == "get_calllog":
+                t["header_locator" if "header_locator" in t else "table"] = "get_calllog\nX: ok"
+
+    stop, _ = check(newline)
+    assert stop and "\n" not in stop and "get_calllog\\nX: ok" in stop
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):

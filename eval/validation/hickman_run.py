@@ -434,6 +434,12 @@ def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
     return sorted({z["zone"] for z in device.get("zones_seen", [])})
 
 
+def _one_line(value: object) -> str:
+    """A package's text, kept on one log line (a table name with a line break must not read
+    as a separate driver entry; CodeRabbit on #269)."""
+    return str(value).replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
 def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # noqa: ANN001
     """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
 
@@ -451,44 +457,62 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
     if cov is None:
         return None, None
     p = cov.payload
-    read_arts = (p.get("leapp") or {}).get("artifacts_read") or []
+    leapp = p.get("leapp")
+    if leapp is None:
+        return None, None  # another importer: no LEAPP call log tables
+    unread = p.get("not_imported") or []
+    if any(not t.get("key") for t in unread):
+        # an import stored before each unread entry kept its artifact key: an unread call log
+        # under another table name could not be told apart, so the case is rebuilt (CodeRabbit)
+        return (
+            "this case was imported before unread tables kept their artifact key, so an unread"
+            " call log cannot be ruled out; build it again with a new --out"
+        ), None
     # by the importer's own artifact keys, never by table name: a manifest may name its table
     # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
-    native = {str(a.get("table")) for a in read_arts if a.get("key") in NATIVE_CALL_KEYS}
-    by_name = {k.lower() for k in NATIVE_CALL_KEYS}  # an entry stored before keys were kept
-    for t in p.get("not_imported") or []:
-        key = t.get("key")
-        mine = key in NATIVE_CALL_KEYS if key else str(t.get("table") or "").lower() in by_name
-        if mine and int(t.get("records") or 0) > 0:
+    native = {str(a.get("table")) for a in leapp.get("artifacts_read") or []
+              if a.get("key") in NATIVE_CALL_KEYS}  # fmt: skip
+    for t in unread:
+        records, holds = t.get("records"), t.get("may_hold_records")
+        # rows may be there: the importer says so, or the manifest counts some, or neither is
+        # known (fail closed); a table known to be empty passes (CodeRabbit on #269)
+        rows = holds is True or (records or 0) > 0 or (holds is None and records is None)
+        if t.get("key") in NATIVE_CALL_KEYS and rows:
             return (
-                f"its call log ({t.get('table')}, {t.get('records')} records) was not read"
-                f" ({t.get('reason')}); every call claim on this phone would go untested, so the"
-                " run stops before any model call"
+                f"its call log ({_one_line(t.get('table'))}, {records} records) was not read"
+                f" ({_one_line(t.get('reason'))}); every call claim on this phone would go"
+                " untested, so the run stops before any model call"
             ), None
     notes = []
     for t in p.get("tables") or []:
-        table = str(t.get("header_locator") or "") if isinstance(t, dict) else ""
-        read = int(t.get("rows_read") or 0) if table else 0
+        if not isinstance(t, dict):
+            continue
+        table = str(t.get("header_locator") or "")
+        read = int(t.get("rows_read") or 0)
         if t.get("kind") != "calls" or table not in native or read == 0:
             continue
+        # this table's own rows only ("TABLE/rowid=N"), never another table whose name starts
+        # with this one and a slash (CodeRabbit on #269)
+        own = (len(table) + 1, f"{table}/", len(table) + 2)
         rows, sided = conn.execute(
             "SELECT count(*), coalesce(sum(from_account_id IS NOT NULL"
-            " OR to_account_id IS NOT NULL), 0) FROM calls"
-            " WHERE source_id = ? AND app = ? AND substr(locator, 1, ?) = ?",
-            (source_id, NATIVE_CALL_APP, len(table) + 1, f"{table}/"),
+            " OR to_account_id IS NOT NULL), 0) FROM calls WHERE source_id = ? AND app = ?"
+            " AND substr(locator, 1, ?) = ? AND instr(substr(locator, ?), '/') = 0",
+            (source_id, NATIVE_CALL_APP, *own),
         ).fetchone()
         (stored,) = conn.execute(
-            "SELECT count(*) FROM calls WHERE source_id = ? AND substr(locator, 1, ?) = ?",
-            (source_id, len(table) + 1, f"{table}/"),
+            "SELECT count(*) FROM calls WHERE source_id = ?"
+            " AND substr(locator, 1, ?) = ? AND instr(substr(locator, ?), '/') = 0",
+            (source_id, *own),
         ).fetchone()
         if sided == 0 and (rows > 0 or stored == 0):
             flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
-                f"its call log ({table}) has {read} rows but no phone call a check can read was"
-                f" stored (flags: {flags or 'none'}); every call claim on this phone would go"
-                " untested, so the run stops before any model call"
+                f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
+                f" read was stored (flags: {_one_line(flags or 'none')}); every call claim on this"
+                " phone would go untested, so the run stops before any model call"
             ), None
-        notes.append(f"{table}: {sided} of {read} rows are phone calls a check can read")
+        notes.append(f"{_one_line(table)}: {sided} of {read} rows are phone calls a check can read")
     return None, ("; ".join(notes) or None)
 
 
@@ -846,12 +870,14 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{a.out}: built.ok is there but case.db is not; use a new --out")
         conn = connect(a.out / "case.db")
         try:
-            stops = [(p["source_id"], call_log_check(conn, p["source_id"])[0]) for p in imported]
+            checks = [(p["source_id"], *call_log_check(conn, p["source_id"])) for p in imported]
         finally:
             conn.close()
-        for sid, stop in stops:
+        for sid, stop, note in checks:
             if stop:
                 raise SystemExit(f"{sid}: {stop}")
+            if note:
+                log(f"{sid}: {note}")  # as a fresh build logs it (CodeRabbit on #269)
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
