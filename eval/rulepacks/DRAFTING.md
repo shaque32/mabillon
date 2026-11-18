@@ -14,13 +14,17 @@ decides every verdict from the human-written checks.
 
 | Role | Sees | Never sees | Writes |
 |---|---|---|---|
-| Drafter | `CLAUDE.md`, the format guides and sample files in `formats/`, `pack.py`, `reader.py`, `check_layout.py`, `core/audit/assumptions.py`, `core/audit/checks/`, `core/audit/rules.py`, `core/contracts.py`, and what the check tool needs to run (`core/db.py`, `core/encryption.py`, `core/schema.sql`, the `core` package files they import) | any claim or trap, the generator (`carrier.py`), the harness, any other pack, this repo's history | one pack JSON, status `draft`, guards with no `blocks` |
-| Trap writer | `CLAUDE.md`, the format guides and samples, the generator `carrier.py` (the records' truth), `claim_api.py`, `reader.py`, `pack.py`, the core files above | the draft pack, any other pack, the reference claims (`carrier_claims.py`), the harness | `claims_blind.py`: true claims and traps, each with the verdict a correct, cautious audit returns |
+| Drafter | `CLAUDE.md`, `docs/ARCHITECTURE.md`, `docs/PRODUCT_STATUS.md`, the format guides and sample files in `formats/`, `pack.py`, `reader.py`, `check_layout.py`, `core/audit/assumptions.py`, `core/audit/checks/`, `core/audit/rules.py`, `core/contracts.py`, and what the check tool needs to run (`core/db.py`, `core/encryption.py`, `core/schema.sql`, the `core` package files they import) | any claim or trap, the generator (`carrier.py`), the harness, any other pack, `docs/changelog/`, this repo's history | one pack JSON, status `draft`, guards with no `blocks` |
+| Trap writer | `CLAUDE.md`, `docs/ARCHITECTURE.md`, `docs/PRODUCT_STATUS.md`, the format guides and samples, the generator `carrier.py` (the records' truth), `claim_api.py`, `reader.py`, `pack.py`, the core files above | the draft pack, any other pack, the reference claims (`carrier_claims.py`), the harness, `docs/changelog/` | `claims_blind.py`: true claims and traps, each with the verdict a correct, cautious audit returns |
 | Harness | everything | | the report: the gate, what each guard blocks, layout mistakes |
 | Examiner and Arsh | the pack, its harness report and one card per guard | | signatures, or a list of changes |
 
 Each session runs in its own copy of the repository that holds only what its row allows, with
 no git history, from its own brief below, and with no context shared with the other.
+`CLAUDE.md` asks every session to read the two docs files first. Neither names a carrier claim,
+trap or guard today (checked 2026-11-18); a status refresh could add one, so the orchestrating
+session checks them again before each round. The changelog entries do name them, so neither
+copy holds `docs/changelog/`.
 
 What each session sees is enforced by what its copy holds and by its brief. A session could
 still open a file outside its copy by path, so each one lists every file it read, and the
