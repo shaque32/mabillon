@@ -550,3 +550,15 @@ def test_only_traps_earn_a_guard_credit(pack: RulePack) -> None:
     rep = harness.evaluate(pack, (*CLAIMS, untagged))
     assert "t-voicemail" in rep.rule_kill["voicemail-leg"]
     assert "x-untagged" not in rep.rule_kill["voicemail-leg"]
+
+
+def test_a_wrong_row_says_why_and_a_right_row_does_not() -> None:
+    # the round 2 drafter gets a reference-only report and needs the reasons (DRAFTING.md)
+    pack = load(REFERENCE)
+    bare = pack.model_copy(update={"guards": ()})
+    rep = harness.evaluate(bare)
+    rows = [r for rows in rep.layouts.values() for r in rows]
+    wrong = [r for r in rows if r["got"] != r["expected"]]
+    assert wrong, "with no guards some trap should come out wrong"
+    assert all(r["why"] for r in wrong)
+    assert all("why" not in r for r in rows if r["got"] == r["expected"])

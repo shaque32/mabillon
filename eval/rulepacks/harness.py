@@ -189,9 +189,12 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
         return rep
     by_layout = {x.id: run_case(pack, x.id, claims=claims) for x in pack.layouts}
     for lid, outs in by_layout.items():
+        # a wrong row carries why: the round 2 drafter gets a reference-only run's report and
+        # needs the reasons (DRAFTING.md); a blind result is passed on as a count only
         rep.layouts[lid] = [
             {"claim": o.claim_id, "expected": o.expected.value, "got": o.got.value,
-             "trap": o.trap} for o in outs
+             "trap": o.trap} | ({"why": list(o.reasons)} if o.got is not o.expected else {})
+            for o in outs
         ]  # fmt: skip
         rep.false_supported += [f"{lid}:{c}" for c in sorted(_fs(outs))]
         rep.wrong += [f"{lid}:{o.claim_id}" for o in outs if o.got is not o.expected]
@@ -201,9 +204,10 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
     # run fails the gate, so no named trap passes untested (code review on #270). Only traps
     # the full pack holds count: one that gets through anyway is not this guard's.
     # Only traps earn a guard credit. `through` holds only false supports (expected verdict not
-    # SUPPORTED), so a non-trap claim in it is one the full pack holds and that goes SUPPORTED
-    # once this guard is removed: it earns no credit and is not reported, since the full pack
-    # gets it right. A true claim the full pack wrongly blocks is a different case: it is in
+    # SUPPORTED) that the full pack does not show, so a non-trap claim in it is one that goes
+    # SUPPORTED once this guard is removed. That removal result earns no credit and is reported
+    # nowhere else. Whether the full pack's own verdict on it is right is a separate question:
+    # any baseline miss (a true claim blocked, or a CONTRADICTED claim left UNPROVEN) is in
     # `wrong` above (CodeRabbit).
     known = {c.id for c in claims if c.trap}
     for g in pack.guards:

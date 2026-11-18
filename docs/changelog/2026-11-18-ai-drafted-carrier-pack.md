@@ -14,7 +14,7 @@
   harness CLI runs several claim sets together and prints one sign-off card per guard
   (`--claims`, `--cards`). Second step of `baker/plans/rule-drafting.md`.
 - Where: PR #270 (branch claude/project-thread-zweeky)
-- Verified: `pytest tests/test_rulepacks.py` (50 tests) on 2026-11-18 in a Linux cloud
+- Verified: `pytest tests/test_rulepacks.py` (51 tests) on 2026-11-18 in a Linux cloud
   container (4-core Intel Xeon at 2.10 GHz, Python 3.13; machine model not recorded,
   unverified). Harness on the drafted pack, same container and date, reference and blind sets
   together: 28/28 claims as expected in each layout, 0 false supported, both guards earn their
