@@ -29,7 +29,13 @@
     own messages app written by name, never "texted") get the event too, while "Telegram or
     Wickr" on a case holding Wickr Pro stays alternatives (CodeRabbit on #265). "Sent an SMS"
     or "an iMessage" searched on Native Messages, which holds both, gets the event too: no check
-    reads which of the two a row was (CodeRabbit on #265).
+    reads which of the two a row was (CodeRabbit on #265). A slash keeps two apps alternatives
+    only when it stands alone between them ("Telegram/Viber"), not inside a date in the gap,
+    and each mention is read as the longest app name written there ("Facebook Messenger" is
+    one app). A reply ("replied", "wrote back") is plain only when it is the quoted message;
+    ", and REYES replied" after the quote states a second message no row tests and gets the
+    event. "Answered" is plain only beside a row that tests a call's length (CodeRabbit on
+    #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -83,7 +89,8 @@
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
-  main, and the full local test run passes (4,702 passed, 9 skipped), and
+  main, the full local test run passes (4,702 passed, 9 skipped, before the last round of
+  fixes; the filler, check and count suites pass after it, 1,270), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

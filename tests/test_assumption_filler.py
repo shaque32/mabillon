@@ -3876,3 +3876,66 @@ def test_one_phone_app_on_an_app_holding_both_waits_for_an_expert(tmp_path, said
     plain = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
     made, _ = build_text(c, plain, ClaimType.COMMUNICATION, answer)
     assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+_Q = '"need 2 more by friday"'
+
+
+@pytest.mark.parametrize(
+    ("text", "event"),
+    [
+        # a second message after the one quoted: no row tests it (CodeRabbit on #265)
+        (f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, and @northstar replied.", True),
+        (f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, and @northstar wrote back.", True),
+        (f"On March 12, 2026, PETROV replied to @northstar, and then wrote: {_Q}.", True),
+        # the reply is the quoted message the rows test
+        (f"On March 12, 2026, PETROV replied to @northstar: {_Q}.", False),
+        (f"On March 12, 2026, PETROV wrote back to @northstar: {_Q}.", False),
+    ],
+)
+def test_a_reply_is_read_only_when_it_is_the_quoted_message(conn, text, event):
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert ("event" in {a.template_id for a in made}) is event
+    assert {"sender", "record_time"} <= {a.template_id for a in made}
+
+
+def test_a_slash_in_a_date_does_not_make_two_apps_alternatives(tmp_path):
+    # "on Telegram (03/12/2026), on Viber": the comma joins the apps; the date's slashes are
+    # no "/" between them, which alone keeps "Telegram/Viber" alternatives (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram (03/12/2026), on Viber"))
+    assert filler._apps_named_together(claim.format("Telegram/Viber")) == []
+    assert filler._apps_named_together(claim.format("Telegram / Viber")) == []
+
+
+def test_a_name_inside_a_longer_app_name_is_not_a_second_app(tmp_path):
+    # "Facebook Messenger" also holds "Facebook": the two matches sat next to each other with
+    # no gap and read as joined, so "Telegram or Facebook Messenger" got an event. The longest
+    # name at a mention is the app; "Facebook and Facebook Messenger" keeps both (CodeRabbit
+    # on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:fb', 'item1', 'x', 'dev:item1', 'Facebook', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'y', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram or Facebook Messenger")) == []
+    assert filler._apps_named_together(claim.format("Telegram and Facebook Messenger"))
+    assert filler._apps_named_together(claim.format("Facebook or Facebook Messenger")) == []
+    assert filler._apps_named_together(claim.format("Facebook and Facebook Messenger"))
+
+
+def test_an_answered_call_is_plain_only_beside_a_tested_length(conn):
+    # "answered" is no reply to a quoted message: beside a row that tests the call's length it
+    # is read (a call that lasted was answered), and elsewhere it is a word no check reads.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV placed a call to REYES that was answered."
+    assert filler.unread_words(text, (), {"call", "length"}) == []
+    assert filler.unread_words(text, (), {"call"}) == ["answered"]

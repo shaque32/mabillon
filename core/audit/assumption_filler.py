@@ -2985,10 +2985,10 @@ _PLAIN_WORDS = frozenset(
     # writing, sending and calling
     " wrote write writes writing written sent send sends sending texted text texts texting "
     "messaged message messages messaging told tell tells telling asked ask asks asking said "
-    "say says saying replied reply replies replying responded respond responds answered "
+    "say says saying "
     "stating stated received receive receives receiving exchanged exchange exchanges "
     "exchanging placed place places placing made make chatted chat chats "
-    "communicated communication communications contact contacted contacting back dm dms "
+    "communicated communication communications contact contacted contacting dm dms "
     "outgoing incoming conversation user users account accounts id identifier handle username "
     "name named names party number numbers telephone phone phones cellular "
     "cell mobile line app application platform service thread messenger arrived"
@@ -3021,7 +3021,8 @@ _GATED_WORDS = {
         "five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
         "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety times".split()
     ),
-    "length": frozenset("lasted lasting lasts length duration long".split()),
+    # "a call that was answered and lasted ...": a call with a tested length was answered
+    "length": frozenset("lasted lasting lasts length duration long answered".split()),
     # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
     "contact": frozenset("saved stored listed".split()),
 }
@@ -3075,6 +3076,14 @@ _UNPLAIN_PHRASES_RE = re.compile(
 # #265).
 _READ_QUOTE_RE = re.compile(
     r"\b(?:(?:that|which)\s+read|reading)\s*[,:]?\s*(?=[\"“‘'])", re.IGNORECASE
+)
+# A reply is a message the checks read only when the claim quotes it: 'REYES replied "ok"',
+# 'REYES replied to PETROV's message: "ok"'. ', and REYES replied' after the one quoted
+# message states a second message no row tests, so its words stay unread (CodeRabbit on #265).
+_REPLY_QUOTED_RE = re.compile(
+    r"\b(?:replied|reply|replies|replying|responded|respond|responds|answered|answers?|back)\b"
+    r"(?=(?:(?!,\s*(?:and|but|then)\b)[^\"“”;])*?[\"“])",
+    re.IGNORECASE,
 )
 # "the records show", "the account displayed as", "a display name": where the records are and
 # how an account is shown, not anyone showing or displaying anything; "the two" is both parties.
@@ -3346,7 +3355,7 @@ class LocalAssumptionFiller:
         checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
-        for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE):
+        for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE, _REPLY_QUOTED_RE):
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
@@ -4452,22 +4461,30 @@ class LocalAssumptionFiller:
         text = self._without_phone_names(_nfc(claim_text))
         apps = self._named_apps(text)
         bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
-        spans: list[tuple[int, int, str]] = []
-        missing = False
+        found: list[tuple[int, int, str]] = []
+        missing: list[str] = []
         for app in apps:
             names = (app, *APP_ALIASES.get(app.casefold(), ()))
-            found = [
+            mine = [
                 (*m.span(), app)
                 for n in names
                 for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
             ]
-            missing = missing or not found
-            spans += found
+            if not mine:
+                missing.append(app)
+            found += mine
+        # Each mention is read as the longest name written there: "Facebook Messenger" is one
+        # app, not Facebook beside it; "Facebook and Facebook Messenger" keeps both
+        # (CodeRabbit on #265).
+        spans: list[tuple[int, int, str]] = []
+        for st, en, app in sorted(found, key=lambda s: (s[0], s[0] - s[1])):
+            if not any(a <= st and en <= b for a, b, _ in spans):
+                spans.append((st, en, app))
         for m in _PHONE_APP_WORD_RE.finditer(bare):
             if not any(st < m.end() and m.start() < en for st, en, _ in spans):
                 kind = "imessage" if "imessage" in m.group(0).casefold() else "sms"
                 spans.append((*m.span(), kind))
-        if len({a for *_, a in spans} | set(apps)) < 2:
+        if len({a for *_, a in spans} | set(missing)) < 2:
             return []
         spans.sort()
         if missing:
@@ -4477,9 +4494,11 @@ class LocalAssumptionFiller:
             if a == b:
                 continue
             gap = bare[end:start]
-            alone = re.search(r"(?i)\bor\b|/", gap) and not re.search(
-                r"(?i)\b(?:and|both|plus|as\s+well\s+as|also)\b|&", gap
-            )
+            # "/" keeps two apps alternatives only alone between them ("Telegram/Viber"), never
+            # inside a date in the gap (CodeRabbit on #265)
+            alone = (
+                re.search(r"(?i)\bor\b", gap) or re.fullmatch(r"\s*/\s*", gap)
+            ) and not re.search(r"(?i)\b(?:and|both|plus|as\s+well\s+as|also)\b|&", gap)
             together = together or not alone
         if not together:
             return []
