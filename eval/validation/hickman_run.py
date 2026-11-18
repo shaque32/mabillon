@@ -1014,7 +1014,12 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             # no claim ran, the final check never ran, and the pipeline stored an empty run as
             # completed: it is stopped here, so no scorer or report takes it (CodeRabbit on #269)
             why = "no claim was audited, so the run is not scored; check the claims file"
-            unscored(why)
+            try:
+                unscored(why)
+            except sqlite3.Error as e:
+                # the empty run stays completed in case.db, but no audited.db, report or zip
+                # is made from it, and the scorer scores only a published results.zip
+                raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
             raise SystemExit(why)
         try:
             if conn.in_transaction:  # the pipeline's own writes end before this read

@@ -1655,6 +1655,45 @@ def test_a_run_whose_claims_go_before_the_pipeline_reads_them_is_stopped(tmp_pat
     assert not (out / hickman_run.AUDITED).exists()
 
 
+def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeypatch):
+    # CodeRabbit on #269: if the empty run cannot be stored as stopped, it stays completed, but
+    # the driver exits without an audited.db, report or zip made from it.
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real, append = pipeline.load_claims, audit_log.append
+    reads: list[int] = []
+
+    def gone_after_first(conn):  # noqa: ANN001, ANN202
+        reads.append(1)
+        if len(reads) > 1:
+            with conn:
+                conn.execute("UPDATE claims SET status = 'removed'")
+        return real(conn)
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("disk I/O error")
+        return append(conn, at, actor, action, payload)
+
+    (out / hickman_run.AUDITED).unlink(missing_ok=True)
+    monkeypatch.setattr(pipeline, "load_claims", gone_after_first)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    with pytest.raises(SystemExit, match="storing it as stopped failed"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    monkeypatch.undo()
+    assert not (out / hickman_run.AUDITED).exists()
+    conn = sqlite3.connect(out / "case.db")
+    assert (
+        conn.execute("SELECT count(*) FROM pipeline_runs WHERE status = 'stopped'").fetchone()[0]
+        == 0
+    )  # the stop write failed, as the test meant
+    conn.close()
+
+
 def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
     # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
     # before any model call instead of passing without a word.
