@@ -3722,6 +3722,39 @@ def test_a_hyphen_joins_the_words_of_a_longer_app_name(conn, monkeypatch):
     assert filler.claim_apps(both) == {"line", "line business"}
 
 
+def test_a_quoted_date_or_year_is_never_the_claims(conn):
+    # A date or year inside the quoted message is the message's: a range on the quoted day,
+    # or a year taken only from the quote, would test the claim on the wrong day (CodeRabbit
+    # on #265).
+    import core.audit.assumption_filler as af
+
+    text = 'On March 12, 2026, PETROV wrote to REYES: "see you March 11, 2026".'
+    check_window(D(2026, 3, 12), D(2026, 3, 13), "March 12, 2026", text, "")
+    with pytest.raises(Reject, match="not a date the claim states"):
+        check_window(D(2026, 3, 11), D(2026, 3, 13), "March 12, 2026", text, "")
+    no_year = 'On March 12, PETROV wrote to REYES: "back in 2025".'
+    assert af.stated_windows(no_year, "") is None
+    assert af.stated_windows("On March 12", no_year) is None
+    (w,) = af.stated_windows("On March 12", f"{no_year} On March 12, 2026, it was.")
+    assert w.start == D(2026, 3, 12)
+    assert (
+        stated_part_day('On March 12, no contact after 9 a.m., per the note "filed 2025".') is None
+    )
+    # an open range takes the paragraph's year, never a quoted one beside it
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="There was no contact between dev:item1 and (212) 555-0144 before March 12, the"
+        ' "2025 plan" aside.',
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    w = filler._open_range(c, ["dev:item1"], "The phones were seized in 2026.")
+    assert w.raw.startswith("before March 12: from")
+    assert w.end_utc.astimezone(ZoneInfo("America/New_York")).date().isoformat() == "2026-03-11"
+
+
 def test_words_inside_a_kept_range_are_still_read(conn):
     # The model may keep "On March 12, 2026, while driving" as the day's range; "while
     # driving" is still a word no check reads (Greptile on #265).

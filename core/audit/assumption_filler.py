@@ -970,6 +970,13 @@ def _unquoted(text: str) -> str:
     return "".join(out)
 
 
+def _stated_years(*texts: str) -> set[int]:
+    """The years the texts write outside quoted words. A year in a quoted message ("back in
+    2025") is the message's, never the year of a date the claim leaves without one
+    (CodeRabbit on #265)."""
+    return {int(y) for t in texts for y in _YEAR_RE.findall(_unquoted(t))}
+
+
 def _names_unquoted(text: str, names: Iterable[str]) -> str:
     """The text with the quotation marks around a party's name blanked and the name kept
     ('the GroupMe user "DFIR Two"'), same length. Any other quoted span is kept whole."""
@@ -1235,8 +1242,12 @@ def check_window(
         )
     if end - start > timedelta(days=MAX_WINDOW_DAYS):
         raise Reject(f"window longer than {MAX_WINDOW_DAYS} days")
-    mentions = date_mentions(as_written) + date_mentions(claim)
-    years = {int(y) for y in _YEAR_RE.findall(as_written + " " + claim + " " + para)}
+    # A date, a year or a time in quoted words is the message's, never one the claim states:
+    # a range on a quoted date would test the claim on the wrong day (CodeRabbit on #265).
+    # Only the weekday check, which only refuses, still reads the quotes.
+    raw_written, as_written = as_written, _unquoted(as_written)
+    mentions = date_mentions(as_written) + date_mentions(_unquoted(claim))
+    years = _stated_years(raw_written, claim, para)
     if not years:
         raise Reject("the document states no year for this range")
     times = time_mentions(as_written)
@@ -1260,7 +1271,7 @@ def check_window(
             raise Reject("window end is not near the end of the stated time range")
     # "after March 3" leaves March 3 out: the range starts at midnight on March 4. "on or
     # after" and "since" keep the day itself.
-    if weekday_mismatch(as_written, years) or weekday_mismatch(claim, years):
+    if weekday_mismatch(raw_written, years) or weekday_mismatch(claim, years):
         raise Reject("a weekday the document gives is not that date's weekday")
     months = months_stated(as_written)
     if months is not None and not times:
@@ -1271,7 +1282,7 @@ def check_window(
             raise Reject("a range of whole months is the months the words state, first to last")
         # "May 2023" copied from "In April and May 2023" is the claim's run cut short: the
         # range is the whole run the claim writes around the words, never part of it.
-        words = _flat(_nfc(as_written.strip()))
+        words = _flat(_nfc(raw_written.strip()))
         plain_claim = _unquoted(_flat(_nfc(claim)))
         at = plain_claim.find(words) if words else -1
         while at >= 0:
@@ -1574,7 +1585,7 @@ def stated_windows(text: str, context: str = "") -> list[StatedWindow] | None:
       date ("in the early hours of", "on the evening of", "late on"): the whole day would
       let any time that day pass.
     """
-    years = {int(y) for y in _YEAR_RE.findall(text + " " + context)}
+    years = _stated_years(text, context)
     out: list[StatedWindow] = []
     read: list[tuple[int, int]] = []  # the spans of `plain` the ranges were read from
     plain = _unquoted(text)  # a date or time in quoted words is the message's, not the claim's
@@ -2056,7 +2067,7 @@ def stated_part_day(text: str, context: str = "") -> StatedWindow | None:
     exactly one time of day, written right after "after" or "before"; no "about", no numeric
     date, no weekday that is not the date's, no zone code cannot read. Anything else is None."""
     plain = _unquoted(text)
-    years = {int(y) for y in _YEAR_RE.findall(text + " " + context)}
+    years = _stated_years(text, context)
     if weekday_mismatch(plain, years) or unread_zone(plain) is not None:
         return None
     if _NUM_DATE_RE.search(text):
@@ -6454,7 +6465,7 @@ class LocalAssumptionFiller:
         m = dates[0]
         # A date with no year takes the one year the claim and its paragraph state, as
         # check_window reads it (Codex on #169).
-        years = {int(y) for y in _YEAR_RE.findall(claim.text + " " + para)}
+        years = _stated_years(claim.text, para)
         y = int(m.group(3) or m.group(6) or 0) or (next(iter(years)) if len(years) == 1 else 0)
         try:
             day = datetime.combine(date(y, _MONTHS[m.group(1).lower()], int(m.group(2))), time())
