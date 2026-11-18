@@ -4621,6 +4621,12 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # a handle ("to @SMS") is an account, never the phone
     handle = 'On March 12, 2026, PETROV wrote to @SMS on Telegram: "need 2 more by friday".'
     assert filler._message_apps(handle) == ["Telegram"]
+    # nor does it hold code's sender to that phone: the message may be on another one
+    assert filler._written_phones(handle) == set()
+    made, f = build_text(c, handle, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    (sender,) = [a for a in made if a.template_id == "sender"]
+    assert sender.params.channels == ("Telegram",), sender.params
+    assert not sender.params.device_ids, sender.params
     # the phone's name inside a quote is the message's words, not the phone
     quoted = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "see you on the SMS".'
     assert filler._message_apps(quoted) == ["Telegram"]

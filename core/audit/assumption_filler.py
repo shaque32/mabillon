@@ -583,6 +583,8 @@ def _count_word(w: str) -> bool:
 
 # An address or identifier with an app's name in it: "x@gmail.com", "live:.cid.5638", "zoom.us".
 _ADDRESS_RE = re.compile(r"\S+@\S+|\S*:\S+|\S+\.(?:com|net|org|us|io)\b\S*", re.IGNORECASE)
+# A web address alone, for the readers that keep times ("9:31") but skip addresses.
+_WEB_ADDRESS_RE = re.compile(r"\S+\.(?:com|net|org|us|io)\b\S*", re.IGNORECASE)
 
 
 def _has_alias(text: str, alias: str) -> bool:
@@ -5472,9 +5474,12 @@ class LocalAssumptionFiller:
         """(device, start, end) for each place `_written_phones` finds a device written. A name
         the expert gave a phone is found with or without its leading "the" ("SAMSUNG exchanged
         ..." for "the SAMSUNG"), as a model's answer is (device_names.keys; Codex on #210),
-        the outermost where two overlap."""
+        the outermost where two overlap. A name written only inside a handle or an address
+        ("to @SMS" for a phone named "the SMS") is no phone's (CodeRabbit on #265); a form
+        that is the whole handle or address is still read."""
         named = logged_names(self.conn)
         found: set[tuple[str, int, int]] = set()
+        handles = [m.span() for rx in (_HANDLE_RE, _WEB_ADDRESS_RE) for m in rx.finditer(text)]
         for did, sid, label in self.conn.execute("SELECT id, source_id, label FROM devices"):
             names = named.get(did, [])
             forms = [*(x for x in (did, sid, label) if x), *names]
@@ -5484,6 +5489,10 @@ class LocalAssumptionFiller:
                     continue
                 pattern = r"(?<!\w)" + r"\s*".join(map(re.escape, name_key(x))) + r"(?!\w)"
                 for m in re.finditer(pattern, text, re.I):
+                    if any(
+                        a <= m.start() and m.end() <= b and (a, b) != m.span() for a, b in handles
+                    ):
+                        continue  # "@SMS": a handle, not the phone "the SMS"
                     if x not in (did, sid, label) and in_lower_case(x, m.group(0)):
                         # "the samsung" for the expert's "the SAMSUNG": it may be any Samsung
                         raise Reject(_lowered(m.group(0), f"the phone name {x!r}"))
