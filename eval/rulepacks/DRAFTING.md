@@ -51,12 +51,13 @@ label changes after the final run, the gate is run again before anyone signs.
    (`carrier_claims.py`, the development set) and the blind set (held out).
 2. A pack that passes goes to signing. A pack that is dropped is reported as dropped, with
    which gate failed. It is not edited to pass by the session that ran the harness.
-3. **Round 2 and later, if dropped.** A fresh drafter session gets the round 1 pack as the
-   drafter wrote it, with empty `blocks` (a signing candidate that names traps is never handed
-   to a drafter), and the harness report **on the development set only** (`--claims reference
-   --json`; each wrong row carries its `why`): which reference claim came out wrong and why. It
-   never sees the blind traps or their results beyond one line: how many were wrong. Each round
-   is a new pack version (`0.1.0-draft.2`, and so on).
+3. **Round 2 and later, if dropped.** A fresh drafter session gets the previous round's pack as
+   its drafter wrote it, with empty `blocks` (so earlier fixes carry forward; a signing
+   candidate that names traps is never handed to a drafter), and that round's harness report
+   **on the development set only** (`--claims reference --json`; each wrong row carries its
+   `why`): which reference claim came out wrong and why. It never sees the blind traps or their
+   results beyond one line: how many were wrong. Each round is a new pack version
+   (`0.1.0-draft.2`, and so on).
 4. The blind set's verdict labels are the trap writer's judgment, not human gold. An examiner
    reviews each label before the pack is signed. A label the examiner corrects is corrected
    in its own commit that says so, never to make a pack pass.
