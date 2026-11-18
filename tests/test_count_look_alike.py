@@ -13,6 +13,7 @@ from core.audit.checks._common import Row
 from core.audit.checks.count import (
     TWIN_S,
     each_way_rests_on_look_alikes,
+    fewest_messages,
     look_alike,
     look_alikes_matter,
 )
@@ -94,3 +95,26 @@ def test_a_message_each_way_on_a_look_alike_pair_alone_is_held_open() -> None:
     assert not each_way_rests_on_look_alikes([*pair, row(3, "other", later), own], a, b)
     # no look-alikes at all
     assert not each_way_rests_on_look_alikes([row(1, "ok", T0), own], a, b)
+
+
+def test_two_copies_of_one_sides_message_still_hold_a_message_from_it() -> None:
+    # A's two "ok" rows a second apart are at most one message, but one from A all the same:
+    # with B's own message, a message each way stands (CodeRabbit on #265).
+    a, b = {"acct:a"}, {"acct:b"}
+    later = T0 + timedelta(seconds=10)
+    copies = [row(1, "ok", T0), row(2, "ok", T0 + timedelta(seconds=1))]
+    own = row(3, "sure", later, sender="acct:b")
+    assert not each_way_rests_on_look_alikes([*copies, own], a, b)
+    assert fewest_messages(copies, [*copies, own]) == 1
+
+
+def test_a_sides_rows_are_read_for_look_alikes_beside_the_other_sides() -> None:
+    # "A to B 'ok'" and "B to A 'ok'" a second apart may be B's message alone, so A's row may
+    # hold none of A's; B's own other message still counts (CodeRabbit on #265).
+    mine = row(1, "ok", T0)
+    theirs = row(2, "ok", T0 + timedelta(seconds=1), sender="acct:b")
+    other = row(3, "sure", T0 + timedelta(seconds=10), sender="acct:b")
+    rows = [mine, theirs, other]
+    assert fewest_messages([mine], rows) == 0
+    assert fewest_messages([theirs, other], rows) == 1
+    assert fewest_messages(rows, rows) == 2  # the pair is one message, whoever sent it

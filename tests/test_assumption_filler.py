@@ -3763,3 +3763,42 @@ def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
     made, filler = build_text(conn, text, ClaimType.COMMUNICATION, scoped)
     assert made == []
     assert any("also names an app" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    "tail", [", over one hour", ", for half an hour", ", an hour after the call"]
+)
+def test_a_spoken_length_no_row_tests_is_read(conn, tail):
+    # "over one hour" passed with no row testing a length: "over", "one" and "hour" are each
+    # plain alone (CodeRabbit on #265).
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = (
+        f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more by friday".'
+    )
+    assert filler.unread_words(text)
+    if "after" not in tail:  # "after the call" is read by a row that tests a call
+        assert filler.unread_words(text, (), {"length"}) == []
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
+def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
+    # "on Telegram and Viber" was searched on either app, so a Telegram message alone passed
+    # the sender and time checks (CodeRabbit on #265). "Telegram or Viber" still reads either.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Viber: "need 2 more by'
+        ' friday".'
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler._apps_named_together(text) == ["Telegram and Viber"]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+    either = text.replace("Telegram and Viber", "Telegram or Viber")
+    assert filler._apps_named_together(either) == []
+    made, _ = build_text(c, either, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" not in {a.template_id for a in made}
+    assert filler._apps_named_together(text.replace(" and Viber", "")) == []

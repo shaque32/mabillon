@@ -20,7 +20,11 @@
     records show" and "displayed as"; an account named like a plain word ("Photo") hides that
     word only where the claim writes it as a name. A count or a length written in digits ("one of
     2 messages", "over 2 hours") is read as its spoken form is, and "video" ("sent a video",
-    "a video call") is a word no check reads, not an app's name (CodeRabbit on #265).
+    "a video call") is a word no check reads, not an app's name (CodeRabbit on #265). A spoken
+    length no row tests ("over one hour", "for half an hour") is read even when each of its
+    words is plain alone, and a message "on Telegram and Viber" (apps named together, not
+    "or") gets the event, since a row searched on both apps finds it on either (CodeRabbit on
+    #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -44,8 +48,8 @@
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, so it is no longer tested by one wider than
     it states. A length written so ("lasted 0:12:45") is not a time of day.
-  - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then 1.3.1 on merging #264's
-    count 1.2.1 guard, which it keeps). Rows
+  - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
+    1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
     the count inconclusive, with a note for the expert. On the Android 13 development phone a
     chat of 12 messages is stored as 17 rows, and each text is held twice (the SMS store and
@@ -55,27 +59,34 @@
     look-alikes could change the answer ("at least 5" over 10 rows with 2 look-alikes still
     passes; `look_alikes_matter`, Claude review on #265). A message each way ("exchanged") that
     rests on a look-alike pair alone is held open too (`each_way_rests_on_look_alikes`,
-    CodeRabbit on #265).
+    CodeRabbit on #265), but two copies of one side's own message still hold a message from
+    that side. Look-alikes are read over both sides before a count picks one side's messages
+    (`fewest_messages`, 1.3.1), so "A sent at least 1" over A's "ok" and B's "ok" a second
+    apart is held open: both rows may be B's message (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
     this, "texted" bound to SMS read as a mismatch on case01 C12. Other apps a try names still
     count. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
     instead of failing it on filler 12's new rows (CodeRabbit on #265).
-- Where: PR #265 (on top of #263)
+- Where: PR #265 (after #263 and #264, both merged; main merged in)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
-  its fix. The filler, fill, replay, override and check suites pass locally (1,784), and
+  its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
+  main (1,231), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only) leaves
-  every check outcome unchanged and adds the expert-only event to 19 claims (4 of them false
+  every check outcome unchanged and adds the expert-only event to 20 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
   Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:
-  the call log keeps no kind of call, so it now waits for an expert); one message-only absence that was inconclusive is now refused.
+  the call log keeps no kind of call, so it now waits for an expert; iOS 15 C07, "placed a
+  second Signal call", after the fixes on the merge with main: "a second" is read as a length
+  no row tests, and the ordinal is one no check reads); one message-only absence that was
+  inconclusive is now refused.
   On case01, C11 (gold contradicted, its time check fails) also gains the event. `make check` runs on GitHub CI.
 - Open: the plain-word list is blunt in both directions. A true claim with an unlisted word
   loses the code-checked path and waits for an expert; a word on the list that carries meaning
@@ -90,4 +101,5 @@
   code-made event that only an expert can carry; a message row gets the app the claim names;
   a time stated to the second gets no minute range". Section on the count check: add "since
   1.3.0, rows repeating another row's words within 2 seconds, on any app and from any sender,
-  make the count inconclusive when merging them could change the answer".
+  make the count inconclusive when merging them could change the answer; since 1.3.1 they are
+  read over both sides before a count of one side's messages".

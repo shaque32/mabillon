@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from core.audit.checks._common import (
     CALL_CHANNEL,
     CaseData,
@@ -46,52 +44,59 @@ def look_alikes_matter(n: int, twins: int, want: int, op: str) -> bool:
     return lo <= want <= n  # eq: below lo or above n the answer is the same at every number
 
 
+def look_alike_groups(rows: list[Row]) -> list[list[Row]]:
+    """The rows that repeat one another's words (folded case and spaces, never empty), each
+    within TWIN_S seconds of the one before, in groups of two or more in time order: rows a
+    count may hold as one message. The app, sender and direction are left out on purpose: one
+    message's copies in two stores can carry different labels ("Native Messages" in one, a
+    number written "9198887386" or no sender at all in the other, as on the Android 13
+    development phone), so a group may be one message of any sender in it."""
+    last: dict[str, list[Row]] = {}
+    groups: list[list[Row]] = []
+    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
+        words = " ".join((r.text or "").casefold().split())
+        if not words:
+            continue
+        group = last.get(words)
+        if group is not None and (r.ts_utc - group[-1].ts_utc).total_seconds() <= TWIN_S:
+            group.append(r)  # rows are in time order, so the latest copy is the nearest
+        else:
+            group = [r]
+            groups.append(group)
+        last[words] = group
+    return [g for g in groups if len(g) > 1]
+
+
 def look_alike(rows: list[Row]) -> int:
-    """How many of the rows repeat an earlier row's words (folded case and spaces, never
-    empty) within TWIN_S seconds: rows a count may hold twice. The app, sender and direction
-    are left out on purpose: one message's copies in two stores can carry different labels
-    ("Native Messages" in one, a number written "9198887386" or no sender at all in the other,
-    as on the Android 13 development phone), and a look-alike only holds a count open, never
-    passes or fails it: the count passes or fails only when every number from n - look-alikes
-    to n gives that answer (CodeRabbit and the Claude review on #265)."""
-    last: dict[str, datetime] = {}
-    n = 0
-    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
-        words = " ".join((r.text or "").casefold().split())
-        if not words:
-            continue
-        seen = last.get(words)
-        if seen is not None and (r.ts_utc - seen).total_seconds() <= TWIN_S:
-            n += 1  # rows are in time order, so the latest copy is the nearest
-        last[words] = r.ts_utc
-    return n
+    """How many of the rows repeat an earlier row's words within TWIN_S seconds
+    (`look_alike_groups`): rows a count may hold twice. A look-alike only holds a count open,
+    never passes or fails it: the count passes or fails only when every number from n -
+    look-alikes to n gives that answer (CodeRabbit and the Claude review on #265)."""
+    return sum(len(g) - 1 for g in look_alike_groups(rows))
 
 
-def look_alike_ids(rows: list[Row]) -> set[str]:
-    """The ids of the rows in any look-alike pair (`look_alike`), the earlier row and the
-    later one alike: either may be the one message both rows hold."""
-    last: dict[str, Row] = {}
-    ids: set[str] = set()
-    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
-        words = " ".join((r.text or "").casefold().split())
-        if not words:
-            continue
-        seen = last.get(words)
-        if seen is not None and seen.ts_utc is not None:
-            if (r.ts_utc - seen.ts_utc).total_seconds() <= TWIN_S:
-                ids |= {seen.id, r.id}
-        last[words] = r
-    return ids
+def fewest_messages(chosen: list[Row], rows: list[Row]) -> int:
+    """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
+    side's) may hold: one for each row in no look-alike group of `rows`, and one for each
+    group whose every row is chosen. A group that holds a row not chosen may be that row's
+    one message, so it may add none: "A to B 'ok'" and "B to A 'ok'" a second apart may be
+    B's message alone (CodeRabbit on #265). The groups are read over every row first, before
+    a side is chosen."""
+    groups = look_alike_groups(rows)
+    ids = {r.id for r in chosen}
+    grouped = {r.id for g in groups for r in g}
+    return sum(1 for r in chosen if r.id not in grouped) + sum(
+        1 for g in groups if all(r.id in ids for r in g)
+    )
 
 
 def each_way_rests_on_look_alikes(rows: list[Row], a_ids: set[str], b_ids: set[str]) -> bool:
-    """True when a message each way may rest on a look-alike row: a side whose every message
-    is one of a look-alike pair may have sent none, as the pair's other row may be the one
-    message, labelled with the other side (CodeRabbit on #265: "A to B 'ok'" and "B to A 'ok'"
-    a second apart)."""
-    paired = look_alike_ids(rows)
-    return not all(
-        any(r.sender in ids and r.id not in paired for r in rows) for ids in (a_ids, b_ids)
+    """True when a message each way may rest on look-alike rows: a side whose rows may hold
+    no message (`fewest_messages`), as each of its rows is in a group with the other side's
+    row, which may be the one message (CodeRabbit on #265: "A to B 'ok'" and "B to A 'ok'" a
+    second apart). Two copies of one side's message still hold a message from that side."""
+    return any(
+        fewest_messages([r for r in rows if r.sender in ids], rows) == 0 for ids in (a_ids, b_ids)
     )
 
 
@@ -120,7 +125,8 @@ class CountCheck(TemplateCheck):
     # 1.2.1: a message or call that names no sender or no receiver, with a party on it or in a
     # chat with one, keeps "at most" and "exactly" from passing (Greptile on #264).
     # 1.3.0: look-alike rows hold a count open when merging them could change the answer.
-    # 1.3.1: both guards together (#264 and #265 merged).
+    # 1.3.1: both guards together (#264 and #265 merged), and look-alikes read over both
+    # sides before a side is chosen (CodeRabbit on #265).
     version = "1.3.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
@@ -177,6 +183,7 @@ class CountCheck(TemplateCheck):
             and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
+        between = counted  # look-alikes are read over both sides, before a side is chosen
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
             # A message from an account both sides hold is no side's alone (Codex on #172).
@@ -275,7 +282,10 @@ class CountCheck(TemplateCheck):
                 "possibly several messages joined, so the count may hold one message twice or "
                 "several as one; an expert must decide which rows are which messages"
             )
-        twins = look_alike(counted)
+        # A row of the side counted may be a copy of the other side's message (CodeRabbit on
+        # #265), so the fewest is read over both sides' rows; with no side chosen it is the
+        # rows less their look-alikes (`look_alike`).
+        twins = n - fewest_messages(counted, between)
         # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no copy
         # number, a live row and a recovered one or the SMS store and Google Messages (Android
         # 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail. The messages
@@ -288,6 +298,11 @@ class CountCheck(TemplateCheck):
             lines.append(
                 f"{twins} of the counted messages repeat another one's words and time "
                 f"(within {TWIN_S} seconds), so the count may hold one message twice"
+                + (
+                    " or the other side's message"
+                    if p.sent_by and twins > look_alike(counted)
+                    else ""
+                )
                 + (
                     "; an expert must decide which rows are the same message"
                     if twins_open

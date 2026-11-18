@@ -723,6 +723,26 @@ def test_a_message_each_way_resting_on_look_alike_rows_is_held_open() -> None:
     assert r.outcome is CheckOutcome.PASS, r.detail
 
 
+def test_a_count_of_one_sides_messages_reads_look_alikes_on_the_other_side() -> None:
+    # Ay's "ok" and Bee's "ok" a second apart may be Bee's one message with Ay's label, so
+    # "Ay sent at least 1" waits for an expert; it held when the rows were filtered to Ay's
+    # before look-alikes were read (CodeRabbit on #265).
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, sent_by=[A])
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "or the other side's message" in r.detail
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
 @pytest.mark.parametrize(
     "extra",
     [

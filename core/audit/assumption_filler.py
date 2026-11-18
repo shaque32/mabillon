@@ -3364,8 +3364,16 @@ class LocalAssumptionFiller:
             # "between 10 and 11 a.m.": the bare first hour is a time code reads
             if (h := _BARE_HOUR_RE.search(bare[: m.start()])) is not None:
                 cut.append((h.start(1), h.end(2) if h.group(2) else h.end(1)))
+        lengths: list[str] = []
         if "length" in tests:
             cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
+        else:
+            # "over one hour", "an hour after the call": a length no row tests, whose words
+            # are each plain alone (CodeRabbit on #265)
+            for m in _SPOKEN_LENGTH_RE.finditer(_blank(bare, cut)):
+                w = " ".join(m.group(0).casefold().split())
+                if w not in lengths:
+                    lengths.append(w)
         phrases = _blank(bare, cut)
         # An account's or person's name in the case is read only where the claim writes it as
         # a name, not as a plain lower-case word: an account shown as "Photo" never hides
@@ -3390,7 +3398,8 @@ class LocalAssumptionFiller:
         )
         words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
         words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
-        return plain_tokens(words, phrases, tests)
+        out = plain_tokens(words, phrases, tests)
+        return [*out, *(w for w in lengths if not set(w.split()) & set(out))]
 
     def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
         """The phone numbers, handles and names the expert gave a number or an account that
@@ -4421,6 +4430,32 @@ class LocalAssumptionFiller:
             return text  # a phone's name in lower case: its words stay, and may name an app
         return _blank(text, [(st, en) for _, st, en in spans])
 
+    def _apps_named_together(self, claim_text: str) -> list[str]:
+        """The words joining the apps a claim names when it names two or more and does not
+        join them with "or" ("on Telegram and Viber", "on both Telegram and Viber"), as one
+        phrase; empty for one app or for "on Telegram or Viber". An app whose name the words
+        do not write whole (a short name of a held app) is read as joined."""
+        text = self._without_phone_names(_nfc(claim_text))
+        apps = self._named_apps(text)
+        if len(apps) < 2:
+            return []
+        bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
+        spans = []
+        for app in apps:
+            found = [
+                m.span()
+                for m in re.finditer(rf"(?<!\w){re.escape(app)}(?!\w)", bare, re.IGNORECASE)
+            ]
+            if not found:
+                return [" and ".join(apps)]
+            spans += found
+        first = min(spans, key=lambda sp: sp[0])
+        last = max(spans, key=lambda sp: sp[1])
+        between = bare[first[1] : last[0]]
+        if re.search(r"(?i)\b(?:or|either)\b|/", between):
+            return []
+        return [" ".join(bare[first[0] : last[1]].split())]
+
     def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message row searched on no app (channels empty) in a claim that names its app
         gets that app from code, so the checks never find the words or the parties on an app
@@ -4582,6 +4617,10 @@ class LocalAssumptionFiller:
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
         words = self.unread_words(claim.text, raws, tests)
+        if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
+            # "wrote on Telegram and Viber": a row searched on both apps finds the message on
+            # either, and no check reads that it was on each (CodeRabbit on #265)
+            words = self._apps_named_together(claim.text)
         if not words:
             return out
         if "event" not in allowed_ids:
