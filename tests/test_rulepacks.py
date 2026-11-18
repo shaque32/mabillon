@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -541,3 +542,11 @@ def test_a_layout_with_a_repeated_header_label_is_refused(pack: RulePack) -> Non
     lay["headers"] = [*lay["headers"], lay["duration_col"]]
     with pytest.raises(ValidationError, match="header label repeats"):
         RulePack.model_validate(body)
+
+
+def test_only_traps_earn_a_guard_credit(pack: RulePack) -> None:
+    trap = next(c for c in CLAIMS if c.id == "t-voicemail")
+    untagged = dataclasses.replace(trap, id="x-untagged", trap=False)
+    rep = harness.evaluate(pack, (*CLAIMS, untagged))
+    assert "t-voicemail" in rep.rule_kill["voicemail-leg"]
+    assert "x-untagged" not in rep.rule_kill["voicemail-leg"]

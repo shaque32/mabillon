@@ -163,9 +163,11 @@ class RulePack(_Strict):
     def sha256(self) -> str:
         """Hash of the pack's content, so signing does not change what is signed. Left out:
         signatures and status only. Each guard's `blocks` are hashed: the gate tests every
-        trap a guard names, so a signature covers them. A draft's guards name no traps; before
-        signing, the traps the harness found are written into the pack and the harness is run
-        on that version, and that is the hash the signers sign (code review on #270).
+        trap a guard names, so a signature covers them. A draft from the drafter names no traps;
+        before signing, the traps the harness found are written into the still-draft pack and
+        the harness is run on that version with the examiner-reviewed claim sets, and that is
+        the hash the signers sign. The hash does not cover claim labels: if one changes after
+        that run, the gate is run again before signing (DRAFTING.md; code review on #270).
 
         The canonical bytes are exactly this json.dumps call (keys sorted by code point, no
         spaces, UTF-8, non-ASCII kept), not RFC 8785: JCS sorts keys by UTF-16 code unit, which

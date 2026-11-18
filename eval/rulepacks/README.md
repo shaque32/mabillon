@@ -47,7 +47,10 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
    names a trap no claim has, fails the gate. A draft's guards name no traps (its drafter never
    saw them); `--cards` prints what each one blocks, for the people who sign it. Every named
    trap must be a trap in this run, so run a pack with every claim set its guards name traps
-   from: a name from a set left out of the run fails the gate rather than go untested.
+   from: a name from a set left out of the run fails the gate rather than go untested. Before
+   signing, the found traps are written into the (still draft) pack and the gate is run on it
+   with the examiner-reviewed claims; the hash covers `blocks` but not the claim labels, so a
+   label changed after that run means running the gate again (DRAFTING.md).
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
    are mutated, once with the time moved six hours and once (for a claim about who placed a
    call) with the direction flipped.

@@ -200,12 +200,15 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
     # be a trap in this run: a misspelling, a true claim, or a trap from a set left out of the
     # run fails the gate, so no named trap passes untested (code review on #270). Only traps
     # the full pack holds count: one that gets through anyway is not this guard's.
+    # Only traps earn a guard credit: a true claim that turns SUPPORTED without it is still
+    # caught by the false-supported check, but it is no trap this guard blocks (CodeRabbit).
     known = {c.id for c in claims if c.trap}
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
         for x in pack.layouts:
             through |= _fs(run_case(pack, x.id, guards=rest, claims=claims)) - _fs(by_layout[x.id])
+        through &= known
         rep.rule_kill[g.id] = sorted(through)
         if not through:
             rep.unearned_guards.append(g.id)
