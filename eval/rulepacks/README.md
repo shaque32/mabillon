@@ -44,8 +44,9 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
    contradiction lost to a guard that blocks too much.
 2. **Rule-kill:** removing each guard in turn lets some trap through as a false supported that
    the full pack holds, including every trap it names. A guard that blocks nothing, or that
-   names a trap no claim has, fails the gate. A draft's guards name no traps (its drafter never
-   saw them); `--cards` prints what each one blocks, for the people who sign it. Every named
+   names a trap no claim has, fails the gate. As the drafter writes them, a draft's guards name
+   no traps (the drafter never saw them); `--cards` prints what each one blocks, for the people
+   who sign it. Every named
    trap must be a trap in this run, so run a pack with every claim set its guards name traps
    from: a name from a set left out of the run fails the gate rather than go untested. Before
    signing, the found traps are written into the (still draft) pack and the gate is run on it
