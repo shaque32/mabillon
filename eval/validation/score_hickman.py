@@ -764,10 +764,10 @@ def r1_card(
     }
 
 
-def last_verdicts(results: Path) -> dict[str, str]:
+def last_verdicts(results: Path) -> tuple[dict[str, str], bool]:
     """Each claim's verdict in the last completed run of another pass's results, read from a
-    private temporary copy, so a refused zip leaves nothing in the score directory (CodeRabbit
-    on #269)."""
+    private temporary copy, so a refused zip leaves nothing in the score directory, and whether
+    the driver checked that zip before publishing it (it has a build id; CodeRabbit on #269)."""
     from core import pipeline
     from core.db import connect
 
@@ -781,7 +781,7 @@ def last_verdicts(results: Path) -> dict[str, str]:
                 v = pipeline.load_verdict(conn, claim_id, run["run_id"])
                 if v is not None:
                     out[claim_id] = v.verdict.value
-    return out
+    return out, record.get("build_id") is not None
 
 
 def repeat(first: dict[str, dict[str, Any]], second: dict[str, str]) -> dict[str, Any]:
@@ -971,8 +971,10 @@ def _score(
         "r2": r2(db, run, mapped, covered["tested_claims"]),
     }
     if repeat_of is not None:
-        result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of))
+        second, second_checked = last_verdicts(repeat_of)
+        result["repeat"] = repeat(r1["per_claim"], second)
         result["repeat_results_sha256"] = _sha256(repeat_of)
+        result["repeat_driver_checked"] = second_checked  # driver_checked stays pass 1's
     result["v4_bars"] = v4_bars(result)
     return result
 
@@ -1097,6 +1099,7 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
         lines += [
             "### Pass 2 against pass 1, by kind",
             "",
+            *([UNCHECKED_REPEAT, ""] if s.get("repeat_driver_checked") is False else []),
             "| Kind | Same | Flips |",
             "|---|---|---|",
         ]
@@ -1114,6 +1117,12 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
         ]
         lines.append("")
     return lines
+
+
+UNCHECKED_REPEAT = (
+    "The pass 2 results.zip given with --repeat has no build id: it was made before the"
+    " driver's final check, so quote no bar 6 number from it as a v5 result."
+)
 
 
 def render(s: dict[str, Any]) -> str:
@@ -1134,6 +1143,8 @@ def render(s: dict[str, Any]) -> str:
             " number from it as a v5 result.",
             "",
         ]
+    if s.get("repeat_driver_checked") is False:
+        lines += [UNCHECKED_REPEAT, ""]
     if "v4_bars" in s:
         lines += _v4_lines(s)
     if "coverage" in s:

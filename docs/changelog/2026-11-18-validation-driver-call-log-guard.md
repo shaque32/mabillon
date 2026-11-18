@@ -79,7 +79,9 @@
   1.5.1, no measure changed: 1.5.1 only narrows what it accepts) also now scores only a
   results.zip that holds a case.db and a run.json (a zip with no build id, made before the
   final check, such as the v4 runs, is still scored, but `score.json` records
-  `driver_checked: false` and `score.md` says to quote no number from it as a v5 result), and only when the case's last completed audit is the one
+  `driver_checked: false` and `score.md` says to quote no number from it as a v5 result; a
+  pass 2 zip given with `--repeat` is marked the same way, as `repeat_driver_checked`, beside
+  bar 6), and only when the case's last completed audit is the one
   the zip's run.json names and the build id stamped in its case.db is the one run.json names
   (run.json now records it; a zip made before build ids, such as the v4 runs, has neither and
   is checked by its run id alone, and one with only one of the two is refused); a case.db on
@@ -206,7 +208,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 100 tests pass (with `tests/test_leapp.py`, 214; `tests/test_validation_score.py`'s 37 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 100 tests pass (with `tests/test_leapp.py`, 214; `tests/test_validation_score.py`'s 38 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

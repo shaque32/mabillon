@@ -543,7 +543,35 @@ def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
     assert s["repeat"]["same"]["k"] == 3 and s["repeat"]["same"]["n"] == 3
     assert s["v4_bars"]["6"]["pass"] is True
     assert set(s["v4_bars"]["6"]["by_type"]) == {r["type"] for r in s["r1"]["per_claim"].values()}
-    assert "Pass 2 against pass 1, by kind" in (tmp_path / "out" / "score.md").read_text("utf-8")
+    md = (tmp_path / "out" / "score.md").read_text("utf-8")
+    assert "Pass 2 against pass 1, by kind" in md
+    assert s["repeat_driver_checked"] is True and score_hickman.UNCHECKED_REPEAT not in md
+
+
+def test_an_unchecked_pass_2_is_marked_beside_bar_6(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: a pass 2 zip with no build id (made before the final check) is still
+    # compared, but its status is kept beside pass 1's and the repeat section says so
+    run, _ = scored
+    base = run.parent
+
+    def no_build(r: dict) -> None:
+        r.pop("build_id")
+
+    older = _rezip(run, tmp_path / "older.zip", no_build)
+    real = score_hickman.stamped_build
+    calls: list[int] = []
+
+    def unstamped_second(conn):  # noqa: ANN001, ANN202
+        calls.append(1)
+        return real(conn) if len(calls) == 1 else None  # pass 1 keeps its stamp
+
+    monkeypatch.setattr(score_hickman, "stamped_build", unstamped_second)
+    s = score_hickman.score(
+        run / "results.zip", base / "keys", base / "dump", tmp_path / "out", older
+    )
+    assert s["driver_checked"] is True and s["repeat_driver_checked"] is False
+    md = (tmp_path / "out" / "score.md").read_text("utf-8")
+    assert md.count(score_hickman.UNCHECKED_REPEAT) == 2  # at the top and beside bar 6
     assert "Validation v4 bars" in (tmp_path / "out" / "score.md").read_text("utf-8")
 
 
