@@ -1657,19 +1657,20 @@ def test_a_run_whose_claims_go_before_the_pipeline_reads_them_is_stopped(tmp_pat
 
 def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeypatch):
     # CodeRabbit on #269: if the empty run cannot be stored as stopped, it stays completed, but
-    # the driver exits without an audited.db, report or zip made from it.
+    # a resume through main() exits with the reason before any report or results.zip, and the
+    # earlier attempt's results.zip is gone from the publication path.
+    import sys
+
     from core import pipeline
     from core.review import audit_log
 
     out = tmp_path / "out"
     assert hickman_run.main(_android_args(tmp_path)) == 0
-    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    assert (out / "results.zip").exists()  # the earlier attempt published one
     real, append = pipeline.load_claims, audit_log.append
-    reads: list[int] = []
 
-    def gone_after_first(conn):  # noqa: ANN001, ANN202
-        reads.append(1)
-        if len(reads) > 1:
+    def gone_in_the_pipeline(conn):  # noqa: ANN001, ANN202
+        if sys._getframe(1).f_code.co_name == "run_audit":  # only the pipeline's own read
             with conn:
                 conn.execute("UPDATE claims SET status = 'removed'")
         return real(conn)
@@ -1679,12 +1680,16 @@ def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeyp
             raise sqlite3.OperationalError("disk I/O error")
         return append(conn, at, actor, action, payload)
 
-    (out / hickman_run.AUDITED).unlink(missing_ok=True)
-    monkeypatch.setattr(pipeline, "load_claims", gone_after_first)
+    reports: list[object] = []
+    monkeypatch.setattr(pipeline, "load_claims", gone_in_the_pipeline)
     monkeypatch.setattr(audit_log, "append", no_halt)
+    monkeypatch.setattr(hickman_run, "report", lambda *a, **k: reports.append(a))
     with pytest.raises(SystemExit, match="storing it as stopped failed"):
-        hickman_run.audit(out, True, lambda _m: None, built=built)
+        hickman_run.main(_android_args(tmp_path))
     monkeypatch.undo()
+    assert reports == []  # no report was made
+    assert not (out / "results.zip").exists()
+    assert not (out / "results.zip.part").exists()
     assert not (out / hickman_run.AUDITED).exists()
     conn = sqlite3.connect(out / "case.db")
     assert (

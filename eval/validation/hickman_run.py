@@ -1018,7 +1018,7 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                 unscored(why)
             except sqlite3.Error as e:
                 # the empty run stays completed in case.db, but no audited.db, report or zip
-                # is made from it, and the scorer scores only a published results.zip
+                # is made for this attempt, and the scorer refuses a bare case.db
                 raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
             raise SystemExit(why)
         try:

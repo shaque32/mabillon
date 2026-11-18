@@ -68,8 +68,9 @@
   removed after that check but before the pipeline reads them (the pipeline itself still stores
   an empty run as completed; `core/pipeline.py` is unchanged), the driver marks that run stopped
   at once and exits. If that stopped write fails too, the empty run stays completed in case.db,
-  but the driver still exits without an audited.db, report or results.zip from it, and the
-  scorer scores only a published results.zip, so the empty run is never scored.
+  but the driver still exits without an audited.db, report or results.zip for that attempt,
+  and the scorer refuses a bare case.db (it takes only a results.zip whose run.json names the
+  last completed audit in the zip's own case.db).
   After that, the same check runs again in the read
   transaction of the copy below, and a change made after the run completed still marks it
   stopped; a failure there that also fails the stopped write leaves a run that passed the final
