@@ -4598,3 +4598,26 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     assert filler._message_apps(text) is None
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
     assert "sender" not in {a.template_id for a in made}
+    # nor does a model's row stand: no message row can tell the phone from the kind
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not {a.template_id for a in made} & {"sender", "record_time"}
+    # the phone's name inside a quote is the message's words, not the phone
+    quoted = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "see you on the SMS".'
+    assert filler._message_apps(quoted) == ["Telegram"]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id for a in made} >= {"sender", "record_time"}, f.drops
+
+
+def test_a_phone_named_only_by_an_app_the_case_lacks_gives_code_no_sender(tmp_path):
+    # "the SIGNAL" for a phone on a case with no Signal: "on the SIGNAL" may be the phone or
+    # the app, so no message row is kept (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["the SIGNAL"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, on the SIGNAL, PETROV wrote to @northstar: "need 2 more by friday".'
+    assert filler._message_apps(text) is None
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not {a.template_id for a in made} & {"sender", "record_time"}

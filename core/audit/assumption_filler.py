@@ -4613,16 +4613,26 @@ class LocalAssumptionFiller:
         return _blank(text, [(st, en) for _, st, en in spans])
 
     def _phone_named_as_an_app(self, text: str) -> bool:
-        """True when the claim writes a phone by a name that is only an app's or a kind's ("the
-        SMS", "TELEGRAM"): where the claim writes that word, code cannot tell the phone from
-        the app, so its own sender searches none (CodeRabbit on #265)."""
+        """True when the claim, outside its quotes, writes a phone by a name that is only an
+        app's or a kind's ("the SMS", "the SIGNAL", whether or not the case holds Signal):
+        where the claim writes that word, code cannot tell the phone from the app, so no
+        message row is kept (CodeRabbit on #265). A longer name ("the SMS SIGNAL PHONE") is
+        a phone's name only."""
         try:
-            spans = self._phone_spans(text)
+            spans = self._phone_spans(_unquoted(text))
         except Reject:
             return False  # a phone's name in lower case: its words stay, as before
         for _, st, en in spans:
             bare = re.sub(r"(?i)^the\s+", "", text[st:en]).strip()
-            if _PHONE_APP_WORD_RE.fullmatch(bare) or any(
+            if any(
+                rx.fullmatch(bare)
+                for rx in (
+                    _PHONE_APP_WORD_RE,
+                    _OTHER_CALL_APPS_RE,
+                    _OTHER_CALL_APPS_CAP_RE,
+                    _OTHER_MESSAGE_APPS_RE,
+                )
+            ) or any(
                 (a, b) == (0, len(bare))
                 for app in self._named_apps(bare)
                 for a, b in self._app_mentions(bare, app)
@@ -4704,6 +4714,12 @@ class LocalAssumptionFiller:
         ]
         if not app_rows:
             return out
+        if any(out[i].template_id in MESSAGE_TEXT_TEMPLATES for i in app_rows) and (
+            self._phone_named_as_an_app(_nfc(claim.text))
+        ):
+            # "on the SMS, PETROV sent an SMS" for a phone named "the SMS": no row can tell the
+            # phone from the kind, so the claim stays unproven (CodeRabbit on #265)
+            raise Reject("the claim writes a phone by a name that is only an app's or a kind's")
         # "the TELEGRAM PHONE" names a phone, not an app (`_absence_parties`; CodeRabbit on
         # #265)
         text = self._without_phone_names(_nfc(claim.text))

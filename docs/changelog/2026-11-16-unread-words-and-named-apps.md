@@ -96,8 +96,9 @@
     a WhatsApp channel the model gave is left out of its row; "on the SMS PHONE" names no kind
     of a phone's messages, so code's own sender searches every app; "on the SMS SIGNAL PHONE" on
     a case with no Signal no longer stops code's own sender; a phone named only by an app or a
-    kind, such as "the SMS", gets no sender from code, since its name and the kind read the
-    same), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
+    kind, such as "the SMS" or "the SIGNAL" (held by the case or not), keeps no message row,
+    from code or the model, since its name and the app read the same, and the claim stays
+    unproven; the phone's name inside a quote is the message's words), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
     lacks, so the claim stays unproven (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
@@ -105,8 +106,8 @@
     it states; `coverage_gap` also refuses such a claim whatever path its range took. A length
     written so ("lasted 0:12:45") is not a time of day, but one with a.m./p.m. or a zone after
     it, in any form a zone is written after a time ("for 09:31:04 UTC", "09:31:04 (UTC)",
-    "09:31:04 Eastern Time", "09:31:04-04:00"), is. A claim that quotes more than one message gets the expert-only event
-    whenever code keeps a row for it (with no row, there is nothing to add the event to and the
+    "09:31:04 Eastern Time", "09:31:04-04:00"), is. A communication, timing or count claim that quotes more than one message
+    gets the expert-only event whenever code keeps a row for it (with no row, there is nothing to add the event to and the
     claim stays unproven): a check finds a quote's words inside a longer message, so one record ("ok, thanks")
     may pass the rows for both 'wrote "ok" and then "thanks"', and code cannot show at fill time
     that two quotes are two records. A claim with one quoted message is unchanged. A quote that matches
