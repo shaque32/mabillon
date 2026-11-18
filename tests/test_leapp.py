@@ -1037,6 +1037,32 @@ def test_a_manifest_that_names_one_table_twice_is_refused(tmp_path: Path, spelli
         _lava_with(tmp_path, twice)
 
 
+def test_two_read_entries_naming_a_missing_table_are_not_refused(tmp_path: Path) -> None:
+    # A table not in the database stores no row, so two entries naming it are each listed as
+    # not read instead of stopping the import (Claude review on #269).
+    def missing(manifest):  # noqa: ANN001, ANN202
+        entries = next(v for v in manifest["artifacts"].values() if v)
+        read = next(e for e in entries if e["artifact_key"] == "get_sms_mms")
+        entries.extend([{**read, "tablename": "gone"}, {**read, "tablename": "gone"}])
+
+    lava = _lava_with(tmp_path, missing)
+    assert sum(a.table.lower() == "gone" for a in lava.artifacts) == 2
+
+
+def test_a_read_key_in_other_ascii_case_is_read(tmp_path: Path) -> None:
+    # Every key Mabillon reads matches in any ASCII case, as table names do, so a messages key
+    # written GET_SMS_MMS is read under its own spelling (Claude review on #269).
+    def upper(manifest):  # noqa: ANN001, ANN202
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_sms_mms":
+                    e["artifact_key"] = "GET_SMS_MMS"
+
+    lava = _lava_with(tmp_path, upper)
+    assert "get_sms_mms" in {a.key for a in lava.artifacts}
+    assert "GET_SMS_MMS" not in {a.key for a in lava.artifacts}
+
+
 def test_a_table_shared_by_entries_mabillon_never_reads_is_not_refused(tmp_path: Path) -> None:
     # Two entries Mabillon does not read can name one table: no row of it is stored, so the
     # import goes on (Claude review on #269).
@@ -1131,6 +1157,8 @@ def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     p = imported(tableless)
     (entry,) = [t for t in p["not_imported"] if t["table"] is None]
     assert (entry["key"], entry["may_hold_records"]) == (stored_key, holds)
+    # an entry of a key Mabillon reads is a failed read, shown as one (Claude review on #269)
+    assert bool(entry.get("read_failed")) is leapp._reads("ALEAPP", stored_key or "")
     native_unread = holds and stored_key in leapp.NATIVE_CALL_KEYS
     assert ("unknown" in p["apps_read_in_full"]) is not native_unread
 

@@ -126,7 +126,12 @@ def open_existing(db: Path, missing: str | None = None) -> sqlite3.Connection:
 
 def check_build(conn, out: Path, built: dict) -> None:  # noqa: ANN001
     """Stop unless the open case.db holds the build `built` records."""
-    if not built.get("build_id") or stamped_build(conn) != built["build_id"]:
+    if not built.get("build_id"):
+        raise SystemExit(
+            f"{out}/built.ok records no build id, so its case.db cannot be tied to its"
+            " build; use a new --out"
+        )
+    if stamped_build(conn) != built["build_id"]:
         raise SystemExit(
             f"{out}/case.db is not the case built.ok records (another build's case.db);"
             " restore the case.db it was built with, or use a new --out"
@@ -588,6 +593,14 @@ def call_log_check(  # noqa: ANN001
     # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
     native = {str(a.get("table")) for a in leapp.get("artifacts_read") or []
               if is_native(a.get("key"))}  # fmt: skip
+    if not native and not any(is_native(t.get("key")) for t in unread):
+        # no call log entry at all, read or not: claims about its calls would go untested
+        # without a word (Claude review on #269)
+        return (
+            "its LEAPP output lists no phone call log (get_calllog or callHistory), so claims"
+            " about its phone calls would go untested; check the LEAPP output before any model"
+            " call"
+        ), None
     for t in unread:
         records = t.get("records")
         if is_native(t.get("key")) and may_hold(t):
@@ -625,6 +638,10 @@ def call_log_check(  # noqa: ANN001
                     " manifest but none was read; claims about its phone calls would go"
                     " untested, so the run stops before any model call"
                 ), None
+    by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
+    known = sorted(set(IOS_CALL_APPS.values()))
+    # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
+    conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
     notes = []
     for t in p.get("tables") or []:
         if not isinstance(t, dict):
@@ -642,10 +659,6 @@ def call_log_check(  # noqa: ANN001
         # empty or its own (CodeRabbit and Claude review on #269). One pass gives the phone
         # calls, the readable ones, every call stored, and those of an app that is neither the
         # phone nor a known provider app (FaceTime).
-        by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
-        known = sorted(set(IOS_CALL_APPS.values()))
-        # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
-        conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
         rows, sided, stored, unknown_app = conn.execute(
             "SELECT coalesce(sum(c.app = ?), 0), coalesce(sum(c.app = ?"  # noqa: S608 (marks only; values bound)
             " AND mabillon_ts_ok(c.ts_utc) AND CASE"
@@ -957,6 +970,8 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                 )
 
         try:
+            if conn.in_transaction:  # the pipeline's own writes end before this read
+                conn.commit()
             conn.execute("BEGIN")
             stop = case_stop(conn, built)
         except Exception as e:
@@ -1208,16 +1223,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                     )
             # ...and is this very build's: another build of the same packages may hold other
             # claims, claim ids or types, or zones, none of which the sources show (CodeRabbit)
-            if not was.get("build_id"):
-                raise SystemExit(
-                    f"{a.out}/built.ok records no build id, so its case.db cannot be tied to its"
-                    " build; use a new --out"
-                )
-            if stamped_build(conn) != was["build_id"]:
-                raise SystemExit(
-                    f"{a.out}/case.db is not the case built.ok records (another build's case.db);"
-                    " restore the case.db it was built with, or use a new --out"
-                )
+            check_build(conn, a.out, was)
             # ...and each phone's device still has the one confirmed owner it was built with:
             # an owner changed since would leave the claims naming the defined owner with no
             # person to find (CodeRabbit on #269)

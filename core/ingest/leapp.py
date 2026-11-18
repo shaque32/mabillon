@@ -246,13 +246,19 @@ def _check_size(z: zipfile.ZipFile, member: str, limit: int, file_name: str) -> 
         )
 
 
-def _native_call_key(key: object) -> object:
-    """A phone call log key (NATIVE_CALL_KEYS) in any ASCII case as its own spelling; any other
-    key unchanged. SQLite ignores ASCII case in table names, so a call log keyed GET_CALLLOG is
-    still the call log, read and checked as one (CodeRabbit on #269)."""
-    if isinstance(key, str):
-        for k in NATIVE_CALL_KEYS:
-            if key.isascii() and key.lower() == k.lower():
+def _known_key(leapp: str, key: object) -> object:
+    """A phone call log key (NATIVE_CALL_KEYS), or a key Mabillon knows for this LEAPP (one it
+    reads, or one it names as holding the same records as another), in any ASCII case, as its
+    own spelling; any other key unchanged. SQLite
+    ignores ASCII case in table names, so a call log keyed GET_CALLLOG is still the call log,
+    read and checked as one, and so is every other key it reads (CodeRabbit and Claude review
+    on #269)."""
+    if isinstance(key, str) and key.isascii():
+        # a phone call log key is the call log under either LEAPP, as the run's check reads it
+        known = [*NATIVE_CALL_KEYS]
+        known += [k for lp, k in (*SPECS, *CHAT_SPECS, *CALL_SPECS, *SAME_RECORDS) if lp == leapp]
+        for k in known:
+            if key.lower() == k.lower():
                 return k
     return key
 
@@ -334,7 +340,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
             # a count below 0, a bool or a non-integer states nothing: unknown (CodeRabbit on #269)
             rc = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
             # a phone call log key in any ASCII case is the call log, read and checked as one
-            key = _native_call_key(e.get("artifact_key"))
+            key = _known_key(leapp, e.get("artifact_key"))
             if isinstance(key, str) and not key.strip():
                 key = None  # a key of only spaces names nothing: as no key (CodeRabbit on #269)
             if not e.get("tablename"):
@@ -352,7 +358,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     category=str(category),
                     name=str(e.get("name") or e["tablename"]),
                     # with no key, the table as the database spells it names the artifact
-                    key=str(key or _native_call_key(table)),
+                    key=str(key or _known_key(leapp, table)),
                     table=table,
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
@@ -369,8 +375,8 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     # (Claude review on #269).
     seen: set[str] = set()
     for art in arts:
-        if not _reads(leapp, art.key):
-            continue
+        if not _reads(leapp, art.key) or _find_table(db, art.table) is None:
+            continue  # a table it never reads, or one not in the database, stores no row
         if art.table in seen:
             db.close()
             raise ValueError(
@@ -390,10 +396,22 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     )
 
 
-def _reads(leapp: str, key: str) -> bool:
-    """Whether the import reads an artifact of this key (SPECS, CHAT_SPECS or CALL_SPECS)."""
+def _spec_for(leapp: str, key: str) -> Spec | None:
+    """How the import reads an artifact of this key (SPECS, CHAT_SPECS or CALL_SPECS), or None
+    when it does not read it."""
     k = (leapp, key)
-    return k in SPECS or k in CHAT_SPECS or k in CALL_SPECS
+    if k in SPECS:
+        return SPECS[k]
+    if k in CHAT_SPECS:
+        return Spec(RecordKind.CHATS, _chat_messages)
+    if k in CALL_SPECS:
+        return Spec(RecordKind.CALLS, _app_calls)
+    return None
+
+
+def _reads(leapp: str, key: str) -> bool:
+    """Whether the import reads an artifact of this key."""
+    return _spec_for(leapp, key) is not None
 
 
 def looks_like_leapp_zip(path: Path) -> bool:
@@ -1913,11 +1931,7 @@ class LeappImporter:
         w = _Writer(conn, src, dev, cov)
         read: list[tuple[Spec, Artifact]] = []
         for art in lava.artifacts:
-            spec = SPECS.get((lava.leapp_name, art.key))
-            if spec is None and (lava.leapp_name, art.key) in CHAT_SPECS:
-                spec = Spec(RecordKind.CHATS, _chat_messages)
-            if spec is None and (lava.leapp_name, art.key) in CALL_SPECS:
-                spec = Spec(RecordKind.CALLS, _app_calls)
+            spec = _spec_for(lava.leapp_name, art.key)
             if spec is None:
                 why = SAME_RECORDS.get((lava.leapp_name, art.key), "Mabillon does not read it")
                 cov.not_imported.append(
@@ -1930,7 +1944,8 @@ class LeappImporter:
         for t in lava.tableless:
             cov.not_imported.append(
                 {**t, "table": None, "reason": "the manifest names no table for it",
-                 "may_hold_records": t["records"] != 0}
+                 "may_hold_records": t["records"] != 0,
+                 "read_failed": _reads(lava.leapp_name, str(t.get("key") or ""))}
             )  # fmt: skip
         with conn:
             conn.execute(

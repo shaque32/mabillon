@@ -1025,7 +1025,7 @@ def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path
     (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
     with pytest.raises(SystemExit, match="built.ok records no build id"):
         hickman_run.main(args)
-    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+    with pytest.raises(SystemExit, match="built.ok records no build id"):
         hickman_run.audit(out, True, lambda _m: None, built=built)
 
 
@@ -1537,6 +1537,21 @@ def test_a_call_log_changed_during_the_audit_stops_the_run_unscored(tmp_path, mo
     finally:
         conn.close()
     assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
+    # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
+    # before any model call instead of passing without a word.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_sms_mms", **{"Date": "2024-03-01T15:00:00Z", "Address": "+19195550111",
+                             "Type": "1", "Body": "hi"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"item1: its LEAPP output lists no phone call log"):
+        hickman_run.main(args)
 
 
 def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch):
