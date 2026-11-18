@@ -141,7 +141,11 @@ row whose text is a call notice (`[Phone call (call id ..., outcome hung up, dur
 N)]`); such a row is stored as a Telegram call, never as a message (`call_notice_read_as_call`),
 from its sender, with that length. Only a live notice of a call that was answered and hung up,
 in a stated direction, keeps its side; any other is stored with no sides and flagged, so
-Telegram's calls are not read in full. On the Android 13 phone 2 of its 29 rows are recovered;
+Telegram's calls are not read in full. A placed call whose row names no sender is flagged
+`sent_without_own_account`. A recovered notice is listed as a possible copy, like a recovered
+message, so a count over it is inconclusive. Only a row that starts with LEAPP's own notice
+shape (`[Phone call (call id N, `) is read as a call; other text that starts with `[Phone call`
+stays a message. On the Android 13 phone 2 of its 29 rows are recovered;
 its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, caller and length; 23
 of the other 25 matched the UFDR with their sender, and 2 have no text.
 
@@ -186,9 +190,12 @@ does not read its participants, so it reads as a call with the caller alone. Wha
 therefore never read in full from ALEAPP output. An app can also place calls through Android's telecom service, which
 writes them to the phone's call log, where they are stored under the call log, not the app. So
 when an ALEAPP call log row names a `Phone Account Package` other than `com.android.phone`
-(flagged `call_placed_by_another_app`), or the call log was not read or is not in the run, or
-any call log entry in the manifest holds records that were not read, no chat app counts as read
-in full. Calls stored from a chat table's call notices count among the
+(flagged `call_placed_by_another_app`), or names none (flagged `call_package_not_stated`), or
+the call log was not read or is not in the run, or any call log entry in the manifest holds
+records that were not read, no chat app counts as read in full. A row from another package is
+stored with neither side, so no check reads it as a phone call, and the call log then does not
+count as read in full either; a row that names no package keeps its sides, since a phone call
+can be written that way too. Calls stored from a chat table's call notices count among the
 kinds the import read. Every call log row on the Android 13 phone is `com.android.phone`. On the Android 13 phone ALEAPP leaves `Caller JID` empty on outgoing
 WhatsApp calls, so its two outgoing calls have no sides and WhatsApp is not read in full there.
 
@@ -202,10 +209,14 @@ for 4 calls, no party id) and `instagramDirectCalls` (17 call events for 9 calls
 ### What an absence check may rest on
 
 The coverage record lists `apps_read_in_full`: the phone's own messages (`Native Messages`) and
-call log (`unknown`) when their tables were read, and, on ALEAPP only, a chat app when no other
-artifact in its LEAPP category holds records Mabillon did not read, none of its calls was
-stored with neither side, and every call log entry was read and holds no row from another app
-(above). On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
+call log (`unknown`) when their tables were read and no row of the phone's own call table, under
+whichever app it names (FaceTime included), was stored with neither side; and, on ALEAPP only, a
+chat app when one of its chat tables was read, every call table listed for it was read, its
+call table can hold every party of a call, no other artifact in its LEAPP category holds records
+Mabillon did not read, none of its calls was stored with neither side, and every call log entry
+was read and holds no row from another app or with no package (above). A call table alone, such
+as ALEAPP Viber's or Line's, holds none of the app's messages, so it never makes the app read in
+full. On iLEAPP no chat app counts as read in full: the iOS 15 phone's UFDR
 holds WhatsApp, Viber and other app calls from the phone's own call records (CallKit) that
 iLEAPP lists under no app, so no iLEAPP table holds every call of an app. The absence check (1.0.2) treats any other
 app, a search on every channel at once, and calls on every app as not covered by a LEAPP source,

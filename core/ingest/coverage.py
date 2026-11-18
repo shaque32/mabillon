@@ -405,8 +405,15 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
     "call_placed_by_another_app": (
         "attention",
         "{n} {be} written to the phone's call log by an app other than the phone's own "
-        "telephony, so {them} may be that app's calls; they are kept in the call log, and no "
-        "chat app's calls are treated as read in full.",
+        "telephony, so {them} may be that app's calls; {them} {be} kept in the call log with "
+        "neither side recorded, so no check reads {them} as phone calls, and neither the call "
+        "log nor any chat app's calls are treated as read in full.",
+    ),
+    "call_package_not_stated": (
+        "attention",
+        "{n} {be} in the phone's call log with no app package named, so {them} may be another "
+        "app's calls; {them} {be} kept as phone calls, and no chat app's calls are treated as "
+        "read in full.",
     ),
     "group_call_parties_not_read": (
         "attention",

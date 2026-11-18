@@ -1058,7 +1058,7 @@ def _chat_messages(c: _Ctx) -> None:
             sender = None
         recovered = bool(spec.live) and _text(r.get(spec.live[0])) != spec.live[1]
         text = str(r.get(h_text) or "")
-        if spec.call_notices and text.startswith(_CALL_NOTICE_PREFIX):
+        if spec.call_notices and _CALL_NOTICE_LEAD.match(text):
             _call_notice(c, spec.app, loc, text, direction, sender, recovered, r.get(h_time))
             continue
         convo = _text(r.get(h_convo)) if h_convo else None
@@ -1077,7 +1077,9 @@ def _chat_messages(c: _Ctx) -> None:
             c.w.cov.numbered_copy_records.append(f"msg:{c.w.src}:{loc}")
 
 
-_CALL_NOTICE_PREFIX = "[Phone call"
+# A row is a call notice only when it opens the way ALEAPP writes one, so a message someone
+# typed that starts "[Phone call" stays a message (Claude review on #268).
+_CALL_NOTICE_LEAD = re.compile(r"^\[Phone call \(call id -?\d+, ")
 # ALEAPP Telegram's call notice; on the public Android 13 phone each one matched a UFDR Telegram
 # call on time, direction, caller and length.
 _CALL_NOTICE_RE = re.compile(
@@ -1105,9 +1107,13 @@ def _call_notice(
     frm: Party | None = sender
     if recovered:
         c.flag("recovered_record_may_repeat_another", loc)
+        c.w.cov.numbered_copy_records.append(f"call:{c.w.src}:{loc}")
     if m is None or kind is None or recovered or sender is None:
         if m is None or kind is None:
             c.flag("call_not_incoming_outgoing_or_missed", loc)
+        elif sender is None and kind is CallDirection.OUTGOING:
+            # an incoming one is flagged received_without_sender with the chat's rows
+            c.flag("sent_without_own_account", loc)
         if sender is not None and sender.identifier:
             c.w.account(app, sender, loc, f"row:{loc}")
         kind, frm = CallDirection.UNKNOWN, None
@@ -1140,6 +1146,10 @@ def _add_call(
         # No check can find a call that names neither side (no direction, or no number on
         # either end), so the call log is then not held in full (CodeRabbit on #264).
         c.lava.calls_without_sides[app] += 1
+        if c.art.key in _NATIVE_CALL_KEYS:
+            # whichever app the row names (CallKit providers on iOS): the phone's own call
+            # table is then not held in full (Claude review on #268)
+            c.lava.calls_without_sides[_NATIVE_CALL_TABLE] += 1
     w.calls.append(
         (f"call:{w.src}:{loc}", w.src, loc, w.dev, app, from_id, to_id, direction.value,
          *_ts_cols(ts), duration, _db_bool(deleted))
@@ -1212,13 +1222,23 @@ def _android_calls(c: _Ctx) -> None:
         if direction is CallDirection.UNKNOWN:
             c.flag("call_type_not_incoming_outgoing_or_missed", loc)
             c.w.cov.unmapped_direction_values[str(raw_type)] += 1
-        if _text(r.get("Phone Account Package")) != _ANDROID_TELEPHONY:
+        package = _text(r.get("Phone Account Package"))
+        other_app = False
+        if package != _ANDROID_TELEPHONY:
             # An app that places calls through Android's telecom service (a VoIP app) can write
-            # them here; they are stored under the call log, not the app, so no app's own call
-            # table holds every call it made.
+            # them here, so no app's own call table holds every call it made; a row that names
+            # no package may be one too.
             c.lava.calls_from_other_packages += 1
-            c.flag("call_placed_by_another_app", loc)
-        frm, to = _call_sides(c, "unknown", loc, direction, other, owner)
+            if package:
+                # Another app's call is not a phone call: it is kept with neither side, so no
+                # check reads it as one, and the call log is not held in full (Claude review).
+                other_app = True
+                c.flag("call_placed_by_another_app", loc)
+            else:
+                c.flag("call_package_not_stated", loc)
+        frm, to = _call_sides(
+            c, "unknown", loc, CallDirection.UNKNOWN if other_app else direction, other, owner
+        )
         dur = _text(r.get("Duration in Secs"))
         deleted = _text(r.get("Deleted"))
         _add_call(
@@ -1610,6 +1630,9 @@ def _not_read(art: Artifact, why: str) -> dict[str, Any]:
 
 _NATIVE_MESSAGE_KEYS = {"sms", "get_sms_mms", "get_sms_mms_mms", "get_googleMessages"}
 _NATIVE_CALL_KEYS = {"callHistory", "get_calllog"}
+# The key that counts the phone's own call log's calls stored with neither side; the leading
+# space keeps it from ever matching an app name (Claude review on #268).
+_NATIVE_CALL_TABLE = " native call table"
 
 
 def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str]:
@@ -1633,7 +1656,7 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     if (
         keys & _NATIVE_CALL_KEYS
         and not unread_keys & _NATIVE_CALL_KEYS
-        and not lava.calls_without_sides.get("unknown")
+        and not lava.calls_without_sides.get(_NATIVE_CALL_TABLE)
     ):
         apps.add("unknown")  # the phone's own call log (assumption_filler NATIVE_CALL_APP)
     if lava.leapp_name == "iLEAPP":
@@ -1647,17 +1670,19 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
         # another package, or was not read (absent included), or one of its entries holds
         # records that were not read (CodeRabbit on #268), no chat app counts as read in full.
         return sorted(apps)
-    read_keys = {(lava.leapp_name, a.key) for _, a in read}
+    # A chat app is read in full only when one of its chat tables was read and every call
+    # table listed for it on this platform was read too: a call table alone holds none of its
+    # messages, and a chat table alone none of its calls (Claude review on #268). An app
+    # whose listed call table cannot hold every party of a call is never read in full,
+    # whether or not that table was in this extraction.
+    name = lava.leapp_name
+    read_keys = {(name, a.key) for _, a in read}
     unread_words = {a.category.split()[0].lower() for a in unread if a.category.split()}
-    specs = {k: v.app for k, v in CHAT_SPECS.items()} | {k: v.app for k, v in CALL_SPECS.items()}
-    partial = {v.app for k, v in CALL_SPECS.items() if k in read_keys and not v.all_parties}
-    for k in read_keys & set(specs):
-        app = specs[k]
-        if (
-            app.split()[0].lower() not in unread_words
-            and not lava.calls_without_sides.get(app)
-            and app not in partial
-        ):
+    chat_read = {v.app for k, v in CHAT_SPECS.items() if k[0] == name and k in read_keys}
+    calls_unread = {v.app for k, v in CALL_SPECS.items() if k[0] == name and k not in read_keys}
+    partial = {v.app for k, v in CALL_SPECS.items() if k[0] == name and not v.all_parties}
+    for app in chat_read - calls_unread - partial:
+        if app.split()[0].lower() not in unread_words and not lava.calls_without_sides.get(app):
             apps.add(app)
     return sorted(apps)
 

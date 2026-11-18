@@ -12,9 +12,12 @@
   table missing any column its reader uses (phone messages, calls, chat and call tables) is not
   read at all and is listed as not read, so a LEAPP version that renames a column is never read
   with that column empty. (4) Apps read in full: a call stored with neither side keeps its own
-  app (not only the phone's call log) from being read in full; on ALEAPP a call log row written
-  by another app's package (a VoIP call), or a call log that was not read in full, keeps every
-  chat app from being read in full; ALEAPP
+  app (not only the phone's call log) from being read in full, and any such row in the phone's
+  own call table keeps the call log partial whichever app it names; on ALEAPP a call log row
+  written by another app's package (a VoIP call, stored with neither side) or naming no package,
+  or a call log that was not read in full, keeps every chat app from being read in full; a chat
+  app counts as read in full only when one of its chat tables and every call table listed for it
+  were read (a call table alone, such as Viber's, never does); ALEAPP
   WhatsApp is never read in full (a group call started outside a group chat cannot be told from
   a two-party call); and on
   iLEAPP no chat app counts
@@ -23,11 +26,14 @@
   the next held-out public test (`/mnt/project-files/baker/plans/leapp-chat-apps.md`); each
   table was added only after it matched Mabillon's UFDR import of the same development phone.
 - Where: PR #268
-- Verified: `tests/test_leapp.py` 71 tests (17 new: app calls on each platform, Telegram recovered
+- Verified: `tests/test_leapp.py` 77 tests (23 new: app calls on each platform, Telegram recovered
   rows and call notices, iLEAPP Snapchat with a recovered row, a call log row from another app, a
   length that is not a finite number, ALEAPP WhatsApp never read in full, an outgoing call with an
   unchecked Missed value, a refused SMS table never standing for a Google Messages copy, a run
-  with no call log, an unread call log entry beside a read one, a missing column on a phone, chat and call table). On the public development
+  with no call log, an unread call log entry beside a read one, a missing column on a phone, chat
+  and call table, text that only starts like a call notice, a recovered call notice, a placed
+  notice with no sender, an iOS FaceTime row with no sides, a call log row with no package, a
+  chat app whose listed call table was not read). On the public development
   phones (cloud container, 2026-11-17, ALEAPP ed1b63d, iLEAPP fb05694; development data, not a
   scored run): Android 13 WhatsApp, Viber and Line calls 4 of 4 each match the UFDR
   on time, direction and length, and on other party where LEAPP names one; iOS 15 WhatsApp calls
