@@ -14,8 +14,8 @@ decides every verdict from the human-written checks.
 
 | Role | Sees | Never sees | Writes |
 |---|---|---|---|
-| Drafter | the format guides and sample files in `formats/`, `pack.py`, `reader.py`, `check_layout.py`, `core/audit/assumptions.py`, `core/audit/checks/`, `core/audit/rules.py`, `core/contracts.py`, and what the check tool needs to run (`core/db.py`, `core/encryption.py`, `core/schema.sql`, the `core` package files they import) | any claim or trap, the generator (`carrier.py`), the harness, any other pack, this repo's history | one pack JSON, status `draft`, guards with no `blocks` |
-| Trap writer | the format guides and samples, the generator `carrier.py` (the records' truth), `claim_api.py`, `reader.py`, `pack.py`, the core files above | the draft pack, any other pack, the reference claims (`carrier_claims.py`), the harness | `claims_blind.py`: true claims and traps, each with the verdict a correct, cautious audit returns |
+| Drafter | `CLAUDE.md`, the format guides and sample files in `formats/`, `pack.py`, `reader.py`, `check_layout.py`, `core/audit/assumptions.py`, `core/audit/checks/`, `core/audit/rules.py`, `core/contracts.py`, and what the check tool needs to run (`core/db.py`, `core/encryption.py`, `core/schema.sql`, the `core` package files they import) | any claim or trap, the generator (`carrier.py`), the harness, any other pack, this repo's history | one pack JSON, status `draft`, guards with no `blocks` |
+| Trap writer | `CLAUDE.md`, the format guides and samples, the generator `carrier.py` (the records' truth), `claim_api.py`, `reader.py`, `pack.py`, the core files above | the draft pack, any other pack, the reference claims (`carrier_claims.py`), the harness | `claims_blind.py`: true claims and traps, each with the verdict a correct, cautious audit returns |
 | Harness | everything | | the report: the gate, what each guard blocks, layout mistakes |
 | Examiner and Arsh | the pack, its harness report and one card per guard | | signatures, or a list of changes |
 
