@@ -17,7 +17,7 @@ decides every verdict from the human-written checks.
 | Drafter | `CLAUDE.md`, `docs/ARCHITECTURE.md`, `docs/PRODUCT_STATUS.md`, the format guides and sample files in `formats/`, `pack.py`, `reader.py`, `check_layout.py`, `core/audit/assumptions.py`, `core/audit/checks/`, `core/audit/rules.py`, `core/contracts.py`, and what the check tool needs to run (`core/db.py`, `core/encryption.py`, `core/schema.sql`, the `core` package files they import) | any claim or trap, the generator (`carrier.py`), the harness, any other pack, `docs/changelog/`, this repo's history | one pack JSON, status `draft`, guards with no `blocks` |
 | Trap writer | `CLAUDE.md`, `docs/ARCHITECTURE.md`, `docs/PRODUCT_STATUS.md`, the format guides and samples, the generator `carrier.py` (the records' truth), `claim_api.py`, `reader.py`, `pack.py`, the core files above | the draft pack, any other pack, the reference claims (`carrier_claims.py`), the harness, `docs/changelog/` | `claims_blind.py`: true claims and traps, each with the verdict a correct, cautious audit returns |
 | Harness | everything | | the report: the gate, what each guard blocks, layout mistakes |
-| Examiner and Arsh | the pack, its harness report and one card per guard | | signatures, or a list of changes |
+| Examiner and Arsh | the pack, its harness report and one card per guard; for the label review, the claim sets themselves (`claims_blind.py` and `carrier_claims.py`: each claim's wording, assumptions and expected verdict), the records they rest on (the samples in `formats/`) and `core/audit/rules.py` | | label corrections, then signatures or a list of changes |
 
 Each session runs in its own copy of the repository that holds only what its row allows, with
 no git history, from its own brief below, and with no context shared with the other.
@@ -38,7 +38,9 @@ trap can rest on rows the drafter never saw; that is a plan, not yet done.
 Before signing, the examiner first reviews the blind set's labels (round 4 below). Then the
 traps the harness found for each guard are written into the pack's `blocks` (the pack is still
 a draft; a draft may name traps), and the harness is run again on that version with every
-claim set the names come from, as reviewed. That final run's report and hash are what the
+reviewed claim set, not only the sets the names come from (for carrier records,
+`--claims reference,blind`), so a corrected label is tested even when no guard names a trap
+from its set. That final run's report and hash are what the
 examiner and Arsh sign. The pack's hash covers `blocks` but not the claim labels, so if any
 label changes after the final run, the gate is run again before anyone signs.
 
