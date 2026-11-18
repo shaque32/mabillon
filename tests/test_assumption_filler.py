@@ -4641,6 +4641,10 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # nor does a host start before the mark that ends a phone's name
     before = 'On March 12, 2026, on SMS,https://example.com PETROV wrote to @northstar: "ok".'
     assert filler._written_phones(before) == {"dev:item1"}
+    # and the phone named as a kind there still stops code's sender
+    assert filler._message_apps(before) is None
+    made, _ = build_text(c, before, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}
     actions.name_device(c, "dev:item1", ["the SMS", "SMS.COM"], "expert:Test Expert", lambda: at)
     assert filler._phone_spans("PETROV wrote on SMS.COM") == [("dev:item1", 16, 23)]
     # the phone's name inside a quote is the message's words, not the phone

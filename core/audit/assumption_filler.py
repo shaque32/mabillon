@@ -4633,14 +4633,11 @@ class LocalAssumptionFiller:
         message row is kept (CodeRabbit on #265). A longer name ("the SMS SIGNAL PHONE") is
         a phone's name only."""
 
-        def blank(m: re.Match[str]) -> str:
-            return " " * len(m.group(0))
-
-        # quotes, handles ("to @SMS") and addresses are no phone's name; blanked in place, so
-        # each span still reads the claim's own words
-        outside = _HANDLE_RE.sub(blank, _ADDRESS_RE.sub(blank, _unquoted(text)))
+        # quotes are blanked in place, so each span still reads the claim's own words; a name
+        # only inside a handle ("to @SMS") or a web address is skipped by `_phone_spans`
+        # itself, which keeps one written just before an address ("SMS,https://x.com")
         try:
-            spans = self._phone_spans(outside)
+            spans = self._phone_spans(_unquoted(text))
         except Reject:
             return False  # a phone's name in lower case: its words stay, as before
         for _, st, en in spans:
