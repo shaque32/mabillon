@@ -4529,3 +4529,8 @@ def test_a_phone_named_after_a_message_kind_gives_code_s_sender_no_kind(tmp_path
     assert {a.template_id for a in made} == {"sender", "record_time"}, f.drops
     (sender,) = [a for a in made if a.template_id == "sender"]
     assert sender.params.channels == ()
+    # an iMessage written apart from the phone's name is that kind alone
+    imsg = text.replace("PETROV wrote to", "PETROV wrote an iMessage to")
+    assert filler._message_apps(imsg) == ["iMessage"]
+    made, f = build_text(c, imsg, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id: a.params.channels for a in made}.get("sender") == ("iMessage",), f.drops
