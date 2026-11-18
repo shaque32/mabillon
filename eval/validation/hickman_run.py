@@ -387,6 +387,11 @@ def build(  # noqa: ANN001
                 log(
                     f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated"
                 )
+            # A phone call log with rows but no call a check can read (each row placed by
+            # another app, or of no direction) would leave every call claim on the phone
+            # unreadable: the run stops here, before any model call (gate G5b).
+            if stop := unreadable_call_log(conn, ph.source_id):
+                raise SystemExit(f"{ph.source_id}: {stop}")
             actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
         _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
             render_affidavit(claims, out / "affidavit.pdf"), conn
@@ -424,6 +429,45 @@ def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
     cov = coverage.load(conn, source_id)
     device = (cov.payload.get("leapp") or {}).get("device") or {} if cov else {}
     return sorted({z["zone"] for z in device.get("zones_seen", [])})
+
+
+# The phone's own call log tables, as a LEAPP import's coverage names them (the importer's
+# _NATIVE_CALL_KEYS, lowercased as its locators are).
+NATIVE_CALL_TABLES = {"get_calllog", "callhistory"}
+
+
+def unreadable_call_log(conn, source_id: str) -> str | None:  # noqa: ANN001
+    """Why the phone's own call log is unreadable, or None. It is unreadable when one of its
+    tables has rows but the import stored no call from it with a side: every row was placed by
+    another app (LEAPP flags call_placed_by_another_app; ALEAPP's Samsung samples name another
+    package) or had no direction, so no check could read any of the phone's calls. A UFDR's
+    coverage names no such table, so it is never stopped here."""
+    from core.ingest import coverage
+
+    cov = coverage.load(conn, source_id)
+    for t in (cov.payload.get("tables") or []) if cov else []:
+        if not isinstance(t, dict) or t.get("kind") != "calls":
+            continue
+        table = str(t.get("header_locator") or "")
+        read = int(t.get("rows_read") or 0)
+        if table.lower() not in NATIVE_CALL_TABLES or read == 0:
+            continue
+        (sided,) = conn.execute(
+            "SELECT count(*) FROM calls WHERE source_id = ? AND substr(locator, 1, ?) = ?"
+            " AND (from_account_id IS NOT NULL OR to_account_id IS NOT NULL)",
+            (source_id, len(table) + 1, f"{table}/"),
+        ).fetchone()
+        flags = t.get("flag_counts") or {}
+        other = int(flags.get("call_placed_by_another_app") or 0)
+        if sided == 0 or other == read:
+            return (
+                f"its call log ({table}) has {read} rows but no call a check can read was stored"
+                f" ({other} placed by another app,"
+                f" {int(flags.get('call_type_not_incoming_outgoing_or_missed') or 0)} of no"
+                " direction); every call claim on this phone would go untested, so the run stops"
+                " before any model call"
+            )
+    return None
 
 
 def number_digits(identifier: str, app: str | None = None) -> str | None:

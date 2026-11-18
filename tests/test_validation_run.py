@@ -631,6 +631,41 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
         hickman_run.main(args)
 
 
+@pytest.mark.parametrize(
+    ("rows", "stops"),
+    [
+        ([("com.samsung.android.dialer", "1"), ("com.samsung.android.dialer", "2")], True),
+        ([("com.android.phone", "99"), ("com.android.phone", "98")], True),
+        ([("com.samsung.android.dialer", "1"), ("com.android.phone", "2")], False),
+        ([(None, "1")], False),
+    ],
+)
+def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(tmp_path, rows, stops):
+    # Gate G5b: a call log whose every row was placed by another app (a Samsung phone names
+    # its own dialer package) or has no direction stores no call with a side, so every call
+    # claim on the phone would go untested: the build stops before the audit.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for i, (package, kind) in enumerate(rows):
+        values = {"Call Date": f"2024-03-01T15:0{i}:00Z", "Partner": "+19195550111",
+                  "Raw Call Type (as stored)": kind, "Duration in Secs": "5"}  # fmt: skip
+        if package:
+            values["Phone Account Package"] = package
+        lv.add("get_calllog", **values)
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    if stops:
+        with pytest.raises(
+            SystemExit, match=rf"item1: its call log \(get_calllog\) has {len(rows)} rows"
+        ):
+            hickman_run.main(args)
+        assert not (tmp_path / "out" / "built.ok").exists()
+    else:
+        assert hickman_run.main(args) == 0
+
+
 def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):
     # One zone in the phone's tables plus a zone value the importer could not read: the
     # package records no zone, but a given zone must still match the one its tables name.
