@@ -27,7 +27,9 @@ from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 _OPS = {"eq": "exactly", "ge": "at least", "le": "at most"}
 
 
-TWIN_S = 2  # seconds within which two rows with the same words may be one message
+# seconds within which a row with the same words as the row before it may be the same message;
+# the rows chain, so three copies a second and a half apart are one group (`look_alike_groups`)
+TWIN_S = 2
 
 
 def look_alikes_matter(n: int, twins: int, want: int, op: str) -> bool:
@@ -47,10 +49,12 @@ def look_alikes_matter(n: int, twins: int, want: int, op: str) -> bool:
 def look_alike_groups(rows: list[Row]) -> list[list[Row]]:
     """The rows that repeat one another's words (folded case and spaces, never empty), each
     within TWIN_S seconds of the one before, in groups of two or more in time order: rows a
-    count may hold as one message. The app, sender and direction are left out on purpose: one
-    message's copies in two stores can carry different labels ("Native Messages" in one, a
-    number written "9198887386" or no sender at all in the other, as on the Android 13
-    development phone), so a group may be one message of any sender in it."""
+    count may hold as one message. The rows chain on purpose: a group only holds a count open,
+    never passes or fails it, so a longer group errs toward the expert (CodeRabbit on #265).
+    The app, sender and direction are left out on purpose: one message's copies in two stores
+    can carry different labels ("Native Messages" in one, a number written "9198887386" or no
+    sender at all in the other, as on the Android 13 development phone), so a group may be one
+    message of any sender in it."""
     last: dict[str, list[Row]] = {}
     groups: list[list[Row]] = []
     for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
@@ -75,14 +79,17 @@ def look_alike(rows: list[Row]) -> int:
     return sum(len(g) - 1 for g in look_alike_groups(rows))
 
 
-def fewest_messages(chosen: list[Row], rows: list[Row]) -> int:
+def fewest_messages(
+    chosen: list[Row], rows: list[Row], groups: list[list[Row]] | None = None
+) -> int:
     """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
     side's) may hold: one for each row in no look-alike group of `rows`, and one for each
     group whose every row is chosen. A group that holds a row not chosen may be that row's
     one message, so it may add none: "A to B 'ok'" and "B to A 'ok'" a second apart may be
     B's message alone (CodeRabbit on #265). The groups are read over every row first, before
-    a side is chosen."""
-    groups = look_alike_groups(rows)
+    a side is chosen; `groups` passes them in when already read."""
+    if groups is None:
+        groups = look_alike_groups(rows)
     ids = {r.id for r in chosen}
     grouped = {r.id for g in groups for r in g}
     return sum(1 for r in chosen if r.id not in grouped) + sum(
@@ -95,8 +102,10 @@ def each_way_rests_on_look_alikes(rows: list[Row], a_ids: set[str], b_ids: set[s
     no message (`fewest_messages`), as each of its rows is in a group with the other side's
     row, which may be the one message (CodeRabbit on #265: "A to B 'ok'" and "B to A 'ok'" a
     second apart). Two copies of one side's message still hold a message from that side."""
+    groups = look_alike_groups(rows)
     return any(
-        fewest_messages([r for r in rows if r.sender in ids], rows) == 0 for ids in (a_ids, b_ids)
+        fewest_messages([r for r in rows if r.sender in ids], rows, groups) == 0
+        for ids in (a_ids, b_ids)
     )
 
 
@@ -183,7 +192,12 @@ class CountCheck(TemplateCheck):
             and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
-        between = counted  # look-alikes are read over both sides, before a side is chosen
+        # Look-alikes are read over both sides, before a side is chosen, and, for one side's
+        # messages, beside the timed rows that name no sender or no receiver: a row of the side
+        # counted may be a copy of one of those (CodeRabbit on #265). Those rows are never
+        # counted, and a count of both sides' messages needs no such reading, since its copy
+        # already shows the message passed between them.
+        between = counted + ([r for r in unplaced if r.ts_utc is not None] if p.sent_by else [])
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
             # A message from an account both sides hold is no side's alone (Codex on #172).

@@ -3039,6 +3039,16 @@ _SPOKEN_LENGTH_RE = re.compile(
     r"secs?|mins?|hrs?)\b",
     re.IGNORECASE,
 )
+# A phone's own messages app written by the word that names it (never "texted" or "a text"):
+# "on Telegram and SMS" names two apps (CodeRabbit on #265).
+_PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
+# A length no row tests, read as words no check reads: the spoken lengths, and "a quarter
+# hour" (CodeRabbit on #265). Only `_SPOKEN_LENGTH_RE` is ever blanked as a tested length.
+_UNTESTED_LENGTH_RE = re.compile(
+    rf"\b(?:(?:{_SPOKEN_NUMBERS}|one|and|a|an|half|quarter|three-quarters?)[\s-]+(?:of\s+an?\s+)?)+"
+    r"(?:seconds?|minutes?|hours?|secs?|mins?|hrs?)\b",
+    re.IGNORECASE,
+)
 # "last" is a length ("the call lasted"), never "the last message": that one is read below.
 # "a second phone", "another number", "a different account": a party or a phone no check binds.
 # "three minutes after a call", "shortly before": an act timed from another the checks do not
@@ -3370,7 +3380,7 @@ class LocalAssumptionFiller:
         else:
             # "over one hour", "an hour after the call": a length no row tests, whose words
             # are each plain alone (CodeRabbit on #265)
-            for m in _SPOKEN_LENGTH_RE.finditer(_blank(bare, cut)):
+            for m in _UNTESTED_LENGTH_RE.finditer(_blank(bare, cut)):
                 w = " ".join(m.group(0).casefold().split())
                 if w not in lengths:
                     lengths.append(w)
@@ -4433,25 +4443,35 @@ class LocalAssumptionFiller:
     def _apps_named_together(self, claim_text: str) -> list[str]:
         """The words naming the claim's apps, as one phrase, when it names two or more and
         any two named next to each other are not joined by "or" alone ("on Telegram and
-        Viber", "on Telegram and on either Viber or WhatsApp", "Telegram, Viber or
-        WhatsApp"); empty for one app, or when every join is an "or" ("on Telegram or
-        Viber", "either Telegram or Viber"). An app whose name the words do not write whole
-        (a short name of a held app) is read as joined (CodeRabbit on #265)."""
+        Viber", "on Telegram and on either Viber or WhatsApp", "Telegram, Viber or WhatsApp",
+        "on Telegram and SMS"); empty for one app, or when every join is an "or" ("on
+        Telegram or Viber", "Telegram or Wickr" for Wickr Pro). An app is found by its name
+        or a short name (APP_ALIASES), and a phone's own messages app by the word that names
+        it ("SMS", "iMessage"), never by "texted". An app whose name the words do not write
+        is read as joined (CodeRabbit on #265)."""
         text = self._without_phone_names(_nfc(claim_text))
         apps = self._named_apps(text)
-        if len(apps) < 2:
-            return []
         bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
         spans: list[tuple[int, int, str]] = []
+        missing = False
         for app in apps:
+            names = (app, *APP_ALIASES.get(app.casefold(), ()))
             found = [
                 (*m.span(), app)
-                for m in re.finditer(rf"(?<!\w){re.escape(app)}(?!\w)", bare, re.IGNORECASE)
+                for n in names
+                for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE)
             ]
-            if not found:
-                return [" and ".join(apps)]
+            missing = missing or not found
             spans += found
+        for m in _PHONE_APP_WORD_RE.finditer(bare):
+            if not any(st < m.end() and m.start() < en for st, en, _ in spans):
+                kind = "imessage" if "imessage" in m.group(0).casefold() else "sms"
+                spans.append((*m.span(), kind))
+        if len({a for *_, a in spans} | set(apps)) < 2:
+            return []
         spans.sort()
+        if missing:
+            return [" and ".join(dict.fromkeys(a for *_, a in spans))]
         together = False
         for (_, end, a), (start, _, b) in zip(spans, spans[1:], strict=False):
             if a == b:

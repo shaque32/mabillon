@@ -743,6 +743,27 @@ def test_a_count_of_one_sides_messages_reads_look_alikes_on_the_other_side() -> 
     assert r.outcome is CheckOutcome.PASS, r.detail
 
 
+def test_a_count_of_one_sides_messages_reads_look_alikes_on_rows_with_no_receiver() -> None:
+    # Ay sent "ok" and "hi"; Bee's "ok" a second after Ay's names no receiver. "Ay sent exactly
+    # 1" failed on Ay's two rows, though Ay's "ok" may be a copy of Bee's message (CodeRabbit on
+    # #265). With other words in Bee's row, the two rows of Ay's still fail it.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    conn.execute("DELETE FROM message_recipients WHERE message_id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:7", "a:p1:own", "a:p1:b")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, sent_by=[A])
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    conn.execute("UPDATE messages SET body = 'fine' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL, r.detail
+
+
 @pytest.mark.parametrize(
     "extra",
     [

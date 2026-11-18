@@ -118,3 +118,15 @@ def test_a_sides_rows_are_read_for_look_alikes_beside_the_other_sides() -> None:
     assert fewest_messages([mine], rows) == 0
     assert fewest_messages([theirs, other], rows) == 1
     assert fewest_messages(rows, rows) == 2  # the pair is one message, whoever sent it
+
+
+def test_a_sides_rows_are_read_beside_rows_that_name_no_receiver() -> None:
+    # A's "ok" may be a copy of B's "ok" that names no receiver, so A's two rows may hold one
+    # message of A's; with other words they hold two (CodeRabbit on #265).
+    mine = [row(1, "ok", T0), row(2, "sure", T0 + timedelta(seconds=30))]
+    peer = Row("m9", "message", "src", "TikTok", "acct:b", (), T0 + timedelta(seconds=1), None,
+               "ok", direction="outgoing")  # fmt: skip
+    assert fewest_messages(mine, [*mine, peer]) == 1
+    other = Row("m9", "message", "src", "TikTok", "acct:b", (), T0 + timedelta(seconds=1), None,
+                "fine", direction="outgoing")  # fmt: skip
+    assert fewest_messages(mine, [*mine, other]) == 2

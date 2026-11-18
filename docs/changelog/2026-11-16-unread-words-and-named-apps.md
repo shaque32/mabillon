@@ -21,12 +21,13 @@
     word only where the claim writes it as a name. A count or a length written in digits ("one of
     2 messages", "over 2 hours") is read as its spoken form is, and "video" ("sent a video",
     "a video call") is a word no check reads, not an app's name (CodeRabbit on #265). A spoken
-    length no row tests ("over one hour", "for half an hour") is read even when each of its
-    words is plain alone, and a message "on Telegram and Viber" gets the event, since a row
+    length no row tests ("over one hour", "for half an hour", "a quarter hour") is read even
+    when each of its words is plain alone, and a message "on Telegram and Viber" gets the event, since a row
     searched on both apps finds it on either. Each join between two apps named next to each
     other is read: only "or" or "/" alone keeps them alternatives, so "on Telegram and on either
-    Viber or WhatsApp" and "Telegram, Viber or WhatsApp" get the event too (CodeRabbit on
-    #265).
+    Viber or WhatsApp", "Telegram, Viber or WhatsApp" and "on Telegram and SMS" (a phone's
+    own messages app written by name, never "texted") get the event too, while "Telegram or
+    Wickr" on a case holding Wickr Pro stays alternatives (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -64,7 +65,9 @@
     CodeRabbit on #265), but two copies of one side's own message still hold a message from
     that side. Look-alikes are read over both sides before a count picks one side's messages
     (`fewest_messages`, 1.3.1), so "A sent at least 1" over A's "ok" and B's "ok" a second
-    apart is held open: both rows may be B's message (CodeRabbit on #265).
+    apart is held open: both rows may be B's message. A count of one side's messages also reads
+    look-alikes beside rows that name no receiver, so "A sent exactly 1" over A's "ok" and "hi"
+    no longer fails when B's "ok" a second later names no receiver (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
@@ -77,7 +80,7 @@
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
-  main (1,235), and
+  main (1,240), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

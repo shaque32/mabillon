@@ -3766,7 +3766,14 @@ def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
 
 
 @pytest.mark.parametrize(
-    "tail", [", over one hour", ", for half an hour", ", an hour after the call"]
+    "tail",
+    [
+        ", over one hour",
+        ", for half an hour",
+        ", an hour after the call",
+        ", for a quarter hour",  # CodeRabbit on #265
+        ", for a quarter of an hour",
+    ],
 )
 def test_a_spoken_length_no_row_tests_is_read(conn, tail):
     # "over one hour" passed with no row testing a length: "over", "one" and "hour" are each
@@ -3800,7 +3807,9 @@ def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
     either = text.replace("Telegram and Viber", "Telegram or Viber")
     assert filler._apps_named_together(either) == []
     made, _ = build_text(c, either, ClaimType.COMMUNICATION, C05_ANSWER)
-    assert "event" not in {a.template_id for a in made}
+    # both rows are kept and each searches either app; no event (CodeRabbit on #265)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "Viber"})}
     assert filler._apps_named_together(text.replace(" and Viber", "")) == []
 
 
@@ -3828,3 +3837,22 @@ def test_each_join_between_named_apps_is_read(tmp_path, apps, together):
     assert bool(filler._apps_named_together(text)) is together
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert ("event" in {a.template_id for a in made}) is together
+
+
+def test_a_phone_app_or_a_short_name_is_read_in_the_joins(tmp_path):
+    # "on Telegram and SMS": SMS is a phone's own messages app, which `_named_apps` leaves out,
+    # so a Telegram message alone passed; "on Telegram or Wickr" on a case holding Wickr Pro
+    # was read as joined because "Wickr Pro" is not written whole (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:wickr', 'item1', 'x', 'dev:item1', 'Wickr Pro', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'On March 12, 2026, PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram and SMS"))
+    assert filler._apps_named_together(claim.format("Telegram or SMS")) == []
+    assert filler._apps_named_together(claim.format("Telegram or Wickr")) == []
+    assert filler._apps_named_together(claim.format("Telegram and Wickr"))
+    # "texted" names no app of its own
+    texted = 'On March 12, 2026, PETROV texted @northstar on Telegram: "need 2 more by friday".'
+    assert filler._apps_named_together(texted) == []
