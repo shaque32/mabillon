@@ -1,0 +1,56 @@
+{
+  "id": "carrier-cdr",
+  "version": "0.1.0-draft.1",
+  "evidence_type": "Carrier call detail records, voice rows (synthetic layouts Carrier A and Carrier B)",
+  "status": "draft",
+  "drafted_by": "ai:claude-code drafter session, brief round 1",
+  "layouts": [
+    {
+      "id": "carrier-a",
+      "headers": ["Date", "Time (UTC)", "Originating", "Terminating", "Direction", "Duration (s)", "Type"],
+      "date_col": "Date",
+      "time_col": "Time (UTC)",
+      "datetime_format": "%Y-%m-%d %H:%M:%S",
+      "zone": "UTC",
+      "zone_evidence": "UTC",
+      "from_col": "Originating",
+      "to_col": "Terminating",
+      "direction_col": "Direction",
+      "direction_values": {"OUT": "outgoing", "IN": "incoming"},
+      "duration_col": "Duration (s)",
+      "type_col": "Type",
+      "type_values": {"VOICE": "voice", "SMS": "sms", "VM": "voicemail", "CFWD": "forwarded"}
+    },
+    {
+      "id": "carrier-b",
+      "headers": ["Call Date", "Call Time (CT)", "Calling Number", "Called Number", "MO/MT", "Seconds", "Call Type"],
+      "date_col": "Call Date",
+      "time_col": "Call Time (CT)",
+      "datetime_format": "%m/%d/%Y %H:%M:%S",
+      "zone": "America/Chicago",
+      "zone_evidence": "(CT)",
+      "from_col": "Calling Number",
+      "to_col": "Called Number",
+      "direction_col": "MO/MT",
+      "direction_values": {"MO": "outgoing", "MT": "incoming"},
+      "duration_col": "Seconds",
+      "type_col": "Call Type",
+      "type_values": {"V": "voice", "S": "sms", "VM": "voicemail", "FW": "forwarded"}
+    }
+  ],
+  "templates": ["record_time", "caller", "message_count", "no_contact", "person_identity"],
+  "guards": [
+    {
+      "id": "voicemail-leg",
+      "text": "A voicemail row (Carrier A type VM, Carrier B call type VM) is a leg to the voicemail platform, not a conversation between the two numbers. Carrier A says its length is the voicemail session; Carrier B says the row is a deposit or a retrieval leg and does not say which, so it may not even be a call from one number to the other. No check may pass or fail on such a row: a result that rests on one is inconclusive, and an examiner reads the row.",
+      "record_types": ["voicemail"],
+      "blocks": []
+    },
+    {
+      "id": "forwarded-leg",
+      "text": "A forwarded row (Carrier A type CFWD, Carrier B call type FW) is a call to the target number that the network sent on to the line's forwarding destination. It does not show that the target line's phone rang, answered or took part, its length is not a call with the target line, and the row does not name the destination. No check may pass or fail on such a row: a result that rests on one is inconclusive, and an examiner reads the row.",
+      "record_types": ["forwarded"],
+      "blocks": []
+    }
+  ]
+}

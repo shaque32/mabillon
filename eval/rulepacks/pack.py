@@ -9,7 +9,7 @@ core/audit/rules.py, signed by Arsh. The closed set of things a pack may say:
 - templates: which existing assumption templates its claims use (core/audit/assumptions.py);
   their checks are the human-written ones in core/audit/checks/;
 - guards: record types on which no check may pass or fail (the result turns inconclusive),
-  each naming the traps it blocks.
+  each naming the traps it blocks once it is past draft.
 """
 
 from __future__ import annotations
@@ -109,7 +109,10 @@ class Guard(_Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
     text: str = Field(min_length=10)  # the plain-English rule card an examiner signs
     record_types: tuple[RecordType, ...] = Field(min_length=1)
-    blocks: tuple[str, ...] = Field(min_length=1)  # trap ids this guard must block
+    # trap ids this guard must block. A drafter never sees the traps, so a draft's guards may
+    # leave this empty and the harness finds what each one blocks (rule-kill); every guard of a
+    # reference or signed pack names its traps, so the signed card says what it is for.
+    blocks: tuple[str, ...] = ()
 
 
 class Signature(_Strict):
@@ -141,6 +144,8 @@ class RulePack(_Strict):
         ids = [g.id for g in self.guards] + [x.id for x in self.layouts]
         if len(ids) != len(set(ids)):
             raise ValueError("guard and layout ids must be unique")
+        if self.status != "draft" and any(not g.blocks for g in self.guards):
+            raise ValueError("every guard of a reference or signed pack names the traps it blocks")
         if self.status == "signed":
             roles = {s.role for s in self.signatures}
             if roles != {"examiner", "owner"}:

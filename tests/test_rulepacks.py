@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from core.contracts import CheckOutcome, CheckResult
-from eval.rulepacks import carrier, harness
+from eval.rulepacks import carrier, check_layout, harness
 from eval.rulepacks.carrier_claims import CLAIMS
 from eval.rulepacks.pack import Guard, RulePack, Signature, load
 
@@ -289,3 +291,109 @@ def test_signatures_need_a_name_and_a_time_and_a_changed_copy_is_unsigned(
     )  # fmt: skip
     copy = signed.without_guard("voicemail-leg")
     assert copy.status == "draft" and copy.signatures == ()
+
+
+# ---------------------------------------------------------------- drafting (DRAFTING.md)
+
+
+def test_the_sample_files_a_drafter_sees_are_the_files_the_harness_reads() -> None:
+    for lid in carrier.LAYOUTS:
+        assert (check_layout.SAMPLES / f"{lid}.csv").read_text() == carrier.render(lid)
+
+
+def test_the_drafters_check_tool_reads_each_sample_and_names_a_missing_one(
+    pack: RulePack, tmp_path: Path
+) -> None:
+    res = check_layout.check(pack)
+    assert set(res) == {"carrier-a", "carrier-b"}
+    for v in res.values():
+        assert v["coverage"]["skipped"]["unmapped_type"] == 0  # type: ignore[index]
+        assert v["coverage"]["skipped"]["malformed"] == 0  # type: ignore[index]
+    assert check_layout.check(pack, tmp_path)["carrier-a"] == {
+        "error": "no sample file carrier-a.csv"
+    }
+
+
+def test_the_drafters_tools_do_not_load_claims_the_generator_or_the_harness() -> None:
+    code = (
+        "import sys, eval.rulepacks.check_layout\n"
+        "bad = [m for m in ('eval.rulepacks.carrier', 'eval.rulepacks.carrier_claims',"
+        " 'eval.rulepacks.claim_api', 'eval.rulepacks.claims_blind', 'eval.rulepacks.harness')"
+        " if m in sys.modules]\n"
+        "print(bad)\n"
+    )
+    out = subprocess.run(  # noqa: S603 - fixed code, this interpreter
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=Path(__file__).parent.parent,
+    )  # fmt: skip
+    assert out.stdout.strip() == "[]"
+
+
+def _unnamed(pack: RulePack, status: str = "draft") -> dict:
+    body = pack.model_dump(mode="json")
+    body["status"] = status
+    body["guards"] = [{**g, "blocks": []} for g in body["guards"]]
+    return body
+
+
+def test_a_drafts_guards_may_name_no_traps_and_the_harness_finds_what_they_block(
+    pack: RulePack,
+) -> None:
+    draft = RulePack.model_validate(_unnamed(pack))
+    rep = harness.evaluate(draft)
+    assert rep.passed, rep
+    assert rep.rule_kill == {
+        "voicemail-leg": ["t-count-voicemail", "t-voicemail"],
+        "forwarded-leg": ["t-forwarded"],
+    }
+
+
+def test_a_reference_or_signed_packs_guards_must_name_their_traps(pack: RulePack) -> None:
+    with pytest.raises(ValidationError, match="names the traps it blocks"):
+        RulePack.model_validate(_unnamed(pack, "reference"))
+
+
+def test_claim_sets_run_together_need_unique_ids_and_a_subset_can_leave_a_guard_unearned(
+    pack: RulePack,
+) -> None:
+    with pytest.raises(ValueError, match="unique"):
+        harness.evaluate(pack, CLAIMS + CLAIMS[:1])
+    true_only = tuple(c for c in CLAIMS if not c.trap)
+    rep = harness.evaluate(pack, true_only)
+    assert rep.wrong == [] and set(rep.unearned_guards) == {"voicemail-leg", "forwarded-leg"}
+    assert not rep.passed
+
+
+def test_a_guard_card_says_what_gets_through_without_it(
+    pack: RulePack, report: harness.Report
+) -> None:
+    cards = harness.cards(pack, report)
+    assert cards[0].startswith("Guard voicemail-leg (voicemail): A call that went to voicemail")
+    assert cards[0].endswith("Without it: t-count-voicemail, t-voicemail")
+
+
+def test_the_cli_refuses_an_unknown_claim_set() -> None:
+    with pytest.raises(SystemExit):
+        harness.main([str(REFERENCE), "--claims", "reference,nope"])
+
+
+DRAFT = REFERENCE.parent / "carrier-cdr-draft.json"
+
+
+def test_the_ai_drafted_pack_passes_the_reference_and_blind_sets_with_no_named_traps() -> None:
+    draft = load(DRAFT)
+    assert draft.status == "draft" and draft.drafted_by.startswith("ai:")
+    assert all(not g.blocks for g in draft.guards)  # the drafter never saw a trap
+    both = harness.claim_set("reference") + harness.claim_set("blind")
+    rep = harness.evaluate(draft, both)
+    assert rep.passed, rep
+    assert rep.false_supported == [] and rep.wrong == [] and rep.unearned_guards == []
+
+
+def test_the_blind_set_is_independent_of_the_reference_claims() -> None:
+    blind = harness.claim_set("blind")
+    src = (REFERENCE.parent.parent / "claims_blind.py").read_text()
+    assert "carrier_claims" not in src
+    assert all(c.id.startswith("b-") for c in blind)
+    assert sum(c.trap for c in blind) >= 12 and sum(not c.trap for c in blind) >= 4
+    assert harness.evaluate(load(REFERENCE), blind).wrong == []
