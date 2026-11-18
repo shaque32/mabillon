@@ -111,15 +111,18 @@
     it, in any form a zone is written after a time ("for 09:31:04 UTC", "09:31:04 (UTC)",
     "09:31:04 Eastern Time", "09:31:04-04:00"), is. A communication, timing or count claim that quotes more than one message
     gets the expert-only event whenever code keeps a row for it and the claim's template allows
-    an event; where it allows none, the claim is refused, and with no row there is nothing to
-    add the event to. Either way the claim stays unproven: a check finds a quote's words inside a longer message, so one record ("ok, thanks")
-    may pass the rows for both 'wrote "ok" and then "thanks"', and code cannot show at fill time
+    an event; where it allows none, the claim is refused and stays unproven, as it does with no
+    row to add the event to. The event only stops SUPPORTED on the checks: a failed check on a
+    kept core row still makes the claim CONTRADICTED (rule 1), and otherwise it stays unproven
+    until an expert reviews it. A check finds a quote's words inside a longer message, so one
+    record ("ok, thanks") may pass the rows for both 'wrote "ok" and then "thanks"', and code cannot show at fill time
     that two quotes are two records. A claim with one quoted message is unchanged. A quote that matches
     a person's or an account's name is left out as a party only where the claim writes it as
     one: in brackets, after "to", "as", "user", "account" and the like, or as the subject at the
-    start of a sentence or clause, with a verb of saying after it ('On November 6, 2022,
-    "ThisIs DfirTwo" asked'); 'wrote to REYES: "Petrov"', 'and then, "Petrov".' and 'and
-    then, "Petrov" on Telegram.' are messages. Quoted words are never read as unread words (CodeRabbit on #265). For the readers
+    start of a sentence or clause, with a verb of saying right after it, "then" allowed and no
+    comma between ('On November 6, 2022, "ThisIs DfirTwo" asked', '"Petrov" then wrote');
+    'wrote to REYES: "Petrov"', 'and then, "Petrov".', 'and then, "Petrov" on Telegram.' and
+    'and then, "Petrov", wrote PETROV.' are messages. Quoted words are never read as unread words (CodeRabbit on #265). For the readers
     that blank quoted words with `_unquoted` (the seconds guards, stated ranges, the time-of-day,
     month and year scans of coverage gaps, unread words and the app readers), a time, an app or
     any other word inside a quote that a line break wraps is the quote's, not the claim's:

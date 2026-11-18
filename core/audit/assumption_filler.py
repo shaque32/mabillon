@@ -2893,7 +2893,8 @@ _SAYING = (
 # the verb that makes a quote at a clause's start its subject ('"ThisIs DfirTwo" asked',
 # '"Petrov" then wrote'):
 # a verb of saying, never a trailing phrase ('"Petrov" on Telegram'; CodeRabbit on #265)
-_SUBJECT_AFTER_QUOTE_RE = re.compile(rf"[\s,]*(?:then\s+)?(?:{_SAYING})\b", re.IGNORECASE)
+# no comma between: '"Petrov", wrote REYES' is the message REYES wrote (CodeRabbit on #265)
+_SUBJECT_AFTER_QUOTE_RE = re.compile(rf"\s*(?:then\s+)?(?:{_SAYING})\b", re.IGNORECASE)
 # Words that may name who sent a quoted message, anywhere outside quotes ("which @northstar
 # sent", "after receiving it from X", "writing"): with any of them, no record_time is made
 # without a sender, so a writer the claim names is never left untested (PAST-30 fill a). "a

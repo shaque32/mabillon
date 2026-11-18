@@ -4506,6 +4506,11 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     assert _quote_is_a_party(then, then.index('"ThisIs'), then.index(" then"))
     end = comma.rindex('"') + 1
     assert not _quote_is_a_party(comma, comma.rindex('"', 0, end - 1), end)
+    # a comma before the verb makes it an attribution: the quote is the message PETROV wrote
+    attributed = comma.replace('"Petrov".', '"Petrov", wrote PETROV.')
+    end = attributed.index('", wrote') + 1
+    assert not _quote_is_a_party(attributed, attributed.rindex('"', 0, end - 1), end)
+    assert "event" in kinds(attributed, C05_ANSWER)
 
 
 def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):
