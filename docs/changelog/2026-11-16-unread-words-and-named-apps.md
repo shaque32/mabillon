@@ -103,9 +103,10 @@
     it, in any form a zone is written after a time ("for 09:31:04 UTC", "09:31:04 (UTC)",
     "09:31:04 Eastern Time", "09:31:04-04:00"), is. A claim that quotes more than one message gets the expert-only
     event unless each quote has a sender or time row of its own whose tested quote holds all of
-    it: a shorter tested quote, or one row for two quotes, is not enough, and a sender row and
-    a time row with the same words count once, since both may pass on one message ('wrote
-    "ok" and then "ok"' always gets the event). A quote that matches
+    it: a shorter tested quote, or one row for two quotes, is not enough, and since a check
+    finds a quote's words inside a longer message, two quotes alike, or rows whose words one
+    holds the other's, may pass on one record: 'wrote "ok" and then "ok"' and 'wrote "ok" and
+    then "ok, thanks"' always get the event. A quote that matches
     a person's or an account's name is left out as a party only where the claim writes it as
     one: in brackets, after "to", "as", "user", "account" and the like, or at the start of a
     clause ('On November 6, 2022, "ThisIs DfirTwo" asked'); 'wrote to REYES: "Petrov"' is a

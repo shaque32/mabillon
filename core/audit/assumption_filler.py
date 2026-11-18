@@ -654,14 +654,28 @@ _PARTY_BEFORE_QUOTE_RE = re.compile(
 
 
 def _each_quote_tested(quotes: list[str], tested: list[str]) -> bool:
-    """True when each quoted message has a tested quote of its own that holds all of it: a
-    shorter tested quote ("on my way" for "I'm on my way now") tests only part of it, and one
-    tested quote never stands for two quotes. A sender row and a time row with the same quote
-    may both pass on one message, so a quote's words count once however many rows test them:
-    'wrote "ok" and then "ok"' always needs an expert (CodeRabbit on #265)."""
-    free = sorted({t for t in tested if t})
-    for q in sorted(quotes, key=len, reverse=True):
-        hit = next((i for i, t in enumerate(free) if q in t), None)
+    """True when each quoted message has a tested quote of its own that holds all of it, and
+    no record can pass for two of them. A shorter tested quote ("on my way" for "I'm on my way
+    now") tests only part of a message. A check finds a quote's words inside a longer message
+    ("ok" in "ok, thanks"), so two rows whose words one holds the other's, or two quotes alike,
+    may both pass on one record: 'wrote "ok" and then "ok"' and 'wrote "ok" and then "ok,
+    thanks"' always need an expert. Words are read without punctuation (CodeRabbit on
+    #265)."""
+
+    def words(x: str) -> str:
+        return " ".join(re.findall(r"\w+", x.casefold()))
+
+    def within(a: str, b: str) -> bool:
+        return f" {a} " in f" {b} "
+
+    qs = [words(q) for q in quotes]
+    ts = sorted({w for t in tested if (w := words(t))})
+    for group in (qs, ts):
+        if any(within(a, b) for i, a in enumerate(group) for j, b in enumerate(group) if i != j):
+            return False
+    free = list(ts)
+    for q in sorted(qs, key=len, reverse=True):
+        hit = next((i for i, t in enumerate(free) if q and within(q, t)), None)
         if hit is None:
             return False
         free.pop(hit)

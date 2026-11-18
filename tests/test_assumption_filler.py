@@ -4469,6 +4469,9 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     # two rows on one quote's words may both pass on one message
     twice = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok".'
     assert "event" in kinds(twice, rows("ok", "ok"))
+    # nor two rows whose words one holds the other's: one "ok, thanks" passes for both
+    thanks = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok, thanks".'
+    assert "event" in kinds(thanks, rows("ok", "ok, thanks"))
     # a name after a semicolon is a message, not a party
     semi = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday"; "Petrov".'
     assert "event" in kinds(semi, C05_ANSWER)
