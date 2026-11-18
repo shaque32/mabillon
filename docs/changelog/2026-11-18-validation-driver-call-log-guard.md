@@ -40,14 +40,19 @@
   such a phone; on resume the phone's accounts count only while its device has one confirmed
   owner. Before that check, a resume stops unless the case.db holds the very imports
   `built.ok` records (each phone's stored SHA-256), and unless it is the very case that build
-  made: each build writes a random build id into the case's audit log and into `built.ok`, so a
+  made: each build writes a random build id into the case's audit log (on the connection that
+  built it) and into `built.ok`, so a
   case.db from any other build (other claims, claim ids, claim types or zones, even of the same
   package) is refused, and so is a `built.ok` that records no build id. The audit itself checks
   the build id and each phone's confirmed owner again when it opens case.db, against the build
   record the run checked or wrote (not built.ok read again), so a case.db swapped (with or
   without its built.ok), or an owner withdrawn, after those checks is refused too. Since the audit
   reads its stipulations in its own snapshot after that check, the driver checks the owners once
-  more when the audit returns, and an owner changed in the meantime stops the run unscored. It
+  more when the audit returns, and an owner changed in the meantime stops the run unscored. The
+  audit opens case.db without ever creating it, so a case.db moved away stops the run instead of
+  leaving an empty file; the report and `results.zip` ship only the audited build (checked before
+  the report and again after the zip, which is removed on a mismatch); and the run decides once
+  whether it builds or resumes, so a `built.ok` that vanishes mid-run never starts a build. It
   also stops unless
   every resumed phone's device still has exactly one confirmed owner (counted by person, so two
   owners of one name are two), named as `built.ok` records it and the very person the build
@@ -79,7 +84,10 @@
     passes when counted 0 (a key of only spaces counts as none).
   - The audit stops when built.ok's build id is not the one case.db holds, or is missing, and
     when the phone's owner stipulation was withdrawn after the resume's checks, or while the
-    audit ran (the run stops unscored).
+    audit ran (the run stops unscored); through `main()` too, with the audit itself refusing
+    before any run; a case.db moved away is never recreated; a case.db swapped in for the report
+    or the zip stops the run with no `results.zip`; a `built.ok` removed mid-resume never starts
+    a build.
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
@@ -122,7 +130,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 69 tests pass (with `tests/test_leapp.py`, 177) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 74 tests pass (with `tests/test_leapp.py`, 182) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

@@ -46,6 +46,7 @@ import json
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -103,6 +104,39 @@ def stamp_build(conn) -> str:  # noqa: ANN001
     audit_log.append(conn, datetime.now(UTC), ACTOR, BUILD_ACTION, {"build_id": build_id})
     conn.commit()
     return build_id
+
+
+def open_existing(db: Path) -> sqlite3.Connection:
+    """Open the case.db a run checked, read-write but never creating it: a case.db moved away
+    after the checks stops the run with the restore advice, not with an empty file left in its
+    place (CodeRabbit on #269). The driver's cases are never encrypted."""
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=rw", uri=True)
+    except sqlite3.OperationalError as e:
+        raise SystemExit(
+            f"{db} is gone since the run checked it ({e}); restore the case.db it was built"
+            " with, or use a new --out"
+        ) from e
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def same_build(out: Path, built: dict) -> None:
+    """Stop unless out/case.db still holds the build the run audited."""
+    conn = open_existing(out / "case.db")
+    try:
+        check_build(conn, out, built)
+    finally:
+        conn.close()
+
+
+def check_build(conn, out: Path, built: dict) -> None:  # noqa: ANN001
+    """Stop unless the open case.db holds the build `built` records."""
+    if not built.get("build_id") or stamped_build(conn) != built["build_id"]:
+        raise SystemExit(
+            f"{out}/case.db is not the case built.ok records (another build's case.db);"
+            " restore the case.db it was built with, or use a new --out"
+        )
 
 
 def stamped_build(conn) -> str | None:  # noqa: ANN001
@@ -316,8 +350,10 @@ def build(  # noqa: ANN001
     out: Path,
     log,
     defined: dict[str, str] | None = None,
-) -> list[dict]:
-    """Build the case. Returns what each phone's import recorded (importer, file hash, zone)."""
+) -> tuple[list[dict], str]:
+    """Build the case. Returns what each phone's import recorded (importer, file hash, zone)
+    and the build id, stamped on the connection that built the case, so no other case.db put
+    in its place between two connections can carry it (CodeRabbit on #269)."""
     from core.ingest.govdoc import PdfGovDocIngester
     from core.ingest.pick import report_importer
     from core.ingest.source_file import InputChanged
@@ -440,6 +476,7 @@ def build(  # noqa: ANN001
             pid = actions.add_person(conn, name, ACTOR)
             if name in defined:
                 linked[name] = link_defined_number(conn, pid, defined[name])
+        build_id = stamp_build(conn)
     finally:
         conn.close()
     log(
@@ -448,7 +485,7 @@ def build(  # noqa: ANN001
         + f"; other people: {', '.join(others) or 'none'}"
         + "".join(f"; {n} linked to {len(ids)} accounts by number" for n, ids in linked.items())
     )
-    return imported
+    return imported, build_id
 
 
 def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
@@ -834,13 +871,9 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
     # The case.db checked before the audit may have been swapped or changed since: the audit
     # runs only on the very case that record names, with the owners it was built with
     # (CodeRabbit on #269).
-    conn = connect(out / "case.db")
+    conn = open_existing(out / "case.db")
     try:
-        if not built.get("build_id") or stamped_build(conn) != built["build_id"]:
-            raise SystemExit(
-                f"{out}/case.db is not the case built.ok records (another build's case.db);"
-                " restore the case.db it was built with, or use a new --out"
-            )
+        check_build(conn, out, built)
         stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
         if stop:
             raise SystemExit(stop)
@@ -1005,7 +1038,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{a.claims}: SHA-256 {claims_sha}, expected {a.claims_sha256}")
     claims = load_claims(a.claims)
     built = a.out / "built.ok"  # the inputs the case in DIR was built from
-    if built.exists():
+    # decided once: a built.ok that vanishes or appears mid-run never turns a resume into a
+    # build (which deletes the checked case.db) or skips both (CodeRabbit on #269)
+    resuming = built.exists()
+    if resuming:
         was = json.loads(built.read_text(encoding="utf-8"))
         if was.get("setup", 1) != SETUP:
             raise SystemExit(
@@ -1114,19 +1150,14 @@ def main(argv: list[str] | None = None) -> int:
         machine=machine(),
         claims={"file": a.claims.name, "sha256": claims_sha, "n": len(claims)},
     )
-    if not built.exists():
+    if not resuming:
         report_sha = None
         if a.ufdr is not None:
             log("checking the phone package's report.xml")
             report_sha = report_xml_sha256(a.ufdr)
             if a.report_sha256 and report_sha != a.report_sha256:
                 raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
-        imported = build(phones, claims, a.out, log, defined)
-        conn = connect(a.out / "case.db")
-        try:
-            build_id = stamp_build(conn)
-        finally:
-            conn.close()
+        imported, build_id = build(phones, claims, a.out, log, defined)
         inputs = {
             "claims_sha256": claims_sha,
             "report_xml_sha256": report_sha,
@@ -1178,6 +1209,9 @@ def main(argv: list[str] | None = None) -> int:
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"
+    # The report and results.zip read case.db again by path: they ship only the audited build,
+    # checked before the report and again once the zip is written (CodeRabbit on #269).
+    same_build(a.out, was)
     run["report"] = report(a.out, log)
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     plog.close()
@@ -1185,6 +1219,11 @@ def main(argv: list[str] | None = None) -> int:
         for name in RESULT_FILES:
             if (a.out / name).exists():
                 z.write(a.out / name, name)
+    try:
+        same_build(a.out, was)
+    except SystemExit:
+        (a.out / "results.zip").unlink(missing_ok=True)
+        raise
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
     return 0
 

@@ -1172,6 +1172,96 @@ def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
         hickman_run.audit(out, True, lambda _m: None, built=built)
 
 
+def test_a_resume_audits_with_the_record_it_checked_not_built_ok_read_again(
+    ufdr, tmp_path, monkeypatch
+):
+    # CodeRabbit on #269: main() hands the audit the record its resume checked, so a case.db
+    # swapped together with its built.ok after those checks is refused through main() too.
+    out, other = tmp_path / "out", tmp_path / "other"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    real = hickman_run.machine
+
+    def swapped_first():  # noqa: ANN202  # called after the resume's checks, before the audit
+        for name in ("case.db", "built.ok"):
+            shutil.copy(other / name, out / name)
+        return real()
+
+    monkeypatch.setattr(hickman_run, "machine", swapped_first)
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.main(args)
+    conn = sqlite3.connect(out / "case.db")  # refused by the audit, not after it: no new run
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    conn.close()
+
+
+def test_the_audit_never_creates_a_case_db_moved_away(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    (out / "case.db").rename(tmp_path / "moved.db")
+    with pytest.raises(SystemExit, match="is gone since the run checked it"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    assert not (out / "case.db").exists()
+
+
+@pytest.mark.parametrize("when", ["report", "zip"])
+def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypatch, when):
+    # CodeRabbit on #269: report() and the zip read case.db by path after the audit; a case.db
+    # swapped in after the audit stops the run, with no results.zip left behind.
+    out, other = tmp_path / "out", tmp_path / "other"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    real_audit, real_report = hickman_run.audit, hickman_run.report
+    kept = tmp_path / "kept.db"
+
+    def audit_then(o, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        r = real_audit(o, *a, **k)
+        if when == "report":  # swapped in for the report only, then put back
+            shutil.copy(o / "case.db", kept)
+            shutil.copy(other / "case.db", o / "case.db")
+        return r
+
+    def report_then(o, log):  # noqa: ANN001, ANN202
+        r = real_report(o, log)
+        if when == "report" and kept.exists():
+            shutil.copy(kept, o / "case.db")
+        else:  # swapped in after the report, before the zip
+            shutil.copy(other / "case.db", o / "case.db")
+        return r
+
+    monkeypatch.setattr(hickman_run, "audit", audit_then)
+    monkeypatch.setattr(hickman_run, "report", report_then)
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists()
+
+
+def test_a_built_ok_gone_mid_run_never_turns_a_resume_into_a_build(ufdr, tmp_path, monkeypatch):
+    # CodeRabbit on #269: the build-or-resume choice is made once, so a built.ok removed
+    # after the resume's checks never starts a build that deletes the checked case.db.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    real = hickman_run.owner_stop
+
+    def gone(conn, phones):  # noqa: ANN001, ANN202
+        (out / "built.ok").unlink(missing_ok=True)
+        return real(conn, phones)
+
+    monkeypatch.setattr(hickman_run, "owner_stop", gone)
+    monkeypatch.setattr(
+        hickman_run, "build", lambda *a, **k: pytest.fail("a resume started a build")
+    )
+    assert hickman_run.main(args) == 0
+
+
 def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path, monkeypatch):
     # CodeRabbit on #269: the audit reads its stipulations after the driver's owner check, so
     # an owner withdrawn in between (here, as the audit starts) is caught when it returns.
