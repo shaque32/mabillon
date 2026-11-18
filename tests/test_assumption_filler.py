@@ -4638,6 +4638,9 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # an address ends at an angle bracket: the phone written after it is still the claim's
     bracketed = "PETROV wrote on <https://example.dev/notes>,SMS,"
     assert filler._phone_spans(bracketed) == [("dev:item1", 44, 47)]
+    # nor does a host start before the mark that ends a phone's name
+    before = 'On March 12, 2026, on SMS,https://example.com PETROV wrote to @northstar: "ok".'
+    assert filler._written_phones(before) == {"dev:item1"}
     actions.name_device(c, "dev:item1", ["the SMS", "SMS.COM"], "expert:Test Expert", lambda: at)
     assert filler._phone_spans("PETROV wrote on SMS.COM") == [("dev:item1", 16, 23)]
     # the phone's name inside a quote is the message's words, not the phone
