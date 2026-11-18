@@ -100,7 +100,9 @@
     count or absence, from code or the model, since its name and the app read the same, and the
     claim stays unproven (a call's time stays `_call_app`'s); the phone's name inside a quote
     is the message's words, and a handle ("to @SMS") or an address (an email, or a web
-    address with a scheme or "www." whatever its suffix) is an account, not the phone, so it neither stops a row nor holds code's sender to that phone), and "Facebook"
+    address with a scheme or "www.", or a host followed by a path, whatever its suffix) is an
+    account, not the phone, so it neither stops a row nor holds code's sender to that phone,
+    while a phone named just before an address stays the claim's), and "Facebook"
     alone beside a held "Facebook Messenger" is an app the case lacks, so the claim stays
     unproven (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",

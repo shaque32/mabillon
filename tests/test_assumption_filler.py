@@ -4638,12 +4638,18 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # a scheme-less address runs from its host through a path to a common suffix
     path = 'On March 12, 2026, PETROV wrote to @northstar from SMS.dev/docs/example.com: "ok".'
     assert filler._written_phones(path) == set()
+    # and a host with any suffix followed by a path is an address too
+    dev_path = 'On March 12, 2026, PETROV wrote to @northstar from example.dev/notes/SMS: "ok".'
+    assert filler._written_phones(dev_path) == set()
     # an address ends at an angle bracket: the phone written after it is still the claim's
     bracketed = "PETROV wrote on <https://example.dev/notes>,SMS,"
     assert filler._phone_spans(bracketed) == [("dev:item1", 44, 47)]
     # nor does a host start before the mark that ends a phone's name
     before = 'On March 12, 2026, on SMS,https://example.com PETROV wrote to @northstar: "ok".'
     assert filler._written_phones(before) == {"dev:item1"}
+    # a path stops at a colon, so a phone written before a scheme's address is the claim's
+    slash = 'On March 12, 2026, on SMS/https://example.com PETROV wrote to @northstar: "ok".'
+    assert filler._written_phones(slash) == {"dev:item1"}
     # and the phone named as a kind there still stops code's sender
     assert filler._message_apps(before) is None
     made, _ = build_text(c, before, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
