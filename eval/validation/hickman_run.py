@@ -106,28 +106,20 @@ def stamp_build(conn) -> str:  # noqa: ANN001
     return build_id
 
 
-def open_existing(db: Path) -> sqlite3.Connection:
-    """Open the case.db a run checked, read-write but never creating it: a case.db moved away
-    after the checks stops the run with the restore advice, not with an empty file left in its
-    place (CodeRabbit on #269). The driver's cases are never encrypted."""
+def open_existing(db: Path, missing: str | None = None) -> sqlite3.Connection:
+    """Open a case.db read-write but never create it: a case.db moved away stops the run with
+    `missing` (or the restore advice), not with an empty file left in its place (CodeRabbit on
+    #269). The driver's cases are never encrypted."""
     try:
         conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=rw", uri=True)
     except sqlite3.OperationalError as e:
         raise SystemExit(
-            f"{db} is gone since the run checked it ({e}); restore the case.db it was built"
+            missing
+            or f"{db} is gone since the run checked it ({e}); restore the case.db it was built"
             " with, or use a new --out"
         ) from e
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
-
-
-def same_build(out: Path, built: dict) -> None:
-    """Stop unless out/case.db still holds the build the run audited."""
-    conn = open_existing(out / "case.db")
-    try:
-        check_build(conn, out, built)
-    finally:
-        conn.close()
 
 
 def check_build(conn, out: Path, built: dict) -> None:  # noqa: ANN001
@@ -863,10 +855,20 @@ def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
     return None
 
 
+AUDITED = "audited.db"  # the copy of the audited case the report and results.zip are made from
+REFUSED = "the device owners changed during the audit, so it is not scored"
+
+
 def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
     """Audit the case in out/case.db. `built` is the build record main() checked or wrote, not
-    read again from disk, so a built.ok swapped together with its case.db is refused too."""
+    read again from disk, so a built.ok swapped together with its case.db is refused too. On
+    success out/audited.db is a copy of the audited case, taken on the connection that ran the
+    checks and the audit, which the report and results.zip are made from (never case.db read
+    again by path; CodeRabbit on #269)."""
     from core import pipeline
+    from core.review import audit_log
+
+    (out / AUDITED).unlink(missing_ok=True)  # never ship an earlier attempt's copy
 
     # The case.db checked before the audit may have been swapped or changed since: the audit
     # runs only on the very case that record names, with the owners it was built with
@@ -897,13 +899,28 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         t = time.monotonic()
         result = pipeline.run_audit(conn, comps, progress=progress)
         # The audit reads its stipulations in its own snapshot, after the check above: an owner
-        # changed in between (or during the run) leaves this run's verdicts on an owner the
-        # build did not stipulate, so the run stops here, unscored (CodeRabbit on #269).
+        # changed in between (or during the run) and still changed now leaves this run's
+        # verdicts on an owner the build did not stipulate. The run is then marked stopped, so
+        # no scorer or report takes it as the case's completed audit (pipeline.last_run), while
+        # its finished claims stay reusable, and the run stops here (CodeRabbit on #269).
         stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
         if stop:
-            raise SystemExit(
-                f"the device owners changed during the audit, so it is not scored: {stop}"
-            )
+            with conn:
+                conn.execute(
+                    "UPDATE pipeline_runs SET status = 'stopped', note = ? WHERE id = ?",
+                    (f"{REFUSED}: {stop}", result.run_id),
+                )
+                audit_log.append(
+                    conn,
+                    datetime.now(UTC),
+                    ACTOR,
+                    pipeline.HALT_ACTION,
+                    {"run_id": result.run_id, "error": f"{REFUSED}: {stop}", "stopped": True},
+                )
+            raise SystemExit(f"{REFUSED}: {stop}")
+        with sqlite3.connect(out / AUDITED) as copy:
+            conn.backup(copy)
+        copy.close()
         tally: dict[str, int] = {}
         for d in result.decisions:
             tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
@@ -929,7 +946,7 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
     }
 
 
-def report(out: Path, log) -> dict:  # noqa: ANN001
+def report(out: Path, log, db: str = "case.db") -> dict:  # noqa: ANN001
     """Write report.html. A report the invariants refuse is left out and said so: the audit's
     results are in case.db either way, and the score is read from there."""
     from core.audit.invariants import InvariantViolation
@@ -937,7 +954,7 @@ def report(out: Path, log) -> dict:  # noqa: ANN001
 
     path = out / "report.html"
     path.unlink(missing_ok=True)  # never ship a report from an earlier attempt
-    conn = connect(out / "case.db")
+    conn = connect(out / db)
     try:
         write_report(conn, path)
     except InvariantViolation as e:
@@ -1094,9 +1111,9 @@ def main(argv: list[str] | None = None) -> int:
         # A case built before the call-log guard (gate G5b) resumes only when each phone's
         # stored import passes it too, so a paid resume never audits a phone whose calls no
         # check can read (CodeRabbit on #269).
-        if not (a.out / "case.db").exists():
-            raise SystemExit(f"{a.out}: built.ok is there but case.db is not; use a new --out")
-        conn = connect(a.out / "case.db")
+        conn = open_existing(
+            a.out / "case.db", f"{a.out}: built.ok is there but case.db is not; use a new --out"
+        )
         try:
             # the case.db must hold the very imports built.ok records: one restored from another
             # run under the same phone names would pass the check with its own calls (CodeRabbit)
@@ -1209,21 +1226,22 @@ def main(argv: list[str] | None = None) -> int:
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"
-    # The report and results.zip read case.db again by path: they ship only the audited build,
-    # checked before the report and again once the zip is written (CodeRabbit on #269).
-    same_build(a.out, was)
-    run["report"] = report(a.out, log)
+    # The report and results.zip are made from the copy of the audited case, never case.db
+    # read again by path, so they hold the audited build whatever case.db holds by then
+    # (CodeRabbit on #269).
+    run["report"] = report(a.out, log, AUDITED)
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     plog.close()
-    with zipfile.ZipFile(a.out / "results.zip", "w", zipfile.ZIP_DEFLATED) as z:
-        for name in RESULT_FILES:
-            if (a.out / name).exists():
-                z.write(a.out / name, name)
+    part = a.out / "results.zip.part"  # published only once written in full
     try:
-        same_build(a.out, was)
-    except SystemExit:
-        (a.out / "results.zip").unlink(missing_ok=True)
-        raise
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
+            for name in RESULT_FILES:
+                src = a.out / (AUDITED if name == "case.db" else name)
+                if src.exists():
+                    z.write(src, name)
+        part.replace(a.out / "results.zip")
+    finally:
+        part.unlink(missing_ok=True)
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
     return 0
 

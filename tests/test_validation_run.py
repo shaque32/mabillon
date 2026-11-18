@@ -1211,35 +1211,61 @@ def test_the_audit_never_creates_a_case_db_moved_away(ufdr, tmp_path):
 
 @pytest.mark.parametrize("when", ["report", "zip"])
 def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypatch, when):
-    # CodeRabbit on #269: report() and the zip read case.db by path after the audit; a case.db
-    # swapped in after the audit stops the run, with no results.zip left behind.
+    # CodeRabbit on #269: the report and results.zip are made from the copy the audit took on
+    # its checked connection, so another build's case.db put at out/case.db while the report
+    # reads (then put back) or before the zip is written never reaches them.
     out, other = tmp_path / "out", tmp_path / "other"
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
             "--fake"]  # fmt: skip
     assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
-    real_audit, real_report = hickman_run.audit, hickman_run.report
+    real_report = hickman_run.report
     kept = tmp_path / "kept.db"
 
-    def audit_then(o, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
-        r = real_audit(o, *a, **k)
-        if when == "report":  # swapped in for the report only, then put back
-            shutil.copy(o / "case.db", kept)
-            shutil.copy(other / "case.db", o / "case.db")
-        return r
-
-    def report_then(o, log):  # noqa: ANN001, ANN202
-        r = real_report(o, log)
-        if when == "report" and kept.exists():
+    def report_then(o, log, *a):  # noqa: ANN001, ANN002, ANN202
+        shutil.copy(o / "case.db", kept)
+        shutil.copy(other / "case.db", o / "case.db")
+        r = real_report(o, log, *a)
+        if when == "report":  # only while the report read, then put back
             shutil.copy(kept, o / "case.db")
-        else:  # swapped in after the report, before the zip
-            shutil.copy(other / "case.db", o / "case.db")
         return r
 
-    monkeypatch.setattr(hickman_run, "audit", audit_then)
     monkeypatch.setattr(hickman_run, "report", report_then)
-    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    shipped = tmp_path / "shipped.db"
+    with zipfile.ZipFile(out / "results.zip") as z, z.open("case.db") as src:
+        shipped.write_bytes(src.read())
+    conn = sqlite3.connect(shipped)
+    try:
+        assert hickman_run.stamped_build(conn) == built["build_id"]
+        assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    finally:
+        conn.close()
+    other_built = json.loads((other / "built.ok").read_text(encoding="utf-8"))
+    assert other_built["build_id"] != built["build_id"]
+    run_id = json.loads((out / "run.json").read_text(encoding="utf-8"))["audit"]["run_id"]
+    other_id = json.loads((other / "run.json").read_text(encoding="utf-8"))["audit"]["run_id"]
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert run_id in html
+    if other_id != run_id:  # run ids are per second, so two fast runs can share one
+        assert other_id not in html
+
+
+def test_a_zip_that_fails_to_write_is_never_published(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    real = zipfile.ZipFile.write
+
+    def failing(self, filename, arcname=None, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if arcname == "report.html":
+            raise OSError("disk full")
+        return real(self, filename, arcname, *a, **k)
+
+    monkeypatch.setattr(zipfile.ZipFile, "write", failing)
+    with pytest.raises(OSError, match="disk full"):
         hickman_run.main(args)
-    assert not (out / "results.zip").exists()
+    assert not (out / "results.zip").exists() and not (out / "results.zip.part").exists()
 
 
 def test_a_built_ok_gone_mid_run_never_turns_a_resume_into_a_build(ufdr, tmp_path, monkeypatch):
@@ -1282,6 +1308,25 @@ def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path
     monkeypatch.setattr(pipeline, "run_audit", withdrawn_first)
     with pytest.raises(SystemExit, match="owners changed during the audit, so it is not scored"):
         hickman_run.audit(out, True, lambda _m: None, built=built)
+    # the refused run is stored as stopped, never the case's completed audit, and no copy of
+    # it is left for a report or zip
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status, note),) = conn.execute(
+            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert status == "stopped" and note.startswith(hickman_run.REFUSED)
+        completed = [r[0] for r in conn.execute(
+            "SELECT id FROM pipeline_runs WHERE status = 'completed'")]  # fmt: skip
+        assert len(completed) == 1  # only the first, unrefused audit
+        assert pipeline.last_run(conn)["run_id"] == completed[0]
+        halted = conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE action = ?", (pipeline.HALT_ACTION,)
+        ).fetchone()[0]
+        assert halted == 1
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
