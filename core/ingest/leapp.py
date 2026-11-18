@@ -251,6 +251,16 @@ def _check_size(z: zipfile.ZipFile, member: str, limit: int, file_name: str) -> 
         )
 
 
+def _db_spelling(db: sqlite3.Connection, table: str) -> str:
+    """The table name as the database spells it, when a table matches the manifest's name the
+    way SQLite resolves names (ASCII letters in any case); else the manifest's name. Locators
+    then name the LAVA table itself (CodeRabbit on #269)."""
+    row = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ? COLLATE NOCASE", (table,)
+    ).fetchone()
+    return str(row[0]) if row else table
+
+
 def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     """Read the LAVA pair from a zip of a LEAPP output folder. Refuses a zip that holds no
     manifest, more than one, or no database beside it."""
@@ -313,7 +323,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     category=str(category),
                     name=str(e.get("name") or e["tablename"]),
                     key=str(e.get("artifact_key") or e["tablename"]),
-                    table=str(e["tablename"]),
+                    table=_db_spelling(db, str(e["tablename"])),
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
                     # a count below 0 (or a bool) states nothing: unknown (CodeRabbit on #269)
@@ -324,18 +334,19 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     data_views=e["data_views"] if isinstance(e.get("data_views"), dict) else {},
                 )
             )
-    # SQLite names are not case-sensitive, so two entries whose table names differ only in case
-    # read one table: each row would be stored twice. No LEAPP output seen lists a table twice,
-    # so such a manifest is refused, not guessed at (CodeRabbit on #269).
-    seen: dict[str, str] = {}
+    # Each entry names its table as the database spells it (SQLite matches ASCII case only), so
+    # two entries for one table, in any case, are the same name here: each row would be stored
+    # twice. No LEAPP output seen lists a table twice, so such a manifest is refused, not
+    # guessed at (CodeRabbit on #269).
+    seen: set[str] = set()
     for art in arts:
-        other = seen.get(art.table.casefold())
-        seen[art.table.casefold()] = art.table
-        if other is not None:
+        if art.table in seen:
+            db.close()
             raise ValueError(
-                f"{file_name}'s manifest names one table twice ({other!r} and {art.table!r});"
-                " each table is read once, so the import stops"
+                f"{file_name}'s manifest names table {art.table!r} twice; each table is read"
+                " once, so the import stops"
             )
+        seen.add(art.table)
     return Lava(
         manifest=manifest,
         db=db,

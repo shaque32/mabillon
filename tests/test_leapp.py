@@ -1011,20 +1011,48 @@ def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
     assert leapp._may_hold_records(lava, replace(sms, table="not_there"))
 
 
-@pytest.mark.parametrize("spelling", [str.upper, str])
-def test_a_manifest_that_names_one_table_twice_is_refused(tmp_path: Path, spelling) -> None:  # noqa: ANN001
-    # Two entries for one table (in any case) would store each of its rows twice: the import
-    # stops rather than guess which entry to read (CodeRabbit on #269).
+def _lava_with(tmp_path: Path, edit) -> leapp.Lava:  # noqa: ANN001
     manifest, data = _android().build()
-    entries = next(v for v in manifest["artifacts"].values() if v)
-    entries.append({**entries[0], "tablename": spelling(entries[0]["tablename"])})
+    edit(manifest)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
         z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
     buf.seek(0)
-    with pytest.raises(ValueError, match="names one table twice"):
-        leapp.read_lava(buf, "a.zip")
+    return leapp.read_lava(buf, "a.zip")
+
+
+@pytest.mark.parametrize("spelling", [str.upper, str])
+def test_a_manifest_that_names_one_table_twice_is_refused(tmp_path: Path, spelling) -> None:  # noqa: ANN001
+    # Two entries for one table (in any case) would store each of its rows twice: the import
+    # stops rather than guess which entry to read (CodeRabbit on #269).
+    def twice(manifest):  # noqa: ANN001, ANN202
+        entries = next(v for v in manifest["artifacts"].values() if v)
+        entries.append({**entries[0], "tablename": spelling(entries[0]["tablename"])})
+
+    with pytest.raises(ValueError, match="twice"):
+        _lava_with(tmp_path, twice)
+
+
+def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
+    tmp_path: Path,
+) -> None:
+    # A manifest naming GET_CALLLOG reads get_calllog, and its locators name get_calllog, the
+    # LAVA table; names that differ in non-ASCII letters stay distinct, as SQLite keeps them
+    # (CodeRabbit on #269).
+    def upper(manifest):  # noqa: ANN001, ANN202
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_calllog":
+                    e["tablename"] = e["tablename"].upper()
+        entries = next(v for v in manifest["artifacts"].values() if v)
+        entries.append({**entries[0], "tablename": "calls_\u00c4", "artifact_key": "x1"})
+        entries.append({**entries[0], "tablename": "calls_\u00e4", "artifact_key": "x2"})
+
+    lava = _lava_with(tmp_path, upper)
+    calls = next(a for a in lava.artifacts if a.key == "get_calllog")
+    assert calls.table == "get_calllog"
+    assert {"calls_\u00c4", "calls_\u00e4"} <= {a.table for a in lava.artifacts}
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

@@ -6,7 +6,7 @@
   The LEAPP coverage's `not_imported` entries now carry their artifact key and, for a table that
   failed to read, whether it may hold records (`may_hold_records`). That flag, and the importer's
   own test of whether an unread artifact may hold records, now reads a table that is there for a
-  row even when the manifest counts 0, reads a manifest count below 0 as unknown, and finds a table whatever the case of its manifest name, as SQLite does. The importer refuses a manifest that names one table twice (in any case), which would store each of its rows twice; neither development manifest (Android 13, iOS 15) does. Only the table's own rows (`TABLE/rowid=N`) are
+  row even when the manifest counts 0, reads a manifest count below 0 as unknown, and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. It refuses a manifest that names one table twice (in any ASCII case), which would store each of its rows twice; neither development manifest (Android 13, iOS 15) does. Only the table's own rows (`TABLE/rowid=N`) are
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
   - The table has rows but no phone call from it can be read as the caller check reads one: a
@@ -77,9 +77,10 @@
   - A timed call on a phone with no line of its own stops the build.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
     manifest counts 0, a negative manifest count reads as unknown, a table whose row probe
-    fails may hold records, a manifest table name in other case still finds its table, and a
-    manifest naming one table twice, in the same or other case, is refused.
-  The file's 58 tests pass (with `tests/test_leapp.py`, 144) locally (cloud container, 2026-11-18). On the G2 development case
+    fails may hold records, a manifest table name in other case still finds its table and is
+    read under the database's spelling (names differing in non-ASCII letters stay distinct), and
+    a manifest naming one table twice, in the same or other case, is refused.
+  The file's 58 tests pass (with `tests/test_leapp.py`, 145) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
