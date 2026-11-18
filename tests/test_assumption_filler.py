@@ -3653,6 +3653,38 @@ def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
             filler._bind_named_app(c, out)
 
 
+@pytest.mark.parametrize(
+    ("words", "kept"), [("had no contact on Recents", True), ("had no contact on recents", False)]
+)
+def test_a_plain_word_app_written_with_a_capital_is_named_however_the_export_spells_it(
+    conn, monkeypatch, words, kept
+):
+    # An export may store "recents"; "on Recents" still names it (CodeRabbit on #265).
+    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["recents"])
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "recents"])
+    monkeypatch.setattr(
+        LocalAssumptionFiller,
+        "_channels",
+        lambda self, text, names, template_id="": list(names),
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=f"PETROV and REYES {words} between March 20 and March 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [Proposal("no_contact", {"person_ids": [PETROV, REYES]}, is_core=True)]
+    if kept:
+        (row,) = filler._bind_named_app(c, out)
+        assert row.params["channels"] == ["recents"]
+    else:
+        with pytest.raises(Reject, match="plain word"):
+            filler._bind_named_app(c, out)
+
+
 def test_words_inside_a_kept_range_are_still_read(conn):
     # The model may keep "On March 12, 2026, while driving" as the day's range; "while
     # driving" is still a word no check reads (Greptile on #265).

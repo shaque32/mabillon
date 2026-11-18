@@ -79,15 +79,18 @@
     on (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
-    unless the claim writes it with a capital, whether code or the model chose it (Greptile on
-    #265).
+    unless the claim writes it with a capital, however the export spells the app, whether code
+    or the model chose it (Greptile and CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
-    it states. A length written so ("lasted 0:12:45") is not a time of day. A time, an app
-    or any other word inside a quote that a line break wraps is the quote's, not the claim's:
-    `_unquoted`, which every reader of the claim's own words uses, now masks a wrapped quote
-    as one (CodeRabbit on #265).
+    it states. A length written so ("lasted 0:12:45") is not a time of day. For the readers
+    that blank quoted words with `_unquoted` (the seconds guards, stated ranges, coverage gaps,
+    unread words and the app readers), a time, an app or any other word inside a quote that a
+    line break wraps is the quote's, not the claim's: `_unquoted` now masks a wrapped quote as
+    one (CodeRabbit on #265). The weekday check in `check_window` still reads the raw claim,
+    quotes included, so a weekday inside any quote that is not that date's weekday refuses the
+    range and the claim stays unproven.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make

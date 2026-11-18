@@ -4597,8 +4597,10 @@ class LocalAssumptionFiller:
 
         def plain_word(app: str) -> bool:
             # "his second line": a plain word that may name no app at all
-            return app.casefold() in _PLAIN_WORD_APPS and not re.search(
-                rf"\b(?:{re.escape(app)}|{re.escape(app.upper())})\b", bare
+            # written with a capital is a name, however the export spells the app ("Recents"
+            # for an export's "recents"; CodeRabbit on #265)
+            return app.casefold() in _PLAIN_WORD_APPS and not any(
+                bare[st].isupper() for st, _ in self._app_mentions(bare, app)
             )
 
         # "by phone" is read before a phone named "Phone" is blanked; the message and call
