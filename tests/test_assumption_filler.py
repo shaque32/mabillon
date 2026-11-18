@@ -4789,6 +4789,9 @@ def test_coderabbit_on_6080aa5_then_and_handles(conn):
     # with no "and", a bare "then" joins the two verbs (CodeRabbit on 6b6b213)
     bare_then = 'On March 12, 2026, PETROV texted @northstar then asked: "need 2 more by friday".'
     assert "a second act" not in filler.unread_words(bare_then)
+    # a handle that reads like a pronoun is an account (CodeRabbit on 31b0e11)
+    at_who = 'On March 12, 2026, PETROV texted @who then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(at_who)
     other = 'On March 12, 2026, PETROV texted @northstar then @northstar asked: "ok".'
     assert "a second act" in filler.unread_words(other)
     # a relative clause before "then" has a subject of its own (CodeRabbit on e7ea4cf)

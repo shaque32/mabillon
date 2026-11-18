@@ -3242,7 +3242,11 @@ def _later_clause(gap: str) -> str:
     if len(parts) > 1:
         return parts[-1]
     *before, after = re.split(r"\bthen\b", gap, flags=re.IGNORECASE)
-    if before and _CLAUSE_PRONOUN_RE.search(" ".join(before)):
+    # a handle or an address is an account, not a pronoun: "texted @who then asked"
+    said = " ".join(before)
+    for rx in (_HANDLE_RE, _WEB_ADDRESS_RE):
+        said = rx.sub(lambda m: " " * len(m.group(0)), said)
+    if before and _CLAUSE_PRONOUN_RE.search(said):
         return gap
     return after
 
