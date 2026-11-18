@@ -638,13 +638,6 @@ _LENGTH_BEFORE_RE = re.compile(
 )
 
 
-# "09:31:04 UTC", "9:31:04 p.m.", "09:31:04-04:00": a zone or a.m./p.m. after it makes it a time
-# of day, whatever word stands before it (CodeRabbit on #265)
-_ZONED_AFTER_RE = re.compile(
-    r"\s*(?:(?i:[ap]\.?\s?m)\b|UTC\b|GMT\b|Z\b|[A-Z]{1,4}T\b|[+\-\u2212]\d{2}:?\d{2}\b)"
-)
-
-
 def _app_text(text: str) -> str:
     """The claim's words an app may be named in: no quoted message, handle or address."""
     return _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
@@ -775,6 +768,16 @@ _UNREAD_ZONE_RE = re.compile(
     rf"(?i:{_CLOCK_END})\s*\(?(?P<z>{_OFFSET_ZONE}"
     r"|(?i:utc|gmt|akst|akdt|[ecmp][sd]t|hst)\b|[ecmp]t\b"
     rf"|{_OTHER_ZONE}|{_ZONE_NAME})"
+)
+# "09:31:04 UTC", "9:31:04 p.m.", "09:31:04-04:00", "09:31:04 (UTC)", "09:31:04 Eastern Time":
+# a.m./p.m. or a zone after a time to the second, in any syntax a zone is written in after a
+# time, makes it a time of day, whatever word stands before it (`_states_seconds`; CodeRabbit
+# on #265)
+_ZONED_AFTER_RE = re.compile(
+    r"\s*(?:(?i:[ap]\.?\s?m)\b|Z\b|\(?\s*(?:"
+    rf"(?i:{_ZONE})|{_OFFSET_ZONE}"
+    r"|(?i:utc|gmt|akst|akdt|[ecmp][sd]t|hst)\b|[ecmp]t\b"
+    rf"|{_OTHER_ZONE}|{_ZONE_NAME}))"
 )
 # After a date only an offset, or a zone in brackets, counts: a capitalized word after a date
 # may be a person ("On January 9, 2026, AST called").
@@ -3660,9 +3663,12 @@ class LocalAssumptionFiller:
                 params["person_ids"] = [writer]
                 code_made = True
 
-        # a handle ("to @sms on Telegram") or an address names an account, not an app
-        # (CodeRabbit on #265)
+        # a handle ("to @sms on Telegram") or an address names no app, so a channel named only
+        # there is refused; one named only by a phone's name ("the WHATSAPP PHONE") is left
+        # out, and the row is scoped as the claim's own words scope it (CodeRabbit on #265)
         channels = self._channels(_app_text(claim.text), p.channels, tpl.id)
+        unphoned = _app_text(self._without_phone_names(_nfc(claim.text)))
+        channels = [c for c in channels if self._names_channel(unphoned, c, tpl.id)]
         if channels:
             params["channels"] = channels
 
@@ -3713,7 +3719,9 @@ class LocalAssumptionFiller:
                     # The app the model wrote the person on scopes their accounts, as the
                     # channel it is, which the claim must name; without it a message on any of
                     # their apps would do (Codex on #152).
-                    (on,) = self._channels(_app_text(claim.text), [acc.app], tpl.id)
+                    (on,) = self._channels(
+                        _app_text(self._without_phone_names(_nfc(claim.text))), [acc.app], tpl.id
+                    )
                     if channels and on not in channels:
                         raise Reject(
                             f"{written!r} is written on {on}, which the proposal's channels"
@@ -4357,7 +4365,8 @@ class LocalAssumptionFiller:
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
         # word, as `_bind_named_app` binds none (CodeRabbit on #265)
         named = self._scope_apps(
-            self._named_apps(claim_text),
+            # "the WHATSAPP PHONE" names no WhatsApp (CodeRabbit on #265)
+            self._named_apps(self._without_phone_names(_nfc(claim_text))),
             _HANDLE_RE.sub(
                 " ", _ADDRESS_RE.sub(" ", _unquoted(self._without_phone_names(_nfc(claim_text))))
             ),
@@ -5509,6 +5518,14 @@ class LocalAssumptionFiller:
                 self._alias(claim_text, canon, vocab, template_id)
             out.append(canon)
         return sorted(set(out), key=str.lower)
+
+    def _names_channel(self, claim_text: str, channel: str, template_id: str = "") -> bool:
+        """True when the words name this case app the way `_channels` requires."""
+        try:
+            self._channels(claim_text, [channel], template_id)
+        except Reject:
+            return False
+        return True
 
     @staticmethod
     def _alias(claim_text: str, canon: str, vocab: dict[str, str], template_id: str) -> None:

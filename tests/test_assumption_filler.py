@@ -4437,11 +4437,16 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
     made, f = build_text(c, handle, ClaimType.COMMUNICATION, on_sms)
     assert [d.reason for d in f.drops] == ["the claim does not name the channel 'SMS'"] * 2
-    assert all(a.params.channels == ("Telegram",) for a in made), [a.params for a in made]
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+    }
     # 3. a zoned clock time to the second is a time of day, whatever word stands before it
     assert _states_seconds("logged for 09:31:04 UTC")
     assert _states_seconds("for 9:31:04 p.m.")
     assert _states_seconds("for 09:31:04-04:00")
+    assert _states_seconds("for 09:31:04 (UTC)")
+    assert _states_seconds("for 09:31:04 Eastern Time")
     assert not _states_seconds("lasted 0:12:45")
     assert not _states_seconds("for 0:12:45 at most")
     # 4. each quoted message needs its own row whose quote holds all of it
@@ -4474,3 +4479,27 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     assert "event" in kinds(said, C05_ANSWER)
     bracketed = 'On March 12, 2026, PETROV wrote to @northstar ("Petrov"): "need 2 more by friday".'
     assert kinds(bracketed, C05_ANSWER) == {"sender", "record_time"}
+
+
+def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):
+    # "on the WHATSAPP PHONE" names a phone, not WhatsApp: code's own sender searches the
+    # app the claim names, and the model's WhatsApp channel is left out of its rows, which are
+    # then scoped to the app the claim names (CodeRabbit on #265).
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["WHATSAPP PHONE"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, on the WHATSAPP PHONE, PETROV wrote to @northstar on Telegram: "need'
+        ' 2 more by friday".'
+    )
+    assert filler._message_apps(text) == ["Telegram"]
+    on_whatsapp = [{**p, "channels": ["WhatsApp"]} for p in C05_ANSWER]
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, on_whatsapp)
+    assert not f.drops, f.drops
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+    }

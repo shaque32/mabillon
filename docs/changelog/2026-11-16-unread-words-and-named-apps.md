@@ -90,15 +90,18 @@
     Telegram or his second line" Telegram alone (CodeRabbit on #265). Code's own sender for
     "sent an SMS" searches the SMS app only, never an iMessage store beside it, also on a case
     with Line ("an SMS on his second line"). An app the model puts a row on must be named outside
-    the quoted words ('on Telegram: "... on Signal"' gives no Signal row) and outside handles and
-    addresses ("to @sms on Telegram" gives no SMS row), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
+    the quoted words ('on Telegram: "... on Signal"' gives no Signal row) and outside handles,
+    addresses and a phone's name ("to @sms on Telegram" gives no SMS row, "on the WHATSAPP
+    PHONE ... on Telegram" searches Telegram alone: code's own sender never picks WhatsApp, and
+    a WhatsApp channel the model gave is left out of its row), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
     lacks, so the claim stays unproven (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
     it states; `coverage_gap` also refuses such a claim whatever path its range took. A length
-    written so ("lasted 0:12:45") is not a time of day, but one with a zone or a.m./p.m. after
-    it ("for 09:31:04 UTC") is. A claim that quotes more than one message gets the expert-only
+    written so ("lasted 0:12:45") is not a time of day, but one with a.m./p.m. or a zone after
+    it, in any form a zone is written after a time ("for 09:31:04 UTC", "09:31:04 (UTC)",
+    "09:31:04 Eastern Time", "09:31:04-04:00"), is. A claim that quotes more than one message gets the expert-only
     event unless each quote has a sender or time row of its own whose tested quote holds all of
     it: a shorter tested quote, or one row for two quotes, is not enough, and a sender row and
     a time row with the same words count once, since both may pass on one message ('wrote
