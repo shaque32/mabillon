@@ -8,6 +8,7 @@ nothing of claims or traps, so it cannot be used to tune a pack to them.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -27,14 +28,14 @@ def check(pack: RulePack, samples: Path = SAMPLES) -> dict[str, dict[str, object
     out: dict[str, dict[str, object]] = {}
     for x in pack.layouts:
         path = samples / f"{x.id}.csv"
-        if not path.is_file():
-            out[x.id] = {"error": f"no sample file {path.name}"}
-            continue
         try:
+            if not path.is_file():
+                out[x.id] = {"error": f"no sample file {path.name}"}
+                continue
             # decode the bytes ourselves: read_text would turn CRLF into LF, and the reader
             # hashes the text it is given, which must be the file's bytes (code review on #270)
             loaded = read(path.read_bytes().decode("utf-8"), x)
-        except (OSError, ValueError) as e:  # unreadable, not UTF-8, or the wrong header
+        except (OSError, ValueError, csv.Error) as e:  # unreadable, not UTF-8, bad CSV, header
             out[x.id] = {"error": str(e)}
             continue
         rows = loaded.conn.execute(

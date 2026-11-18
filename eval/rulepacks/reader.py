@@ -3,8 +3,10 @@
 Kept apart from the synthetic generator (carrier.py) so that a drafting session can be given
 the reader and the sample files without the generator's source, which states each layout's
 codes outright and marks which events the claims rest on (DRAFTING.md). The drafter still sees
-every record: the samples in formats/samples/ are checked-in snapshots of carrier.render(),
-the files the harness reads, and a test keeps the two identical.
+every record: the samples in formats/samples/ are checked-in snapshots of carrier.render().
+The harness never reads the samples. It passes carrier.render() to read() directly, so editing a
+sample does not change a harness run; check_layout.py is the tool that reads the samples, and a
+test keeps them identical to render().
 """
 
 from __future__ import annotations

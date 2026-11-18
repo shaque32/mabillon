@@ -484,3 +484,23 @@ def test_the_check_tool_reports_an_unreadable_sample_and_goes_on(
     res = check_layout.check(pack, tmp_path)
     assert res["carrier-a"] == {"error": "denied"}
     assert "coverage" in res["carrier-b"]
+
+
+def test_the_check_tool_reports_a_csv_parser_error_and_goes_on(
+    pack: RulePack, tmp_path: Path
+) -> None:
+    for lid in carrier.LAYOUTS:
+        (tmp_path / f"{lid}.csv").write_text(carrier.render(lid))
+    bad = carrier.render("carrier-a").replace("\n", '\n"unclosed' + "x" * 200_000, 1)
+    (tmp_path / "carrier-a.csv").write_text(bad)
+    res = check_layout.check(pack, tmp_path)
+    assert "error" in res["carrier-a"]
+    assert "coverage" in res["carrier-b"]
+
+
+def test_a_layout_with_a_repeated_header_label_is_refused(pack: RulePack) -> None:
+    body = pack.model_dump(mode="json")
+    lay = body["layouts"][0]
+    lay["headers"] = [*lay["headers"], lay["duration_col"]]
+    with pytest.raises(ValidationError, match="header label repeats"):
+        RulePack.model_validate(body)

@@ -79,6 +79,8 @@ class Layout(_Strict):
         missing = [c for c in cols if c not in self.headers]
         if missing:
             raise ValueError(f"layout {self.id}: columns not in headers: {missing}")
+        if len(set(self.headers)) != len(self.headers):
+            raise ValueError(f"layout {self.id}: a header label repeats, so a column is ambiguous")
         # the zone word must stand alone and end the label: "Time (UTC-05:00)", "Time (UTC
         # -05:00)" and "Central Standard Time" state an offset or a fixed standard time, not
         # the zone (CodeRabbit and code review on #260)
