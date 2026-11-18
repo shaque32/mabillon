@@ -53,8 +53,8 @@
     app as that app ("Wickr" for "Wickr Pro") and a handle ("@viber") as no app, also when it
     picks the claim's apps, and a phone's name ("the WHATSAPP PHONE") as no app, and an app
     written only inside a longer app's name as no app ("Facebook Messenger" binds no
-    Facebook; a hyphen joins its words too, so "Line-Business" binds no Line, and the join scan and the
-    unread-word scan read it the same way, so "Telegram or Line-Business" gets no event), while "by phone"
+    Facebook; a hyphen joins its words too, so "Line-Business" binds no Line, as does a line break, and the join
+    scan and the unread-word scan read it the same way, so "Telegram or Line-Business" gets no event), while "by phone"
     is still one kind of contact on a case with a phone named "Phone" (CodeRabbit on #265). "Texted" on a
     case with two apps of a phone's own messages (SMS and iMessage) searches both for a message,
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
@@ -90,18 +90,19 @@
     that blank quoted words with `_unquoted` (the seconds guards, stated ranges, the time-of-day,
     month and year scans of coverage gaps, unread words and the app readers), a time, an app or
     any other word inside a quote that a line break wraps is the quote's, not the claim's:
-    `_unquoted` now masks a wrapped quote as one (CodeRabbit on #265). A date, a year or a time
+    `_unquoted` now masks a wrapped quote as one (CodeRabbit on #265). A date, a year, a time or a weekday
     inside quoted words is never one the claim states (CodeRabbit on #265): `check_window` no
     longer takes a quoted date as a stated day ('On March 12, 2026, PETROV wrote "see you March
-    11, 2026"' let a range start on March 11), and a date with no year never takes a year
-    written only in a quote ('On March 12, ... "back in 2025"' read March 12, 2025), in
-    `stated_windows`, `stated_part_day`, the open range of no contact and `check_window`
-    (`_stated_years`). Some scans still read the raw claim, quotes included, and each only
-    refuses: the date scans of coverage gaps and of a tie to an event (`date_mentions`), so a
-    quoted date with no time range kept leaves the claim unproven; the numeric-date checks in
-    `stated_windows` and `stated_part_day`, so a quoted numeric date ("03/13/2026") builds no
-    range; and the weekday check in `check_window`, so a quoted weekday that is not that date's
-    weekday refuses the range.
+    11, 2026"' let a range start on March 11), and refuses a model's range words that cross a
+    quote's edge ('March 11, 2026".') so code reads the claim's own date; a date with no year
+    never takes a year written only in a quote ('On March 12, ... "back in 2025"' read March 12,
+    2025), in `stated_windows`, `stated_part_day`, the open range of no contact and
+    `check_window` (`_stated_years`); and a quoted weekday ("See you Monday, March 11") is never
+    judged against the claim's year. Some scans still read the raw claim, quotes included, and
+    each only refuses: the date scans of coverage gaps and of a tie to an event
+    (`date_mentions`), so a quoted date with no time range kept leaves the claim unproven, and
+    the numeric-date checks in `stated_windows` and `stated_part_day`, so a quoted numeric date
+    ("03/13/2026") builds no range.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make

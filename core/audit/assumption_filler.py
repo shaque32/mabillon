@@ -1242,9 +1242,9 @@ def check_window(
         )
     if end - start > timedelta(days=MAX_WINDOW_DAYS):
         raise Reject(f"window longer than {MAX_WINDOW_DAYS} days")
-    # A date, a year or a time in quoted words is the message's, never one the claim states:
-    # a range on a quoted date would test the claim on the wrong day (CodeRabbit on #265).
-    # Only the weekday check, which only refuses, still reads the quotes.
+    # A date, a year, a time or a weekday in quoted words is the message's, never one the
+    # claim states: a range on a quoted date would test the claim on the wrong day (CodeRabbit
+    # on #265).
     raw_written, as_written = as_written, _unquoted(as_written)
     mentions = date_mentions(as_written) + date_mentions(_unquoted(claim))
     years = _stated_years(raw_written, claim, para)
@@ -1271,7 +1271,9 @@ def check_window(
             raise Reject("window end is not near the end of the stated time range")
     # "after March 3" leaves March 3 out: the range starts at midnight on March 4. "on or
     # after" and "since" keep the day itself.
-    if weekday_mismatch(raw_written, years) or weekday_mismatch(claim, years):
+    # a weekday in quoted words is the message's: read with the claim's own year, a quoted
+    # "Monday, March 11" would refuse a true range (CodeRabbit on #265)
+    if weekday_mismatch(as_written, years) or weekday_mismatch(_unquoted(_flat(claim)), years):
         raise Reject("a weekday the document gives is not that date's weekday")
     months = months_stated(as_written)
     if months is not None and not times:
@@ -1520,6 +1522,11 @@ def cut_from_longer(as_written: str, claim: str) -> bool:
         j = i + len(words)
         if any(a <= i and j <= b for a, b in quotes):
             return True  # "meet me at 9 p.m. on May 9": the message's time, not the claim's
+        if any(a < j and i < b and not (i <= a and b <= j) for a, b in quotes):
+            # 'March 11, 2026".' copied from '"see you March 11, 2026".': words that cross a
+            # quote's edge are part the message's, so masking them alone cannot see the quote
+            # (CodeRabbit on #265)
+            return True
         rest = plain[j:]
         if (
             _CUT_BEFORE_RE.search(plain[:i])
@@ -5621,13 +5628,13 @@ class LocalAssumptionFiller:
     @staticmethod
     def _app_mentions(text: str, app: str) -> list[tuple[int, int]]:
         """Where the words write the app by its name or a short name (APP_ALIASES). The words of
-        a name of several words may be joined by spaces or hyphens ("Line-Business" writes Line
-        Business; CodeRabbit on #265)."""
+        a name of several words may be joined by spaces, a line break or hyphens ("Line-Business"
+        writes Line Business; CodeRabbit on #265)."""
         return [
             m.span()
             for n in (app, *APP_ALIASES.get(app.casefold(), ()))
             for m in re.finditer(
-                r"(?<!\w)" + r"[ -]+".join(map(re.escape, n.split())) + r"(?!\w)",
+                r"(?<!\w)" + r"[\s-]+".join(map(re.escape, n.split())) + r"(?!\w)",
                 text,
                 re.IGNORECASE,
             )

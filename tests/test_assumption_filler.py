@@ -3732,6 +3732,19 @@ def test_a_quoted_date_or_year_is_never_the_claims(conn):
     check_window(D(2026, 3, 12), D(2026, 3, 13), "March 12, 2026", text, "")
     with pytest.raises(Reject, match="not a date the claim states"):
         check_window(D(2026, 3, 11), D(2026, 3, 13), "March 12, 2026", text, "")
+    # words copied across a quote's edge are part the message's (CodeRabbit on #265)
+    from core.audit.assumption_filler import cut_from_longer
+
+    assert cut_from_longer('March 11, 2026".', text)
+    assert not cut_from_longer("On March 12, 2026", text)
+    # a quoted weekday is the message's, never read with the claim's year; an unquoted wrong
+    # weekday is still refused (CodeRabbit on #265)
+    monday = 'On March 12, 2026, PETROV wrote "See you Monday, March 11; back in 2024".'
+    check_window(D(2026, 3, 12), D(2026, 3, 13), "March 12, 2026", monday, "")
+    with pytest.raises(Reject, match="weekday"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), "Monday, March 12, 2026", f"On Monday, {monday[3:]}", ""
+        )
     no_year = 'On March 12, PETROV wrote to REYES: "back in 2025".'
     assert af.stated_windows(no_year, "") is None
     assert af.stated_windows("On March 12", no_year) is None
@@ -3929,6 +3942,10 @@ def test_a_hyphenated_app_name_reads_its_join_like_binding(tmp_path):
     assert {frozenset(a.params.channels) for a in made} == {
         frozenset({"Telegram", "Line Business"})
     }
+    wrapped = text.replace("Line-Business", "Line\nBusiness")
+    assert filler._apps_named_together(wrapped) == []
+    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
     joined = text.replace(" or ", " and ")
     assert filler._apps_named_together(joined) == ["Telegram and Line-Business"]
     made, _ = build_text(c, joined, ClaimType.COMMUNICATION, C05_ANSWER)
