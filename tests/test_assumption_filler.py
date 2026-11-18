@@ -4275,3 +4275,28 @@ def test_more_findings_on_e3062bf(tmp_path):
     assert tg.claim_apps(wrapped) == {"telegram"}
     made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
     assert {a.template_id for a in made} >= {"sender", "record_time"}
+
+
+def test_a_plain_word_app_written_lowercase_binds_no_row(tmp_path):
+    # "his second line" names no Line (CodeRabbit on #265): a row on no app is never bound to
+    # Line alone, where a true message on the phone's own app would go unfound, and the sheet
+    # check does not excuse a Line the model chose, since `claim_apps` reads the same.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:ln', 'item1', 'x', 'dev:item1', 'Line', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    phone = filler._phone_message_apps()
+    texted = 'On March 12, 2026, PETROV texted REYES on his second line: "need 2 more by friday".'
+    made, _ = build_text(c, texted, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert all(a.params.channels == tuple(phone) for a in made if a.params.channels)
+    assert filler.claim_apps(texted) == frozenset(a.casefold() for a in phone)
+    wrote = 'On March 12, 2026, PETROV wrote to REYES on his second line: "need 2 more by friday".'
+    made, _ = build_text(c, wrote, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert all(not a.params.channels for a in made)
+    assert filler.claim_apps(wrote) == frozenset()
+    # written as a name, it is the app; beside a named app it widens the search
+    named = 'On March 12, 2026, PETROV wrote to REYES on Line: "need 2 more by friday".'
+    assert filler.claim_apps(named) == frozenset({"line"})
+    made, _ = build_text(c, named, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made if a.params.channels} == {("Line",)}

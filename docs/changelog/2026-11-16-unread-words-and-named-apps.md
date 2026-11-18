@@ -82,7 +82,10 @@
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital at a mention of its own (never inside a longer
     app's name), however the export spells the app, whether code or the model chose it
-    (Greptile and CodeRabbit on #265).
+    (Greptile and CodeRabbit on #265). Nor is a row on no app bound to such an app alone:
+    "wrote to REYES on his second line" searches every app, and "texted REYES on his second
+    line" the phone's own messages, never Line, where a true text would go unfound
+    (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
@@ -134,7 +137,8 @@
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
     this, "texted" bound to SMS read as a mismatch on case01 C12. Other apps a try names still
-    count. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
+    count, and so does a plain-word app the claim writes without a capital ("his recents"),
+    which code binds no row to. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
     instead of failing it on filler 12's new rows (CodeRabbit on #265).
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve

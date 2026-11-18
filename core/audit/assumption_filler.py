@@ -4486,7 +4486,7 @@ class LocalAssumptionFiller:
         claim_text = self._without_phone_names(_nfc(claim_text))
         # a handle ("to @sms") names an account, not an app (CodeRabbit on #265)
         bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(claim_text)))
-        apps = self._named_apps(claim_text)
+        apps = self._scope_apps(self._named_apps(claim_text), bare)
         if not apps and _PHONE_APP_WORD_RE.search(bare):
             # "sent an iMessage": the kinds the words name, as `_bind_named_app` binds them
             apps = self._phone_apps_named(bare)
@@ -4497,6 +4497,18 @@ class LocalAssumptionFiller:
             # `_bind_named_app` binds them (CodeRabbit on #265)
             apps = [*apps, *self._phone_apps_named(bare)]
         return frozenset(a.casefold() for a in apps)
+
+    def _scope_apps(self, apps: list[str], bare: str) -> list[str]:
+        """The named apps a message row is bound to: none when every one is a plain word the
+        claim does not write as a name ("wrote to REYES on his second line" names no Line, so
+        every app is searched, or a phone's own messages for "texted"). Beside an app written
+        as a name, a plain word only widens the search. `claim_apps` reads the same, so the
+        sheet check never excuses an app the claim's words do not name (CodeRabbit on #265)."""
+        if any(
+            a.casefold() not in _PLAIN_WORD_APPS or self._written_as_name(bare, a) for a in apps
+        ):
+            return apps
+        return []
 
     def _phone_apps_named(self, bare: str) -> list[str]:
         """The case's apps of a phone's own messages that the words name by kind ("SMS",
@@ -4751,7 +4763,9 @@ class LocalAssumptionFiller:
 
         unscoped = [i for i in app_rows if not out[i].params.get("channels")]
         try:
-            found = self._claim_scope(apps, phone_named, kinds_named, texty, bare)
+            found = self._claim_scope(
+                self._scope_apps(apps, bare), phone_named, kinds_named, texty, bare
+            )
         except Reject:
             if unscoped:
                 raise
