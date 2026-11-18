@@ -4506,3 +4506,26 @@ def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):
         "sender": ("Telegram",),
         "record_time": ("Telegram",),
     }
+
+
+def test_a_phone_named_after_a_message_kind_gives_code_s_sender_no_kind(tmp_path):
+    # "On the SMS PHONE" names a phone, not SMS: on a case with SMS and iMessage stores, code's
+    # own sender searches every app, as for any claim that names none, and is kept by the
+    # binding (CodeRabbit on #265).
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["SMS PHONE"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, on the SMS PHONE, PETROV wrote to @northstar: "need 2 more by friday".'
+    )
+    assert filler._message_apps(text) == []
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id for a in made} == {"sender", "record_time"}, f.drops
+    (sender,) = [a for a in made if a.template_id == "sender"]
+    assert sender.params.channels == ()

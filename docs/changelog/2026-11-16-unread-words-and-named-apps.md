@@ -93,7 +93,8 @@
     the quoted words ('on Telegram: "... on Signal"' gives no Signal row) and outside handles,
     addresses and a phone's name ("to @sms on Telegram" gives no SMS row, "on the WHATSAPP
     PHONE ... on Telegram" searches Telegram alone: code's own sender never picks WhatsApp, and
-    a WhatsApp channel the model gave is left out of its row), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
+    a WhatsApp channel the model gave is left out of its row; "on the SMS PHONE" names no kind
+    of a phone's messages, so code's own sender searches every app), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
     lacks, so the claim stays unproven (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event

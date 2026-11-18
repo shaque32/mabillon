@@ -4375,16 +4375,13 @@ class LocalAssumptionFiller:
         every app in the case that holds a phone's messages, since "texted" may be SMS or
         iMessage (Codex on #164); None when the case holds no such app. Empty when the claim
         names no app."""
-        words = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
+        # a phone's name names no app, kind or cue: "the WHATSAPP PHONE" no WhatsApp, "the SMS
+        # PHONE" no SMS (CodeRabbit on #265)
+        unphoned = self._without_phone_names(_nfc(claim_text))
+        words = _ADDRESS_RE.sub(" ", _unquoted(unphoned))
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
         # word, as `_bind_named_app` binds none (CodeRabbit on #265)
-        named = self._scope_apps(
-            # "the WHATSAPP PHONE" names no WhatsApp (CodeRabbit on #265)
-            self._named_apps(self._without_phone_names(_nfc(claim_text))),
-            _HANDLE_RE.sub(
-                " ", _ADDRESS_RE.sub(" ", _unquoted(self._without_phone_names(_nfc(claim_text))))
-            ),
-        )
+        named = self._scope_apps(self._named_apps(unphoned), _HANDLE_RE.sub(" ", words))
         if _PHONE_APP_WORD_RE.search(_HANDLE_RE.sub(" ", words)) and not named:
             # "PETROV wrote an SMS" ("on his second line" too, on a case with Line): the kinds
             # the words name, as `_claim_scope` binds them, never the iMessage store beside it,
