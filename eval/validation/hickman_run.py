@@ -446,12 +446,13 @@ def call_log_check(  # noqa: ANN001
     """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
 
     It stops when a call log table of the phone (LEAPP's `get_calllog` or `callHistory`) holds
-    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a side and a time:
-    every row was placed by another app (ALEAPP's Samsung samples name another package), had no
-    direction, no party or no readable time, so no check could read any of the phone's calls.
+    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a time and the other
+    party on the side its direction names: every row was placed by another app (ALEAPP's
+    Samsung samples name another package), had no direction, no other party or no readable
+    time, so no check could read any of the phone's calls.
     Calls of a provider app in the same table (FaceTime on iOS) are not phone calls and do not
     count. It stops too when such a table holds records the import could not read at all.
-    Otherwise it logs how many phone calls a check can read, with a known time and a side. A
+    Otherwise it logs how many phone calls a check can read. A
     UFDR's coverage names no such table: never stopped here. A LEAPP phone (by `importer`, as
     the build recorded it) whose case holds no LEAPP coverage record stops: its call log
     cannot be checked."""
@@ -510,11 +511,22 @@ def call_log_check(  # noqa: ANN001
         # this table's own rows only ("TABLE/rowid=N"), never another table whose name starts
         # with this one and a slash (CodeRabbit on #269)
         own = (len(table) + 1, f"{table}/", len(table) + 2)
+        # a call a check can read, as the caller check reads it (_placed_by): a known time, and
+        # the other side stored where the direction puts it (not the phone's own line, whose
+        # account carries the phone's device), the phone's side empty or its own (CodeRabbit)
         rows, sided = conn.execute(
-            "SELECT count(*), coalesce(sum((from_account_id IS NOT NULL"
-            " OR to_account_id IS NOT NULL) AND ts_utc IS NOT NULL), 0)"
-            " FROM calls WHERE source_id = ? AND app = ?"
-            " AND substr(locator, 1, ?) = ? AND instr(substr(locator, ?), '/') = 0",
+            "SELECT count(*), coalesce(sum(c.ts_utc IS NOT NULL AND CASE"
+            " WHEN c.direction = 'outgoing' THEN t.id IS NOT NULL"
+            " AND t.device_id IS NOT c.device_id"
+            " AND (f.id IS NULL OR f.device_id IS c.device_id)"
+            " WHEN c.direction IN ('incoming', 'missed') THEN f.id IS NOT NULL"
+            " AND f.device_id IS NOT c.device_id"
+            " AND (t.id IS NULL OR t.device_id IS c.device_id)"
+            " ELSE 0 END), 0) FROM calls c"
+            " LEFT JOIN accounts f ON f.id = c.from_account_id"
+            " LEFT JOIN accounts t ON t.id = c.to_account_id"
+            " WHERE c.source_id = ? AND c.app = ?"
+            " AND substr(c.locator, 1, ?) = ? AND instr(substr(c.locator, ?), '/') = 0",
             (source_id, NATIVE_CALL_APP, *own),
         ).fetchone()
         (stored,) = conn.execute(
@@ -887,6 +899,18 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{a.out}: built.ok is there but case.db is not; use a new --out")
         conn = connect(a.out / "case.db")
         try:
+            # the case.db must hold the very imports built.ok records: one restored from another
+            # run under the same phone names would pass the check with its own calls (CodeRabbit)
+            for p in imported:
+                row = conn.execute(
+                    "SELECT sha256 FROM sources WHERE id = ?", (p["source_id"],)
+                ).fetchone()
+                if row is None or row[0] != p["sha256"]:
+                    raise SystemExit(
+                        f"{p['source_id']}: {a.out}/case.db does not hold the import built.ok"
+                        f" records ({p['file']} {p['sha256']}); restore the case.db it was built"
+                        " with, or use a new --out"
+                    )
             checks = [
                 (p["source_id"], *call_log_check(conn, p["source_id"], p.get("importer")))
                 for p in imported

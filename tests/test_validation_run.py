@@ -872,6 +872,15 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     # a call with a side but no time is no call a check can read (CodeRabbit on #269)
     no_time = "UPDATE calls SET ts_utc = NULL"
     assert "no phone call a check can read" in (check(sql=(no_time,))[0] or "")
+    # nor one whose other party is not where its direction puts it: an outgoing call with only
+    # the phone's own line, or the same row read as incoming (CodeRabbit on #269)
+    no_callee = "UPDATE calls SET to_account_id = NULL"
+    assert "no phone call a check can read" in (check(sql=(no_callee,))[0] or "")
+    turned = "UPDATE calls SET direction = 'incoming'"
+    assert "no phone call a check can read" in (check(sql=(turned,))[0] or "")
+    # an outgoing call with the callee and no line of the phone is read (as the caller check)
+    no_line = "UPDATE calls SET from_account_id = NULL"
+    assert check(sql=(no_line,))[0] is None
     # a LEAPP phone whose coverage is not in the case, or whose importer the build did not
     # record, fails closed; another importer's phone is not checked (CodeRabbit on #269)
     assert "left no coverage record" in (check(source="item9")[0] or "")
@@ -885,6 +894,28 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
 
     stop, _ = check(newline)
     assert stop and "\n" not in stop and "get_calllog\\nX: ok" in stop
+
+
+def test_a_resume_stops_when_case_db_holds_another_import(tmp_path):
+    # A case.db restored from another run under the same phone name would pass the call-log
+    # check with its own calls: the resume first checks it holds the import built.ok records
+    # (CodeRabbit on #269).
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    conn.execute("UPDATE sources SET sha256 = ? WHERE id = 'item1'", ("0" * 64,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match=r"item1: .*case.db does not hold the import built.ok"):
+        hickman_run.main(args)
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):

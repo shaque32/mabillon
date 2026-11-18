@@ -4,6 +4,8 @@ writes one."""
 
 from __future__ import annotations
 
+import io
+import json
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -950,6 +952,27 @@ def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_pa
         empty = leapp.read_lava(f, z.name)
     sms = next(a for a in empty.artifacts if a.key == "get_sms_mms")
     assert not leapp._may_hold_records(empty, replace(sms, record_count=None))
+
+
+def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
+    # A count below 0 says nothing about the table: it is read as unknown, so a missing table
+    # with it may hold records (CodeRabbit on #269).
+    manifest, data = _android().build()
+    for entries in manifest["artifacts"].values():
+        for e in entries:
+            if e["artifact_key"] == "get_sms_mms":
+                e["record_count"] = -1
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    buf.seek(0)
+    lava = leapp.read_lava(buf, "a.zip")
+    sms = next(a for a in lava.artifacts if a.key == "get_sms_mms")
+    from dataclasses import replace
+
+    assert sms.record_count is None
+    assert leapp._may_hold_records(lava, replace(sms, table="not_there"))
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

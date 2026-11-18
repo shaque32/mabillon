@@ -313,7 +313,10 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     table=str(e["tablename"]),
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
-                    record_count=int(rc) if isinstance(rc, int) else None,
+                    # a count below 0 (or a bool) states nothing: unknown (CodeRabbit on #269)
+                    record_count=rc
+                    if isinstance(rc, int) and not isinstance(rc, bool) and rc >= 0
+                    else None,
                     source_path=str(e["source_path"]) if e.get("source_path") else None,
                     data_views=e["data_views"] if isinstance(e.get("data_views"), dict) else {},
                 )

@@ -6,23 +6,28 @@
   The LEAPP coverage's `not_imported` entries now carry their artifact key and, for a table that
   failed to read, whether it may hold records (`may_hold_records`). That flag, and the importer's
   own test of whether an unread artifact may hold records, now reads a table that is there for a
-  row even when the manifest counts 0. Only the table's own rows (`TABLE/rowid=N`) are
+  row even when the manifest counts 0, and reads a manifest count below 0 as unknown. Only the table's own rows (`TABLE/rowid=N`) are
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
-  - The table has rows but no phone call from it was stored with a side and a readable time.
-    This happens when every row was placed by another app, or had no direction, no party or no
-    usable time. The message lists the table's import flags.
+  - The table has rows but no phone call from it can be read as the caller check reads one: a
+    readable time, and the other party stored on the side its direction names (the callee of an
+    outgoing call, the caller of an incoming or missed one). This happens when every row was
+    placed by another app, or had no direction, no other party or no usable time. The message
+    lists the table's import flags.
   - The table may hold records the import could not read at all (listed under `not_imported`;
     an entry with neither a count nor a row check fails closed, one known empty passes).
-  - The phone was read by the LEAPP importer but the case holds no LEAPP coverage record for
-    it, or the build did not record its importer.
+  - The case holds no LEAPP coverage record for the phone, and the build recorded it as read
+    by the LEAPP importer or did not record its importer. A phone whose importer is not recorded
+    but whose LEAPP coverage is there is checked as usual.
   The messages say that claims about the phone's calls would go untested; calls of another app
   are checked apart.
   Calls of a provider app in the same table, such as FaceTime on iOS, are not phone calls, so
   they neither hide an unreadable call log nor stop a phone that has only those calls.
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
   check on the stored case, so a case built before this change never resumes into an audit of
-  such a phone. A resume whose case.db is gone stops with a message. A resume of a case imported
+  such a phone. Before that check, a resume stops unless the case.db holds the very imports
+  `built.ok` records (each phone's stored SHA-256). A resume whose case.db is gone stops with a
+  message. A resume of a case imported
   before unread entries kept their artifact key stops too, since an unread call log cannot be
   ruled out; the driver does not rebuild it, and the operator runs again with a new `--out`.
   Why: since #268, a call log row that names another app's package is stored with neither side.
@@ -50,21 +55,28 @@
     time passes.
   - On a stored case: an unread entry with no count stops unless known empty, an entry with no
     key asks for a rebuild, another table's calls do not count (with foreign keys on), a call
-    with no time does not count, a LEAPP phone with no coverage record or no recorded importer
-    stops, and a line break in a table name stays escaped. A resume logs the readable count as a
+    with no time, or with no other party on the side its direction names, does not count, and
+    one with the callee but no line of the phone does; a phone with no LEAPP coverage record
+    stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
+  - A resume whose case.db holds another import under the same phone name stops.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
-    manifest counts 0.
-  The file's 53 tests pass locally (cloud container, 2026-11-18). On the G2 development case
-  (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped: 70 of 108
-  and 13 of 22 call log rows are phone calls a check can read. `make check` runs on GitHub CI.
+    manifest counts 0, and a negative manifest count reads as unknown.
+  The file's 54 tests pass locally (cloud container, 2026-11-18). On the G2 development case
+  (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
+  or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
+  calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
 - Open: a call log where only a few rows are readable passes and is only logged; no share is
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
   not known.
 - Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
-  manifest count of 0 no longer taken on trust when the table holds a row (an app can then count
-  as not read in full where it did before).
-  No product capability, verdict, privacy or network change, and no customer-facing claim.
+  manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at
+  all. The verdict rules do not change, but the coverage that feeds them can: when such a table
+  of an app holds rows Mabillon did not read (for example a refused native-message table with
+  rows and a count of 0), that app is no longer counted as read in full, so an exact count or
+  absence check on it that would have passed becomes inconclusive. This is the safer reading
+  and did not change the coverage of the G2 development phones.
+  No capability, privacy or network change, and no customer-facing claim.
 - Status doc: no change
