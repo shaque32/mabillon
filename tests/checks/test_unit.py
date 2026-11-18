@@ -787,6 +787,15 @@ def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None
     conn.execute("UPDATE messages SET body = 'fine' WHERE id = 'msg:p1:8'")
     r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
     assert r.outcome is CheckOutcome.PASS, r.detail
+    # a fail on the counted rows cites them alone (CodeRabbit on #265)
+    conn.execute("UPDATE messages SET body = 'ok' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL, r.detail
+    assert "msg:p1:8" not in r.record_ids
+    # Ay's own copy with no receiver keeps Ay's message Ay's (CodeRabbit on #265)
+    conn.execute("UPDATE messages SET sender_account_id = 'a:p1:own' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
 
 
 @pytest.mark.parametrize(

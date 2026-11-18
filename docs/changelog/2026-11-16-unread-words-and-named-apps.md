@@ -34,7 +34,9 @@
     and each mention is read as the longest app name written there ("Facebook Messenger" is
     one app). A reply ("replied", "wrote back") is plain only when it is the quoted message;
     ", and REYES replied" after the quote states a second message no row tests and gets the
-    event. "Answered" is plain only beside a row that tests a call's length, and a length a
+    event, as does a reply in a sentence of its own. A number in digits is blanked as a phone
+    number only when it is one ("one of 10000 that day" is a count). "Answered" is plain only
+    beside a row that tests a call's length, and a length a
     row does not test is read beside one it tests ("one minute and a quarter hour")
     (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
@@ -56,13 +58,15 @@
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
     alone (Claude review and CodeRabbit on #265). A phone's own messages app written by name
     beside another app ("on Telegram or SMS") is searched too, on the case's apps that word
-    names, and no count or absence reads the mix (CodeRabbit on #265). Before, "wrote on
+    names, each kind apart ("MMS" is no "SMS"), and no count or absence reads the mix; the
+    sheet check counts those apps as the claim's own (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
     #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
-    "21:14:05Z", "T21:14:05") gets no minute range, so it is no longer tested by one wider than
+    "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
+    ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
     it states. A length written so ("lasted 0:12:45") is not a time of day.
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
@@ -83,7 +87,9 @@
     no longer fails when B's "ok" a second later names no receiver; the other side's rows that
     hold such a count open are cited beside the counted rows. A message each way reads those
     rows too, so "exchanged at least 2" over A's "ok", B's "ok" a second later to no one
-    named, and B's "sure" is held open, and B's row is cited (CodeRabbit on #265).
+    named, and B's "sure" is held open, and B's row is cited, though not beside a fail on the
+    counted rows. A look-alike whose every row names one side as sender stays that side's
+    message, so A's copy with no receiver never takes A's message away (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without

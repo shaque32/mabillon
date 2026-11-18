@@ -3878,6 +3878,12 @@ def test_one_phone_app_on_an_app_holding_both_waits_for_an_expert(tmp_path, said
     plain = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
     made, _ = build_text(c, plain, ClaimType.COMMUNICATION, answer)
     assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    # the app named whole names no one kind of message (CodeRabbit on #265)
+    named = (
+        'On March 12, 2026, PETROV wrote to @northstar on Native Messages: "need 2 more by friday".'
+    )
+    made, _ = build_text(c, named, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
 
 
 _Q = '"need 2 more by friday"'
@@ -4003,3 +4009,26 @@ def test_a_phone_app_named_beside_another_app_is_searched_too(tmp_path):
     c.execute("UPDATE threads SET app = 'Signal' WHERE app = 'SMS'")
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert made == []
+
+
+def test_more_findings_on_5da573d(tmp_path, conn):
+    # CodeRabbit on #265, on 5da573d.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a reply in a sentence of its own is no reply quoted later
+    text = f"On March 12, 2026, PETROV wrote to REYES. REYES replied. PETROV wrote: {_Q}."
+    assert "replied" in filler.unread_words(text)
+    # a count in digits that no phone number holds
+    text = f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, one of 10000 that day."
+    assert "10000" in filler.unread_words(text)
+    # MMS is no SMS: a case with SMS alone holds no MMS app
+    c = _case_with(tmp_path)
+    claim = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram or {}: "need 2 more by friday".'
+    )
+    made, _ = build_text(c, claim.format("MMS"), ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    made, _ = build_text(c, claim.format("SMS"), ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    # the sheet check reads the phone app the claim names beside another
+    sms = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert sms.claim_apps(claim.format("SMS")) == {"telegram", "sms"}

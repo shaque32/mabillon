@@ -80,20 +80,33 @@ def look_alike(rows: list[Row]) -> int:
 
 
 def fewest_messages(
-    chosen: list[Row], rows: list[Row], groups: list[list[Row]] | None = None
+    chosen: list[Row],
+    rows: list[Row],
+    groups: list[list[Row]] | None = None,
+    senders: set[str] | None = None,
 ) -> int:
     """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
     side's) may hold: one for each row in no look-alike group of `rows`, and one for each
     group whose every row is chosen. A group that holds a row not chosen may be that row's
     one message, so it may add none: "A to B 'ok'" and "B to A 'ok'" a second apart may be
     B's message alone (CodeRabbit on #265). The groups are read over every row first, before
-    a side is chosen; `groups` passes them in when already read."""
+    a side is chosen; `groups` passes them in when already read. With `senders` (the chosen
+    side's accounts), a group holding a chosen row whose every row names that side as sender
+    is that side's message too: a copy with no receiver never takes the direction away
+    (CodeRabbit on #265)."""
     if groups is None:
         groups = look_alike_groups(rows)
     ids = {r.id for r in chosen}
     grouped = {r.id for g in groups for r in g}
     return sum(1 for r in chosen if r.id not in grouped) + sum(
-        1 for g in groups if all(r.id in ids for r in g)
+        1
+        for g in groups
+        if all(r.id in ids for r in g)
+        or (
+            senders is not None
+            and any(r.id in ids for r in g)
+            and all(r.sender in senders for r in g)
+        )
     )
 
 
@@ -115,7 +128,7 @@ def each_way_rests_on_look_alikes(
     if groups is None:
         groups = look_alike_groups(pool)
     return any(
-        fewest_messages([r for r in rows if r.sender in ids], pool, groups) == 0
+        fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids) == 0
         for ids in (a_ids, b_ids)
     )
 
@@ -231,6 +244,7 @@ class CountCheck(TemplateCheck):
         one_side_silent = False
         each_way_open = False
         each_way_peers: list[Row] = []
+        side_ids: set[str] | None = None
         if p.sent_by:
             side = _sending_side(p, a, b)
             if side is None:
@@ -243,6 +257,7 @@ class CountCheck(TemplateCheck):
                     sources,
                 )
             mine, theirs = (a_ids, b_ids) if side is a else (b_ids, a_ids)
+            side_ids = mine
             unknown_sender = [
                 r
                 for r in pool
@@ -327,7 +342,7 @@ class CountCheck(TemplateCheck):
         # A row of the side counted may be a copy of the other side's message (CodeRabbit on
         # #265), so the fewest is read over both sides' rows; with no side chosen it is the
         # rows less their look-alikes (`look_alike`).
-        twins = n - fewest_messages(counted, between, groups)
+        twins = n - fewest_messages(counted, between, groups, side_ids)
         # the other side's rows that make one side's rows look-alikes, cited when they hold the
         # count open (CodeRabbit on #265)
         mine_ids = {r.id for r in counted}
@@ -384,7 +399,9 @@ class CountCheck(TemplateCheck):
         ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
         if twins_open:
             ids += [r.id for r in peers]
-        ids += [r.id for r in each_way_peers]
+        if outcome is CheckOutcome.INCONCLUSIVE:
+            # cited only when they hold the count open, never beside a fail on the counted rows
+            ids += [r.id for r in each_way_peers]
         return self.done(
             assumption_id,
             outcome,

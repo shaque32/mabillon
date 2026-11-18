@@ -3082,7 +3082,7 @@ _READ_QUOTE_RE = re.compile(
 # message states a second message no row tests, so its words stay unread (CodeRabbit on #265).
 _REPLY_QUOTED_RE = re.compile(
     r"\b(?:replied|reply|replies|replying|responded|respond|responds|answered|answers?|back)\b"
-    r"(?=(?:(?!,\s*(?:and|but|then)\b)[^\"“”;])*?[\"“])",
+    r"(?=(?:(?!,\s*(?:and|but|then)\b|[.!?]\s+(?-i:[A-Z]))[^\"“”;])*?[\"“])",
     re.IGNORECASE,
 )
 # "the records show", "the account displayed as", "a display name": where the records are and
@@ -3376,9 +3376,15 @@ class LocalAssumptionFiller:
             pass  # a name in lower case: its words stay, and read as words no check reads
         cut += [(st, en) for _, st, en in self._phone_spans(bare)]
         cut += [(st, en) for _, st, en in self._numbers_named(bare)]
-        for rx in (_ADDRESS_RE, _HANDLE_RE, _PHONE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE,
-                   _TIME24_RE, _YEAR_RE):  # fmt: skip
+        for rx in (_ADDRESS_RE, _HANDLE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE, _TIME24_RE,
+                   _YEAR_RE):  # fmt: skip
             cut += [m.span() for m in rx.finditer(bare)]
+        # only a phone number: "one of 10000 messages" is a count (CodeRabbit on #265)
+        cut += [
+            m.span()
+            for m in _PHONE_RE.finditer(bare)
+            if phone_digits(m.group(0).strip(" .,-")) is not None
+        ]
         for m in _TIME_RE.finditer(bare):
             # "between 10 and 11 a.m.": the bare first hour is a time code reads
             if (h := _BARE_HOUR_RE.search(bare[: m.start()])) is not None:
@@ -4111,6 +4117,12 @@ class LocalAssumptionFiller:
             if len(tied) != 1:  # two tied days: never picked by the model's day
                 raise Reject("the time range is not one the claim plainly states")
             (w,) = tied
+            if _states_seconds(_unquoted(claim.text)):
+                # "the day after the RAID, at 2026-03-12T21:14:05Z": a whole day would pass a
+                # message at any second of it (CodeRabbit on #265)
+                raise Reject(
+                    "the claim states a time to the second, which a range in minutes does not test"
+                )
             # A day code reads from the expert's event, not from words the claim writes, so it
             # is not a date check_window can find in the claim (case_events, schema 0.7.0).
             return self._zoned_window(None, w.start, w.end, device_ids, w.raw)
@@ -4438,7 +4450,27 @@ class LocalAssumptionFiller:
         apps = self._named_apps(claim_text)
         if not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
             apps = self._phone_message_apps()
+        elif apps and _PHONE_APP_WORD_RE.search(bare):
+            # "on Telegram or SMS": the phone apps the word names are the claim's too, as
+            # `_bind_named_app` binds them (CodeRabbit on #265)
+            apps = [*apps, *self._phone_apps_named(bare)]
         return frozenset(a.casefold() for a in apps)
+
+    def _phone_apps_named(self, bare: str) -> list[str]:
+        """The case's apps of a phone's own messages that the words name by kind ("SMS",
+        "MMS", "RCS", "iMessage"), each kind apart, and an app that holds several kinds
+        ("Native Messages", WIDER_APPS), where the expert-only event then reads which kind a
+        row was (`_add_unread_event`)."""
+
+        def kind(word: str) -> str:
+            return re.sub(r"[-\s]", "", word.casefold()).replace("imessages", "imessage")
+
+        kinds = {kind(w) for w in _PHONE_APP_WORD_RE.findall(bare)}
+        return [
+            a
+            for a in self._phone_message_apps()
+            if a.strip().casefold() in WIDER_APPS or kind(a.strip()) in kinds
+        ]
 
     def _without_phone_names(self, text: str) -> str:
         """The text with each phone's name the expert gave written as spaces: "the WHATSAPP
@@ -4598,18 +4630,11 @@ class LocalAssumptionFiller:
                     " of a phone's own messages, so no count or absence is read on one"
                 )
         phone_named: list[str] = []
-        if apps and (words := _PHONE_APP_WORD_RE.findall(bare)):
+        if apps and _PHONE_APP_WORD_RE.search(bare):
             # "on Telegram or SMS": a phone's own messages app written by name beside another
             # app, which `_named_apps` leaves out. Its rows search the phone apps that word
             # names too, and no count or absence reads the mix (CodeRabbit on #265).
-            kinds = {"imessage" if "imessage" in w.casefold().replace("-", "") else "sms"
-                     for w in words}  # fmt: skip
-            phone_named = [
-                a
-                for a in self._phone_message_apps()
-                if a.strip().casefold() in WIDER_APPS
-                or ("imessage" if "imessage" in a.casefold() else "sms") in kinds
-            ]
+            phone_named = self._phone_apps_named(bare)
             if not phone_named:
                 raise Reject("the claim also names a phone's own messages app the case lacks")
             if any(out[i].template_id in WHOLE_APP_TEMPLATES for i in app_rows):

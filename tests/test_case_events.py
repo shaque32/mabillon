@@ -646,3 +646,12 @@ def test_the_setup_page_adds_and_removes_events(conn):
     _post(app, "/event/remove", name="RAID")
     assert app.flash and not app.flash[1]
     assert case_events.stored(connect(db_path)) == []
+
+
+def test_a_time_to_the_second_beside_an_event_tie_is_refused(events):
+    # The ISO clock is no time code reads for a range, so the event's whole day was taken; a
+    # day would pass a message at any second of it (CodeRabbit on #265).
+    text = "The day after the RAID, at 2026-03-21T21:14:05Z, PETROV and REYES had no contact."
+    made, filler = _no_contact(events, text)
+    assert made == []
+    assert any("to the second" in d.reason for d in filler.drops)
