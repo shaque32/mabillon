@@ -2,11 +2,12 @@
 - Changed: `eval/validation/hickman_run.py` (`call_log_check`, gate G5b of the validation v5
   readiness list in project files; not pilot gate 5b). After each phone's import, the build
   checks the phone's own call log, found by the importer's artifact keys (`NATIVE_CALL_KEYS`:
-  `get_calllog` or `callHistory`, now public in `core/ingest/leapp.py`), not by table name.
+  `get_calllog` or `callHistory`, now public in `core/ingest/leapp.py`, matched in any ASCII
+  case and stored under that spelling), not by table name.
   The LEAPP coverage's `not_imported` entries now carry their artifact key and, for a table that
   failed to read, whether it may hold records (`may_hold_records`). That flag, and the importer's
   own test of whether an unread artifact may hold records, now reads a table that is there for a
-  row even when the manifest counts 0, reads a manifest count below 0 as unknown, and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key takes that spelling as its key. It refuses a manifest that names one table twice (in any ASCII case), which would store each of its rows twice, and one that lists a phone call log (`get_calllog` or `callHistory`) with no table name unless its count is 0, since such an entry would leave no coverage record; neither development manifest (Android 13, iOS 15) does either. Only the table's own rows (`TABLE/rowid=N`) are
+  row even when the manifest counts 0, reads a manifest count that is below 0, a bool or not a whole number as unknown, and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key takes that spelling as its key. It refuses a manifest that names one table twice (in any ASCII case), which would store each of its rows twice, and one that lists a phone call log (`get_calllog` or `callHistory`) with no table name unless its count is 0, since such an entry would leave no coverage record; neither development manifest (Android 13, iOS 15) does either. Only the table's own rows (`TABLE/rowid=N`) are
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
   - The table has rows but no phone call from it can be read as the caller check reads one: a
@@ -71,18 +72,20 @@
     elsewhere, and stops when it has none, or on resume when its owner stipulation was withdrawn; a phone with no LEAPP coverage record
     stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
+  - An unread call log keyed in other case (`GET_CALLLOG`) stops the build.
   - A resume whose case.db holds another import under the same phone name stops, and so does
     one whose case.db is another build of the same package that differs only in a claim's text,
     only in a claim id, or only in the zone given, and one whose build recorded no build id.
   - A timed call on a phone with no line of its own stops the build.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
-    manifest counts 0, a negative manifest count reads as unknown, a table whose row probe
+    manifest counts 0, a negative manifest count reads as unknown (and a count of False or 0.0 is not taken as empty), a table whose row probe
     fails may hold records, a manifest table name in other case still finds its table and is
     read under the database's spelling, also as its key when it has none (tables whose names
     differ in non-ASCII letters stay distinct, each read from its own rows), a manifest naming
     one table twice, in the same or other case, is refused, and so is a call log listed with no
-    table unless its count is 0.
-  The file's 58 tests pass (with `tests/test_leapp.py`, 148) locally (cloud container, 2026-11-18). On the G2 development case
+    table unless its count is 0, and a call log key in other case is read as the call log (a key
+    that is not text is not).
+  The file's 58 tests pass (with `tests/test_leapp.py`, 155) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

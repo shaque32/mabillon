@@ -865,6 +865,13 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     assert check(unread(False))[0] is None  # known to be empty
     assert "was not read" in (check(unread(None))[0] or "")  # nothing known: fails closed
 
+    def unread_upper(p):  # noqa: ANN001, ANN202
+        # a call log key in other ASCII case is still the call log (CodeRabbit on #269)
+        entry = {"table": "calls_x", "key": "GET_CALLLOG", "records": 4}
+        p["not_imported"].append({**entry, "reason": "bad", "may_hold_records": True})
+
+    assert "was not read" in (check(unread_upper)[0] or "")
+
     def keyless(p):  # noqa: ANN001, ANN202
         p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
 

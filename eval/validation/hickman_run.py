@@ -489,6 +489,11 @@ def call_log_check(  # noqa: ANN001
     from core.ingest import coverage
     from core.ingest.leapp import IMPORTER_NAME, NATIVE_CALL_KEYS
 
+    def is_native(key: object) -> bool:  # any ASCII case, as the importer reads it (CodeRabbit)
+        return isinstance(key, str) and key.isascii() and key.lower() in native_keys
+
+    native_keys = {k.lower() for k in NATIVE_CALL_KEYS}
+
     cov = coverage.load(conn, source_id)
     p = cov.payload if cov else {}
     leapp = p.get("leapp")
@@ -518,13 +523,13 @@ def call_log_check(  # noqa: ANN001
     # by the importer's own artifact keys, never by table name: a manifest may name its table
     # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
     native = {str(a.get("table")) for a in leapp.get("artifacts_read") or []
-              if a.get("key") in NATIVE_CALL_KEYS}  # fmt: skip
+              if is_native(a.get("key"))}  # fmt: skip
     for t in unread:
         records, holds = t.get("records"), t.get("may_hold_records")
         # rows may be there: the importer says so, or the manifest counts some, or neither is
         # known (fail closed); a table known to be empty passes (CodeRabbit on #269)
         rows = holds is True or (records or 0) > 0 or (holds is None and records is None)
-        if t.get("key") in NATIVE_CALL_KEYS and rows:
+        if is_native(t.get("key")) and rows:
             return (
                 f"its call log ({_one_line(t.get('table'))}, {records} records) was not read"
                 f" ({_one_line(t.get('reason'))}); claims about its phone calls would go"

@@ -251,6 +251,17 @@ def _check_size(z: zipfile.ZipFile, member: str, limit: int, file_name: str) -> 
         )
 
 
+def _native_call_key(key: object) -> object:
+    """A phone call log key (NATIVE_CALL_KEYS) in any ASCII case as its own spelling; any other
+    key unchanged. SQLite ignores ASCII case in table names, so a call log keyed GET_CALLLOG is
+    still the call log, read and checked as one (CodeRabbit on #269)."""
+    if isinstance(key, str):
+        for k in NATIVE_CALL_KEYS:
+            if key.isascii() and key.lower() == k.lower():
+                return k
+    return key
+
+
 def _db_spelling(db: sqlite3.Connection, table: str) -> str:
     """The table name as the database spells it, when a table matches the manifest's name the
     way SQLite resolves names (ASCII letters in any case); else the manifest's name. Locators
@@ -317,16 +328,20 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         for e in entries if isinstance(entries, list) else []:
             if not isinstance(e, dict):
                 continue
-            rc = e.get("record_count")
+            raw = e.get("record_count")
+            # a count below 0, a bool or a non-integer states nothing: unknown (CodeRabbit on #269)
+            rc = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
+            # a phone call log key in any ASCII case is the call log, read and checked as one
+            key = _native_call_key(e.get("artifact_key"))
             if not e.get("tablename"):
                 # a phone call log listed with no table to read would leave no coverage record,
                 # so a run could not tell it was never read: unless it is known empty, the
                 # import stops (CodeRabbit on #269)
-                if e.get("artifact_key") in NATIVE_CALL_KEYS and rc != 0:
+                if isinstance(key, str) and key in NATIVE_CALL_KEYS and rc != 0:
                     db.close()
                     raise ValueError(
-                        f"{file_name}'s manifest lists the call log {e['artifact_key']!r} with"
-                        " no table, so it cannot be read; the import stops"
+                        f"{file_name}'s manifest lists the call log {key!r} with no table, so it"
+                        " cannot be read; the import stops"
                     )
                 continue
             table = _db_spelling(db, str(e["tablename"]))
@@ -335,14 +350,11 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     category=str(category),
                     name=str(e.get("name") or e["tablename"]),
                     # with no key, the table as the database spells it names the artifact
-                    key=str(e.get("artifact_key") or table),
+                    key=str(key or _native_call_key(table) or table),
                     table=table,
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
-                    # a count below 0 (or a bool) states nothing: unknown (CodeRabbit on #269)
-                    record_count=rc
-                    if isinstance(rc, int) and not isinstance(rc, bool) and rc >= 0
-                    else None,
+                    record_count=rc,
                     source_path=str(e["source_path"]) if e.get("source_path") else None,
                     data_views=e["data_views"] if isinstance(e.get("data_views"), dict) else {},
                 )

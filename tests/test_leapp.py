@@ -1073,23 +1073,45 @@ def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
         assert lava.db.execute(f'SELECT who FROM "{quoted}"').fetchall() == [(name,)]  # noqa: S608
 
 
-@pytest.mark.parametrize(("count", "refused"), [(1, True), (None, True), (0, False)])
+@pytest.mark.parametrize(
+    ("key", "count", "refused"),
+    [("get_calllog", 1, True), ("get_calllog", None, True), ("get_calllog", False, True),
+     ("get_calllog", 0.0, True), ("GET_CALLLOG", 1, True), ("CallHistory", 2, True),
+     ("get_calllog", 0, False), (["get_calllog"], 1, False), ("get_sms_mms", 1, False)],
+)  # fmt: skip
 def test_a_call_log_listed_with_no_table_stops_the_import_unless_empty(
     tmp_path: Path,
-    count,
+    key,  # noqa: ANN001
+    count,  # noqa: ANN001
     refused,  # noqa: ANN001
 ) -> None:
     # A call log entry with no table name would be skipped and leave no coverage record, so a
-    # run could not tell it went unread (CodeRabbit on #269).
+    # run could not tell it went unread: it stops unless its count is the integer 0, whatever
+    # the ASCII case of its key. A key that is not a string, or not a call log's, is skipped as
+    # before (CodeRabbit on #269).
     def tableless(manifest):  # noqa: ANN001, ANN202
         entries = next(v for v in manifest["artifacts"].values() if v)
-        entries.append({"name": "Call logs", "artifact_key": "get_calllog", "record_count": count})
+        entries.append({"name": "Call logs", "artifact_key": key, "record_count": count})
 
     if refused:
         with pytest.raises(ValueError, match="with no table"):
             _lava_with(tmp_path, tableless)
     else:
         _lava_with(tmp_path, tableless)
+
+
+def test_a_call_log_key_in_other_case_is_read_as_the_call_log(tmp_path: Path) -> None:
+    # SQLite ignores ASCII case in names, so a call log keyed GET_CALLLOG is the call log: it
+    # takes the key's own spelling, is read, and the run's check finds it (CodeRabbit on #269).
+    def upper(manifest):  # noqa: ANN001, ANN202
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_calllog":
+                    e["artifact_key"] = "GET_CALLLOG"
+
+    lava = _lava_with(tmp_path, upper)
+    assert "get_calllog" in {a.key for a in lava.artifacts}
+    assert "GET_CALLLOG" not in {a.key for a in lava.artifacts}
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(
