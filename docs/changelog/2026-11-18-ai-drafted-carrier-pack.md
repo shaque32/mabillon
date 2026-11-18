@@ -1,4 +1,4 @@
-## 2026-11-18: First AI-drafted rule pack (carrier call records) and blind traps (eval only) (#PR)
+## 2026-11-18: First AI-drafted rule pack (carrier call records) and blind traps (eval only) (#270)
 - Changed: Added the drafting procedure for rule packs (`eval/rulepacks/DRAFTING.md`): one
   Claude Code session drafts a pack from format guides and sample files only, a second session
   that never sees the draft writes traps, and the harness runs the draft on both the reference
@@ -12,7 +12,7 @@
   reference and signed packs must still name them), and the harness CLI runs several claim
   sets together and prints one sign-off card per guard (`--claims`, `--cards`). Second step of
   `baker/plans/rule-drafting.md`.
-- Where: branch claude/project-thread-zweeky
+- Where: PR #270 (branch claude/project-thread-zweeky)
 - Verified: `pytest tests/test_rulepacks.py` (36 tests) on the cloud container, 2026-11-18.
   Harness on the drafted pack, reference and blind sets together: 28/28 claims as expected in
   each layout, 0 false supported, both guards earn their place (voicemail-leg blocks 4 traps,
