@@ -584,9 +584,12 @@ def _count_word(w: str) -> bool:
 # An address or identifier with an app's name in it: "x@gmail.com", "live:.cid.5638", "zoom.us".
 _ADDRESS_RE = re.compile(r"\S+@\S+|\S*:\S+|\S+\.(?:com|net|org|us|io)\b\S*", re.IGNORECASE)
 # A web address alone, for the readers that keep times ("9:31") but skip addresses: one with
-# a scheme or "www." whatever its suffix ("https://PIXEL.dev/notes"), or a common suffix.
+# a scheme or "www." whatever its suffix ("https://PIXEL.dev/notes"), or a common suffix. An
+# address ends at a space or an angle bracket, so "<https://x.dev/notes>,SMS" leaves the SMS
+# phone's name outside it (CodeRabbit on #265).
 _WEB_ADDRESS_RE = re.compile(
-    r"\b[a-z][a-z0-9+.-]*://\S+|\bwww\.\S+|\S+\.(?:com|net|org|us|io)\b\S*", re.IGNORECASE
+    r"\b[a-z][a-z0-9+.-]*://[^\s<>]+|\bwww\.[^\s<>]+|[^\s<>]+\.(?:com|net|org|us|io)\b[^\s<>]*",
+    re.IGNORECASE,
 )
 
 
