@@ -4641,6 +4641,8 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # and a host with any suffix followed by a path is an address too
     dev_path = 'On March 12, 2026, PETROV wrote to @northstar from example.dev/notes/SMS: "ok".'
     assert filler._written_phones(dev_path) == set()
+    port = dev_path.replace("example.dev/", "example.dev:8443/")
+    assert filler._written_phones(port) == set()
     # an address ends at an angle bracket: the phone written after it is still the claim's
     bracketed = "PETROV wrote on <https://example.dev/notes>,SMS,"
     assert filler._phone_spans(bracketed) == [("dev:item1", 44, 47)]

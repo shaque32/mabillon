@@ -590,11 +590,12 @@ _ADDRESS_RE = re.compile(r"\S+@\S+|\S*:\S+|\S+\.(?:com|net|org|us|io)\b\S*", re.
 # does too. A scheme-less address runs from its host through any path to the suffix, so
 # "PIXEL.dev/docs/x.com" is one address and PIXEL in it is no phone, but that path stops at
 # a colon, so "SMS/https://x.com" leaves SMS outside the scheme's address. A host with any
-# suffix followed by a path ("x.dev/notes/SMS") is an address too (CodeRabbit on #265).
+# suffix, and any port, followed by a path ("x.dev:8443/notes/SMS") is an address too
+# (CodeRabbit on #265).
 _WEB_ADDRESS_RE = re.compile(
     r"\b[a-z][a-z0-9+.-]*://[^\s<>]+|\bwww\.[^\s<>]+"
     r"|(?<![\w./-])[\w.-]+(?:/[^\s<>:]*?)?\.(?:com|net|org|us|io)\b[^\s<>]*"
-    r"|(?<![\w./-])[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/[^\s<>]*",
+    r"|(?<![\w./-])[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?::\d+)?/[^\s<>]*",
     re.IGNORECASE,
 )
 
