@@ -863,6 +863,14 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
         t = time.monotonic()
         result = pipeline.run_audit(conn, comps, progress=progress)
+        # The audit reads its stipulations in its own snapshot, after the check above: an owner
+        # changed in between (or during the run) leaves this run's verdicts on an owner the
+        # build did not stipulate, so the run stops here, unscored (CodeRabbit on #269).
+        stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+        if stop:
+            raise SystemExit(
+                f"the device owners changed during the audit, so it is not scored: {stop}"
+            )
         tally: dict[str, int] = {}
         for d in result.decisions:
             tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1

@@ -1172,6 +1172,28 @@ def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
         hickman_run.audit(out, True, lambda _m: None, built=built)
 
 
+def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path, monkeypatch):
+    # CodeRabbit on #269: the audit reads its stipulations after the driver's owner check, so
+    # an owner withdrawn in between (here, as the audit starts) is caught when it returns.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.run_audit
+
+    def withdrawn_first(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with conn:
+            conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+        return real(conn, *a, **k)
+
+    monkeypatch.setattr(pipeline, "run_audit", withdrawn_first)
+    with pytest.raises(SystemExit, match="owners changed during the audit, so it is not scored"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+
+
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake"]  # fmt: skip

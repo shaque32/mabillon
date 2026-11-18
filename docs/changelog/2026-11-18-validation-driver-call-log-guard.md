@@ -45,7 +45,10 @@
   package) is refused, and so is a `built.ok` that records no build id. The audit itself checks
   the build id and each phone's confirmed owner again when it opens case.db, against the build
   record the run checked or wrote (not built.ok read again), so a case.db swapped (with or
-  without its built.ok), or an owner withdrawn, after those checks is refused too. It also stops unless
+  without its built.ok), or an owner withdrawn, after those checks is refused too. Since the audit
+  reads its stipulations in its own snapshot after that check, the driver checks the owners once
+  more when the audit returns, and an owner changed in the meantime stops the run unscored. It
+  also stops unless
   every resumed phone's device still has exactly one confirmed owner (counted by person, so two
   owners of one name are two), named as `built.ok` records it and the very person the build
   stipulated (`person:<device>:owner`, not another person of that name): an owner withdrawn or changed
@@ -75,7 +78,8 @@
     neither a key nor a table stops it as a manifest problem when it may hold records and
     passes when counted 0 (a key of only spaces counts as none).
   - The audit stops when built.ok's build id is not the one case.db holds, or is missing, and
-    when the phone's owner stipulation was withdrawn after the resume's checks.
+    when the phone's owner stipulation was withdrawn after the resume's checks, or while the
+    audit ran (the run stops unscored).
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
@@ -118,7 +122,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 68 tests pass (with `tests/test_leapp.py`, 176) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 69 tests pass (with `tests/test_leapp.py`, 177) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
