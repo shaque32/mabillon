@@ -112,9 +112,11 @@
     SQLite's integer range is stored as unknown, on Android and iOS (an iOS duration of 5000
     digits too, and an app call duration that `int()` refuses is unknown, never a rounded float), instead of stopping the
     import; each such row is flagged `duration_not_readable` and the coverage summary lists it.
+    So is a Telegram call notice whose checked length is past SQLite's range or has more digits
+    than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 67 tests pass (with `tests/test_leapp.py`, 171) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 67 tests pass (with `tests/test_leapp.py`, 172) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

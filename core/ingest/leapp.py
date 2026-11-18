@@ -1208,8 +1208,11 @@ def _call_notice(
             c.w.account(app, sender, loc, f"row:{loc}")
         kind, frm = CallDirection.UNKNOWN, None
     c.flag("call_notice_read_as_call", loc)
-    length = int(seconds) if checked and seconds is not None else None
-    _add_call(c, app, loc, frm, None, kind, _time(raw_time), length, None)
+    # a stated length int() refuses or SQLite cannot hold is unknown and flagged, never a crash
+    # of the import (CodeRabbit on #269); an unchecked notice's length is not taken at all
+    length = _whole_seconds(seconds) if checked else None
+    _add_call(c, app, loc, frm, None, kind, _time(raw_time), length, None,
+              seconds if checked else None)  # fmt: skip
     c.lava.extra_kinds.add(RecordKind.CALLS)
 
 

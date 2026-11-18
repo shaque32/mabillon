@@ -1586,6 +1586,19 @@ def _telegram_flags(payload: dict) -> dict:
     return {t["name"]: t for t in payload["tables"]}["Telegram - Messages"]["flag_counts"]
 
 
+def test_a_call_notice_length_that_cannot_be_read_is_unknown_and_flagged(tmp_path: Path) -> None:
+    # CodeRabbit on #269: a notice's stated length past SQLite's range, or with more digits than
+    # int() reads, keeps the call with length unknown and flagged, and the import goes on.
+    lv = _android()
+    for secs in (str(2**63), "9" * 5000, "40"):
+        _telegram(lv, f"[Phone call (call id 9, outcome hung up, duration seconds {secs})]")
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    got = conn.execute("SELECT duration_s FROM calls WHERE app = 'Telegram'").fetchall()
+    assert sorted(got, key=str) == sorted([(None,), (None,), (40,)], key=str)
+    assert _telegram_flags(coverage.load(conn, "and").payload)["duration_not_readable"] == 2
+
+
 def test_a_message_that_only_starts_like_a_call_notice_stays_a_message(tmp_path: Path) -> None:
     # Claude review on #268: only LEAPP's own notice shape is read as a call.
     # CodeRabbit on #268: so does one that opens like a notice but is not one in full.
