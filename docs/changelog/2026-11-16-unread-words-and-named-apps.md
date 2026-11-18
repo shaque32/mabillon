@@ -111,9 +111,9 @@
     may pass the rows for both 'wrote "ok" and then "thanks"', and code cannot show at fill time
     that two quotes are two records. A claim with one quoted message is unchanged. A quote that matches
     a person's or an account's name is left out as a party only where the claim writes it as
-    one: in brackets, after "to", "as", "user", "account" and the like, or at the start of a
-    clause ('On November 6, 2022, "ThisIs DfirTwo" asked'); 'wrote to REYES: "Petrov"' is a
-    message. A message that is a name and follows a comma is still read as a name. Quoted words are never read as unread words (CodeRabbit on #265). For the readers
+    one: in brackets, after "to", "as", "user", "account" and the like, or as the subject at the
+    start of a sentence or clause, with its verb after it ('On November 6, 2022, "ThisIs
+    DfirTwo" asked'); 'wrote to REYES: "Petrov"' and 'and then, "Petrov".' are messages. Quoted words are never read as unread words (CodeRabbit on #265). For the readers
     that blank quoted words with `_unquoted` (the seconds guards, stated ranges, the time-of-day,
     month and year scans of coverage gaps, unread words and the app readers), a time, an app or
     any other word inside a quote that a line break wraps is the quote's, not the claim's:

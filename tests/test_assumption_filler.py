@@ -4489,6 +4489,18 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     assert "event" in kinds(said, C05_ANSWER)
     bracketed = 'On March 12, 2026, PETROV wrote to @northstar ("Petrov"): "need 2 more by friday".'
     assert kinds(bracketed, C05_ANSWER) == {"sender", "record_time"}
+    # a name after a comma is a party only as the clause's subject, with its verb after it
+    comma = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then, "Petrov".'
+    )
+    assert "event" in kinds(comma, C05_ANSWER)
+    from core.audit.assumption_filler import _quote_is_a_party
+
+    subject = 'On November 6, 2022, "ThisIs DfirTwo" asked SUBJECT-1, "Can you delete it?"'
+    at = subject.index('"ThisIs')
+    assert _quote_is_a_party(subject, at, subject.index(" asked"))
+    end = comma.rindex('"') + 1
+    assert not _quote_is_a_party(comma, comma.rindex('"', 0, end - 1), end)
 
 
 def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):

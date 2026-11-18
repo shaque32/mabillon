@@ -644,13 +644,25 @@ def _app_text(text: str) -> str:
 
 
 # what stands before a quote that writes it as a party's name, not as a message: a bracket
-# ('@northstar ("Daniel Petrov,")'), a role word ('to the Kik user "ThisIs DFIRTwo,"',
-# 'displayed as "Josh Hickman,"'), or the start of the sentence or a clause ('On November 6,
-# 2022, "ThisIs DfirTwo" asked'); never 'wrote to @northstar: "Petrov"'
+# ('@northstar ("Daniel Petrov,")') or a role word ('to the Kik user "ThisIs DFIRTwo,"',
+# 'displayed as "Josh Hickman,"'); never 'wrote to @northstar: "Petrov"'
 _PARTY_BEFORE_QUOTE_RE = re.compile(
-    r"(?i)(?:^|[(,]|\b(?:to|from|with|by|as|user|account|contact|handle|user\s*name|username|"
+    r"(?i)(?:\(|\b(?:to|from|with|by|as|user|account|contact|handle|user\s*name|username|"
     r"name|named|called|alias|aka|known\s+as|display\s+name))\s*$"
 )
+# a quote at the start of the sentence or a clause is a party only as the clause's subject,
+# with the clause's verb after it ('On November 6, 2022, "ThisIs DfirTwo" asked'); 'and then,
+# "Petrov".' is a message (CodeRabbit on #265)
+_CLAUSE_START_RE = re.compile(r"(?:^|,)\s*$")
+_SUBJECT_AFTER_QUOTE_RE = re.compile(r"\s+(?!(?:and|or|then|but|plus|nor)\b)[A-Za-z]", re.I)
+
+
+def _quote_is_a_party(flat: str, start: int, end: int) -> bool:
+    """True when the claim writes the quote at flat[start:end] where a party's name stands."""
+    before = flat[:start]
+    if _PARTY_BEFORE_QUOTE_RE.search(before):
+        return True
+    return bool(_CLAUSE_START_RE.search(before) and _SUBJECT_AFTER_QUOTE_RE.match(flat, end))
 
 
 def _states_seconds(text: str) -> bool:
@@ -4993,9 +5005,10 @@ class LocalAssumptionFiller:
                 q
                 for m in _QUOTE_SPAN_RE.finditer(flat)
                 if (q := " ".join(_nfc(m.group(0)[1:-1]).casefold().split()))
-                # a name only where the claim writes it as a party: in brackets, or after "to",
-                # "user", "account" and the like, never 'wrote "ok"' (CodeRabbit on #265)
-                and not (key(q) in names and _PARTY_BEFORE_QUOTE_RE.search(flat[: m.start()]))
+                # a name only where the claim writes it as a party: in brackets, after "to",
+                # "user", "account" and the like, or as a clause's subject, never 'wrote "ok"'
+                # (CodeRabbit on #265)
+                and not (key(q) in names and _quote_is_a_party(flat, m.start(), m.end()))
             ]
             if len(quotes) > 1:
                 words = ["a second quoted message"]
