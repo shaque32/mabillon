@@ -150,8 +150,11 @@ its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, calle
 of the other 25 matched the UFDR with their sender, and 2 have no text.
 
 A table is read only when it has every column its reader uses: the conversation view's columns
-and the sender id for a chat table, the columns below for a call table, and the columns each
-phone table's reader uses. A table missing any of them is not read at all, never in part: it is
+and the sender id for a chat table, the columns below for a call table, and, for each phone
+table, every column that sets a record's time, direction, parties, text or attachment names.
+Only display columns may be missing, and are then read as empty: an iOS chat's name and contact
+label, an attachment's path beside its name, and the ALEAPP call log column that marks a call removed from the list (a call's
+status there is then unknown). A table missing any of them is not read at all, never in part: it is
 listed in `not_imported` with `read_failed` (`its table has no column ...`), and its app is not
 read in full. A LEAPP version that renames or drops a column is caught this way rather than read
 with that column empty. A phone message table refused this way is not used to find Google
