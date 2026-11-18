@@ -534,7 +534,7 @@ def call_log_check(  # noqa: ANN001
         return holds is True or (records or 0) > 0 or (holds is None and records is None)
 
     for t in unread:
-        if not t.get("key") and may_hold(t):
+        if not str(t.get("key") or "").strip() and may_hold(t):
             # an entry the manifest gives neither a key nor a table: a rebuild lists it again,
             # so the manifest is named instead; one known empty passes (CodeRabbit on #269)
             return (
@@ -791,48 +791,89 @@ def cloud_components(conn, model):  # noqa: ANN001, ANN201
     return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
 
 
+def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
+    """Why a case may not be audited: a phone's device no longer has the one confirmed owner
+    the build stipulated (an owner changed since would leave the claims naming the defined owner
+    with no person to find; CodeRabbit on #269), or None."""
+    for p in phones:
+        # by person id, so two confirmed owners of one name are two, and the one the
+        # build stipulated (person:<device>:owner), not another of that name (CodeRabbit)
+        owners = sorted(
+            (str(n), str(pid), str(did))
+            for (pid, n, did) in conn.execute(
+                "SELECT DISTINCT s.person_id, pe.name, d.id FROM stipulations s"
+                " JOIN devices d ON d.id = s.subject_id"
+                " JOIN persons pe ON pe.id = s.person_id"
+                " WHERE d.source_id = ? AND s.kind = 'device_owner'"
+                " AND s.status = 'confirmed'",
+                (_sid(p),),
+            )
+        )
+        if [n for n, _, _ in owners] != [p.get("owner")]:
+            names = ", ".join(n for n, _, _ in owners) or "no one"
+            return (
+                f"{_sid(p)}: its confirmed device owner is"
+                f" {_one_line(names)}, not {p.get('owner')} as"
+                " built; restore the case.db it was built with, or use a new --out"
+            )
+        (_, pid, did) = owners[0]
+        if pid != f"person:{did}:owner":
+            return (
+                f"{_sid(p)}: its confirmed device owner is {p.get('owner')} under"
+                f" {_one_line(pid)}, not the person the build stipulated; restore the"
+                " case.db it was built with, or use a new --out"
+            )
+    return None
+
+
 def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
     from core import pipeline
 
+    # The case.db checked before the audit may have been swapped or changed since: the audit
+    # runs only on the very case built.ok records, with the owners it was built with
+    # (CodeRabbit on #269).
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
     conn = connect(out / "case.db")
-    # the case.db checked before the audit may have been swapped since: the audit runs only on
-    # the very case built.ok records (CodeRabbit on #269)
-    was = json.loads((out / "built.ok").read_text(encoding="utf-8")).get("build_id")
-    if not was or stamped_build(conn) != was:
+    try:
+        if not built.get("build_id") or stamped_build(conn) != built["build_id"]:
+            raise SystemExit(
+                f"{out}/case.db is not the case built.ok records (another build's case.db);"
+                " restore the case.db it was built with, or use a new --out"
+            )
+        stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+        if stop:
+            raise SystemExit(stop)
+        if fake:
+            from eval.pipeline_fakes import fake_components
+
+            comps = fake_components()
+        elif cloud_model is not None:
+            comps = cloud_components(conn, cloud_model)
+        else:
+            comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
+        # The run 3 plan keeps the challenge step off (on by default since #162), so run 3
+        # changes only the filler and stays comparable to run 2. The audit's configuration
+        # records it.
+        comps.challenge = False
+
+        def progress(done: int, total: int, d) -> None:  # noqa: ANN001
+            spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
+            log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
+
+        t = time.monotonic()
+        result = pipeline.run_audit(conn, comps, progress=progress)
+        tally: dict[str, int] = {}
+        for d in result.decisions:
+            tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+        calls = {
+            purpose: {"calls": n, "first_utc": first, "last_utc": last}
+            for purpose, n, first, last in conn.execute(
+                "SELECT r.purpose, COUNT(*), MIN(c.at_utc), MAX(c.at_utc) FROM model_calls c"
+                " JOIN model_runs r ON r.id = c.model_run_id GROUP BY r.purpose"
+            )
+        }
+    finally:
         conn.close()
-        raise SystemExit(
-            f"{out}/case.db is not the case built.ok records (another build's case.db);"
-            " restore the case.db it was built with, or use a new --out"
-        )
-    if fake:
-        from eval.pipeline_fakes import fake_components
-
-        comps = fake_components()
-    elif cloud_model is not None:
-        comps = cloud_components(conn, cloud_model)
-    else:
-        comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
-    # The run 3 plan keeps the challenge step off (on by default since #162), so run 3 changes
-    # only the filler and stays comparable to run 2. The audit's configuration records it.
-    comps.challenge = False
-
-    def progress(done: int, total: int, d) -> None:  # noqa: ANN001
-        spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
-        log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
-
-    t = time.monotonic()
-    result = pipeline.run_audit(conn, comps, progress=progress)
-    tally: dict[str, int] = {}
-    for d in result.decisions:
-        tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
-    calls = {
-        purpose: {"calls": n, "first_utc": first, "last_utc": last}
-        for purpose, n, first, last in conn.execute(
-            "SELECT r.purpose, COUNT(*), MIN(c.at_utc), MAX(c.at_utc) FROM model_calls c"
-            " JOIN model_runs r ON r.id = c.model_run_id GROUP BY r.purpose"
-        )
-    }
-    conn.close()
     return {
         "run_id": result.run_id,
         "fake": result.fake,
@@ -1039,34 +1080,9 @@ def main(argv: list[str] | None = None) -> int:
             # ...and each phone's device still has the one confirmed owner it was built with:
             # an owner changed since would leave the claims naming the defined owner with no
             # person to find (CodeRabbit on #269)
-            for p in was_p:
-                # by person id, so two confirmed owners of one name are two, and the one the
-                # build stipulated (person:<device>:owner), not another of that name (CodeRabbit)
-                owners = sorted(
-                    (str(n), str(pid), str(did))
-                    for (pid, n, did) in conn.execute(
-                        "SELECT DISTINCT s.person_id, pe.name, d.id FROM stipulations s"
-                        " JOIN devices d ON d.id = s.subject_id"
-                        " JOIN persons pe ON pe.id = s.person_id"
-                        " WHERE d.source_id = ? AND s.kind = 'device_owner'"
-                        " AND s.status = 'confirmed'",
-                        (_sid(p),),
-                    )
-                )
-                if [n for n, _, _ in owners] != [p.get("owner")]:
-                    names = ", ".join(n for n, _, _ in owners) or "no one"
-                    raise SystemExit(
-                        f"{_sid(p)}: its confirmed device owner is"
-                        f" {_one_line(names)}, not {p.get('owner')} as"
-                        " built; restore the case.db it was built with, or use a new --out"
-                    )
-                (_, pid, did) = owners[0]
-                if pid != f"person:{did}:owner":
-                    raise SystemExit(
-                        f"{_sid(p)}: its confirmed device owner is {p.get('owner')} under"
-                        f" {_one_line(pid)}, not the person the build stipulated; restore the"
-                        " case.db it was built with, or use a new --out"
-                    )
+            stop = owner_stop(conn, was_p)
+            if stop:
+                raise SystemExit(stop)
             checks = [
                 (
                     p["source_id"],

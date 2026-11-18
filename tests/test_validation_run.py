@@ -1114,7 +1114,9 @@ def test_a_call_log_the_manifest_counts_but_whose_table_is_empty_stops_the_build
       r"item1: its call log \(no table named, 2 records\)"),
      ({"record_count": 2}, r"item1: the LEAPP manifest lists an entry with neither an artifact"
                            r" key nor a table \(Call logs, 2 records\)"),
-     ({"record_count": 0}, None)],
+     ({"record_count": 0}, None),
+     ({"artifact_key": " ", "record_count": 2},
+      r"item1: the LEAPP manifest lists an entry with neither an artifact key nor a table")],
 )  # fmt: skip
 def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path, entry, stop):
     # The importer lists an entry with no table as not imported; the build's check stops on a
@@ -1152,10 +1154,20 @@ def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
             "--fake"]  # fmt: skip
     assert hickman_run.main(args) == 0
-    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    raw = (out / "built.ok").read_text(encoding="utf-8")
+    built = json.loads(raw)
+    assert [p.get("owner") for p in built["phones"]] == ["SUBJECT-1"]  # the owners it rechecks
     built["build_id"] = "0" * 32
     (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
     with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.audit(out, True, lambda _m: None)
+    # the very build, but its owner stipulation withdrawn after the resume's checks
+    (out / "built.ok").write_text(raw, encoding="utf-8")
+    conn = sqlite3.connect(out / "case.db")
+    conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match="its confirmed device owner is no one, not SUBJECT-1"):
         hickman_run.audit(out, True, lambda _m: None)
 
 
