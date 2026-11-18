@@ -26,7 +26,10 @@
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
   check on the stored case, so a case built before this change never resumes into an audit of
   such a phone. Before that check, a resume stops unless the case.db holds the very imports
-  `built.ok` records (each phone's stored SHA-256). A resume whose case.db is gone stops with a
+  `built.ok` records (each phone's stored SHA-256) and no other source: `built.ok` now records
+  every source of the case (each package and the affidavit rendered from the claims), so a
+  case.db from another build of the same package with other claims is refused. This is driver
+  setup 5; a case built by setup 4 is not resumed and is built again with a new `--out`. A resume whose case.db is gone stops with a
   message. A resume of a case imported
   before unread entries kept their artifact key stops too, since an unread call log cannot be
   ruled out; the driver does not rebuild it, and the operator runs again with a new `--out`.
@@ -59,10 +62,11 @@
     one with the callee but no line of the phone does; a phone with no LEAPP coverage record
     stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
-  - A resume whose case.db holds another import under the same phone name stops.
+  - A resume whose case.db holds another import under the same phone name stops, and so does
+    one whose case.db is another build of the same package with other claims.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
     manifest counts 0, and a negative manifest count reads as unknown.
-  The file's 54 tests pass locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 55 tests pass locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

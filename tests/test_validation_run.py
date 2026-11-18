@@ -918,6 +918,37 @@ def test_a_resume_stops_when_case_db_holds_another_import(tmp_path):
         hickman_run.main(args)
 
 
+def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path):
+    # Two builds of one package under one phone name, with other claims: the second build's
+    # case.db restored into the first's output passes the phone check, but holds the affidavit
+    # of other claims, so the resume stops (CodeRabbit on #269).
+    import shutil
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    other = tmp_path / "other"
+    other.mkdir()
+    other_claims = _claims(other, [{**CLAIMS[0], "text": CLAIMS[0]["text"] + " again"}])
+
+    def args(claims: Path, out: str) -> list[str]:
+        return ["--phone", f"item1={zipped}", "--claims", str(claims), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+    first = args(_claims(tmp_path), "a")
+    assert hickman_run.main(first) == 0
+    assert hickman_run.main(args(other_claims, "b")) == 0
+    built = json.loads((tmp_path / "a" / "built.ok").read_text(encoding="utf-8"))
+    assert [sid for sid, _ in built["sources"]][:1] == ["item1"]  # the phone, then the affidavit
+    shutil.copy(tmp_path / "b" / "case.db", tmp_path / "a" / "case.db")
+    with pytest.raises(SystemExit, match=r"case.db holds other sources than built.ok records"):
+        hickman_run.main(first)
+
+
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake"]  # fmt: skip

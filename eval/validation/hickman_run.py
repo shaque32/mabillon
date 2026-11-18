@@ -83,8 +83,17 @@ TYPE_ALIASES = {"content": "content_meaning"}
 RESULT_FILES = ("case.db", "run.json", "report.html", "progress.log")
 # How build() sets the case up. A case built by an earlier setup is not resumed: run 1's case
 # (setup 1) had no phone name and no SUBJECT-2; run 2's (setup 2) had no account for SUBJECT-2;
-# setup 3 (v4) held one phone and did not record what its import read (setup 4 records each).
-SETUP = 4
+# setup 3 (v4) held one phone and did not record what its import read (setup 4 records each);
+# setup 4 did not record the case's sources, so a case.db restored from another build of the
+# same packages with other claims could not be told apart (setup 5 does; CodeRabbit on #269).
+SETUP = 5
+
+
+def case_sources(conn) -> list[list[str]]:  # noqa: ANN001
+    """Every source the case holds, as [id, SHA-256]: each phone package and the rendered
+    affidavit (its claims). built.ok records them, and a resume refuses a case.db that holds
+    others: one restored from another build of the same packages with other claims."""
+    return [[r[0], r[1]] for r in conn.execute("SELECT id, sha256 FROM sources ORDER BY id")]
 
 
 def sha256_file(path: Path) -> str:
@@ -911,6 +920,14 @@ def main(argv: list[str] | None = None) -> int:
                         f" records ({p['file']} {p['sha256']}); restore the case.db it was built"
                         " with, or use a new --out"
                     )
+            # ...and no other source: the affidavit rendered from other claims, from another
+            # build of the same packages, is refused too (CodeRabbit on #269)
+            if case_sources(conn) != was.get("sources"):
+                raise SystemExit(
+                    f"{a.out}/case.db holds other sources than built.ok records (another"
+                    " build's case, or other claims); restore the case.db it was built with,"
+                    " or use a new --out"
+                )
             checks = [
                 (p["source_id"], *call_log_check(conn, p["source_id"], p.get("importer")))
                 for p in imported
@@ -938,12 +955,18 @@ def main(argv: list[str] | None = None) -> int:
             if a.report_sha256 and report_sha != a.report_sha256:
                 raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
         imported = build(phones, claims, a.out, log, defined)
+        conn = connect(a.out / "case.db")
+        try:
+            sources = case_sources(conn)
+        finally:
+            conn.close()
         inputs = {
             "claims_sha256": claims_sha,
             "report_xml_sha256": report_sha,
             "setup": SETUP,
             **setup,
             "imported": imported,
+            "sources": sources,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
