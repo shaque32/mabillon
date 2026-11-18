@@ -973,6 +973,20 @@ def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path, c
         hickman_run.main(first)
 
 
+def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path, monkeypatch):
+    # A build that wrote no build id to built.ok or the case's audit log (as #269's setup 5
+    # could) has nothing to tie its case.db to, so a resume stops (CodeRabbit on #269).
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake"]  # fmt: skip
+    with monkeypatch.context() as m:
+        m.setattr(hickman_run, "stamp_build", lambda conn: None)
+        assert hickman_run.main(args) == 0
+    built = json.loads((tmp_path / "out" / "built.ok").read_text(encoding="utf-8"))
+    assert built["build_id"] is None
+    with pytest.raises(SystemExit, match="built.ok records no build id"):
+        hickman_run.main(args)
+
+
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake"]  # fmt: skip

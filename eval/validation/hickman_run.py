@@ -86,8 +86,10 @@ RESULT_FILES = ("case.db", "run.json", "report.html", "progress.log")
 # setup 3 (v4) held one phone and did not record what its import read (setup 4 records each);
 # setup 4 did not tie the case.db to its build, so a case.db restored from another build of the
 # same packages (other claims, ids, types or zones) could not be told apart (setup 5 does, by a
-# build id in both built.ok and the case's audit log; CodeRabbit on #269).
-SETUP = 5
+# build id in both built.ok and the case's audit log; CodeRabbit on #269). Setup 5, on #269's
+# branch only, could leave the id out of both; setup 6 always writes it, and a resume refuses a
+# built.ok that records none.
+SETUP = 6
 BUILD_ACTION = "validation.build"
 
 
@@ -953,7 +955,12 @@ def main(argv: list[str] | None = None) -> int:
                     )
             # ...and is this very build's: another build of the same packages may hold other
             # claims, claim ids or types, or zones, none of which the sources show (CodeRabbit)
-            if stamped_build(conn) != was.get("build_id"):
+            if not was.get("build_id"):
+                raise SystemExit(
+                    f"{a.out}/built.ok records no build id, so its case.db cannot be tied to its"
+                    " build; use a new --out"
+                )
+            if stamped_build(conn) != was["build_id"]:
                 raise SystemExit(
                     f"{a.out}/case.db is not the case built.ok records (another build's case.db);"
                     " restore the case.db it was built with, or use a new --out"
