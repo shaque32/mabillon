@@ -82,10 +82,12 @@
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital at a mention of its own (never inside a longer
     app's name), however the export spells the app, whether code or the model chose it
-    (Greptile and CodeRabbit on #265). Nor is a row on no app bound to such an app alone:
-    "wrote to REYES on his second line" searches every app, and "texted REYES on his second
-    line" the phone's own messages, never Line, where a true text would go unfound
-    (CodeRabbit on #265).
+    (Greptile and CodeRabbit on #265). Nor does code bind a row, the model's on no app or
+    code's own sender and the time row that copies it, to such an app written without a
+    capital (`_scope_apps`, read by `_bind_named_app`, `_message_apps` and `claim_apps`):
+    "wrote to REYES on his second line" searches every app, "texted REYES on his second line"
+    the phone's own messages, never Line, where a true text would go unfound, and "on
+    Telegram or his second line" Telegram alone (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than

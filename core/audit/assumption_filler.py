@@ -4307,9 +4307,16 @@ class LocalAssumptionFiller:
         every app in the case that holds a phone's messages, since "texted" may be SMS or
         iMessage (Codex on #164); None when the case holds no such app. Empty when the claim
         names no app."""
-        if named := self._named_apps(claim_text):
-            return named
         words = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
+        # "wrote on his second line" names no Line: a code-made row is never bound to a plain
+        # word, as `_bind_named_app` binds none (CodeRabbit on #265)
+        if named := self._scope_apps(
+            self._named_apps(claim_text),
+            _HANDLE_RE.sub(
+                " ", _ADDRESS_RE.sub(" ", _unquoted(self._without_phone_names(_nfc(claim_text))))
+            ),
+        ):
+            return named
         phone = [  # with an app that holds a phone's messages (iOS "Native Messages")
             app
             for app in self.channels()
@@ -4499,16 +4506,17 @@ class LocalAssumptionFiller:
         return frozenset(a.casefold() for a in apps)
 
     def _scope_apps(self, apps: list[str], bare: str) -> list[str]:
-        """The named apps a message row is bound to: none when every one is a plain word the
-        claim does not write as a name ("wrote to REYES on his second line" names no Line, so
-        every app is searched, or a phone's own messages for "texted"). Beside an app written
-        as a name, a plain word only widens the search. `claim_apps` reads the same, so the
-        sheet check never excuses an app the claim's words do not name (CodeRabbit on #265)."""
-        if any(
-            a.casefold() not in _PLAIN_WORD_APPS or self._written_as_name(bare, a) for a in apps
-        ):
-            return apps
-        return []
+        """The named apps a message row is bound to, less each plain-word app the claim does
+        not write as a name: "wrote to REYES on his second line" names no Line, so every app is
+        searched, or a phone's own messages for "texted", and "Telegram or his line" binds
+        Telegram alone. `claim_apps` and `_message_apps` read the same, so code never binds a
+        row to a plain word and the sheet check never excuses an app the claim's words do not
+        name (CodeRabbit on #265)."""
+        return [
+            a
+            for a in apps
+            if a.casefold() not in _PLAIN_WORD_APPS or self._written_as_name(bare, a)
+        ]
 
     def _phone_apps_named(self, bare: str) -> list[str]:
         """The case's apps of a phone's own messages that the words name by kind ("SMS",
