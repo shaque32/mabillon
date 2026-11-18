@@ -817,6 +817,17 @@ def main(argv: list[str] | None = None) -> int:
             if ph.sha256 and ph.sha256 != h:
                 raise SystemExit(f"--phone-sha256: {ph.path} has SHA-256 {h}, not {ph.sha256}")
         imported, report_sha = was["imported"], was.get("report_xml_sha256")
+        # A case built before the call-log guard (gate G5b) resumes only when each phone's
+        # stored import passes it too, so a paid resume never audits a phone whose calls no
+        # check can read (CodeRabbit on #269).
+        conn = connect(a.out / "case.db")
+        try:
+            stops = [(p["source_id"], unreadable_call_log(conn, p["source_id"])) for p in imported]
+        finally:
+            conn.close()
+        for sid, stop in stops:
+            if stop:
+                raise SystemExit(f"{sid}: {stop}")
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),

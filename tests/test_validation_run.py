@@ -640,7 +640,9 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
         ([(None, "1")], False),
     ],
 )
-def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(tmp_path, rows, stops):
+def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
+    tmp_path, monkeypatch, rows, stops
+):
     # Gate G5b: a call log whose every row was placed by another app (a Samsung phone names
     # its own dialer package) or has no direction stores no call with a side, so every call
     # claim on the phone would go untested: the build stops before the audit.
@@ -656,14 +658,21 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(tmp_
     zipped = lv.write_zip(tmp_path / "item1.zip")
     args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
-    if stops:
-        with pytest.raises(
-            SystemExit, match=rf"item1: its call log \(get_calllog\) has {len(rows)} rows"
-        ):
-            hickman_run.main(args)
-        assert not (tmp_path / "out" / "built.ok").exists()
-    else:
+    why = rf"item1: its call log \(get_calllog\) has {len(rows)} rows"
+    if not stops:
         assert hickman_run.main(args) == 0
+        assert hickman_run.main(args) == 0  # and a resume passes it too
+        return
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "built.ok").exists()
+    # A case built before the guard is not resumed either (CodeRabbit on #269).
+    with monkeypatch.context() as m:
+        m.setattr(hickman_run, "unreadable_call_log", lambda conn, sid: None)
+        assert hickman_run.main(args) == 0
+    assert (tmp_path / "out" / "built.ok").exists()
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
 
 
 def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):
