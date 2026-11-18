@@ -4791,6 +4791,12 @@ def test_coderabbit_on_6080aa5_then_and_handles(conn):
     assert "a second act" not in filler.unread_words(bare_then)
     other = 'On March 12, 2026, PETROV texted @northstar then @northstar asked: "ok".'
     assert "a second act" in filler.unread_words(other)
+    # a relative clause before "then" has a subject of its own (CodeRabbit on e7ea4cf)
+    for two in (
+        'On March 12, 2026, PETROV texted @northstar who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @northstar, who then asked PETROV: "ok".',
+    ):
+        assert "a second act" in filler.unread_words(two), two
     # a handle or an address that holds a reply verb is an account, not an act
     for one in (
         'On March 12, 2026, PETROV wrote to @replied: "need 2 more by friday".',

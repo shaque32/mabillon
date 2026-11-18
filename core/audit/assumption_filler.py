@@ -3235,11 +3235,22 @@ _SAME_SUBJECT_RE = re.compile(
 
 def _later_clause(gap: str) -> str:
     """The words between two verbs that belong to the later one: those after the last "and",
-    "but", "or", comma or semicolon, or, with none of those, after the last "then"."""
+    "but", "or", comma or semicolon, or, with none of those, after the last "then". A relative
+    or personal pronoun before that "then" starts a clause of its own ("texted REYES who then
+    asked"; CodeRabbit on #265), so the whole gap is the later verb's."""
     parts = re.split(r"\b(?:and|but|or)\b|[,;]", gap, flags=re.IGNORECASE)
     if len(parts) > 1:
         return parts[-1]
-    return re.split(r"\bthen\b", gap, flags=re.IGNORECASE)[-1]
+    *before, after = re.split(r"\bthen\b", gap, flags=re.IGNORECASE)
+    if before and _CLAUSE_PRONOUN_RE.search(" ".join(before)):
+        return gap
+    return after
+
+
+# A pronoun that starts a clause with a subject of its own: "REYES who then asked".
+_CLAUSE_PRONOUN_RE = re.compile(
+    r"\b(?:who|whom|whose|which|that|he|she|they|it|we|i|you)\b", re.IGNORECASE
+)
 
 
 # A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
