@@ -954,6 +954,27 @@ def test_an_artifact_with_no_stated_count_is_empty_only_when_its_table_is(tmp_pa
     assert not leapp._may_hold_records(empty, replace(sms, record_count=None))
 
 
+def test_a_table_that_cannot_be_read_may_hold_records(tmp_path: Path) -> None:
+    # A row probe that SQLite cannot answer (a corrupt page) does not stop the import: the
+    # table is not known to be empty (CodeRabbit on #269).
+    from dataclasses import replace
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    real = lava.db
+
+    class Corrupt:
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            if sql.startswith('SELECT 1 FROM "'):
+                raise sqlite3.DatabaseError("database disk image is malformed")
+            return real.execute(sql, *args)
+
+    broken = replace(lava, db=Corrupt())
+    sms = next(a for a in lava.artifacts if a.key == "get_sms_mms")
+    assert leapp._may_hold_records(broken, replace(sms, record_count=0))
+
+
 def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
     # A count below 0 says nothing about the table: it is read as unknown, so a missing table
     # with it may hold records (CodeRabbit on #269).

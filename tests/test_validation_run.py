@@ -589,6 +589,7 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
             **{
                 "Call Date": "2024-03-01T15:00:00Z",
                 "Partner": "+19195550111",
+                "Phone Account Address": "+19195550100",
                 "Raw Call Type (as stored)": "1",
                 "Duration in Secs": "5",
             },
@@ -651,6 +652,7 @@ def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
     lv = Lava(leapp="ALEAPP")
     for i, (package, kind) in enumerate(rows):
         values = {"Call Date": f"2024-03-01T15:0{i}:00Z", "Partner": "+19195550111",
+                  "Phone Account Address": "+19195550100",
                   "Raw Call Type (as stored)": kind, "Duration in Secs": "5"}  # fmt: skip
         if package:
             values["Phone Account Package"] = package
@@ -765,9 +767,10 @@ def test_a_call_log_of_untimed_calls_stops_the_build(tmp_path):
     # #269): the same import with a readable time passes.
     from eval.synthetic.leapp import Lava
 
-    def args(when: object, out: str) -> list[str]:
+    def args(when: object, out: str, own: str | None = "+19195550100") -> list[str]:
         lv = Lava(leapp="ALEAPP")
         lv.add("get_calllog", **{"Call Date": when, "Partner": "+19195550111",
+                                 "Phone Account Address": own,
                                  "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
                                  "Phone Account Package": "com.android.phone"})  # fmt: skip
         zipped = lv.write_zip(tmp_path / f"{out}.zip")
@@ -776,6 +779,9 @@ def test_a_call_log_of_untimed_calls_stops_the_build(tmp_path):
 
     with pytest.raises(SystemExit, match=r"no phone call a check can read"):
         hickman_run.main(args(10**18, "untimed"))  # past any date Python can hold
+    # a timed call on a phone with no line of its own: no check can put its owner on it
+    with pytest.raises(SystemExit, match=r"no account of its own"):
+        hickman_run.main(args("2024-03-01T15:00:00Z", "unowned", own=None))
     assert hickman_run.main(args("2024-03-01T15:00:00Z", "timed")) == 0
 
 
@@ -810,6 +816,7 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
 
     lv = Lava(leapp="ALEAPP")
     lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
                              "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
                              "Phone Account Package": "com.android.phone"})  # fmt: skip
     zipped = lv.write_zip(tmp_path / "item1.zip")
@@ -842,6 +849,10 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
             conn.close()
 
     assert check() == (None, "get_calllog: 1 of 1 rows are phone calls a check can read")
+    db = sqlite3.connect(tmp_path / "out" / "case.db")
+    sides = db.execute("SELECT from_account_id, to_account_id FROM calls").fetchall()
+    db.close()
+    assert len(sides) == 1 and all(sides[0])  # the phone's own line and the other party
 
     def unread(holds):  # noqa: ANN001, ANN202
         def edit(p):  # noqa: ANN001, ANN202
@@ -878,9 +889,13 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
     assert "no phone call a check can read" in (check(sql=(no_callee,))[0] or "")
     turned = "UPDATE calls SET direction = 'incoming'"
     assert "no phone call a check can read" in (check(sql=(turned,))[0] or "")
-    # an outgoing call with the callee and no line of the phone is read (as the caller check)
+    # an outgoing call with the callee and no line of the phone is read (as the caller check),
+    # while the phone has an account of its own elsewhere in the case...
     no_line = "UPDATE calls SET from_account_id = NULL"
     assert check(sql=(no_line,))[0] is None
+    # ...and with no account of its own, no check can put its owner on a call (CodeRabbit)
+    unowned = "UPDATE accounts SET device_id = NULL"
+    assert "no account of its own" in (check(sql=(no_line, unowned))[0] or "")
     # a LEAPP phone whose coverage is not in the case, or whose importer the build did not
     # record, fails closed; another importer's phone is not checked (CodeRabbit on #269)
     assert "left no coverage record" in (check(source="item9")[0] or "")
@@ -904,6 +919,7 @@ def test_a_resume_stops_when_case_db_holds_another_import(tmp_path):
 
     lv = Lava(leapp="ALEAPP")
     lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
                              "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
                              "Phone Account Package": "com.android.phone"})  # fmt: skip
     zipped = lv.write_zip(tmp_path / "item1.zip")
@@ -928,6 +944,7 @@ def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path):
 
     lv = Lava(leapp="ALEAPP")
     lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
                              "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
                              "Phone Account Package": "com.android.phone"})  # fmt: skip
     zipped = lv.write_zip(tmp_path / "item1.zip")
@@ -970,6 +987,7 @@ def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp
         **{
             "Call Date": "2024-03-01T15:00:00Z",
             "Partner": "+19195550111",
+            "Phone Account Address": "+19195550100",
             "Raw Call Type (as stored)": "1",
             "Duration in Secs": "5",
         },

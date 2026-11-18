@@ -509,6 +509,14 @@ def call_log_check(  # noqa: ANN001
                 f" ({_one_line(t.get('reason'))}); claims about its phone calls would go"
                 " untested, so the run stops before any model call"
             ), None
+    # The caller check puts the phone's owner on a call only through the phone's own accounts
+    # (person_party: the accounts on the device a confirmed device_owner stipulation names):
+    # with none, no call on it can be read, whatever its rows hold (CodeRabbit on #269).
+    (owned,) = conn.execute(
+        "SELECT count(*) FROM accounts a JOIN devices d ON d.id = a.device_id"
+        " WHERE d.source_id = ?",
+        (source_id,),
+    ).fetchone()
     notes = []
     for t in p.get("tables") or []:
         if not isinstance(t, dict):
@@ -549,6 +557,13 @@ def call_log_check(  # noqa: ANN001
                 f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
                 f" read was stored (flags: {_one_line(flags or 'none')}); claims about its phone"
                 " calls would go untested, so the run stops before any model call"
+            ), None
+        if sided and not owned:
+            return (
+                f"its call log ({_one_line(table)}) has {sided} phone calls with the other party"
+                " stored, but the phone has no account of its own in the case (no line or handle"
+                " the import tied to it), so no check can put its owner on a call; claims about"
+                " its phone calls would go untested, so the run stops before any model call"
             ), None
         notes.append(f"{_one_line(table)}: {sided} of {read} rows are phone calls a check can read")
     return None, ("; ".join(notes) or None)

@@ -14,8 +14,12 @@
     outgoing call, the caller of an incoming or missed one). This happens when every row was
     placed by another app, or had no direction, no other party or no usable time. The message
     lists the table's import flags.
+  - The table has such calls but the phone has no account of its own in the case (no line or
+    handle the import tied to its device), so the caller check could not put its owner on any
+    call.
   - The table may hold records the import could not read at all (listed under `not_imported`;
-    an entry with neither a count nor a row check fails closed, one known empty passes).
+    an entry with neither a count nor a row check fails closed, one known empty passes; a
+    table whose row probe SQLite cannot answer counts as possibly holding records).
   - The case holds no LEAPP coverage record for the phone, and the build recorded it as read
     by the LEAPP importer or did not record its importer. A phone whose importer is not recorded
     but whose LEAPP coverage is there is checked as usual.
@@ -59,13 +63,16 @@
   - On a stored case: an unread entry with no count stops unless known empty, an entry with no
     key asks for a rebuild, another table's calls do not count (with foreign keys on), a call
     with no time, or with no other party on the side its direction names, does not count, and
-    one with the callee but no line of the phone does; a phone with no LEAPP coverage record
+    one with the callee but no line of the phone does while the phone has an account of its own
+    elsewhere, and stops when it has none; a phone with no LEAPP coverage record
     stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
   - A resume whose case.db holds another import under the same phone name stops, and so does
     one whose case.db is another build of the same package with other claims.
+  - A timed call on a phone with no line of its own stops the build.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
-    manifest counts 0, and a negative manifest count reads as unknown.
+    manifest counts 0, a negative manifest count reads as unknown, and a table whose row probe
+    fails may hold records.
   The file's 55 tests pass locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed

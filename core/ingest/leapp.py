@@ -1652,7 +1652,11 @@ def _may_hold_records(lava: Lava, art: Artifact) -> bool:
     if not lava.has_table(art):
         return art.record_count is None
     quoted = art.table.replace(chr(34), chr(34) * 2)
-    return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
+    try:
+        return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
+    except db_errors.DatabaseError:
+        # a table that cannot be read is not known to be empty (CodeRabbit on #269)
+        return True
 
 
 def _not_read(lava: Lava, art: Artifact, why: str) -> dict[str, Any]:
