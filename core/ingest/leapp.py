@@ -1242,11 +1242,15 @@ def _add_call(
     ts: Timestamp,
     duration: int | None,
     deleted: bool | None,
+    raw_duration: object = None,
 ) -> None:
     w = c.w
     if duration is not None and not 0 <= duration <= _MAX_SQLITE_INT:
         duration = None  # SQLite cannot hold it; the call is kept (CodeRabbit on #269)
-        c.flag("duration_not_readable", loc)  # why its length is unknown (Claude review)
+    if duration is None and _text(raw_duration) is not None:
+        # a length the row states but Mabillon could not read: say why it is unknown
+        # (Claude review and CodeRabbit on #269)
+        c.flag("duration_not_readable", loc)
     scope = f"row:{loc}"
     from_id = w.account(app, frm, loc, scope) if frm and frm.identifier else None
     to_id = w.account(app, to, loc, scope) if to and to.identifier else None
@@ -1290,7 +1294,7 @@ def _ios_calls(c: _Ctx) -> None:
                 c.w.account(app, other, loc, f"row:{loc}")
         _add_call(
             c, app, loc, frm, to, direction, _time(r.get("Starting Timestamp")),
-            _hms(_text(r.get("Call Duration"))), None,
+            _hms(_text(r.get("Call Duration"))), None, r.get("Call Duration"),
         )  # fmt: skip
 
 
@@ -1355,6 +1359,7 @@ def _android_calls(c: _Ctx) -> None:
             c, "unknown", loc, frm, to, direction, _time(r.get("Call Date")),
             _whole_seconds(dur),
             None if deleted is None else deleted not in ("0", "False", "false"),
+            dur,
         )  # fmt: skip
 
 
@@ -1497,12 +1502,13 @@ def _app_calls(c: _Ctx) -> None:
         owner = _party(own, owner=True) if own else None
         frm, to = _call_sides(c, spec.app, loc, direction, other, owner)
         start = _time(r.get(spec.time))
-        length = _seconds(r.get(spec.duration)) if spec.duration else None
+        raw = r.get(spec.duration) if spec.duration else None
+        length = _seconds(raw)
         if spec.end and start.utc is not None:
             end = _time(r.get(spec.end))
             if end.utc is not None and end.utc >= start.utc:
                 length = int((end.utc - start.utc).total_seconds())
-        _add_call(c, spec.app, loc, frm, to, direction, start, length, None)
+        _add_call(c, spec.app, loc, frm, to, direction, start, length, None, raw)
 
 
 def _entries(v: object) -> list[str]:
@@ -1808,11 +1814,19 @@ def apps_read_in_full(lava: Lava, read: list[tuple[Spec, Artifact]]) -> list[str
     read_keys = {(name, a.key) for _, a in read}
     unread_words = {c.split()[0].lower() for c in [a.category for a in unread]
                     + [t["category"] for t in no_table] if c.split()}  # fmt: skip
+    # an unread entry of a key Mabillon reads for an app marks that app, whatever its category
+    # (CodeRabbit on #269)
+    unread_apps = {v.app for specs in (CHAT_SPECS, CALL_SPECS) for k, v in specs.items()
+                   if k[0] == name and k[1] in unread_keys}  # fmt: skip
     chat_read = {v.app for k, v in CHAT_SPECS.items() if k[0] == name and k in read_keys}
     calls_unread = {v.app for k, v in CALL_SPECS.items() if k[0] == name and k not in read_keys}
     partial = {v.app for k, v in CALL_SPECS.items() if k[0] == name and not v.all_parties}
     for app in chat_read - calls_unread - partial:
-        if app.split()[0].lower() not in unread_words and not lava.calls_without_sides.get(app):
+        if (
+            app not in unread_apps
+            and app.split()[0].lower() not in unread_words
+            and not lava.calls_without_sides.get(app)
+        ):
             apps.add(app)
     return sorted(apps)
 

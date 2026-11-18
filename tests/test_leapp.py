@@ -1135,6 +1135,28 @@ def test_an_entry_listed_with_no_table_is_recorded_as_not_imported(
     assert ("unknown" in p["apps_read_in_full"]) is not native_unread
 
 
+@pytest.mark.parametrize(("count", "in_full"), [(1, False), (None, False), (0, True)])
+def test_an_unread_entry_of_an_apps_key_keeps_the_app_partial_whatever_its_category(
+    tmp_path: Path,
+    count,  # noqa: ANN001
+    in_full: bool,
+) -> None:
+    # CodeRabbit on #269: an entry of a chat app's own key that was not read marks that app,
+    # even when its category's first word does not name the app.
+    lv = _android()
+    _telegram(lv, "hi")
+
+    def change(m: dict) -> None:
+        m["artifacts"].setdefault("Social Media", []).append(
+            {"name": "Messages", "artifact_key": "get_telegramMessages", "record_count": count}
+        )
+
+    conn = _db()
+    LeappImporter(source_id="and").import_source(_zip_with(tmp_path, lv, change), conn)
+    payload = coverage.load(conn, "and").payload
+    assert ("Telegram" in payload["apps_read_in_full"]) is in_full
+
+
 def test_a_call_log_key_in_other_case_is_read_as_the_call_log(tmp_path: Path) -> None:
     # SQLite ignores ASCII case in names, so a call log keyed GET_CALLLOG is the call log: it
     # takes the key's own spelling, is read, and the run's check finds it (CodeRabbit on #269).
@@ -1171,6 +1193,15 @@ def test_a_call_duration_that_is_not_a_decimal_number_is_unknown(tmp_path: Path)
     LeappImporter(source_id="d").import_source(lv.write_zip(tmp_path / "d.zip"), conn)
     got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
     assert got == [(None,), (None,), (None,), (2**63 - 1,), (5,)]
+    # each length the row states but Mabillon could not read is flagged at its row, and the
+    # coverage summary shows it (Claude review and CodeRabbit on #269)
+    (t,) = coverage.load(conn, "d").payload["tables"]
+    assert t["flag_counts"].get("duration_not_readable") == 3
+    assert len(t["flagged_locators"]["duration_not_readable"]) == 3
+    s = coverage.summary(conn, "d")
+    assert s is not None
+    (item,) = [i for i in s.attention if i.code == "duration_not_readable"]
+    assert "3 records" in item.plain and len(item.locators) == 3
 
 
 def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> None:
@@ -1187,9 +1218,9 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
     got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
     assert got == [(None,), (None,), (125,)]
-    # the one past SQLite's range is flagged, so the coverage says why its length is unknown
+    # both unreadable lengths are flagged, so the coverage says why each is unknown
     (t,) = coverage.load(conn, "ios").payload["tables"]
-    assert t["flag_counts"].get("duration_not_readable") == 1
+    assert t["flag_counts"].get("duration_not_readable") == 2
 
 
 def test_an_app_call_duration_int_refuses_is_unknown_not_rounded() -> None:

@@ -452,6 +452,11 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
     ),
     "no_body_or_attachment": ("info", "{n} {have} neither text nor an attachment."),
     "no_time": ("attention", "{n} {have} no time in the {container}, so no time was set."),
+    "duration_not_readable": (
+        "attention",
+        "{n} {have} a call length in the {container} that Mabillon could not read as whole "
+        "seconds, so {them} {be} imported with length unknown.",
+    ),
 }
 
 
