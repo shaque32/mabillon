@@ -1145,7 +1145,7 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     # Any importer path: a duration past SQLite's integer range is stored as unknown, and the
     # call is kept (CodeRabbit on #269).
     lv = Lava(leapp="iLEAPP")
-    for i, dur in enumerate([str(2**63), "00:02:05"]):
+    for i, dur in enumerate([str(2**63), "9" * 5000, "00:02:05"]):
         lv.add("callHistory", **{"Starting Timestamp": f"2024-02-01T16:0{i}:00Z",
                                  "Service Provider": "com.apple.Telephony",
                                  "Call Type": "Phone Call", "Call Direction": "Outgoing",
@@ -1154,7 +1154,7 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     conn = _db()
     LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
     got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
-    assert got == [(None,), (125,)]
+    assert got == [(None,), (None,), (125,)]
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

@@ -999,11 +999,12 @@ def main(argv: list[str] | None = None) -> int:
             # an owner changed since would leave the claims naming the defined owner with no
             # person to find (CodeRabbit on #269)
             for p in was_p:
-                # by person id, so two confirmed owners of one name are two (CodeRabbit)
+                # by person id, so two confirmed owners of one name are two, and the one the
+                # build stipulated (person:<device>:owner), not another of that name (CodeRabbit)
                 owners = sorted(
-                    (str(n), str(pid))
-                    for (pid, n) in conn.execute(
-                        "SELECT DISTINCT s.person_id, pe.name FROM stipulations s"
+                    (str(n), str(pid), str(did))
+                    for (pid, n, did) in conn.execute(
+                        "SELECT DISTINCT s.person_id, pe.name, d.id FROM stipulations s"
                         " JOIN devices d ON d.id = s.subject_id"
                         " JOIN persons pe ON pe.id = s.person_id"
                         " WHERE d.source_id = ? AND s.kind = 'device_owner'"
@@ -1011,12 +1012,19 @@ def main(argv: list[str] | None = None) -> int:
                         (_sid(p),),
                     )
                 )
-                if [n for n, _ in owners] != [p.get("owner")]:
-                    names = ", ".join(n for n, _ in owners) or "no one"
+                if [n for n, _, _ in owners] != [p.get("owner")]:
+                    names = ", ".join(n for n, _, _ in owners) or "no one"
                     raise SystemExit(
                         f"{_sid(p)}: its confirmed device owner is"
                         f" {_one_line(names)}, not {p.get('owner')} as"
                         " built; restore the case.db it was built with, or use a new --out"
+                    )
+                (_, pid, did) = owners[0]
+                if pid != f"person:{did}:owner":
+                    raise SystemExit(
+                        f"{_sid(p)}: its confirmed device owner is {p.get('owner')} under"
+                        f" {_one_line(pid)}, not the person the build stipulated; restore the"
+                        " case.db it was built with, or use a new --out"
                     )
             checks = [
                 (

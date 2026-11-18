@@ -38,7 +38,8 @@
   case.db from any other build (other claims, claim ids, claim types or zones, even of the same
   package) is refused, and so is a `built.ok` that records no build id. It also stops unless
   every resumed phone's device still has exactly one confirmed owner (counted by person, so two
-  owners of one name are two), named as `built.ok` records it: an owner withdrawn or changed
+  owners of one name are two), named as `built.ok` records it and the very person the build
+  stipulated (`person:<device>:owner`, not another person of that name): an owner withdrawn or changed
   since the build stops the resume, whatever the phone's call log holds. This is driver setup 6
   (setup 5 existed only on this PR's branch); a case built by an earlier setup is not resumed and
   is built again with a new `--out`. A resume whose case.db is gone stops with a message. A resume
@@ -77,7 +78,8 @@
   - On a stored case, an unread call log entry keyed in other case (`GET_CALLLOG`) stops the
     check, and so does a call log the manifest counts records in whose table gave no row.
   - A resume stops when its phone's confirmed device owner was changed to another person,
-    withdrawn, or joined by a second confirmed owner of the same name since the build.
+    withdrawn, joined by a second confirmed owner of the same name, or moved to another person
+    of the same name since the build.
   - A build stops on a real `get_calllog` table with no row whose manifest counts 3 records.
   - A resume whose case.db holds another import under the same phone name stops, and so does
     one whose case.db is another build of the same package that differs only in a claim's text,
@@ -92,9 +94,10 @@
     table unless its count is 0, and a call log key in other case is read as the call log (a key
     that is not text is not), and the import stores its calls under that key. A call duration
     that is not a decimal number (such as `²`), has more digits than Python reads, or is past
-    SQLite's integer range is stored as unknown, on Android and iOS, instead of stopping the
+    SQLite's integer range is stored as unknown, on Android and iOS (an iOS duration of 5000
+    digits too), instead of stopping the
     import.
-  The file's 62 tests pass (with `tests/test_leapp.py`, 161) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 63 tests pass (with `tests/test_leapp.py`, 162) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

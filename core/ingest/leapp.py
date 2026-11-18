@@ -1278,7 +1278,7 @@ def _ios_calls(c: _Ctx) -> None:
                 c.w.account(app, other, loc, f"row:{loc}")
         _add_call(
             c, app, loc, frm, to, direction, _time(r.get("Starting Timestamp")),
-            parse_duration(_text(r.get("Call Duration"))), None,
+            _hms(_text(r.get("Call Duration"))), None,
         )  # fmt: skip
 
 
@@ -1424,12 +1424,21 @@ CALL_SPECS: dict[tuple[str, str], CallSpec] = {
 }
 
 
+def _hms(t: str | None) -> int | None:
+    """parse_duration, with a value int() refuses (more digits than Python reads) unknown, so
+    the call is kept and the import goes on (CodeRabbit on #269)."""
+    try:
+        return parse_duration(t)
+    except ValueError:
+        return None
+
+
 def _seconds(v: object) -> int | None:
     """A length in whole seconds: '104', '00:01:44' or '83.0'."""
     t = _text(v)
     if t is None:
         return None
-    n = parse_duration(t)
+    n = _hms(t)
     if n is not None:
         return n
     try:

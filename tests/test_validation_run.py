@@ -1034,6 +1034,12 @@ def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path
             " status, decided_by, decided_at_utc FROM stipulations WHERE kind = 'device_owner'",
             "is SUBJECT-1, SUBJECT-1, not SUBJECT-1",
         ),
+        # the one confirmed owner moved to another person of the same name
+        (
+            "INSERT INTO persons (id, name, created_by) VALUES ('p2', 'SUBJECT-1', 'expert:x');"
+            "UPDATE stipulations SET person_id = 'p2' WHERE kind = 'device_owner'",
+            "is SUBJECT-1 under p2, not the person the build stipulated",
+        ),
     ],
 )
 def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, sql, says):
@@ -1055,7 +1061,7 @@ def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, 
     conn.executescript(sql)
     conn.commit()
     conn.close()
-    with pytest.raises(SystemExit, match=rf"item1: its confirmed device owner {says} as built"):
+    with pytest.raises(SystemExit, match=rf"item1: its confirmed device owner {says}"):
         hickman_run.main(args)
 
 
