@@ -324,6 +324,18 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                     data_views=e["data_views"] if isinstance(e.get("data_views"), dict) else {},
                 )
             )
+    # SQLite names are not case-sensitive, so two entries whose table names differ only in case
+    # read one table: each row would be stored twice. No LEAPP output seen lists a table twice,
+    # so such a manifest is refused, not guessed at (CodeRabbit on #269).
+    seen: dict[str, str] = {}
+    for art in arts:
+        other = seen.get(art.table.casefold())
+        seen[art.table.casefold()] = art.table
+        if other is not None:
+            raise ValueError(
+                f"{file_name}'s manifest names one table twice ({other!r} and {art.table!r});"
+                " each table is read once, so the import stops"
+            )
     return Lava(
         manifest=manifest,
         db=db,

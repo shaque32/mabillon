@@ -1011,6 +1011,22 @@ def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
     assert leapp._may_hold_records(lava, replace(sms, table="not_there"))
 
 
+@pytest.mark.parametrize("spelling", [str.upper, str])
+def test_a_manifest_that_names_one_table_twice_is_refused(tmp_path: Path, spelling) -> None:  # noqa: ANN001
+    # Two entries for one table (in any case) would store each of its rows twice: the import
+    # stops rather than guess which entry to read (CodeRabbit on #269).
+    manifest, data = _android().build()
+    entries = next(v for v in manifest["artifacts"].values() if v)
+    entries.append({**entries[0], "tablename": spelling(entries[0]["tablename"])})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    buf.seek(0)
+    with pytest.raises(ValueError, match="names one table twice"):
+        leapp.read_lava(buf, "a.zip")
+
+
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(
     tmp_path: Path,
 ) -> None:
