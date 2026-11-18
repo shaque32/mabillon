@@ -3076,17 +3076,17 @@ _PLAIN_WORDS = frozenset(
     "a an the of to on at in by and or with from for via over using through into onto as "
     "is was were are be been being has had have did do does that which who whom whose this "
     "these those it its it's their his her hers them they he she him its own each other one "
-    "another both either s also then there here what where when"
+    "another both either s also then"
     # writing, sending and calling
     " wrote write writes writing written sent send sends sending texted text texts texting "
     "messaged message messages messaging told tell tells telling asked ask asks asking said "
     "say says saying "
-    "stating stated received receive receives receiving exchanged exchange exchanges "
-    "exchanging placed place places placing made make chatted chat chats "
+    "stating stated received receive receives receiving placed place places placing made "
+    "make chat chats "
     "communicated communication communications contact contacted contacting dm dms "
-    "outgoing incoming conversation user users account accounts id identifier handle username "
+    "outgoing incoming user users account accounts id identifier handle username "
     "name named names party number numbers telephone phone phones cellular "
-    "cell mobile line app application platform service thread messenger arrived"
+    "cell mobile line app application platform service thread messenger"
     # the phone's own records
     " record records recorded log logs logged hold holds held contain contains contained entry "
     "entries"
@@ -3120,6 +3120,11 @@ _GATED_WORDS = {
     "length": frozenset("lasted lasting lasts length duration long answered".split()),
     # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
     "contact": frozenset("saved stored listed".split()),
+    # "exchanged messages", "had a conversation": messages between both sides, which only a
+    # count of both sides reads, never one sender row (Claude review on #265)
+    "each_way": frozenset(
+        "exchanged exchange exchanges exchanging conversation conversations chatted".split()
+    ),
 }
 _SPOKEN_NUMBERS = "|".join(
     sorted(
@@ -3162,6 +3167,10 @@ _UNPLAIN_PHRASES_RE = re.compile(
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
     r"second(?=\s+(?:phone|call|message|text|number|account|line|device|time|handset|sim)s?\b)|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
+    # "texted REYES his phone number": what the message held, or a number no check binds
+    # (Claude review on #265)
+    r"(?:his|her|their|its|my|your)\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone)\s+)?"
+    r"numbers?|"
     r"(?:seconds?|minutes?|hours?|days?|moments?|shortly|soon|just|right|immediately)\s+"
     r"(?:after|before|later|earlier|prior)|"
     # "after a Telegram call", "during the call", "before their conversation": an act timed
@@ -3199,6 +3208,24 @@ _RECORDS_SAY_RE = re.compile(
 )
 # "seven text messages, all recorded on the KYOCERA": where the records are, not who sent them.
 _ALL_RECORDED_RE = re.compile(r"\ball\s+(?=(?:recorded|logged|stored|held|found)\b)", re.I)
+# A verb that states one act of writing, sending or calling. Each such verb is its own act
+# unless it leads, within one clause, to a quoted message another verb leads to as well
+# ('texted REYES and asked: "..."' is one message), and a sender, time or call row tests one
+# act: "PETROV wrote ..., and @northstar wrote to PETROV" or "called REYES before REYES called
+# him" states a second act no row tests (Claude review on #265). "spoke" and "talked" are a
+# call's words, read with it.
+_ACT_VERB_RE = re.compile(
+    r"\b(?:wrote|writes|sent|sends|texted|messaged|e-?mailed|told|tells|asked|asks|said|says|"
+    r"called|phoned|dialed|dialled|rang|replied|responded|contacted|received|receives|placed)\b",
+    re.IGNORECASE,
+)
+# From a verb to the quote it leads to, within one clause: no ", and", ", but", ", then", ";"
+# or sentence end between them.
+_LEADS_TO_QUOTE_RE = re.compile(
+    r"(?:(?!,\s*(?:and|but|then)\b|;|[.!?]\s)[^\"“”])*?[\"“]", re.IGNORECASE
+)
+# A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
+_CLOCK_WORD_RE = re.compile(r"\b(?:noon|midnight)\b", re.IGNORECASE)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
 # A number written in digits that no date, time, phone or year took: "one of 2 messages" is a
 # count and "over 2 hours" a length, each plain only beside a kept row that tests it, as their
@@ -3448,31 +3475,43 @@ class LocalAssumptionFiller:
         return None
 
     def unread_words(
-        self, text: str, raws: Iterable[str] = (), tests: Iterable[str] = ()
+        self, text: str, raws: Iterable[str] = (), tests: Iterable[str] = (), counts: int = 1
     ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
         apps it reads, every date and time code reads, and the time ranges `raws` (a kept
         proposal's words) that hold nothing more. `tests` names what the kept rows test
-        ("call", "count", "length"; `_GATED_WORDS`). Empty when the claim states only what its
-        checks test."""
+        ("call", "count", "length", "contact", "each_way"; `_GATED_WORDS`), and `counts` how
+        many kept rows count. A second act ("and @northstar wrote to PETROV"), a time of day
+        outside every kept range, or more numbers than counting rows, is a part no row tests.
+        Empty when the claim states only what its checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
         for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE, _REPLY_QUOTED_RE):
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
+        ranges: list[tuple[int, int]] = []  # every kept range's words, blanked or not
         for raw in raws:
+            r = _flat(_nfc(raw)).strip()
+            # searched in the claim's own text, so a span is never off by a letter that
+            # casefolds longer ("ß"; Claude review on #265)
+            found = [m.span() for m in re.finditer(re.escape(r), bare, re.IGNORECASE)] if r else []
+            ranges += found
             # A kept range's words are blanked only when they hold nothing past the dates and
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
-            if self.unread_words(raw, tests=tests):
-                continue
-            r = _flat(_nfc(raw)).strip()
-            if r:
-                # searched in the claim's own text, so a span is never off by a letter that
-                # casefolds longer ("ß"; Claude review on #265)
-                cut += [m.span() for m in re.finditer(re.escape(r), bare, re.IGNORECASE)]
+            if not self.unread_words(raw, tests=tests, counts=counts):
+                cut += found
+        extra: list[str] = []
+        # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
+        # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
+        if ranges and any(
+            not any(a <= m.start() and m.end() <= b for a, b in ranges)
+            for rx in (_TIME_RE, _TIME24_RE, _CLOCK_WORD_RE)
+            for m in rx.finditer(bare)
+        ):
+            extra.append("a second time")
         try:
             cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
@@ -3510,6 +3549,9 @@ class LocalAssumptionFiller:
             for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE):
                 if not re.fullmatch(r"[^\W\d_A-Z]+(?:\s+[^\W\d_A-Z]+)*", m.group(0)):
                     cut.append(m.span())
+        # acts are read before apps are blanked: "texted" names the phone's own messages apps
+        # and is still an act
+        acted = _blank(bare, cut)
         # the call log's channel "call" is no app's name: "called" and "a call" are read by
         # `_GATED_WORDS` (Claude review on #265)
         apps = {c.casefold() for c in self.channels()} - {CALL_CHANNEL}
@@ -3524,9 +3566,44 @@ class LocalAssumptionFiller:
             lambda m: m.group(0) if m.group(0).casefold() == "video" else " ", words
         )
         words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
+        # acts: each verb, or each set of verbs leading to one quoted message, read on the
+        # claim's words with kept ranges, names, numbers and addresses blanked
+        acts = set()
+        for m in _ACT_VERB_RE.finditer(acted):
+            q = _LEADS_TO_QUOTE_RE.match(flat, m.end())
+            acts.add(("quote", q.end()) if q else ("verb", m.start()))
+        if len(acts) > 1:
+            extra.append("a second act")
+        if "count" in tests and self._count_mentions(words) > counts:
+            # "sent REYES 3 messages and REYES sent PETROV 5": a number no counting row tests
+            # (Claude review on #265)
+            extra.append("a second count")
         words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
-        return [*out, *(w for w in lengths if not set(w.split()) & set(out))]
+        return [
+            *out,
+            *(w for w in lengths if not set(w.split()) & set(out)),
+            *(w for w in extra if w not in out),
+        ]
+
+    @staticmethod
+    def _count_mentions(words: str) -> int:
+        """How many numbers the words state as counts: digits and spoken numbers, a run of
+        spoken ones ("twenty-one", "one hundred") as one, "one" only as a count ("at least
+        one", "one message"), and never a length ("two minutes", "2 hours")."""
+        words = _UNTESTED_LENGTH_RE.sub(" ", words)
+        words = re.sub(r"(?<![\w.,:/])\d+(?:[.,]\d+)?" + _UNIT_AFTER_RE.pattern, " ", words,
+                       flags=re.IGNORECASE)  # fmt: skip
+        spoken = rf"(?:{_SPOKEN_NUMBERS}|dozens?|hundreds?|one)"
+        n = 0
+        for m in re.finditer(rf"\b(?:\d+(?:[.,]\d+)?|{spoken}(?:[\s-]+{spoken})*)\b", words, re.I):
+            run = m.group(0)
+            if run.casefold() != "one" or re.search(
+                r"\b(?:least|most|than|exactly|only|just)\s+$", words[: m.start()], re.I
+            ) or re.match(r"\s+(?:[^\W\d_]+\s+)?(?:messages?|texts?|calls?|times?)\b",
+                          words[m.end():], re.I):  # fmt: skip
+                n += 1
+        return n
 
     def _written_recipients(self, bare: str, stated: list[tuple[int, int]]) -> list[str]:
         """The phone numbers, handles and names the expert gave a number or an account that
@@ -4759,8 +4836,8 @@ class LocalAssumptionFiller:
         def plain_word(app: str) -> bool:
             # "his second line": a plain word that may name no app at all
             # written with a capital is a name, however the export spells the app ("Recents"
-            # for an export's "recents"; CodeRabbit on #265)
-            return app.casefold() in _PLAIN_WORD_APPS and not self._written_as_name(bare, app)
+            # for an export's "recents"; CodeRabbit on #265); the one rule `_scope_apps` holds
+            return not self._scope_apps([app], bare)
 
         # "by phone" is read before a phone named "Phone" is blanked; the message and call
         # words after, so a phone named "Messages Phone" is no kind of contact (CodeRabbit on
@@ -4909,11 +4986,7 @@ class LocalAssumptionFiller:
         # viber"; CodeRabbit on #265), but never by a plain word that may name none ("his
         # accounts", "a regular line") unless written as a name, and a call keeps
         # `_call_app`'s reading.
-        wide = [
-            a
-            for a in found
-            if a.casefold() not in _PLAIN_WORD_APPS or self._written_as_name(bare, a)
-        ]
+        wide = self._scope_apps(found, bare)
 
         def short(i: int) -> bool:
             p = out[i]
@@ -5008,13 +5081,19 @@ class LocalAssumptionFiller:
             # a record_time with no quote is a call (core/audit/assumptions.py), and a count on
             # "call" counts calls (core/audit/checks/count.py)
             tests.add("call")
-        if any(p.template_id == "message_count" for p in core):
+        counting = [p for p in core if p.template_id == "message_count"]
+        if counting:
             tests.add("count")
+        if any(p.params.get("each_way") or not p.params.get("sent_by") for p in counting):
+            # "13 messages exchanged between PETROV and @northstar" is the count of messages
+            # between the two (case01 C03, signed gold), read by a count of both sides; a
+            # one-way count or a sender row never reads an exchange
+            tests.add("each_way")
         if any(p.params.get("duration_s") for p in core):
             tests.add("length")
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
-        words = self.unread_words(claim.text, raws, tests)
+        words = self.unread_words(claim.text, raws, tests, counts=len(counting))
         if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
             # either, and no check reads that it was on each (CodeRabbit on #265)

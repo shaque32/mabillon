@@ -39,7 +39,17 @@
     beside a row that tests a call's length, and a length a
     row does not test is read beside one it tests ("one minute and a quarter hour")
     (CodeRabbit on #265). "On SMS and MMS" is two kinds joined, so it gets the event, while
-    "SMS or MMS" stays alternatives (CodeRabbit on #265).
+    "SMS or MMS" stays alternatives (CodeRabbit on #265). After the Claude review of 9f84acb
+    on #265: "when", "what", "where", "there", "here" and "arrived" are no longer plain ("...
+    when he arrived", "told him what he had"), nor is a possessive number ("his phone
+    number"); a second act in plain words (", and @northstar wrote to PETROV", "called REYES
+    before REYES called him") gets the event, while verbs that lead to one quoted message are
+    one act ('texted REYES and asked: "..."'); so does a time of day outside every kept range
+    ("at 9 p.m. and at 10 p.m."); "exchanged", "conversation" and "chatted" are plain only
+    beside a count of both sides (each way, or with no one-way side, as case01 C03's "13
+    Telegram messages exchanged between"), never beside a sender row alone; and beside a kept
+    count, a claim that states more numbers than counting rows gets the event ("sent REYES 3
+    messages and 5 calls").
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -172,7 +182,9 @@
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
-    this, "texted" bound to SMS read as a mismatch on case01 C12. Other apps a try names still
+    this, "texted" bound to SMS read as a mismatch on case01 C12. This holds only under the
+    step's parties check (SHEET_CHECK_PARTIES); the strict SHEET_CHECK, which older logs replay
+    under, excuses neither parties nor these apps (Claude review on #265). Other apps a try names still
     count, and so does a plain-word app the claim writes without a capital ("his recents"),
     which code binds no row to. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
     instead of failing it on filler 12's new rows (CodeRabbit on #265).
@@ -182,13 +194,18 @@
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
-  main, the full local test run passes (4,702 passed, 9 skipped, before the last round of
-  fixes; the filler, check, count, fill, LEAPP, replay, override, testability and timeline
-  suites pass after it), and
-  `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
-  answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
+  main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
+  this PR's Linux cloud session, before the last rounds of fixes; the filler, check, count,
+  fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
+  1,713 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
+  Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
+  case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-18, final
+  head). Class batteries of new wordings with wrong
+  answers on the Android 13 phone (messages, calls, counts and timing; this PR's cloud
+  session, 2026-11-16 to 2026-11-18): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
-  Android 13, iOS 15 and Android 12 (no model call; results in project files only) leaves
+  Android 13, iOS 15 and Android 12 (no model call; results in project files only; this
+  PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-18) leaves
   every check outcome unchanged and adds the expert-only event to 20 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
   Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:

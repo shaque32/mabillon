@@ -132,7 +132,8 @@ SHEET_CHECK = "claim and sheet"  # the eval's: the claim-only check, then the si
 # The eval's sheet check from 2026-11-08 (Arsh: the go/no-go scores both passes together, and a
 # party the claim names is not a wrong person): as SHEET_CHECK, except that a person the claim's
 # own words name, named only as a party to the record (PARTY_TEMPLATES), is not counted as one
-# the sheet does not name. Logs that say SHEET_CHECK (or no check) replay with SHEET_CHECK.
+# the sheet does not name, nor an app code binds from the claim's own words (`claim_apps`).
+# Logs that say SHEET_CHECK (or no check) replay with SHEET_CHECK, which excuses neither.
 SHEET_CHECK_PARTIES = "claim and sheet, parties the claim names"
 # Templates whose person_ids are who the record was between, not its sender, the one its words
 # refer to, or whose account it is: naming one more party the claim names only narrows the search.
@@ -290,7 +291,8 @@ class Named:
     # only under SHEET_CHECK_PARTIES). Not in the payload: a replay computes it again.
     parties: frozenset[str] = frozenset()
     # Of `apps`, those code binds from the claim's own words (LocalAssumptionFiller.claim_apps,
-    # filler 12), which the sheet check does not count either. Not in the payload.
+    # filler 12), which the sheet check does not count either (set only under
+    # SHEET_CHECK_PARTIES). Not in the payload.
     claim_apps: frozenset[str] = frozenset()
 
     def payload(self) -> dict[str, list[Any]]:
@@ -604,9 +606,15 @@ def check_answer(
         out.setdefault(a.id, a)
     assumptions = list(out.values())
     rows = [(a.template_id, a.params.model_dump()) for a in assumptions if a.is_core]
-    got = dataclasses.replace(named(rows), claim_apps=filler.claim_apps(claim.text))
+    got = named(rows)
     if check == SHEET_CHECK_PARTIES:
-        got = dataclasses.replace(got, parties=claim_parties(filler, claim.text, rows))
+        # the strict SHEET_CHECK, which older logs replay under, excuses neither (Claude
+        # review on #265)
+        got = dataclasses.replace(
+            got,
+            parties=claim_parties(filler, claim.text, rows),
+            claim_apps=filler.claim_apps(claim.text),
+        )
     outside = outside_claim(filler, claim, got)
     if outside:
         return "outside", outside, got, []

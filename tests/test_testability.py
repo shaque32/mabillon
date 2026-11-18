@@ -1124,19 +1124,25 @@ def test_a_party_the_claim_names_is_no_wrong_person_under_the_parties_check(conn
     """Arsh, 2026-11-08 (decision card): the go/no-go scores both passes, and a party the claim
     names is not a wrong person. Under SHEET_CHECK_PARTIES, REYES as a party to the message's
     time (the claim names him) matches a sheet whose rows name PETROV only; under the old
-    SHEET_CHECK, which earlier logs replay with, it is a mismatch as before."""
+    SHEET_CHECK, which earlier logs replay with, it is a mismatch as before, and so is the app
+    "texted" binds (`claim_apps`), which only SHEET_CHECK_PARTIES excuses (Claude review on
+    #265)."""
     filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
     sheet = testability.sheet_named(SHEET)["C12"]
     assert sheet.people == {PETROV}
     old = testability.check_answer(
         filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK
     )
-    assert old[0] == "mismatch" and old[2].parties == frozenset()
-    assert old[1] == [f"names the person {REYES!r}, which the signed sheet does not name"]
+    assert old[0] == "mismatch" and old[2].parties == old[2].claim_apps == frozenset()
+    assert old[1] == [
+        f"names the person {REYES!r}, which the signed sheet does not name",
+        "names the app 'sms', which the signed sheet does not name",
+    ]
     outcome, reasons, got, kept = testability.check_answer(
         filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK_PARTIES
     )
     assert (outcome, reasons) == ("proposed", []) and got.parties == {REYES}
+    assert got.claim_apps == {"sms"}
     assert {a.template_id for a in kept} == {"sender", "record_time"}
     assert got.payload() == old[2].payload()  # the log entry shows what it named, as before
 

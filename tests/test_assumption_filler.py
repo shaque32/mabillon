@@ -4679,3 +4679,63 @@ def test_a_phone_named_only_by_an_app_the_case_lacks_gives_code_no_sender(tmp_pa
     made, f = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert not {a.template_id for a in made} & {"sender", "record_time"}
     assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 1. a clause or content only of words that used to be plain
+        f"{C05_TEXT[:-1]} when he arrived.",
+        f"{C05_TEXT[:-1]} and told him what he had.",
+        f"{C05_TEXT[:-1]} from there.",
+        f"{C05_TEXT[:-1]} and his phone number.",
+        # 2. a second act in plain words
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday", and @northstar'
+        " wrote to PETROV.",
+        # 3. an exchange, which one sender row never reads
+        'On March 12, 2026, PETROV and @northstar had a conversation and PETROV wrote: "need 2'
+        ' more by friday".',
+        'On March 12, 2026, PETROV and @northstar exchanged messages, and PETROV wrote: "need 2'
+        ' more by friday".',
+    ],
+)
+def test_claude_review_on_9f84acb_more_than_the_checks_read(conn, text):
+    # The Claude review of 9f84acb on #265: each of these kept only the sender and time rows
+    # and could be SUPPORTED on them alone.
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time", "event"}
+
+
+def test_claude_review_on_9f84acb_acts_and_counts(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # one message, written with two verbs that lead to its quote, is one act
+    asked = 'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(asked)
+    assert "a second act" in filler.unread_words(
+        "On March 12, 2026, PETROV called @northstar before @northstar called him.", (), {"call"}
+    )
+    # "texted" names the phone's own messages apps and is still an act
+    assert "a second act" in filler.unread_words(
+        "On March 12, 2026, PETROV texted @northstar and @northstar texted PETROV."
+    )
+    # a second time, outside the kept range
+    day = "On March 12, 2026, PETROV texted @northstar at 9 p.m."
+    assert "a second time" not in filler.unread_words(day, [day])
+    assert "a second time" in filler.unread_words(f"{day} and at 10 p.m.", [day])
+    # 4. a number no counting row tests
+    two = "From March 10 through March 31, 2026, PETROV sent @northstar 3 messages and 5 calls."
+    assert "a second count" in filler.unread_words(two, (), {"count"}, counts=1)
+    assert "a second count" not in filler.unread_words(two, (), {"count"}, counts=2)
+    for one in (
+        "From March 10 through March 31, 2026, PETROV sent @northstar at least one message.",
+        "From March 10 through March 31, 2026, PETROV sent @northstar twenty-one messages.",
+        "From March 10 through March 31, 2026, PETROV called @northstar 3 times for 2 minutes.",
+    ):
+        assert "a second count" not in filler.unread_words(one, (), {"count", "length"}), one
+    # "exchanged" is read by a count of both sides (case01 C03), never by a one-way count
+    assert "exchanged" not in filler.unread_words(
+        "PETROV and @northstar exchanged 13 messages.", (), {"count", "each_way"}
+    )
+    assert "exchanged" in filler.unread_words(
+        "PETROV and @northstar exchanged 13 messages.", (), {"count"}
+    )
