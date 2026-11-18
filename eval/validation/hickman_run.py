@@ -452,12 +452,14 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
         return None, None
     p = cov.payload
     read_arts = (p.get("leapp") or {}).get("artifacts_read") or []
-    # by the importer's own keys; an entry it could not read names only its table, which
-    # LEAPP names after the key
+    # by the importer's own artifact keys, never by table name: a manifest may name its table
+    # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
     native = {str(a.get("table")) for a in read_arts if a.get("key") in NATIVE_CALL_KEYS}
-    native |= {k.lower() for k in NATIVE_CALL_KEYS}
+    by_name = {k.lower() for k in NATIVE_CALL_KEYS}  # an entry stored before keys were kept
     for t in p.get("not_imported") or []:
-        if str(t.get("table") or "").lower() in native and int(t.get("records") or 0) > 0:
+        key = t.get("key")
+        mine = key in NATIVE_CALL_KEYS if key else str(t.get("table") or "").lower() in by_name
+        if mine and int(t.get("records") or 0) > 0:
             return (
                 f"its call log ({t.get('table')}, {t.get('records')} records) was not read"
                 f" ({t.get('reason')}); every call claim on this phone would go untested, so the"
@@ -467,7 +469,7 @@ def call_log_check(conn, source_id: str) -> tuple[str | None, str | None]:  # no
     for t in p.get("tables") or []:
         table = str(t.get("header_locator") or "") if isinstance(t, dict) else ""
         read = int(t.get("rows_read") or 0) if table else 0
-        if t.get("kind") != "calls" or table.lower() not in native or read == 0:
+        if t.get("kind") != "calls" or table not in native or read == 0:
             continue
         rows, sided = conn.execute(
             "SELECT count(*), coalesce(sum(from_account_id IS NOT NULL"

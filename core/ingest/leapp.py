@@ -1651,7 +1651,7 @@ def _may_hold_records(lava: Lava, art: Artifact) -> bool:
 
 
 def _not_read(art: Artifact, why: str) -> dict[str, Any]:
-    return {"name": art.name, "category": art.category, "table": art.table,
+    return {"name": art.name, "category": art.category, "table": art.table, "key": art.key,
             "records": art.record_count, "reason": why, "read_failed": True}  # fmt: skip
 
 
@@ -1799,7 +1799,7 @@ class LeappImporter:
                 why = SAME_RECORDS.get((lava.leapp_name, art.key), "Mabillon does not read it")
                 cov.not_imported.append(
                     {"name": art.name, "category": art.category, "table": art.table,
-                     "records": art.record_count, "reason": why,
+                     "key": art.key, "records": art.record_count, "reason": why,
                      "may_hold_records": _may_hold_records(lava, art)}
                 )  # fmt: skip
                 continue

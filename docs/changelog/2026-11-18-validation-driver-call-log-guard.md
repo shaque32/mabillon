@@ -1,8 +1,9 @@
 ## 2026-11-18: The validation run stops before any model call when a phone's call log cannot be read (#269)
 - Changed: `eval/validation/hickman_run.py` (`call_log_check`, gate G5b of the validation v5
   readiness list in project files; not pilot gate 5b). After each phone's import, the build
-  checks the phone's own call log (the importer's `NATIVE_CALL_KEYS`: `get_calllog` or
-  `callHistory`, now public in `core/ingest/leapp.py`). The build stops before the audit, so no
+  checks the phone's own call log, found by the importer's artifact keys (`NATIVE_CALL_KEYS`:
+  `get_calllog` or `callHistory`, now public in `core/ingest/leapp.py`), not by table name.
+  The LEAPP coverage's `not_imported` entries now carry their artifact key too. The build stops before the audit, so no
   model call is made, in two cases:
   - The table has rows but no phone call from it was stored with a side. This happens when
     every row was placed by another app, or had no direction or no party. The message lists the
@@ -31,13 +32,15 @@
   - An iOS call history of FaceTime calls only passes.
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
-  The file's 48 tests pass locally (cloud container, 2026-11-18). On the G2 development case
+  - A call log whose table is named other than its key is still checked, read or unread.
+  The file's 50 tests pass locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped: 70 of 108
   and 13 of 22 call log rows are phone calls a check can read. `make check` runs on GitHub CI.
 - Open: a call log where only a few rows are readable passes and is only logged; no share is
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
   not known.
-- Affects: the validation driver (`eval/`) and one constant made public in the LEAPP importer.
+- Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public and an artifact key added to each
+  `not_imported` coverage entry.
   No product capability, verdict, privacy or network change, and no customer-facing claim.
 - Status doc: no change

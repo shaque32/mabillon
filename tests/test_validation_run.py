@@ -720,6 +720,30 @@ def test_a_call_log_the_import_could_not_read_stops_the_build(tmp_path, monkeypa
         hickman_run.main(args)
 
 
+@pytest.mark.parametrize("unread", [False, True])
+def test_the_call_log_is_found_by_its_key_when_its_table_is_named_otherwise(
+    tmp_path, monkeypatch, unread
+):
+    # The importer reads a call log by its artifact key; a manifest whose table for that key
+    # has another name is still checked (CodeRabbit on #269).
+    import eval.synthetic.leapp as synth
+
+    name = synth.sanitize
+    monkeypatch.setattr(synth, "sanitize", lambda n: "calls_t" if n == "get_calllog" else name(n))
+    if unread:
+        monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+    lv = synth.Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Raw Call Type (as stored)": "1", "Duration in Secs": "5",
+                             "Phone Account Package": "com.samsung.android.dialer"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    why = r"\(calls_t, 1 records\) was not read" if unread else r"\(calls_t\) has 1 rows"
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+
+
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake"]  # fmt: skip
