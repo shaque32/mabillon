@@ -22,8 +22,10 @@
     2 messages", "over 2 hours") is read as its spoken form is, and "video" ("sent a video",
     "a video call") is a word no check reads, not an app's name (CodeRabbit on #265). A spoken
     length no row tests ("over one hour", "for half an hour") is read even when each of its
-    words is plain alone, and a message "on Telegram and Viber" (apps named together, not
-    "or") gets the event, since a row searched on both apps finds it on either (CodeRabbit on
+    words is plain alone, and a message "on Telegram and Viber" gets the event, since a row
+    searched on both apps finds it on either. Each join between two apps named next to each
+    other is read: only "or" or "/" alone keeps them alternatives, so "on Telegram and on either
+    Viber or WhatsApp" and "Telegram, Viber or WhatsApp" get the event too (CodeRabbit on
     #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
@@ -75,7 +77,7 @@
   absence wordings, a plain-word app, short names and handles, texted on two apps, spans) and
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
-  main (1,231), and
+  main (1,235), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

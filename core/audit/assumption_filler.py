@@ -4431,30 +4431,39 @@ class LocalAssumptionFiller:
         return _blank(text, [(st, en) for _, st, en in spans])
 
     def _apps_named_together(self, claim_text: str) -> list[str]:
-        """The words joining the apps a claim names when it names two or more and does not
-        join them with "or" ("on Telegram and Viber", "on both Telegram and Viber"), as one
-        phrase; empty for one app or for "on Telegram or Viber". An app whose name the words
-        do not write whole (a short name of a held app) is read as joined."""
+        """The words naming the claim's apps, as one phrase, when it names two or more and
+        any two named next to each other are not joined by "or" alone ("on Telegram and
+        Viber", "on Telegram and on either Viber or WhatsApp", "Telegram, Viber or
+        WhatsApp"); empty for one app, or when every join is an "or" ("on Telegram or
+        Viber", "either Telegram or Viber"). An app whose name the words do not write whole
+        (a short name of a held app) is read as joined (CodeRabbit on #265)."""
         text = self._without_phone_names(_nfc(claim_text))
         apps = self._named_apps(text)
         if len(apps) < 2:
             return []
         bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
-        spans = []
+        spans: list[tuple[int, int, str]] = []
         for app in apps:
             found = [
-                m.span()
+                (*m.span(), app)
                 for m in re.finditer(rf"(?<!\w){re.escape(app)}(?!\w)", bare, re.IGNORECASE)
             ]
             if not found:
                 return [" and ".join(apps)]
             spans += found
-        first = min(spans, key=lambda sp: sp[0])
-        last = max(spans, key=lambda sp: sp[1])
-        between = bare[first[1] : last[0]]
-        if re.search(r"(?i)\b(?:or|either)\b|/", between):
+        spans.sort()
+        together = False
+        for (_, end, a), (start, _, b) in zip(spans, spans[1:], strict=False):
+            if a == b:
+                continue
+            gap = bare[end:start]
+            alone = re.search(r"(?i)\bor\b|/", gap) and not re.search(
+                r"(?i)\b(?:and|both|plus|as\s+well\s+as|also)\b|&", gap
+            )
+            together = together or not alone
+        if not together:
             return []
-        return [" ".join(bare[first[0] : last[1]].split())]
+        return [" ".join(bare[spans[0][0] : spans[-1][1]].split())]
 
     def _bind_named_app(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message row searched on no app (channels empty) in a claim that names its app

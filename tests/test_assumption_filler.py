@@ -3802,3 +3802,29 @@ def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
     made, _ = build_text(c, either, ClaimType.COMMUNICATION, C05_ANSWER)
     assert "event" not in {a.template_id for a in made}
     assert filler._apps_named_together(text.replace(" and Viber", "")) == []
+
+
+@pytest.mark.parametrize(
+    ("apps", "together"),
+    [
+        ("Telegram and on either Viber or WhatsApp", True),  # one "and" beside an "or"
+        ("Telegram, Viber or WhatsApp", True),  # a list joined by a comma is read as joined
+        ("either Telegram or Viber or WhatsApp", False),
+        ("Telegram/Viber", False),
+    ],
+)
+def test_each_join_between_named_apps_is_read(tmp_path, apps, together):
+    # "on Telegram and on either Viber or WhatsApp" was read as either app because an "or"
+    # stood between the first and last app, so a WhatsApp message alone passed (CodeRabbit on
+    # #265). Every join between two apps named next to each other is read now.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+        "INSERT INTO threads VALUES ('thr:wa', 'item1', 'x', 'dev:item1', 'WhatsApp', NULL)",
+    )
+    text = f'On March 12, 2026, PETROV wrote to @northstar on {apps}: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert len(filler._named_apps(text)) >= 2
+    assert bool(filler._apps_named_together(text)) is together
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert ("event" in {a.template_id for a in made}) is together
