@@ -2888,9 +2888,10 @@ _SAYING = (
     r"messaged|replied|replies|replying|asked|asks|posted|posts|stated|states|stating|answered|"
     r"responded|typed|read|reads|reading"
 )
-# the verb that makes a quote at a clause's start its subject ('"ThisIs DfirTwo" asked'):
+# the verb that makes a quote at a clause's start its subject ('"ThisIs DfirTwo" asked',
+# '"Petrov" then wrote'):
 # a verb of saying, never a trailing phrase ('"Petrov" on Telegram'; CodeRabbit on #265)
-_SUBJECT_AFTER_QUOTE_RE = re.compile(rf"[\s,]*(?:{_SAYING})\b", re.IGNORECASE)
+_SUBJECT_AFTER_QUOTE_RE = re.compile(rf"[\s,]*(?:then\s+)?(?:{_SAYING})\b", re.IGNORECASE)
 # Words that may name who sent a quoted message, anywhere outside quotes ("which @northstar
 # sent", "after receiving it from X", "writing"): with any of them, no record_time is made
 # without a sender, so a writer the claim names is never left untested (PAST-30 fill a). "a
@@ -4621,8 +4622,15 @@ class LocalAssumptionFiller:
         where the claim writes that word, code cannot tell the phone from the app, so no
         message row is kept (CodeRabbit on #265). A longer name ("the SMS SIGNAL PHONE") is
         a phone's name only."""
+
+        def blank(m: re.Match[str]) -> str:
+            return " " * len(m.group(0))
+
+        # quotes, handles ("to @SMS") and addresses are no phone's name; blanked in place, so
+        # each span still reads the claim's own words
+        outside = _HANDLE_RE.sub(blank, _ADDRESS_RE.sub(blank, _unquoted(text)))
         try:
-            spans = self._phone_spans(_unquoted(text))
+            spans = self._phone_spans(outside)
         except Reject:
             return False  # a phone's name in lower case: its words stay, as before
         for _, st, en in spans:
@@ -4717,11 +4725,16 @@ class LocalAssumptionFiller:
         ]
         if not app_rows:
             return out
-        if any(out[i].template_id in MESSAGE_TEXT_TEMPLATES for i in app_rows) and (
-            self._phone_named_as_an_app(_nfc(claim.text))
-        ):
-            # "on the SMS, PETROV sent an SMS" for a phone named "the SMS": no row can tell the
-            # phone from the kind, so the claim stays unproven (CodeRabbit on #265)
+        # a record_time with no quote is a call's time, which `_call_app` reads; every other
+        # row here reads messages (sender, a quoted record_time, a count, an absence)
+        reads_messages = any(
+            out[i].template_id != "record_time" or out[i].params.get("quoted_text")
+            for i in app_rows
+        )
+        if reads_messages and self._phone_named_as_an_app(_nfc(claim.text)):
+            # "on the SMS, PETROV sent an SMS" or "never texted on the SMS" for a phone named
+            # "the SMS": no row can tell the phone from the kind, so the claim stays unproven
+            # (CodeRabbit on #265)
             raise Reject("the claim writes a phone by a name that is only an app's or a kind's")
         # "the TELEGRAM PHONE" names a phone, not an app (`_absence_parties`; CodeRabbit on
         # #265)

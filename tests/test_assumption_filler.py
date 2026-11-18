@@ -4502,6 +4502,8 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
     subject = 'On November 6, 2022, "ThisIs DfirTwo" asked SUBJECT-1, "Can you delete it?"'
     at = subject.index('"ThisIs')
     assert _quote_is_a_party(subject, at, subject.index(" asked"))
+    then = 'On November 6, 2022, "ThisIs DfirTwo" then asked SUBJECT-1, "Can you delete it?"'
+    assert _quote_is_a_party(then, then.index('"ThisIs'), then.index(" then"))
     end = comma.rindex('"') + 1
     assert not _quote_is_a_party(comma, comma.rindex('"', 0, end - 1), end)
 
@@ -4602,8 +4604,23 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
     assert "sender" not in {a.template_id for a in made}
     # nor does a model's row stand: no message row can tell the phone from the kind
-    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert not {a.template_id for a in made} & {"sender", "record_time"}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+    # an absence too: "no contact on the SMS" may be the phone or the kind
+    absent = "PETROV had no contact with @northstar on the SMS between March 20 and March 23, 2026."
+    none = P(
+        "no_contact",
+        people=["PETROV"],
+        handles=["@northstar"],
+        window=W("between March 20 and March 23, 2026", "2026-03-20T00:00", "2026-03-24T00:00"),
+    )
+    made, f = build_text(c, absent, ClaimType.ABSENCE, [none])
+    assert "no_contact" not in {a.template_id for a in made}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+    # a handle ("to @SMS") is an account, never the phone
+    handle = 'On March 12, 2026, PETROV wrote to @SMS on Telegram: "need 2 more by friday".'
+    assert filler._message_apps(handle) == ["Telegram"]
     # the phone's name inside a quote is the message's words, not the phone
     quoted = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "see you on the SMS".'
     assert filler._message_apps(quoted) == ["Telegram"]
@@ -4622,5 +4639,6 @@ def test_a_phone_named_only_by_an_app_the_case_lacks_gives_code_no_sender(tmp_pa
     filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
     text = 'On March 12, 2026, on the SIGNAL, PETROV wrote to @northstar: "need 2 more by friday".'
     assert filler._message_apps(text) is None
-    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert not {a.template_id for a in made} & {"sender", "record_time"}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
