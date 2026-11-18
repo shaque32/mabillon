@@ -1775,7 +1775,7 @@ def test_a_call_time_the_caller_check_cannot_parse_is_not_readable(tmp_path):
     with conn:
         conn.execute("UPDATE calls SET ts_utc = 'not-a-time'")
     conn.close()
-    with pytest.raises(SystemExit, match=r"item1: .*no phone call a check can read"):
+    with pytest.raises(SystemExit, match=r"item1: .*has a time the checks cannot read"):
         hickman_run.main(args)
 
 
@@ -1818,6 +1818,61 @@ def test_a_call_log_with_a_row_no_longer_stored_stops_beside_readable_calls(tmp_
     conn.close()
     with pytest.raises(SystemExit, match=r"get_calllog\) has 2 rows read but 1 calls stored"):
         hickman_run.main(args)
+
+
+def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_path):
+    # Claude review on #269: the caller check parses every call time it reads, so a stored
+    # time it cannot parse would stop the audit partway through, after model calls; the gate
+    # stops it first, even beside readable phone calls.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = 'March 1st' WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"1 of its stored calls has a time the checks cannot"):
+        hickman_run.main(args)
+
+
+def test_the_final_check_holds_its_lock_until_the_completed_write(tmp_path, monkeypatch):
+    # Claude review on #269: the final check's guarantee rests on core/pipeline.py writing the
+    # run as completed in the transaction the check opened, with no commit between the last
+    # progress call and that write. This pins that order, so a pipeline change that ends the
+    # transaction in between fails here.
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    trace: list[str] = []
+    real = hickman_run.open_existing
+
+    def traced(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        conn = real(*a, **k)
+        conn.set_trace_callback(trace.append)
+        return conn
+
+    monkeypatch.setattr(hickman_run, "open_existing", traced)
+    hickman_run.audit(out, True, lambda _m: None, built=built)
+    upper = [t.strip().upper() for t in trace]
+    lock = max(i for i, t in enumerate(upper) if t.startswith("BEGIN IMMEDIATE"))
+    done = next(
+        i for i, t in enumerate(upper)
+        if i > lock and t.startswith("UPDATE PIPELINE_RUNS SET STATUS")
+    )  # fmt: skip
+    between = upper[lock + 1 : done]
+    assert not any(t.startswith(("COMMIT", "ROLLBACK", "END")) for t in between), between
+    assert "STATUS = 'COMPLETED'" in upper[done]
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):

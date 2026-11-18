@@ -726,3 +726,21 @@ def test_a_refused_zip_leaves_an_earlier_score_in_place(scored, tmp_path):
         score_hickman.score(run / "results.zip", base / "keys", base / "dump", out, swapped)
     assert {n: (out / n).read_bytes() for n in before} == before
     assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+def test_a_failed_render_leaves_an_earlier_score_in_place(scored, tmp_path, monkeypatch):
+    # Claude review on #269: the score files are written in full before scored.db is put in
+    # place, so a render that fails leaves the earlier scored.db beside its own score files
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "score.json", "score.md")}
+
+    def broken(_result: dict) -> str:
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(score_hickman, "render", broken)
+    with pytest.raises(RuntimeError, match="render failed"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)

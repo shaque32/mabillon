@@ -58,7 +58,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from core.audit.assumption_filler import NATIVE_CALL_APP
-from core.audit.checks._common import namespace
+from core.audit.checks._common import _ts, namespace
 from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
 
@@ -510,8 +510,6 @@ def _marks(values: list[str]) -> str:
 
 def _ts_ok(value: object) -> int:
     """1 when the caller check's time parser reads the stored value as a time, else 0."""
-    from core.audit.checks._common import _ts
-
     try:
         return int(isinstance(value, str) and _ts(value) is not None)
     except (ValueError, TypeError, OverflowError):
@@ -545,6 +543,23 @@ def call_log_check(  # noqa: ANN001
         return isinstance(key, str) and key.isascii() and key.lower() in native_keys
 
     native_keys = {k.lower() for k in NATIVE_CALL_KEYS}
+
+    # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
+    conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
+    # a stored call time the caller check cannot parse would stop the audit partway through,
+    # after model calls; any app, any importer, since the check reads every call of an
+    # account (Claude review on #269)
+    (bad_ts,) = conn.execute(
+        "SELECT count(*) FROM calls WHERE source_id = ? AND ts_utc IS NOT NULL"
+        " AND NOT mabillon_ts_ok(ts_utc)",
+        (source_id,),
+    ).fetchone()
+    if bad_ts:
+        return (
+            f"{bad_ts} of its stored calls {'has' if bad_ts == 1 else 'have'} a time the checks"
+            " cannot read, so the caller check would stop partway through the audit; check the"
+            " import before any model call"
+        ), None
 
     cov = coverage.load(conn, source_id)
     p = cov.payload if cov else {}
@@ -642,8 +657,6 @@ def call_log_check(  # noqa: ANN001
                 ), None
     by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
     known = sorted(set(IOS_CALL_APPS.values()))
-    # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
-    conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
     notes = []
     for t in p.get("tables") or []:
         if not isinstance(t, dict):
@@ -1068,8 +1081,9 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
 
 def report(out: Path, log, db: str = "case.db") -> dict:  # noqa: ANN001
-    """Write report.html. A report the invariants refuse is left out and said so: the audit's
-    results are in case.db either way, and the score is read from there."""
+    """Write report.html from `db` (the driver passes audited.db, the copy of the audited case).
+    A report the invariants refuse is left out and said so: the audit's results are in that copy
+    either way, and the scorer reads the case.db inside results.zip, made from the same copy."""
     from core.audit.invariants import InvariantViolation
     from core.report.html import write_report
 

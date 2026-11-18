@@ -79,15 +79,18 @@
   the zip's run.json names and the build id stamped in its case.db is the one run.json names
   (run.json now records it; a zip made before build ids, such as the v4 runs, has neither and
   is checked by its run id alone, and one with only one of the two is refused); a case.db on
-  its own is refused. The scorer scores into a temporary copy and replaces `scored.db`,
-  `score.json` and `score.md` only once scoring succeeds, so a refused zip leaves an earlier
-  score in place. The final check tests that the
+  its own is refused. The scorer scores into a temporary copy, writes `score.json` and
+  `score.md` in full beside it, and only then puts the three in place, so a refused zip or a
+  failed render leaves an earlier score in place. The final check tests that the
   case still passes the gates, not that it equals what the audit read: a change made and
   reversed while the audit ran, or one that leaves the gates passing (such as a call time moved
   to another readable time), is not detected, and model calls made before a refusal are still
   spent. Closing these needs the pipeline to read in a snapshot the driver holds, a hook in
   `core/pipeline.py` not made here; the driver owns its output directory through `run.lock`,
-  and nothing else is meant to write to case.db during a run.
+  and nothing else is meant to write to case.db during a run. The final check also relies on
+  the pipeline writing the run as completed in the transaction the check opened, with no
+  commit in between; a driver test traces the statements and fails if the pipeline ever ends
+  that transaction first.
   Otherwise the audit copies the case on that same connection, in the same read transaction as
   the check, to `audited.db`, and the
   report and `results.zip` are made from that copy, not from case.db read again by path, so they
@@ -126,8 +129,10 @@
     FaceTime call beside them.
   - An iOS call history of FaceTime calls only passes; on a stored case, calls of an app not
     known as a call provider and no phone call stop the check, and so does a history with fewer
-    calls stored than rows read, with or without a readable phone call beside them. A stored call time the caller check cannot parse is not a
-    readable time.
+    calls stored than rows read, with or without a readable phone call beside them. A stored call
+    time the caller check cannot parse stops the check before any model call, for any app on
+    the phone and for any importer, since the caller check reads every call of an account and
+    would fail on it partway through the audit.
   - A call log entry with no table name stops the build (`no table named`); an entry with
     neither a key nor a table stops it as a manifest problem when it may hold records and
     passes when counted 0 (a key of only spaces counts as none).
@@ -189,7 +194,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 94 tests pass (with `tests/test_leapp.py`, 207; `tests/test_validation_score.py`'s 30 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 96 tests pass (with `tests/test_leapp.py`, 209; `tests/test_validation_score.py`'s 31 pass too) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -197,11 +202,12 @@
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
   not known. The caller check itself (`core/audit/checks/_common.py` `_ts`) still raises on a
-  stored call time it cannot parse, so such a row beside readable ones fails the audit loudly
-  (the pipeline marks the run failed and sets no verdict for the claim that failed; verdicts
-  of claims finished before it stay in the case) rather than reading as inconclusive; that
-  shared parser is used by every check and is not changed here. The importers store only
-  parsed UTC times.
+  stored call time it cannot parse; the driver now stops such a case before any model call,
+  but the app's own audit path does not, and that shared parser is used by every check and is
+  not changed here. The importers store only parsed UTC times. A phone whose LEAPP output
+  lists no call log at all always stops the driver, and no option lets it through, so such a
+  phone is looked at by a person before any spend (whether a v5 phone has one is not known
+  before the run).
 - Affects: the validation driver and scorer (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at

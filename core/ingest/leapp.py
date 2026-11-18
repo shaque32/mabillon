@@ -71,6 +71,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -199,6 +200,8 @@ class Lava:
     tableless: list[dict[str, Any]] = field(default_factory=list)
     # each table's columns as stored; two manifest entries can share a table with other maps
     _columns: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    # each table's rows probe (_may_hold_records), asked once per table (Claude review on #269)
+    _has_rows: dict[str, bool | None] = field(default_factory=dict, repr=False)
     # record kinds stored from a table read as another kind (a chat table's call notices)
     extra_kinds: set[RecordKind] = field(default_factory=set)
 
@@ -254,13 +257,22 @@ def _known_key(leapp: str, key: object) -> object:
     read and checked as one, and so is every other key it reads (CodeRabbit and Claude review
     on #269)."""
     if isinstance(key, str) and key.isascii():
-        # a phone call log key is the call log under either LEAPP, as the run's check reads it
-        known = [*NATIVE_CALL_KEYS]
-        known += [k for lp, k in (*SPECS, *CHAT_SPECS, *CALL_SPECS, *SAME_RECORDS) if lp == leapp]
-        for k in known:
-            if key.lower() == k.lower():
-                return k
+        return _key_spellings(leapp).get(key.lower(), key)
     return key
+
+
+@cache
+def _key_spellings(leapp: str) -> dict[str, str]:
+    """{key in lower case: Mabillon's own spelling} for this LEAPP, built once (Claude review
+    on #269). A phone call log key is the call log under either LEAPP, as the run's check reads
+    it; the first spelling listed wins."""
+    out: dict[str, str] = {}
+    for k in NATIVE_CALL_KEYS:
+        out.setdefault(k.lower(), k)
+    for lp, k in (*SPECS, *CHAT_SPECS, *CALL_SPECS, *SAME_RECORDS):
+        if lp == leapp:
+            out.setdefault(k.lower(), k)
+    return out
 
 
 def _find_table(db: sqlite3.Connection, table: str) -> str | None:
@@ -1772,13 +1784,21 @@ def _may_hold_records(lava: Lava, art: Artifact) -> bool:
     be wrong, and a refused call log with rows must not pass as empty (CodeRabbit on #269)."""
     if art.record_count is not None and art.record_count > 0:
         return True
+    if art.table not in lava._has_rows:
+        lava._has_rows[art.table] = _table_has_rows(lava, art)
+    held = lava._has_rows[art.table]
+    return art.record_count is None if held is None else held
+
+
+def _table_has_rows(lava: Lava, art: Artifact) -> bool | None:
+    """None when the table is not there; else whether a row can be read from it (a table that
+    cannot be read is not known to be empty; CodeRabbit on #269)."""
     if not lava.has_table(art):
-        return art.record_count is None
+        return None
     quoted = art.table.replace(chr(34), chr(34) * 2)
     try:
         return lava.db.execute(f'SELECT 1 FROM "{quoted}" LIMIT 1').fetchone() is not None  # noqa: S608  (a table the manifest names, quoted)
     except db_errors.DatabaseError:
-        # a table that cannot be read is not known to be empty (CodeRabbit on #269)
         return True
 
 

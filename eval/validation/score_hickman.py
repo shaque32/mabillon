@@ -865,13 +865,22 @@ def score(
     # scored under a temporary name, put in place with the score files only once scoring
     # succeeds, so a refused or failed zip leaves an earlier score as it was (CodeRabbit)
     db = out / "scored.db.part"
+    names = ("score.json", "score.md")
+    parts = {n: out / f"{n}.part" for n in names}
     try:
         result = _score(results, keys, dump, out, db, repeat_of)
+        # both score files are rendered and written in full before any file is put in place,
+        # so a failed render or write leaves the earlier scored.db and score files together
+        # (Claude review on #269)
+        parts["score.json"].write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+        parts["score.md"].write_text(render(result), encoding="utf-8")
+        for n in names:
+            os.replace(parts[n], out / n)
         os.replace(db, out / "scored.db")
     finally:
         db.unlink(missing_ok=True)
-    (out / "score.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-    (out / "score.md").write_text(render(result), encoding="utf-8")
+        for part in parts.values():
+            part.unlink(missing_ok=True)
     return result
 
 
