@@ -52,10 +52,14 @@
   that moment marks the run stopped (with the reason in its note and a halt entry in the audit
   log), so `pipeline.last_run` and the scorer never take it as the case's completed audit, while
   its finished claims stay reusable; a change made and reversed while the audit ran is not
-  detected. Otherwise the audit copies the case on that same connection to `audited.db`, and the
+  detected, and the run is recorded as completed by the pipeline for the moment between its
+  return and that update (closing that needs a hook in `core/pipeline.py`, not made here).
+  Otherwise the audit copies the case on that same connection, in the same read transaction as
+  the check, to `audited.db`, and the
   report and `results.zip` are made from that copy, not from case.db read again by path, so they
   hold the audited build whatever case.db holds by then; the zip is written under a temporary
-  name and published only once complete. The resume and the audit open case.db without ever
+  name and published only once complete, never without the audited case, and an earlier
+  attempt's `results.zip` is removed before the audit starts. The resume and the audit open case.db without ever
   creating it, so a case.db moved away stops the run instead of leaving an empty file, and the
   run decides once whether it builds or resumes, so a `built.ok` that vanishes mid-run never
   starts a build. It also stops unless
@@ -93,8 +97,10 @@
     run, and no `audited.db` is left); through `main()` too, with the audit itself refusing
     before any run; a case.db moved away is never recreated; another build's case.db put at
     case.db while the report reads it, or before the zip, never reaches `report.html` or
-    `results.zip`; a zip that fails to write is never published; a `built.ok` removed
-    mid-resume never starts a build.
+    `results.zip` (the other build's claim text is absent from the report); an owner withdrawn
+    by another connection between the final check and the copy never reaches the shipped copy;
+    a zip that fails to write, or lacks the audited case, is never published; a failed attempt
+    leaves no earlier `results.zip`; a `built.ok` removed mid-resume never starts a build.
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
@@ -137,7 +143,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 75 tests pass (with `tests/test_leapp.py`, 183) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 78 tests pass (with `tests/test_leapp.py`, 186) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

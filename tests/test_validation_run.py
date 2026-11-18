@@ -1217,7 +1217,11 @@ def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypa
     out, other = tmp_path / "out", tmp_path / "other"
     args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
             "--fake"]  # fmt: skip
-    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    (tmp_path / "o").mkdir()
+    marked = [{**CLAIMS[0], "text": CLAIMS[0]["text"] + " OTHER BUILD"}, *CLAIMS[1:]]
+    other_args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path / "o", marked)),
+                  "--out", str(other), "--fake"]  # fmt: skip
+    assert hickman_run.main(other_args) == 0
     real_report = hickman_run.report
     kept = tmp_path / "kept.db"
 
@@ -1243,12 +1247,80 @@ def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypa
         conn.close()
     other_built = json.loads((other / "built.ok").read_text(encoding="utf-8"))
     assert other_built["build_id"] != built["build_id"]
-    run_id = json.loads((out / "run.json").read_text(encoding="utf-8"))["audit"]["run_id"]
-    other_id = json.loads((other / "run.json").read_text(encoding="utf-8"))["audit"]["run_id"]
     html = (out / "report.html").read_text(encoding="utf-8")
-    assert run_id in html
-    if other_id != run_id:  # run ids are per second, so two fast runs can share one
-        assert other_id not in html
+    assert "OTHER BUILD" not in html  # the other build's claim text never reaches the report
+    assert "OTHER BUILD" in (other / "report.html").read_text(encoding="utf-8")
+
+
+def test_the_copy_holds_the_owners_the_final_check_passed(ufdr, tmp_path, monkeypatch):
+    # CodeRabbit on #269: the final owner check and the copy read in one transaction, so an
+    # owner withdrawn by another connection between the two never reaches audited.db.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    real, calls = hickman_run.owner_stop, []
+
+    def then_withdraw(conn, phones):  # noqa: ANN001, ANN202
+        r = real(conn, phones)
+        calls.append(r)
+        if len(calls) == 2:  # the check after the audit, before the copy
+            other = sqlite3.connect(out / "case.db", timeout=0.2)
+            try:
+                with other:
+                    other.execute(
+                        "UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'"
+                    )
+            except sqlite3.OperationalError:
+                pass  # held off by the check's read transaction
+            finally:
+                other.close()
+        return r
+
+    monkeypatch.setattr(hickman_run, "owner_stop", then_withdraw)
+    assert hickman_run.main(args) == 0
+    shipped = tmp_path / "shipped.db"
+    with zipfile.ZipFile(out / "results.zip") as z, z.open("case.db") as src:
+        shipped.write_bytes(src.read())
+    conn = sqlite3.connect(shipped)
+    try:
+        (status,) = conn.execute(
+            "SELECT status FROM stipulations WHERE kind = 'device_owner'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert status == "confirmed"
+
+
+def test_a_failed_attempt_leaves_no_earlier_results_zip(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0 and (out / "results.zip").exists()
+
+    def broken(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise SystemExit("audit broke")
+
+    monkeypatch.setattr(hickman_run, "audit", broken)
+    with pytest.raises(SystemExit, match="audit broke"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists()
+
+
+def test_a_zip_without_the_audited_case_is_never_published(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    real = hickman_run.report
+
+    def report_then(o, *a):  # noqa: ANN001, ANN002, ANN202
+        r = real(o, *a)
+        (o / hickman_run.AUDITED).unlink()
+        return r
+
+    monkeypatch.setattr(hickman_run, "report", report_then)
+    with pytest.raises(SystemExit, match="audited.db is missing; results.zip not published"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists() and not (out / "results.zip.part").exists()
 
 
 def test_a_zip_that_fails_to_write_is_never_published(ufdr, tmp_path, monkeypatch):

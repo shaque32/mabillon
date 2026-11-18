@@ -902,9 +902,13 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         # changed in between (or during the run) and still changed now leaves this run's
         # verdicts on an owner the build did not stipulate. The run is then marked stopped, so
         # no scorer or report takes it as the case's completed audit (pipeline.last_run), while
-        # its finished claims stay reusable, and the run stops here (CodeRabbit on #269).
+        # its finished claims stay reusable, and the run stops here (CodeRabbit on #269). The
+        # check and the copy below read in one transaction, so the copy holds the owners the
+        # check passed.
+        conn.execute("BEGIN")
         stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
         if stop:
+            conn.commit()  # end the read before the refusal is written
             with conn:
                 conn.execute(
                     "UPDATE pipeline_runs SET status = 'stopped', note = ? WHERE id = ?",
@@ -918,9 +922,12 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                     {"run_id": result.run_id, "error": f"{REFUSED}: {stop}", "stopped": True},
                 )
             raise SystemExit(f"{REFUSED}: {stop}")
-        with sqlite3.connect(out / AUDITED) as copy:
-            conn.backup(copy)
-        copy.close()
+        try:
+            with sqlite3.connect(out / AUDITED) as copy:
+                conn.backup(copy)
+            copy.close()
+        finally:
+            conn.commit()
         tally: dict[str, int] = {}
         for d in result.decisions:
             tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
@@ -1194,6 +1201,8 @@ def main(argv: list[str] | None = None) -> int:
     if report_sha is not None:
         run["report_xml_sha256"] = report_sha
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    # an earlier attempt's results never stand for this one, even if this one stops early
+    (a.out / "results.zip").unlink(missing_ok=True)
     from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing
 
@@ -1237,6 +1246,8 @@ def main(argv: list[str] | None = None) -> int:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
             for name in RESULT_FILES:
                 src = a.out / (AUDITED if name == "case.db" else name)
+                if name == "case.db" and not src.exists():  # never a zip without the case
+                    raise SystemExit(f"{src} is missing; results.zip not published")
                 if src.exists():
                     z.write(src, name)
         part.replace(a.out / "results.zip")
