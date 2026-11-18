@@ -4635,6 +4635,9 @@ def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
     # nor a web address, whatever its suffix, while a phone named by a whole address is read
     pixel = 'On March 12, 2026, PETROV wrote to @northstar from https://SMS.dev/notes: "ok".'
     assert filler._written_phones(pixel) == set()
+    # a scheme-less address runs from its host through a path to a common suffix
+    path = 'On March 12, 2026, PETROV wrote to @northstar from SMS.dev/docs/example.com: "ok".'
+    assert filler._written_phones(path) == set()
     # an address ends at an angle bracket: the phone written after it is still the claim's
     bracketed = "PETROV wrote on <https://example.dev/notes>,SMS,"
     assert filler._phone_spans(bracketed) == [("dev:item1", 44, 47)]
