@@ -1306,16 +1306,22 @@ def _telegram_flags(payload: dict) -> dict:
 
 def test_a_message_that_only_starts_like_a_call_notice_stays_a_message(tmp_path: Path) -> None:
     # Claude review on #268: only LEAPP's own notice shape is read as a call.
+    # CodeRabbit on #268: so does one that opens like a notice but is not one in full.
     lv = _android()
-    _telegram(lv, "[Phone call me later]")
+    typed = ("[Phone call me later]", "[Phone call (call id 638, please call tomorrow]")
+    for text in typed:
+        _telegram(lv, text)
+    _telegram(lv, "[Phone call (call id 999)]")  # a notice whose record holds no outcome
     conn = _db()
     LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
-    assert _calls(conn, "Telegram") == []
+    assert _calls(conn, "Telegram") == [
+        ("get_telegrammessages/rowid=3", "unknown", None, None, None)
+    ]
     bodies = conn.execute(
         "SELECT m.body FROM messages m JOIN threads t ON t.id = m.thread_id"
-        " WHERE t.app = 'Telegram'"
+        " WHERE t.app = 'Telegram' ORDER BY m.locator"
     ).fetchall()
-    assert bodies == [("[Phone call me later]",)]
+    assert bodies == [(t,) for t in typed]
 
 
 def test_a_recovered_call_notice_is_a_possible_copy(tmp_path: Path) -> None:

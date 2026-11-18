@@ -1058,7 +1058,7 @@ def _chat_messages(c: _Ctx) -> None:
             sender = None
         recovered = bool(spec.live) and _text(r.get(spec.live[0])) != spec.live[1]
         text = str(r.get(h_text) or "")
-        if spec.call_notices and _CALL_NOTICE_LEAD.match(text):
+        if spec.call_notices and _CALL_NOTICE_FORM.match(text):
             _call_notice(c, spec.app, loc, text, direction, sender, recovered, r.get(h_time))
             continue
         convo = _text(r.get(h_convo)) if h_convo else None
@@ -1077,9 +1077,16 @@ def _chat_messages(c: _Ctx) -> None:
             c.w.cov.numbered_copy_records.append(f"msg:{c.w.src}:{loc}")
 
 
-# A row is a call notice only when it opens the way ALEAPP writes one, so a message someone
-# typed that starts "[Phone call" stays a message (Claude review on #268).
-_CALL_NOTICE_LEAD = re.compile(r"^\[Phone call \(call id -?\d+, ")
+# A row is a call notice only when its whole text has the form ALEAPP writes for one (its
+# telegramAndroid.py at ed1b63d: the call id, then an outcome and a length when the record holds
+# them), so a message someone typed that only starts like one stays a message (Claude review and
+# CodeRabbit on #268). The chat table names no service rows, so a typed text in exactly this form
+# cannot be told from a notice.
+_CALL_NOTICE_FORM = re.compile(
+    r"^\[Phone call \(call id -?\d+"
+    r"(?:, outcome (?:missed|disconnected|hung up|busy|unknown))?"
+    r"(?:, duration seconds -?\d+)?\)\]$"
+)
 # ALEAPP Telegram's call notice; on the public Android 13 phone each one matched a UFDR Telegram
 # call on time, direction, caller and length.
 _CALL_NOTICE_RE = re.compile(

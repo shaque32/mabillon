@@ -15,7 +15,8 @@
   app (not only the phone's call log) from being read in full, and any such row in the phone's
   own call table keeps the call log partial whichever app it names; on ALEAPP a call log row
   written by another app's package (a VoIP call, stored with neither side) or naming no package,
-  or a call log that was not read in full, keeps every chat app from being read in full; a chat
+  or a call log table that is missing, was not read, or has an entry holding records that were
+  not read, keeps every chat app from being read in full; a chat
   app counts as read in full only when one of its chat tables and every call table listed for it
   were read (a call table alone, such as Viber's, never does); ALEAPP
   WhatsApp is never read in full (a group call started outside a group chat cannot be told from

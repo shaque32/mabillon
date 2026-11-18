@@ -143,9 +143,11 @@ from its sender, with that length. Only a live notice of a call that was answere
 in a stated direction, keeps its side; any other is stored with no sides and flagged, so
 Telegram's calls are not read in full. A placed call whose row names no sender is flagged
 `sent_without_own_account`. A recovered notice is listed as a possible copy, like a recovered
-message, so a count over it is inconclusive. Only a row that starts with LEAPP's own notice
-shape (`[Phone call (call id N, `) is read as a call; other text that starts with `[Phone call`
-stays a message. On the Android 13 phone 2 of its 29 rows are recovered;
+message, so a count over it is inconclusive. Only a row whose whole text has the form ALEAPP
+writes for a notice (`[Phone call (call id N)]`, with `, outcome ...` and `, duration seconds N`
+when the record holds them) is read as a call; other text that starts with `[Phone call` stays a
+message. The table marks no row as a notice, so a message typed in exactly that form cannot be
+told from one. On the Android 13 phone 2 of its 29 rows are recovered;
 its 4 call notices matched the UFDR's 4 Telegram calls on time, direction, caller and length; 23
 of the other 25 matched the UFDR with their sender, and 2 have no text.
 
