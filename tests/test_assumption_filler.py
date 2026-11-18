@@ -1551,11 +1551,13 @@ def test_a_code_made_sender_stays_on_the_phones_messages_when_the_claim_names_th
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
     phone = ["Phone", "SMS"]  # case01's apps that hold a phone's messages
     assert filler._message_apps('PETROV texted REYES: "ok".') == phone
-    assert filler._message_apps('PETROV told REYES by iMessage: "ok".') == phone
+    # "by iMessage" names a kind case01 holds no app for: an iMessage is never read on the
+    # SMS app (CodeRabbit on #265), so code makes no sender
+    assert filler._message_apps('PETROV told REYES by iMessage: "ok".') is None
     assert filler._message_apps('PETROV texted REYES on Telegram: "ok".') == ["Telegram"]
     assert filler._message_apps('PETROV wrote to REYES: "ok".') == []
     # An app named inside the message is no app it went by.
-    assert filler._message_apps('PETROV told REYES by iMessage: "use Telegram".') == phone
+    assert filler._message_apps('PETROV told REYES by SMS: "use Telegram".') == ["SMS"]
     assert filler._message_apps('PETROV texted REYES: "use Telegram".') == phone
 
 
@@ -4273,8 +4275,16 @@ def test_more_findings_on_e3062bf(tmp_path):
     )
     tg = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
     assert tg.claim_apps(wrapped) == {"telegram"}
-    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    # in one quote, a wrapped app name is the message's, and the claim is read on Telegram
+    one = wrapped.replace('friday",\n adding "try', "friday, try").replace(
+        'friday", adding "try', "friday, try"
+    )
+    assert one.count('"') == 2, one
+    made, _ = build_text(c, one, ClaimType.COMMUNICATION, C05_ANSWER)
     assert {a.template_id for a in made} >= {"sender", "record_time"}
+    # its second quote, which no row tests, needs an expert (CodeRabbit on #265)
+    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time", "event"}
 
 
 def test_a_plain_word_app_written_lowercase_binds_no_row(tmp_path):
@@ -4324,3 +4334,71 @@ def test_a_plain_word_app_written_lowercase_binds_no_row(tmp_path):
     assert filler.claim_apps(wrote) == frozenset()
     assert filler.claim_apps(named) == frozenset({"line"})
     assert filler.claim_apps(beside) == frozenset({"telegram"})
+
+
+def test_coderabbit_round_on_4a9bc77(tmp_path):
+    # Five findings from CodeRabbit's review of 4a9bc77 on #265.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+        "INSERT INTO threads VALUES ('thr:sig', 'item1', 'y', 'dev:item1', 'Signal', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'z', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # 1. "sent an SMS": code's own sender searches the SMS app, never the iMessage store
+    # beside it, which the binding would refuse, leaving the claim unread
+    sms = 'On March 12, 2026, PETROV sent an SMS to @northstar: "need 2 more by friday".'
+    assert filler._message_apps(sms) == ["SMS"]
+    made, _ = build_text(c, sms, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    got = {a.template_id: tuple(a.params.channels) for a in made}
+    assert got.get("sender") == ("SMS",), got
+    # 2. an app named only inside the quote is no app the model may put a row on
+    quoted = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday on'
+        ' Signal".'
+    )
+    on_signal = [{**p, "channels": ["Signal"]} for p in C05_ANSWER]
+    made, _ = build_text(c, quoted, ClaimType.COMMUNICATION, on_signal)
+    assert all("Signal" not in a.params.channels for a in made), [a.params for a in made]
+    # 3. "Facebook" alone beside a held "Facebook Messenger" is an app the case lacks
+    assert filler._names_an_app_the_case_lacks("on Facebook and Facebook Messenger")
+    assert not filler._names_an_app_the_case_lacks("on Facebook Messenger")
+
+    # 4. read on the kept rows (`coverage_gap`)
+    def gap(text: str, *rows: Proposal) -> str | None:
+        cl = Claim(
+            id="X1",
+            paragraph_id="p",
+            text=text,
+            claim_type=ClaimType.COMMUNICATION,
+            status=ClaimStatus.ACCEPTED,
+        )
+        return coverage_gap(cl, list(rows))
+
+    class _W:
+        raw = "On March 12, 2026, at 9:31"
+
+    def row(tid: str, quote: str) -> Proposal:
+        return Proposal(tid, {"quoted_text": quote, "window": _W()})
+
+    # a time to the second is tested by no check, whatever path its range took
+    secs = 'On March 12, 2026, at 9:31:04, PETROV wrote to @northstar: "ok".'
+    assert "to the second" in (gap(secs, row("sender", "ok"), row("record_time", "ok")) or "")
+    assert (
+        gap(secs.replace("9:31:04", "9:31"), row("sender", "ok"), row("record_time", "ok")) is None
+    )
+    # 5. each quoted message needs a row that tests it, or an expert
+    two = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then "on my'
+        ' way".'
+    )
+    made, _ = build_text(c, two, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}
+    one = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, one, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    # a quote that only names a party is no message, read without spaces or punctuation
+    named = one.replace("@northstar:", '@northstar ("Daniel  Petrov,"):')
+    made, _ = build_text(c, named, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}

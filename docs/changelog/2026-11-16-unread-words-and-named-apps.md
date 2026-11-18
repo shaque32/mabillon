@@ -1,4 +1,4 @@
-## 2026-11-16: Claims with words no check reads, or a named app, can no longer pass on checks alone; counts flag look-alike rows
+## 2026-11-16: Claims with words no check reads need an expert; a named app limits the search to that app; counts flag look-alike rows
 - Changed: four fixes from the v5 failure hunt (plan in project files, no model calls), each a
   class found by feeding plausible wrong model answers and new claim wordings through the
   filler and checks on the public development phones.
@@ -87,11 +87,17 @@
     capital (`_scope_apps`, read by `_bind_named_app`, `_message_apps` and `claim_apps`):
     "wrote to REYES on his second line" searches every app, "texted REYES on his second line"
     the phone's own messages, never Line, where a true text would go unfound, and "on
-    Telegram or his second line" Telegram alone (CodeRabbit on #265).
+    Telegram or his second line" Telegram alone (CodeRabbit on #265). Code's own sender for
+    "sent an SMS" searches the SMS app only, never an iMessage store beside it. An app the model
+    puts a row on must be named outside the quoted words ('on Telegram: "... on Signal"' gives
+    no Signal row), and "Facebook" alone beside a held "Facebook Messenger" is an app the case
+    lacks, so the claim stays unproven (CodeRabbit on #265).
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
-    it states. A length written so ("lasted 0:12:45") is not a time of day. For the readers
+    it states; `coverage_gap` also refuses such a claim whatever path its range took. A claim
+    that quotes more than one message gets the expert-only event unless a sender or time row
+    tests each one, since quoted words are never read as unread words (CodeRabbit on #265). A length written so ("lasted 0:12:45") is not a time of day. For the readers
     that blank quoted words with `_unquoted` (the seconds guards, stated ranges, the time-of-day,
     month and year scans of coverage gaps, unread words and the app readers), a time, an app or
     any other word inside a quote that a line break wraps is the quote's, not the claim's:

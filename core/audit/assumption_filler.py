@@ -2988,6 +2988,10 @@ def coverage_gap(
         return "the claim dates itself from another day but no assumption tests a time range"
     if time_mentions(_unquoted(claim.text)) and not any(time_mentions(r) for r in raws):
         return "the claim states a time of day but no time range states one"
+    if _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
+        # "at 9:31:04": no check tests a time to the second, whatever path its range took
+        # (CodeRabbit on #265)
+        return "the claim states a time to the second, which no check tests"
     if _QUOTED_MESSAGE.search(claim.text) and "sender" not in kept:
         quotes = [m.group(0)[1:-1].strip() for m in _QUOTE_SPAN_RE.finditer(_flat(claim.text))]
         if claim.claim_type is ClaimType.COMMUNICATION or any(
@@ -3616,7 +3620,7 @@ class LocalAssumptionFiller:
                 params["person_ids"] = [writer]
                 code_made = True
 
-        channels = self._channels(claim.text, p.channels, tpl.id)
+        channels = self._channels(_unquoted(claim.text), p.channels, tpl.id)
         if channels:
             params["channels"] = channels
 
@@ -3667,7 +3671,7 @@ class LocalAssumptionFiller:
                     # The app the model wrote the person on scopes their accounts, as the
                     # channel it is, which the claim must name; without it a message on any of
                     # their apps would do (Codex on #152).
-                    (on,) = self._channels(claim.text, [acc.app], tpl.id)
+                    (on,) = self._channels(_unquoted(claim.text), [acc.app], tpl.id)
                     if channels and on not in channels:
                         raise Reject(
                             f"{written!r} is written on {on}, which the proposal's channels"
@@ -4308,6 +4312,13 @@ class LocalAssumptionFiller:
         iMessage (Codex on #164); None when the case holds no such app. Empty when the claim
         names no app."""
         words = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
+        if _PHONE_APP_WORD_RE.search(_HANDLE_RE.sub(" ", words)) and not self._named_apps(
+            claim_text
+        ):
+            # "PETROV wrote an SMS": the kinds the words name, as `_claim_scope` binds them,
+            # never the iMessage store beside it, which `_bind_named_app` would refuse
+            # (CodeRabbit on #265); None when the case holds no app of those kinds
+            return self._phone_apps_named(_HANDLE_RE.sub(" ", words)) or None
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
         # word, as `_bind_named_app` binds none (CodeRabbit on #265)
         if named := self._scope_apps(
@@ -4909,6 +4920,34 @@ class LocalAssumptionFiller:
             }
             if wider:
                 words = [named.group(0).casefold()]
+        if not words:
+            # 'PETROV wrote "ok" and then "on my way"': each quoted message is a part of the
+            # claim, and quoted words are never read as unread words, so one that no sender or
+            # time row tests needs an expert (CodeRabbit on #265)
+            tested = [
+                " ".join(_nfc(str(p.params.get("quoted_text") or "")).casefold().split())
+                for p in core
+                if p.template_id in ("sender", "record_time")
+            ]
+
+            # a quote that only names a party ('to the Kik user "ThisIs DFIRTwo,"') is no
+            # message: a person's or an account's name, read without spaces or punctuation
+            def key(x: str) -> str:
+                return re.sub(r"[\W_]+", "", _nfc(x).casefold())
+
+            names = {key(n) for n in self._names(claim.text)}
+            quotes = [
+                q
+                for q in (
+                    " ".join(_nfc(m.group(0)[1:-1]).casefold().split())
+                    for m in _QUOTE_SPAN_RE.finditer(_flat(claim.text))
+                )
+                if q and key(q) not in names
+            ]
+            if len(quotes) > 1 and any(
+                not any(t and (t in q or q in t) for t in tested) for q in quotes
+            ):
+                words = ["a second quoted message"]
         if not words:
             return out
         if "event" not in allowed_ids:
@@ -5623,13 +5662,15 @@ class LocalAssumptionFiller:
         reads it for calls, `unread_words` for messages). A handle ("@viber") names an
         account, not an app (CodeRabbit on #265)."""
         bare = _HANDLE_RE.sub(" ", bare)
-        held = [" ".join(a.casefold().split()) for a in self._named_apps(bare)]
+        # each mention apart: "Facebook" alone beside a held "Facebook Messenger" is an app the
+        # case lacks, while the "Facebook" inside "Facebook Messenger" is not (CodeRabbit on
+        # #265)
+        held = [sp for a in self._named_apps(bare) for sp in self._app_mentions(bare, a)]
         for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE, _OTHER_MESSAGE_APPS_RE):
             for m in rx.finditer(bare):
-                word = " ".join(m.group(0).casefold().split())
-                if word == "video":
+                if " ".join(m.group(0).casefold().split()) == "video":
                     continue
-                if not any(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", a) for a in held):
+                if not any(a <= m.start() and m.end() <= b for a, b in held):
                     return True
         return False
 
