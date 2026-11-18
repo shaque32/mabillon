@@ -17,30 +17,31 @@ from core.contracts import ClaimType, Verdict
 from eval.rulepacks.claim_api import A2, A3, ET, GoldClaim, call, window
 from eval.rulepacks.reader import LINE_DEVICE, P1, P3
 
-_call, _w = call, window  # older names, kept for callers
 __all__ = ["A2", "A3", "CLAIMS", "ET", "GoldClaim", "call", "window"]
 
-MAR4_2AM = _w(datetime(2026, 3, 4, 2, 0), datetime(2026, 3, 4, 2, 30), "about 2:14 a.m. on March 4")
-MAR4_830PM = _w(
+MAR4_2AM = window(
+    datetime(2026, 3, 4, 2, 0), datetime(2026, 3, 4, 2, 30), "about 2:14 a.m. on March 4"
+)
+MAR4_830PM = window(
     datetime(2026, 3, 4, 20, 15), datetime(2026, 3, 4, 20, 45), "about 8:30 p.m. on March 4"
 )
-MAR4_910PM = _w(
+MAR4_910PM = window(
     datetime(2026, 3, 4, 21, 0), datetime(2026, 3, 4, 21, 20), "about 9:10 p.m. on March 4"
 )
-MAR5_10PM = _w(
+MAR5_10PM = window(
     datetime(2026, 3, 5, 21, 45), datetime(2026, 3, 5, 22, 15), "about 10 p.m. on March 5"
 )
-MAR9_745PM = _w(
+MAR9_745PM = window(
     datetime(2026, 3, 9, 19, 30), datetime(2026, 3, 9, 20, 0), "about 7:45 p.m. on March 9"
 )
 # the e3 call (8:30 p.m. ET) read wrongly: its UTC time as if Eastern, its Central time as Eastern
-MAR5_130AM = _w(
+MAR5_130AM = window(
     datetime(2026, 3, 5, 1, 0), datetime(2026, 3, 5, 2, 0), "about 1:30 a.m. on March 5"
 )
-MAR4_730PM = _w(
+MAR4_730PM = window(
     datetime(2026, 3, 4, 19, 15), datetime(2026, 3, 4, 19, 45), "about 7:30 p.m. on March 4"
 )
-MAR3_6 = _w(datetime(2026, 3, 3), datetime(2026, 3, 7), "March 3 to 6")  # fmt: skip
+MAR3_6 = window(datetime(2026, 3, 3), datetime(2026, 3, 7), "March 3 to 6")  # fmt: skip
 
 CLAIMS: tuple[GoldClaim, ...] = (
     GoldClaim(

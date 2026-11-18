@@ -23,7 +23,7 @@ python -m eval.rulepacks.harness <pack.json> --claims reference,blind --cards
 
 | File | What it is |
 |---|---|
-| `pack.py` | The pack format (pydantic), its validator and its hash (signatures and status left out) |
+| `pack.py` | The pack format (pydantic), its validator and its hash (signatures, status and each guard's `blocks` left out, so signing a draft keeps the hash the harness tested) |
 | `carrier.py` | Synthetic carrier call records in two invented layouts (the generator) |
 | `reader.py` | The reader that maps a carrier file through a pack's layout |
 | `claim_api.py` | What a claim looks like (`GoldClaim`) and helpers to write one |

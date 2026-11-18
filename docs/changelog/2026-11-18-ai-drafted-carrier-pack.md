@@ -9,11 +9,11 @@
   (`check_layout.py`), the reader split from the generator (`reader.py`) and the claim helpers
   from the reference claims (`claim_api.py`) so each session's copy can leave the other's
   inputs out, a draft's guards may name no traps (the harness reports what each one blocks;
-  reference and signed packs must still name them), and the harness CLI runs several claim
+  reference and signed packs must still name them, and the pack hash leaves `blocks` out so signing a draft keeps the hash the harness tested), and the harness CLI runs several claim
   sets together and prints one sign-off card per guard (`--claims`, `--cards`). Second step of
   `baker/plans/rule-drafting.md`.
 - Where: PR #270 (branch claude/project-thread-zweeky)
-- Verified: `pytest tests/test_rulepacks.py` (36 tests) on the cloud container, 2026-11-18.
+- Verified: `pytest tests/test_rulepacks.py` (41 tests) on the cloud container, 2026-11-18.
   Harness on the drafted pack, reference and blind sets together: 28/28 claims as expected in
   each layout, 0 false supported, both guards earn their place (voicemail-leg blocks 4 traps,
   forwarded-leg 3), no insensitive supported claim. The drafter took about 2.5 minutes and the
@@ -25,9 +25,11 @@
   writer modelled its own guess of a pack to check its labels. The blind labels are the trap
   writer's judgment, not human gold, and need an examiner's review. Blindness rests on what
   each session's copy held and on its brief; each listed the files it read, all inside its
-  copy. A flipped direction map still makes no trap a false supported (the caller check
+  copy. The drafter was blind to the claims, not to the records: its sample files are the
+  files the harness reads, so it saw every row the traps rest on (DRAFTING.md says samples
+  should come from a separate seed next time). A flipped direction map still makes no trap a false supported (the caller check
   refuses it), and the trap writer asked for records the generator lacks (blank lengths, a
-  time the clock change skips or repeats, an incoming voicemail, duplicate rows). Human review
+  time the clock change skips or repeats, an incoming voicemail from a party a claim names, duplicate rows). Human review
   time for signing is not measured yet. Nothing is signed, and nothing in the app loads a pack.
 - Affects: none (eval tooling; no capability, privacy, model or customer-facing claim changes)
 - Status doc: no change

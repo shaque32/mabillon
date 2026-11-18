@@ -19,18 +19,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from eval.rulepacks.pack import RulePack
-from eval.rulepacks.reader import (  # noqa: F401 - re-exported for callers of carrier
-    LINE_DEVICE,
-    P1,
-    P2,
-    P3,
-    SOURCE_ID,
-    SUBJECT_2_LINE,
-    SUBJECT_3_LINE,
-    TARGET,
-    Loaded,
-    read,
-)
+from eval.rulepacks.reader import SUBJECT_2_LINE, SUBJECT_3_LINE, TARGET, Loaded, read
 
 SEED = 20261115
 

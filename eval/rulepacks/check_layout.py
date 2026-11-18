@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 from pydantic import ValidationError
 
@@ -30,15 +31,25 @@ def check(pack: RulePack, samples: Path = SAMPLES) -> dict[str, dict[str, object
             out[x.id] = {"error": f"no sample file {path.name}"}
             continue
         try:
-            loaded = read(path.read_text(encoding="utf-8"), x)
+            # decode the bytes ourselves: read_text would turn CRLF into LF, and the reader
+            # hashes the text it is given, which must be the file's bytes (code review on #270)
+            loaded = read(path.read_bytes().decode("utf-8"), x)
         except ValueError as e:
             out[x.id] = {"error": str(e)}
             continue
         rows = loaded.conn.execute(
             "SELECT id, ts_raw, ts_utc, direction, duration_s FROM calls ORDER BY rowid LIMIT 5"
         ).fetchall()
+        skipped = cast(dict[str, int], loaded.coverage["skipped"])
+        warnings = [f"{n} rows skipped as {k}" for k, n in skipped.items() if n and k != "sms"]
+        if not loaded.record_types:
+            out[x.id] = {"error": "no row read as a call", "coverage": loaded.coverage}
+            continue
+        (sha,) = loaded.conn.execute("SELECT sha256 FROM sources").fetchone()
         out[x.id] = {
+            "sha256": sha,
             "coverage": loaded.coverage,
+            "warnings": warnings,
             "first_calls": [
                 {"id": r[0], "raw": r[1], "utc": r[2], "direction": r[3], "seconds": r[4],
                  "type": loaded.record_types[r[0]]} for r in rows
@@ -58,7 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     res = check(pack)
     print(json.dumps({"pack": pack.ref, "sha256": pack.sha256(), "layouts": res}, indent=2))
-    return 1 if any("error" in v for v in res.values()) else 0
+    # exit 1 on an error (no calls read, a refused file); exit 2 when rows were skipped as
+    # unmapped, malformed or with a bad time, which the drafter must explain or fix
+    if any("error" in v for v in res.values()):
+        return 1
+    return 2 if any(v.get("warnings") for v in res.values()) else 0
 
 
 if __name__ == "__main__":

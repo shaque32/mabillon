@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from core.contracts import CheckOutcome, CheckResult
-from eval.rulepacks import carrier, check_layout, harness
+from eval.rulepacks import carrier, check_layout, harness, reader
 from eval.rulepacks.carrier_claims import CLAIMS
 from eval.rulepacks.pack import Guard, RulePack, Signature, load
 
@@ -108,9 +110,25 @@ def test_the_hash_ignores_signatures_and_status_but_not_content(pack: RulePack) 
     assert pack.without_guard("forwarded-leg").sha256() != h
 
 
+def test_signing_a_draft_keeps_the_hash_the_harness_tested(pack: RulePack) -> None:
+    draft = RulePack.model_validate(_unnamed(pack))  # guards name no traps
+    h = draft.sha256()
+    sigs = [
+        Signature(role=r, name="x", signed_at_utc="2026-11-18T00:00:00Z", pack_sha256=h)
+        for r in ("examiner", "owner")
+    ]
+    body = pack.model_dump(mode="json")  # the same pack with blocks filled in from the report
+    body.update(status="signed", signatures=[s.model_dump(mode="json") for s in sigs])
+    signed = RulePack.model_validate(body)
+    assert signed.sha256() == h
+    changed = {**body, "guards": [{**body["guards"][0], "record_types": ["forwarded"]}]}
+    with pytest.raises(ValidationError, match="another version"):
+        RulePack.model_validate(changed)
+
+
 def test_the_reader_refuses_another_layouts_file(pack: RulePack) -> None:
     with pytest.raises(ValueError, match="header row"):
-        carrier.read(carrier.render("carrier-b"), pack.layout("carrier-a"))
+        reader.read(carrier.render("carrier-b"), pack.layout("carrier-a"))
 
 
 def test_the_generator_is_deterministic_and_keeps_raw_times(pack: RulePack) -> None:
@@ -222,9 +240,9 @@ def _one_row_file(layout_id: str, row: list[str]) -> str:
 def test_a_local_time_daylight_saving_repeats_or_skips_keeps_no_utc_time(pack: RulePack) -> None:
     for day, clock in [("11/01/2026", "01:30:00"), ("03/08/2026", "02:30:00")]:
         text = _one_row_file(
-            "carrier-b", [day, clock, carrier.TARGET, "5550100377", "MO", "60", "V"]
+            "carrier-b", [day, clock, reader.TARGET, "5550100377", "MO", "60", "V"]
         )
-        loaded = carrier.read(text, pack.layout("carrier-b"))
+        loaded = reader.read(text, pack.layout("carrier-b"))
         row = loaded.conn.execute("SELECT ts_utc, ts_offset_min, ts_raw FROM calls").fetchone()
         assert row == (None, None, f"{day} {clock}")
         assert loaded.coverage["unsure_times"] == 1
@@ -232,14 +250,14 @@ def test_a_local_time_daylight_saving_repeats_or_skips_keeps_no_utc_time(pack: R
 
 def test_malformed_rows_are_counted_and_a_blank_length_is_not_zero(pack: RulePack) -> None:
     lay = pack.layout("carrier-a")
-    good = ["2026-03-04", "07:14:40", "5550100377", carrier.TARGET, "IN"]
+    good = ["2026-03-04", "07:14:40", "5550100377", reader.TARGET, "IN"]
     text = _one_row_file("carrier-a", [*good, "", "VOICE"])
     text += ",".join(good[:3]) + "\n"  # short row
     text += ",".join([*good, "1:23", "VOICE"]) + "\n"  # not whole seconds
     text += ",".join([*good, "\u00b2", "VOICE"]) + "\n"  # a digit int() refuses (CodeRabbit)
     text += ",".join([*good, "9223372036854775808", "VOICE"]) + "\n"  # overflows SQLite
     text += ",".join([*good, "9" * 5000, "VOICE"]) + "\n"  # past int()'s digit limit
-    loaded = carrier.read(text, lay)
+    loaded = reader.read(text, lay)
     assert loaded.conn.execute("SELECT duration_s FROM calls").fetchall() == [(None,)]
     assert loaded.coverage["skipped"]["malformed"] == 5
 
@@ -265,12 +283,12 @@ def test_a_trap_the_full_pack_lets_through_is_not_credited_to_a_guard(pack: Rule
 
 
 def test_a_carrier_claim_names_subject_1_and_its_stated_caller() -> None:
-    from eval.rulepacks.carrier_claims import A2, A3, MAR4_2AM, _call
+    from eval.rulepacks.carrier_claims import A2, A3, MAR4_2AM, call
 
-    caller, _ = _call(A2, carrier.P1, MAR4_2AM)
+    caller, _ = call(A2, reader.P1, MAR4_2AM)
     assert caller[1]["sent_by"] == [A2] and caller[1]["account_ids"] == [A2]
     with pytest.raises(ValueError, match="SUBJECT-1"):
-        _call(A3, A2, MAR4_2AM)
+        call(A3, A2, MAR4_2AM)
 
 
 def test_signatures_need_a_name_and_a_time_and_a_changed_copy_is_unsigned(
@@ -397,3 +415,39 @@ def test_the_blind_set_is_independent_of_the_reference_claims() -> None:
     assert all(c.id.startswith("b-") for c in blind)
     assert sum(c.trap for c in blind) >= 12 and sum(not c.trap for c in blind) >= 4
     assert harness.evaluate(load(REFERENCE), blind).wrong == []
+
+
+def test_a_run_of_one_claim_set_does_not_drop_a_pack_for_traps_named_from_another() -> None:
+    rep = harness.evaluate(load(REFERENCE), harness.claim_set("blind"))
+    assert rep.unknown_traps == [] and rep.unblocked_named_traps == []
+    assert rep.passed, rep
+
+
+def test_json_output_carries_the_cards_when_asked(capsys: pytest.CaptureFixture[str]) -> None:
+    assert harness.main([str(REFERENCE), "--json", "--cards"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["cards"][0].startswith("Guard voicemail-leg")
+
+
+def test_the_check_tool_fails_a_layout_that_reads_no_calls_and_warns_on_skipped_rows(
+    pack: RulePack,
+) -> None:
+    lay, other = pack.layout("carrier-a"), pack.layout("carrier-b")
+    none = lay.model_copy(update={"type_values": {"Voice": "voice"}})
+    res = check_layout.check(pack.model_copy(update={"layouts": (none, other)}))
+    assert res["carrier-a"]["error"] == "no row read as a call"
+    no_vm = lay.model_copy(
+        update={"type_values": {k: v for k, v in lay.type_values.items() if k != "VM"}}
+    )
+    res = check_layout.check(pack.model_copy(update={"layouts": (no_vm, other)}))
+    assert res["carrier-a"]["warnings"] and res["carrier-a"]["warnings"][0].endswith(
+        "rows skipped as unmapped_type"
+    )
+    assert res["carrier-b"]["warnings"] == []
+
+
+def test_the_check_tool_hashes_the_samples_bytes(pack: RulePack, tmp_path: Path) -> None:
+    for lid in carrier.LAYOUTS:
+        raw = carrier.render(lid).replace("\n", "\r\n").encode()
+        (tmp_path / f"{lid}.csv").write_bytes(raw)
+        assert check_layout.check(pack, tmp_path)[lid]["sha256"] == hashlib.sha256(raw).hexdigest()

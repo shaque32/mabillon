@@ -2,7 +2,8 @@
 
 Kept apart from the synthetic generator (carrier.py) so that a drafting session can be given
 the reader and the sample files without the generator's source, which states each layout's
-codes and the events behind every claim (DRAFTING.md).
+codes outright and marks which events the claims rest on (DRAFTING.md). The drafter still sees
+every record: the samples are the files the harness reads.
 """
 
 from __future__ import annotations

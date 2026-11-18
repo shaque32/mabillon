@@ -42,8 +42,9 @@ from core.audit.checks import run_checks
 from core.audit.rules import RULE_VERSION, decide_verdict
 from core.contracts import CheckOutcome, CheckResult, Claim, ClaimStatus, Verdict
 from core.pipeline import load_stipulations
-from eval.rulepacks import carrier
-from eval.rulepacks.carrier_claims import CLAIMS, GoldClaim
+from eval.rulepacks import carrier, reader
+from eval.rulepacks.carrier_claims import CLAIMS
+from eval.rulepacks.claim_api import GoldClaim
 from eval.rulepacks.pack import Guard, Layout, RulePack, load
 
 RUN_ID = "rulepack-harness"
@@ -196,9 +197,10 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
         rep.wrong += [f"{lid}:{o.claim_id}" for o in outs if o.got is not o.expected]
 
     # rule-kill: each guard must let every trap it names through once removed. A name that is
-    # no claim's fails the gate, so a misspelled trap cannot skip its test.
+    # no claim's, in this run or any registered set, fails the gate, so a misspelled trap
+    # cannot skip its test; a named trap from a set not in this run is not tested here.
     # Only traps the full pack holds count: one that gets through anyway is not this guard's.
-    known = set(ids)
+    known = set(ids) | {c.id for name in CLAIM_SETS for c in claim_set(name)}
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
@@ -210,7 +212,7 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
         for trap in g.blocks:
             if trap not in known:
                 rep.unknown_traps.append(f"{g.id}:{trap}")
-            elif trap not in through:
+            elif trap in ids and trap not in through:
                 rep.unblocked_named_traps.append(f"{g.id}:{trap}")
 
     # sensitivity: a SUPPORTED claim must not survive mutation of the records it rests on
@@ -263,7 +265,7 @@ def _flip(v: str) -> str:
 def _with_layout(
     pack: RulePack, file_layout: str, layout: Layout, claims: tuple[GoldClaim, ...]
 ) -> list[Outcome]:
-    loaded = carrier.read(carrier.render(file_layout), layout)
+    loaded = reader.read(carrier.render(file_layout), layout)
     return [decide(c, loaded.conn, pack.guards, loaded.record_types) for c in claims]
 
 
@@ -312,7 +314,10 @@ def main(argv: list[str] | None = None) -> int:
     pack = load(args.pack)
     rep = evaluate(pack, tuple(c for cs in sets.values() for c in cs))
     if args.json:
-        print(json.dumps({**rep.__dict__, "passed": rep.passed}, indent=2, sort_keys=True))
+        out = {**rep.__dict__, "passed": rep.passed}
+        if args.cards:
+            out["cards"] = cards(pack, rep)
+        print(json.dumps(out, indent=2, sort_keys=True))
         return 0 if rep.passed else 1
     print(f"pack {rep.pack} sha256 {rep.pack_sha256[:12]} rules {rep.rule_version}")
     if rep.layout_errors:
