@@ -503,6 +503,16 @@ def _marks(values: list[str]) -> str:
     return ", ".join("?" * len(values))
 
 
+def _ts_ok(value: object) -> int:
+    """1 when the caller check's time parser reads the stored value as a time, else 0."""
+    from core.audit.checks._common import _ts
+
+    try:
+        return int(isinstance(value, str) and _ts(value) is not None)
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
 def call_log_check(  # noqa: ANN001
     conn, source_id: str, importer: str | None, *, owner_confirmed: bool = False
 ) -> tuple[str | None, str | None]:
@@ -634,9 +644,11 @@ def call_log_check(  # noqa: ANN001
         # phone nor a known provider app (FaceTime).
         by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
         known = sorted(set(IOS_CALL_APPS.values()))
+        # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
+        conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
         rows, sided, stored, unknown_app = conn.execute(
-            "SELECT coalesce(sum(c.app = ?), 0), coalesce(sum(c.app = ? AND c.ts_utc IS NOT NULL"  # noqa: S608 (marks only; values bound)
-            " AND CASE"
+            "SELECT coalesce(sum(c.app = ?), 0), coalesce(sum(c.app = ?"  # noqa: S608 (marks only; values bound)
+            " AND mabillon_ts_ok(c.ts_utc) AND CASE"
             f" WHEN c.direction IN ({_marks(by_phone)}) THEN t.id IS NOT NULL"
             " AND t.device_id IS NOT c.device_id"
             " AND (f.id IS NULL OR f.device_id IS c.device_id)"
@@ -651,10 +663,12 @@ def call_log_check(  # noqa: ANN001
             " AND substr(c.locator, 1, ?) = ? AND instr(substr(c.locator, ?), '/') = 0",
             (NATIVE_CALL_APP, NATIVE_CALL_APP, *by_phone, *by_other, *known, source_id, *own),
         ).fetchone()
-        # no phone call to read, and a row that is no phone call, no call at all, or a call of
-        # an app Mabillon does not know as a provider (an iOS phone provider written another
-        # way would read so): stop. A FaceTime-only history passes (Claude review on #269).
-        if sided == 0 and (rows > 0 or stored == 0 or unknown_app > 0):
+        # no phone call to read, and a row that is no phone call, no call at all, a call of an
+        # app Mabillon does not know as a provider (an iOS phone provider written another way
+        # would read so), or fewer calls stored than rows read (the importer stores one call
+        # per row, so a phone call may be gone): stop. A FaceTime-only history whose every row
+        # is stored passes (Claude review and CodeRabbit on #269).
+        if sided == 0 and (rows > 0 or stored < read or unknown_app > 0):
             flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
             return (
                 f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
@@ -664,6 +678,7 @@ def call_log_check(  # noqa: ANN001
                     if unknown_app
                     else ""
                 )
+                + (f"; {stored} calls stored" if stored < read else "")
                 + "); claims about its phone"
                 " calls would go untested, so the run stops before any model call"
             ), None
@@ -859,7 +874,20 @@ def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
 
 LOCK = "run.lock"  # held by the one invocation using DIR
 AUDITED = "audited.db"  # the copy of the audited case the report and results.zip are made from
-REFUSED = "the device owners changed during the audit, so it is not scored"
+REFUSED = "the device owners or call log changed during the audit, so it is not scored"
+
+
+def case_stop(conn, built: dict) -> str | None:  # noqa: ANN001
+    """Why the case on `conn` no longer is the one `built` records as checked: a device owner
+    changed (owner_stop) or a phone's call log that no longer passes gate G5b."""
+    stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+    if stop:
+        return stop
+    for p in sorted(built.get("imported") or [], key=_sid):
+        why, _ = call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True)
+        if why:
+            return f"{p['source_id']}: {why}"
+    return None
 
 
 def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
@@ -879,16 +907,12 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
     conn = open_existing(out / "case.db")
     try:
         check_build(conn, out, built)
-        stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+        # ...and each phone's call log still passes gate G5b on this connection, so a call row
+        # changed since the build or resume check stops the run before any model call. A
+        # change after this check is caught by the same check after the audit (CodeRabbit).
+        stop = case_stop(conn, built)
         if stop:
             raise SystemExit(stop)
-        # ...and each phone's call log still passes gate G5b on this connection, so a call row
-        # changed since the build or resume check never reaches the model calls. This narrows
-        # the window; a write while the audit runs is not caught here (CodeRabbit on #269).
-        for p in sorted(built.get("imported") or [], key=_sid):
-            stop, _ = call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True)
-            if stop:
-                raise SystemExit(f"{p['source_id']}: {stop}")
         if fake:
             from eval.pipeline_fakes import fake_components
 
@@ -908,15 +932,15 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
         t = time.monotonic()
         result = pipeline.run_audit(conn, comps, progress=progress)
-        # The audit reads its stipulations in its own snapshot, after the check above: an owner
-        # changed in between (or during the run) and still changed now leaves this run's
-        # verdicts on an owner the build did not stipulate. The run is then marked stopped, so
-        # no scorer or report takes it as the case's completed audit (pipeline.last_run), while
-        # its finished claims stay reusable, and the run stops here (CodeRabbit on #269). The
-        # check and the copy below read in one transaction, so the copy holds the owners the
-        # check passed.
+        # The audit reads its stipulations and calls in its own reads, after the check above:
+        # an owner or a call row changed in between (or during the run) and still changed now
+        # leaves this run's verdicts on a case the gates did not pass. The run is then marked
+        # stopped, so no scorer or report takes it as the case's completed audit
+        # (pipeline.last_run), while its finished claims stay reusable, and the run stops here
+        # (CodeRabbit on #269). The check and the copy below read in one transaction, so the
+        # copy holds the owners and call log the check passed.
         conn.execute("BEGIN")
-        stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+        stop = case_stop(conn, built)
         if stop:
             conn.commit()  # end the read before the refusal is written
             with conn:

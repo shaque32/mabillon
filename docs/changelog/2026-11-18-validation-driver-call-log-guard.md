@@ -11,7 +11,7 @@
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
   - The table has rows but no phone call from it can be read as the caller check reads one: a
-    readable time, and the other party stored on the side its direction names (the callee of an
+    time the caller check's own parser reads (a stored value it cannot parse does not count), and the other party stored on the side its direction names (the callee of an
     outgoing call, the caller of an incoming or missed one; the directions come from the caller
     check's own sets in `core/audit/checks/caller.py`). This happens when every row was
     placed by another app, or had no direction, no other party or no usable time, or when the
@@ -33,8 +33,10 @@
   The messages say that claims about the phone's calls would go untested; calls of another app
   are checked apart.
   FaceTime calls in the same table are not phone calls, so they neither hide an unreadable
-  call log nor stop a phone that has only those calls; calls of any other app with no phone
-  call beside them stop the run.
+  call log nor stop a phone that has only those calls, as long as every row read is stored
+  (the importer stores one call per row, so fewer calls stored than rows read means a phone
+  call may be gone, and the run stops); calls of any other app with no phone call beside them
+  stop the run.
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
   check on the stored case, so a case built before this change never resumes into an audit of
   such a phone; on resume the phone's accounts count only while its device has one confirmed
@@ -47,11 +49,10 @@
   the build id, each phone's confirmed owner and each phone's call log (gate G5b) again when it
   opens case.db, against the build record the run checked or wrote (not built.ok read again), so
   a case.db swapped (with or without its built.ok), an owner withdrawn, or call rows made
-  unreadable after those checks is refused too (a call row changed while the audit runs is not
-  caught by that check). The audit
-  reads its stipulations in its own snapshot after that check, so when the audit returns the
-  driver checks the owners once more on the same connection. An owner change still in place at
-  that moment marks the run stopped (with the reason in its note and a halt entry in the audit
+  unreadable after those checks is refused too. The audit
+  reads its stipulations and calls in its own reads after that check, so when the audit returns
+  the driver runs the same owner and call log checks once more on the same connection. An owner
+  or call log change still in place at that moment marks the run stopped (with the reason in its note and a halt entry in the audit
   log), so `pipeline.last_run` and the scorer never take it as the case's completed audit, while
   its finished claims stay reusable; a change made and reversed while the audit ran is not
   detected, and the run is recorded as completed by the pipeline for the moment between its
@@ -93,14 +94,15 @@
   - An iOS call history whose phone calls have no direction stops the build even with a
     FaceTime call beside them.
   - An iOS call history of FaceTime calls only passes; on a stored case, calls of an app not
-    known as a call provider and no phone call stop the check.
+    known as a call provider and no phone call stop the check, and so does a history with fewer
+    calls stored than rows read. A stored call time the caller check cannot parse is not a
+    readable time.
   - A call log entry with no table name stops the build (`no table named`); an entry with
     neither a key nor a table stops it as a manifest problem when it may hold records and
     passes when counted 0 (a key of only spaces counts as none).
   - The audit stops when built.ok's build id is not the one case.db holds, or is missing, and
-    when a phone's call log no longer passes gate G5b after the resume's checks, and
-    when the phone's owner stipulation was withdrawn after the resume's checks, or while the
-    audit ran (the run is stored as stopped, `pipeline.last_run` keeps the earlier completed
+    when a phone's call log no longer passes gate G5b or the phone's owner stipulation was
+    withdrawn, after the resume's checks or while the audit ran (the run is stored as stopped, `pipeline.last_run` keeps the earlier completed
     run, and no `audited.db` is left); through `main()` too, with the audit itself refusing
     before any run; a case.db moved away is never recreated; another build's case.db put at
     case.db while the report reads it, or before the zip, never reaches `report.html` or
@@ -153,14 +155,18 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 83 tests pass (with `tests/test_leapp.py`, 191) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 86 tests pass (with `tests/test_leapp.py`, 194) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
 - Open: a call log where only a few rows are readable passes and is only logged; no share is
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is
-  not known.
+  not known. The caller check itself (`core/audit/checks/_common.py` `_ts`) still raises on a
+  stored call time it cannot parse, so such a row beside readable ones fails the audit loudly
+  (the run is marked failed, no verdict is set) rather than reading as inconclusive; that
+  shared parser is used by every check and is not changed here. The importers store only
+  parsed UTC times.
 - Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at

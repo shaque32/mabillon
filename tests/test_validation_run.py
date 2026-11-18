@@ -1473,7 +1473,7 @@ def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path
         return real(conn, *a, **k)
 
     monkeypatch.setattr(pipeline, "run_audit", withdrawn_first)
-    with pytest.raises(SystemExit, match="owners changed during the audit, so it is not scored"):
+    with pytest.raises(SystemExit, match="call log changed during the audit, so it is not scored"):
         hickman_run.audit(out, True, lambda _m: None, built=built)
     # the refused run is stored as stopped, never the case's completed audit, and no copy of
     # it is left for a report or zip
@@ -1494,6 +1494,78 @@ def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path
     finally:
         conn.close()
     assert not (out / hickman_run.AUDITED).exists()
+
+
+def _android_args(tmp_path: Path) -> list[str]:
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+
+def test_a_call_log_changed_during_the_audit_stops_the_run_unscored(tmp_path, monkeypatch):
+    # CodeRabbit on #269: the audit reads its calls after the driver's checks, so a call log
+    # made unreadable in between (here, as the audit starts) is caught when it returns, by the
+    # same check in the same read as the copy.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.run_audit
+
+    def untimed_first(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        return real(conn, *a, **k)
+
+    monkeypatch.setattr(pipeline, "run_audit", untimed_first)
+    with pytest.raises(SystemExit, match=r"changed during the audit.*no phone call a check can"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status, note),) = conn.execute(
+            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert status == "stopped" and note.startswith(hickman_run.REFUSED)
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_a_call_time_the_caller_check_cannot_parse_is_not_readable(tmp_path):
+    # CodeRabbit on #269: the gate counts a time only when the caller check's own parser reads
+    # it, so a stored value that is no time stops the run instead of failing in the audit.
+    out = tmp_path / "out"
+    args = _android_args(tmp_path)
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = 'not-a-time'")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"item1: .*no phone call a check can read"):
+        hickman_run.main(args)
+
+
+def test_a_call_history_with_a_row_read_but_no_longer_stored_stops_the_run(tmp_path):
+    # CodeRabbit on #269: the importer stores one call per row read, so a history of FaceTime
+    # calls with fewer calls stored than rows read (a phone call may be gone) stops; one whose
+    # every row is stored passes.
+    out = tmp_path / "out"
+    args = _ios_calls(tmp_path, [("com.apple.FaceTime", "Outgoing")] * 2)
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("DELETE FROM calls WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"callhistory\) has 2 rows.*; 1 calls stored\)"):
+        hickman_run.main(args)
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
