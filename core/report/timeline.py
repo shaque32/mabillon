@@ -22,6 +22,7 @@ from core.timeline.check import (
     Link,
     TimelineRow,
     fmt_delta,
+    joined,
     timeline,
     window_utc,
     zoneless_note,
@@ -180,6 +181,19 @@ def _link_block(lk: Link, data: CaseRecords) -> str:
     return f"<div>{head}{e(rel)}: {lk.total} found<ul>{items}</ul>{more}</div>"
 
 
+def _summary_html(row: TimelineRow) -> str:
+    """The row's summary, with the source text it repeats (a tied message's words) cited."""
+    return joined(row.summary_parts, q, e) if row.summary_parts else e(row.summary)
+
+
+def _notes_html(row: TimelineRow) -> str:
+    """The row's notes, with the raw time a report printed cited (Claude review on #267)."""
+    parts = row.note_parts if len(row.note_parts) == len(row.notes) else ()
+    return "".join(
+        f"<li>{joined(parts[i], q, e) if parts else e(n)}</li>" for i, n in enumerate(row.notes)
+    )
+
+
 def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
     out = ["<ol class='tl'>"]
     for row in rows:
@@ -202,7 +216,7 @@ def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
                 f"<details><summary>Records the phones hold in this time</summary><ul>{items}"
                 "</ul></details>"
             )
-        notes = "".join(f"<li>{e(n)}</li>" for n in row.notes)
+        notes = _notes_html(row)
         if row.zoneless:  # each phone label is source text: cited, never the tool's own words
             notes += f"<li>{zoneless_note(row.zoneless, q)}</li>"
         flag = " class='flag'" if row.status in FLAGGED else ""
@@ -212,7 +226,7 @@ def timeline_rows(rows: list[TimelineRow], data: CaseRecords) -> str:
             f"<details><summary>The sentence</summary>{q(' '.join(st.sentence.split()))}"
             f"</details><div class='meta'>{e(_read_as(st, data)) or e(row.zone_label)}</div>"
             f"</div><div class='recs'><div class='meta'>Phone records</div>"
-            f"<div>{e(row.summary)}</div>{recs}</div>"
+            f"<div>{_summary_html(row)}</div>{recs}</div>"
             f"<div class='st'>{_status_chip(row)}<div class='meta'>derived</div></div>"
             + (f"<ul class='notes'>{notes}</ul>" if notes else "")
             + "</li>"

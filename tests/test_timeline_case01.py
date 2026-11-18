@@ -9,6 +9,7 @@ All data is synthetic.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 from datetime import UTC, datetime
@@ -247,6 +248,79 @@ def test_screen_pages_and_report(db):
         )  # fmt: skip
     )
     assert refused.status == 403
+
+
+def test_a_quoted_message_s_own_words_never_stop_the_report(conn):
+    # The summary names the nearest message by the document's quoted words: those are cited
+    # text, so a forbidden word in them is not the tool's (a development LEAPP dry run, whose
+    # nearest message read "I deleted it.", lost its report this way).
+    for old, new in (("its done", "i deleted"), ("move it", "i deleted it")):
+        for table, col in (("messages", "body"), ("govdoc_paragraphs", "text")):
+            conn.execute(
+                f"UPDATE {table} SET {col} = replace({col}, ?, ?) WHERE {col} LIKE ?",  # noqa: S608
+                (old, new, f"%{old}%"),
+            )
+    # the raw time a note quotes is the source's text too (Claude review on #267)
+    conn.execute("UPDATE messages SET ts_raw = ts_raw || ' deleted' WHERE body LIKE '%i deleted%'")
+    conn.commit()
+    rows = rows_for(conn)
+    assert row(rows, "8", "At 2:31 a.m.").status == "differs"
+    assert any(" deleted, UTC" in n for n in row(rows, "8", "At 2:31 a.m.").notes)
+    assert row(rows, "9", "At 10:05 p.m.").status == "order"
+    html = render_report(conn)
+    # the quote marks are the tool's, outside the cite, as on the rest of the page
+    assert '&quot;<span class="q">i deleted</span>&quot;' in html
+    assert '&quot;<span class="q">i deleted it tonight</span>&quot;' in html
+    assert re.search(r'printed \(<span class="q">[^<]* deleted</span>, UTC', html)
+    check_report_text(html)
+
+
+def test_a_raw_time_that_matches_the_note_s_own_words_is_cited_where_it_stands(conn):
+    # The raw time is cited as a segment of the note, never found by searching the note's text:
+    # a raw value "time" must not cite the word in "The stated time" (Claude review on #267).
+    conn.execute("UPDATE messages SET ts_raw = 'time' WHERE body LIKE '%its done%'")
+    conn.commit()
+    html = render_report(conn)
+    assert 'clock the report printed (<span class="q">time</span>, UTC' in html
+    assert 'The stated <span class="q">time</span>' not in html
+    check_report_text(html)
+    # ...and so it is when the row has a note of its own before it (CodeRabbit on #267)
+    conn.execute(
+        "UPDATE govdoc_paragraphs SET text = replace(text, 'At 2:31 a.m.', 'At about 2:31 a.m.')"
+    )
+    conn.execute("UPDATE messages SET ts_raw = 'time deleted' WHERE body LIKE '%its done%'")
+    conn.commit()
+    (r,) = [x for x in rows_for(conn) if x.stated.para_label == "8" and x.stated.approx]
+    assert len(r.notes) == len(r.note_parts) == 2
+    html = render_report(conn)
+    assert 'clock the report printed (<span class="q">time deleted</span>, UTC' in html
+    check_report_text(html)
+
+
+def test_a_printed_time_with_no_raw_value_cites_nothing():
+    # A record with an offset but no raw value: the note gives the tool's reading of the
+    # printed clock, never the word "None" as if the phone records said it (Claude review).
+    para = 'At 2:31 a.m. on March 5, 2026, he wrote "bring the blue bag".'
+    conn = _tiny("America/New_York", "2026-03-05T02:31:00Z", 0, "x", para)
+    conn.execute("UPDATE messages SET ts_raw = NULL")
+    (r,) = rows_for(conn)
+    assert r.status == "differs"
+    (note,) = r.notes
+    assert "None" not in note and "printed (2026-03-05 02:31:00, UTC+00:00)" in note
+    assert all(not src for _, src in r.note_parts[0])
+
+
+def test_a_row_whose_segments_differ_from_its_text_is_refused():
+    from core.timeline.check import TimelineRow
+
+    para = 'At 2:31 a.m. on March 5, 2026, he wrote "bring the blue bag".'
+    stated = rows_for(_tiny("UTC", "2026-03-05T02:31:00Z", 0, "x", para))[0].stated
+    with pytest.raises(ValueError, match="summary_parts"):
+        TimelineRow(stated, "differs", "One text.", "", None, summary_parts=(("Another.", False),))
+    with pytest.raises(ValueError, match="note_parts"):
+        TimelineRow(
+            stated, "differs", "x", "", None, notes=("a", "b"), note_parts=((("a", False),),)
+        )
 
 
 def test_render_report_takes_default_settings(conn):
