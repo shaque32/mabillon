@@ -1438,7 +1438,10 @@ def _seconds(v: object) -> int | None:
     t = _text(v)
     if t is None:
         return None
-    n = _hms(t)
+    try:
+        n = parse_duration(t)
+    except ValueError:
+        return None  # digits int() refuses: unknown, never a rounded float (CodeRabbit)
     if n is not None:
         return n
     try:

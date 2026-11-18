@@ -1157,6 +1157,15 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     assert got == [(None,), (None,), (125,)]
 
 
+def test_an_app_call_duration_int_refuses_is_unknown_not_rounded() -> None:
+    # 5000 zeros then 2**53 + 1: parse_duration refuses it, and the float fallback would round
+    # it to 2**53, a wrong length a duration check could select on (CodeRabbit on #269).
+    assert leapp._seconds("0" * 5000 + "9007199254740993") is None
+    assert leapp._seconds("83.0") == 83
+    assert leapp._seconds("00:01:44") == 104
+    assert leapp._seconds("104") == 104
+
+
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(
     tmp_path: Path,
 ) -> None:

@@ -95,9 +95,9 @@
     that is not text is not), and the import stores its calls under that key. A call duration
     that is not a decimal number (such as `²`), has more digits than Python reads, or is past
     SQLite's integer range is stored as unknown, on Android and iOS (an iOS duration of 5000
-    digits too), instead of stopping the
+    digits too, and an app call duration that `int()` refuses is unknown, never a rounded float), instead of stopping the
     import.
-  The file's 63 tests pass (with `tests/test_leapp.py`, 162) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 63 tests pass (with `tests/test_leapp.py`, 163) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
