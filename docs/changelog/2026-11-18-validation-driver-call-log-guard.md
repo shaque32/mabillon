@@ -25,7 +25,7 @@
   - The table may hold records the import could not read at all (listed under `not_imported`;
     an entry with neither a count nor a row check fails closed, one known empty passes; a
     table whose row probe SQLite cannot answer counts as possibly holding records).
-  - The manifest counts records in the call log, but its table gave no row to read.
+  - The manifest counts more records in the call log than its table gave rows to read.
   - The manifest lists an entry with neither an artifact key (none, or only spaces) nor a
     table that may hold records, so it cannot be ruled out as the call log (the message names the manifest
     problem, since a rebuild would list it again); one counted 0 passes.
@@ -62,8 +62,10 @@
   and a halt entry in the audit log), so `pipeline.last_run` and the scorer never take it as the
   case's completed audit, while its finished claims stay reusable. If even that stopped write
   fails, or the check is interrupted (Ctrl+C), the run stays running, which `pipeline.last_run`
-  never takes either, and the next start marks it stopped. So a run is stored as completed only
-  after it passed the final check. After that, the same check runs again in the read
+  never takes either, and the driver's next audit on that case marks it stopped before it starts
+  (as the app does when it opens a case or starts an audit). So, for a claim set with at least
+  one claim, a run is stored as completed only after it passed the final check; with no claims
+  the pipeline never calls the check, and only the checks before and after the audit run. After that, the same check runs again in the read
   transaction of the copy below, and a change made after the run completed still marks it
   stopped; a failure there that also fails the stopped write leaves a run that passed the final
   check. The scorer (`eval/validation/score_hickman.py`, version unchanged, no measure changed)
@@ -153,7 +155,8 @@
     stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
   - On a stored case, an unread call log entry keyed in other case (`GET_CALLLOG`) stops the
-    check, and so does a call log the manifest counts records in whose table gave no row.
+    check, and so does a call log the manifest counts records in whose table gave no row, or
+    fewer rows than the count.
   - A resume stops when its phone's confirmed device owner was changed to another person,
     withdrawn, joined by a second confirmed owner of the same name, or moved to another person
     of the same name since the build.

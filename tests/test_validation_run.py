@@ -885,7 +885,14 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
         for a in p["leapp"]["artifacts_read"]:
             a["records"] = 3 if a["key"] == "get_calllog" else a["records"]
 
-    assert check(counted_read)[0] is None  # a count its table gave rows for passes
+    # a count above the rows its table gave stops too: the calls past those were never read
+    assert "counts 3 records in its manifest but 1 was read" in (check(counted_read)[0] or "")
+
+    def counted_all(p):  # noqa: ANN001, ANN202
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 1 if a["key"] == "get_calllog" else a["records"]
+
+    assert check(counted_all)[0] is None  # a count its table gave every row for passes
 
     def keyless(p):  # noqa: ANN001, ANN202
         p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
@@ -1579,12 +1586,20 @@ def test_a_final_check_and_stopped_write_that_both_fail_leave_no_completed_run(
         )
         assert rid != first and status == "running"
         assert pipeline.finished_claims(conn, rid)
-        monkeypatch.setattr(audit_log, "append", real_append)
-        assert pipeline.mark_stale_runs_stopped(conn) == [rid]  # the next start stops it
-        assert pipeline.last_run(conn)["run_id"] == first
     finally:
         conn.close()
     assert not (out / hickman_run.AUDITED).exists()
+    # the driver's next audit stops the run left running before it starts its own
+    monkeypatch.setattr(audit_log, "append", real_append)
+    monkeypatch.setattr(hickman_run, "case_stop", real_stop)
+    hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status,),) = conn.execute("SELECT status FROM pipeline_runs WHERE id = ?", (rid,))
+        assert status == "stopped"
+        assert pipeline.last_run(conn)["run_id"] not in (first, rid)
+    finally:
+        conn.close()
 
 
 def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):

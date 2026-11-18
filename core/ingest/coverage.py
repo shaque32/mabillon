@@ -879,8 +879,9 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
                         (
                             _q(e.get("name")),
                             _t(
-                                f" could not be read: {e.get('reason')}. The LEAPP output "
-                                "counts no records in it."
+                                f" could not be read: {e.get('reason')}. No records are "
+                                "known to be missing from it: its table is empty, or the "
+                                "LEAPP output counts none and has no table for it."
                             ),
                         ),
                     )

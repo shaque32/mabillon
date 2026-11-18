@@ -622,8 +622,8 @@ def call_log_check(  # noqa: ANN001
         " AND s.status = 'confirmed') = 1)",
         (source_id, int(owner_confirmed)),
     ).fetchone()
-    # a call log the manifest counts records in but whose table gave no row: the calls it
-    # counts were never read, so no check could find them (CodeRabbit on #269)
+    # a call log the manifest counts more records in than its table gave: the calls it counts
+    # past those were never read, so no check could find them (CodeRabbit on #269)
     got: dict[str, int] = {}
     for t in p.get("tables") or []:
         if isinstance(t, dict) and t.get("kind") == "calls":
@@ -632,11 +632,13 @@ def call_log_check(  # noqa: ANN001
     for a in leapp.get("artifacts_read") or []:
         n = a.get("records")
         if is_native(a.get("key")) and isinstance(n, int) and n > 0:
-            if got.get(str(a.get("table")), 0) == 0:
+            read = got.get(str(a.get("table")), 0)
+            if read < n:
                 return (
                     f"its call log ({_one_line(a.get('table'))}) counts {n} records in its"
-                    " manifest but none was read; claims about its phone calls would go"
-                    " untested, so the run stops before any model call"
+                    f" manifest but {read or 'none'} {'was' if read < 2 else 'were'} read;"
+                    " claims about its phone calls would go untested, so the run stops before"
+                    " any model call"
                 ), None
     by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
     known = sorted(set(IOS_CALL_APPS.values()))
@@ -943,6 +945,9 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         # changes only the filler and stays comparable to run 2. The audit's configuration
         # records it.
         comps.challenge = False
+        # a run an earlier attempt left running (its final check and stopped write both failed,
+        # or it was interrupted) is stopped now: run.lock makes this the only audit on the case
+        pipeline.mark_stale_runs_stopped(conn)
 
         def progress(done: int, total: int, d) -> None:  # noqa: ANN001
             spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""

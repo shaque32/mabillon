@@ -44,8 +44,10 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 from collections import Counter
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -754,21 +756,23 @@ def r1_card(
     }
 
 
-def last_verdicts(results: Path, work: Path) -> dict[str, str]:
-    """Each claim's verdict in the last completed run of another pass's results."""
+def last_verdicts(results: Path) -> dict[str, str]:
+    """Each claim's verdict in the last completed run of another pass's results, read from a
+    private temporary copy, so a refused zip leaves nothing in the score directory (CodeRabbit
+    on #269)."""
     from core import pipeline
     from core.db import connect
 
-    db = work / "repeat.db"
-    record = _copy_db(results, db)
-    conn = connect(db)
-    run = _published_run(conn, results, record)
-    out = {}
-    for claim_id in run["manifest"]:
-        v = pipeline.load_verdict(conn, claim_id, run["run_id"])
-        if v is not None:
-            out[claim_id] = v.verdict.value
-    conn.close()
+    with tempfile.TemporaryDirectory() as work:
+        db = Path(work) / "repeat.db"
+        record = _copy_db(results, db)
+        with closing(connect(db)) as conn:
+            run = _published_run(conn, results, record)
+            out = {}
+            for claim_id in run["manifest"]:
+                v = pipeline.load_verdict(conn, claim_id, run["run_id"])
+                if v is not None:
+                    out[claim_id] = v.verdict.value
     return out
 
 
@@ -880,17 +884,17 @@ def _score(
     gold, key_hashes = load_keys(keys)
     by_index, chats, dump_counts = load_dump(dump)
 
-    conn = connect(db)
-    run = _published_run(conn, results, run_record)
-    check_key_covers(conn, gold)
-    mapped, mapping = map_keys(conn, gold, by_index, chats)
-    r1 = r1_measures(conn, run, mapped)
-    ready = key_recall(conn, run, mapping["groups"])
-    labels = label_counts(conn, run, mapped)
-    counts = import_counts(conn, dump_counts)
-    covered = coverage(run, mapped, r1)
-    first_card = r1_card(conn, run, mapped, covered["tested_claims"])
-    conn.close()
+    # closed on every path, so score() can remove the temporary copy (on Windows too)
+    with closing(connect(db)) as conn:
+        run = _published_run(conn, results, run_record)
+        check_key_covers(conn, gold)
+        mapped, mapping = map_keys(conn, gold, by_index, chats)
+        r1 = r1_measures(conn, run, mapped)
+        ready = key_recall(conn, run, mapping["groups"])
+        labels = label_counts(conn, run, mapped)
+        counts = import_counts(conn, dump_counts)
+        covered = coverage(run, mapped, r1)
+        first_card = r1_card(conn, run, mapped, covered["tested_claims"])
 
     result = {
         "scorer_version": SCORER_VERSION,
@@ -909,7 +913,7 @@ def _score(
         "r2": r2(db, run, mapped, covered["tested_claims"]),
     }
     if repeat_of is not None:
-        result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of, out))
+        result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of))
         result["repeat_results_sha256"] = _sha256(repeat_of)
     result["v4_bars"] = v4_bars(result)
     return result

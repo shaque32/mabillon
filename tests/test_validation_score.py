@@ -721,3 +721,8 @@ def test_a_refused_zip_leaves_an_earlier_score_in_place(scored, tmp_path):
         score_hickman.score(swapped, base / "keys", base / "dump", out)
     assert {n: (out / n).read_bytes() for n in before} == before
     assert sorted(p.name for p in out.iterdir()) == sorted(before)
+    # a refused --repeat zip leaves nothing behind either: it is read from a private copy
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out, swapped)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
