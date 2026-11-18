@@ -5,8 +5,7 @@ sanitized function name, columns named from the sanitized headers, a `column_map
 headers, datetime columns as INTEGER UTC epochs, and a manifest entry per artifact. The headers
 and their order are LEAPP's own for the artifacts Mabillon reads (iLEAPP `sms`, `callHistory`,
 `addressBook`; ALEAPP `get_sms_mms`, `get_sms_mms_mms`, `get_googleMessages`, `get_calllog`,
-`contacts`). Every value
-is made up.
+`contacts`; and the chat and call tables below). Every value is made up.
 """
 
 from __future__ import annotations
@@ -94,6 +93,46 @@ HEADERS: dict[str, tuple[Header, ...]] = {
         "Content Type (as stored)", "Media URL", "Media Owner Username", "Sender ID",
         "Thread ID", "Item ID",
     ),
+    "get_telegramMessages": (
+        ("Timestamp", "datetime"), "Dialog ID", "Chat", "Direction", "Sender ID", "Sender",
+        "Message", "Record Origin", ("Recorded Media Path", "media"), "Media File",
+        "Read State", "Message ID", "Recovery Method", "Recovery Location", "Source File",
+    ),
+    "snapchatMessages": (
+        ("Creation Timestamp", "datetime"), ("Read Timestamp", "datetime"),
+        "Message Direction", "Sender Username", "Message Text", ("Media", "media"),
+        "Created On Device", "Record Origin", "Sender Display Name", "Sender ID",
+        "Conversation Participants", "Content Type (as stored)", "Message State Type",
+        "Is Saved", "Is Viewed By User", "Remote Media Count", "Quoted Server Message ID",
+        "Conversation ID", "Client Message ID", "Server Message ID", "Local Media ID",
+        "Recovery Method", "Recovery Location",
+    ),
+    # app calls
+    "get_whatsapp_call_logs": (
+        ("Call Start Timestamp", "datetime"), ("Call End Timestamp", "datetime"),
+        "Call Duration", "Group Name", "Call Direction", "Caller", "Caller JID", "Call Type",
+    ),
+    "get_Viber": (
+        ("Call Start Time", "datetime"), ("Phone Number", "phonenumber"), "Call Direction",
+        ("Call End Time (computed: start + duration)", "datetime"),
+        "Viber Call Type (as stored)",
+    ),
+    "get_line_calls": (
+        ("Start Time", "datetime"), ("End Time", "datetime"), "To ID", "From ID", "Direction",
+        "Call Type", "Android User",
+    ),
+    "whatsAppCallHistory": (
+        ("Starting Timestamp", "datetime"), ("Ending Timestamp", "datetime"),
+        "Duration H:M:S", "Direction", "Disconnected cause", "Contact ID",
+        "Incoming (as stored)", "Video Call", "Missed", "Missed Reason (as stored)",
+        "Bytes Sent", "Bytes Received", "Call ID", "Group JID", "Aggregate Event ID",
+        "Contact Fullname", ("Phone Number", "phonenumber"),
+    ),
+    "lineCalls": (
+        ("Call Started", "datetime"), ("Call Ended", "datetime"), "Direction", "Contact",
+        "Contact MID", "Type (as stored)", "Duration (seconds)", "Result (as stored)",
+        "Cause (as stored)", "Message ID", "Account ID",
+    ),
 }  # fmt: skip
 # LEAPP's conversation view for the chat artifacts above (the manifest's data_views), with the
 # columns named as the database names them.
@@ -108,6 +147,12 @@ DATA_VIEWS: dict[str, dict[str, Any]] = {
         "conversationDiscriminatorColumn": "thread", "textColumn": "message",
         "directionColumn": "direction", "directionSentValue": "Outgoing",
         "timeColumn": "timestamp", "senderColumn": "sender_username",
+    },
+    "snapchatMessages": {
+        "conversationDiscriminatorColumn": "conversation_id", "textColumn": "message_text",
+        "directionColumn": "message_direction", "directionSentValue": "Outgoing",
+        "timeColumn": "creation_timestamp", "senderColumn": "sender_username",
+        "mediaColumn": "media",
     },
 }  # fmt: skip
 NAMES = {
@@ -127,6 +172,13 @@ NAMES = {
     "usagestatsVersion": ("Device Information", "OS Version"),
     "whatsAppMessages": ("WhatsApp", "WhatsApp - Messages"),
     "instagramDirectMessages": ("Instagram", "Instagram - Direct Messages"),
+    "get_telegramMessages": ("Telegram", "Telegram - Messages"),
+    "snapchatMessages": ("Snapchat", "Snapchat - Messages (arroyo.db)"),
+    "get_whatsapp_call_logs": ("WhatsApp", "WhatsApp - Call Logs"),
+    "get_Viber": ("Viber", "Viber - Call Logs"),
+    "get_line_calls": ("Line", "Line - Call Logs"),
+    "whatsAppCallHistory": ("WhatsApp", "WhatsApp - Call History"),
+    "lineCalls": ("Line", "Line - Calls"),
 }
 
 
