@@ -15,17 +15,18 @@
 - Where: PR #270 (branch claude/project-thread-zweeky)
 - Verified: `pytest tests/test_rulepacks.py` (46 tests) on 2026-11-18 in a Linux cloud
   container (4-core Intel Xeon at 2.10 GHz, Python 3.13; machine model not recorded,
-  unverified). Harness on the drafted pack, same container and date, reference and blind
-  sets together: 28/28 claims as expected in
-  each layout, 0 false supported, both guards earn their place (voicemail-leg blocks 4 traps,
-  forwarded-leg 3), no insensitive supported claim. The drafter took about 2.5 minutes and the
-  trap writer about 5.5 minutes (session clocks, 2026-11-18). The drafted layouts are identical
-  to the hand-built reference pack's, and its two guards cover the same record types.
-  `make check` in CI on 97d0954 (ubuntu-latest and windows-latest, GitHub runners,
-  2026-11-18) passed; `make eval` there: case01 model-free accuracy 1.00 with 0 false
-  supported (0.70 unreviewed, report only), hostile 0 of 7 structural claims supported,
-  case02 aggregate accuracy 0.90 with 0 false supported, the same as main. This PR does
-  not touch core/, so the eval is not expected to move.
+  unverified). Harness on the drafted pack, same container and date, reference and blind sets
+  together: 28/28 claims as expected in each layout, 0 false supported, both guards earn their
+  place (voicemail-leg blocks 4 traps, forwarded-leg 3), no insensitive supported claim. The
+  drafter took about 2.5 minutes and the trap writer about 5.5 minutes (wall-clock times each
+  session reported, 2026-11-18, as subagents in the same container; the model service's
+  hardware is not known, so these are unverified). The drafted layouts are identical to the
+  hand-built reference pack's, and its two guards cover the same record types. `make check` in
+  CI on 97d0954 (ubuntu-latest and windows-latest, GitHub runners, 2026-11-18) passed; `make
+  eval` there: case01 model-free accuracy 1.00 with 0 false supported (0.70 unreviewed, report
+  only), hostile 0 of 7 structural claims supported, case02 aggregate accuracy 0.90 with 0
+  false supported, the same as main. This PR does not touch core/, so the eval is not expected
+  to move.
 - Open: The test was easy and correlated, so it shows the procedure works, not that AI can
   read a real carrier format: the format guides were written by the session that built the
   reference pack, and they state plainly what voicemail and forwarded rows mean; the trap

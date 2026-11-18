@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import subprocess
@@ -491,10 +492,14 @@ def test_the_check_tool_reports_a_csv_parser_error_and_goes_on(
 ) -> None:
     for lid in carrier.LAYOUTS:
         (tmp_path / f"{lid}.csv").write_text(carrier.render(lid))
-    bad = carrier.render("carrier-a").replace("\n", '\n"unclosed' + "x" * 200_000, 1)
-    (tmp_path / "carrier-a.csv").write_text(bad)
-    res = check_layout.check(pack, tmp_path)
-    assert "error" in res["carrier-a"]
+    header, rest = carrier.render("carrier-a").split("\n", 1)
+    (tmp_path / "carrier-a.csv").write_text(f"{header}\n{'x' * 2000}\n{rest}")
+    old = csv.field_size_limit(1000)
+    try:
+        res = check_layout.check(pack, tmp_path)
+    finally:
+        csv.field_size_limit(old)
+    assert res["carrier-a"] == {"error": "field larger than field limit (1000)"}
     assert "coverage" in res["carrier-b"]
 
 
