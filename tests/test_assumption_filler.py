@@ -3798,10 +3798,7 @@ def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
         tmp_path,
         "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
     )
-    text = (
-        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Viber: "need 2 more by'
-        ' friday".'
-    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram and Viber: "need 2 more by friday".'
     filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
     assert filler._apps_named_together(text) == ["Telegram and Viber"]
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
@@ -3833,7 +3830,7 @@ def test_each_join_between_named_apps_is_read(tmp_path, apps, together):
         "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
         "INSERT INTO threads VALUES ('thr:wa', 'item1', 'x', 'dev:item1', 'WhatsApp', NULL)",
     )
-    text = f'On March 12, 2026, PETROV wrote to @northstar on {apps}: "need 2 more by friday".'
+    text = f'On March 12, 2026, PETROV wrote on {apps}: "need 2 more by friday".'
     filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
     assert len(filler._named_apps(text)) >= 2
     assert bool(filler._apps_named_together(text)) is together
@@ -3970,7 +3967,7 @@ def test_a_name_inside_a_longer_app_name_binds_no_second_app(tmp_path):
         " NULL)",
     )
     filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
-    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    claim = 'PETROV wrote on {}: "need 2 more by friday".'
     assert sorted(filler._named_apps(claim.format("Telegram or Facebook Messenger"))) == [
         "Facebook Messenger",
         "Telegram",
@@ -3992,9 +3989,7 @@ def test_a_phone_app_named_beside_another_app_is_searched_too(tmp_path):
     # read Telegram only (CodeRabbit on #265). Message rows search SMS too; a count or an
     # absence of the mix is refused; a case with no SMS refuses the claim.
     c = _case_with(tmp_path)
-    text = (
-        'On March 12, 2026, PETROV wrote to @northstar on Telegram or SMS: "need 2 more by friday".'
-    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram or SMS: "need 2 more by friday".'
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert {a.template_id for a in made} == {"sender", "record_time"}
     assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
@@ -4022,9 +4017,7 @@ def test_more_findings_on_5da573d(tmp_path, conn):
     assert "10000" in filler.unread_words(text)
     # MMS is no SMS: a case with SMS alone holds no MMS app
     c = _case_with(tmp_path)
-    claim = (
-        'On March 12, 2026, PETROV wrote to @northstar on Telegram or {}: "need 2 more by friday".'
-    )
+    claim = 'On March 12, 2026, PETROV wrote on Telegram or {}: "need 2 more by friday".'
     made, _ = build_text(c, claim.format("MMS"), ClaimType.COMMUNICATION, C05_ANSWER)
     assert made == []
     made, _ = build_text(c, claim.format("SMS"), ClaimType.COMMUNICATION, C05_ANSWER)
@@ -4048,9 +4041,7 @@ def test_more_findings_on_37917c7(tmp_path):
     assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram"})}
     # a message row the model put on Telegram alone for "Telegram or SMS" searches SMS too:
     # a Telegram copy outside the range would fail a true claim sent by SMS
-    text = (
-        'On March 12, 2026, PETROV wrote to @northstar on Telegram or SMS: "need 2 more by friday".'
-    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram or SMS: "need 2 more by friday".'
     on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
     made, _ = build_text(c, text, ClaimType.COMMUNICATION, on_telegram)
     assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
@@ -4058,7 +4049,7 @@ def test_more_findings_on_37917c7(tmp_path):
     # unproven rather than read on Telegram alone
     northstar = {"as_written": "5551234", "app": "Telegram"}
     as_account = [on_telegram[0], {**on_telegram[1], "accounts": [northstar]}]
-    to_id = text.replace("@northstar", "Telegram user 5551234")
+    to_id = text.replace("wrote on", "wrote to Telegram user 5551234 on")
     made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, as_account)
     assert made == [], [a.params for a in made]
     assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
@@ -4093,3 +4084,45 @@ def test_more_findings_on_37917c7(tmp_path):
     )
     made, wrapped = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert not any("to the second" in d.reason for d in wrapped.drops)
+
+
+def test_more_findings_on_e3062bf(tmp_path):
+    # CodeRabbit on #265, on e3062bf.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    c = _case_with(tmp_path / "a")  # SMS, no MMS
+    # "on SMS or MMS" on a case with no MMS app: SMS alone is not every alternative, whether
+    # code or the model scoped the row
+    text = 'On March 12, 2026, PETROV wrote on SMS or MMS: "need 2 more by friday".'
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == [], [a.params for a in made]
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, on_sms)
+    assert made == [], [a.params for a in made]
+    assert any("(mms)" in d.reason for d in filler.drops), filler.drops
+    # ...and both kinds held keep the alternative searchable
+    both = _case_with(
+        tmp_path / "b",
+        "INSERT INTO threads VALUES ('thr:mms', 'item1', 'x', 'dev:item1', 'MMS', NULL)",
+    )
+    made, _ = build_text(both, text, ClaimType.COMMUNICATION, on_sms)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"SMS", "MMS"})}
+    # a handle on several apps the claim names resolves to one account, so reaches one app
+    to_handle = text.replace("wrote on SMS or MMS", "wrote to @northstar on Telegram or SMS")
+    made, handle = build_text(c, to_handle, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == [], [a.params for a in made]
+    assert any("or a handle" in d.reason for d in handle.drops), handle.drops
+    # an app the claim names in lower case widens the row the model scoped
+    lower = 'On March 12, 2026, PETROV wrote on Telegram or whatsapp: "need 2 more by friday".'
+    on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, _ = build_text(c, lower, ClaimType.COMMUNICATION, on_telegram)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "WhatsApp"})}
+    # an app's name inside a quote a line break wraps is the quote's, not the claim's
+    wrapped = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday",'
+        ' adding "try\nSignal tomorrow".'
+    )
+    tg = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert tg.claim_apps(wrapped) == {"telegram"}
+    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time"}

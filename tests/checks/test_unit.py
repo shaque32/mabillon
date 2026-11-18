@@ -797,7 +797,9 @@ def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None
     # "ok" copy is cited (CodeRabbit on #265)
     (sure_at,) = conn.execute("SELECT ts_utc FROM messages WHERE id = 'msg:p1:2'").fetchone()
     _march_message(conn, "msg:p1:9", "a:p1:b")
-    later = sure_at.replace(sure_at[17:19], f"{int(sure_at[17:19]) + 1:02d}", 1)
+    # one second after the original, in the same look-alike group
+    assert sure_at[17:19] == "00", sure_at
+    later = f"{sure_at[:17]}01{sure_at[19:]}"
     conn.execute("UPDATE messages SET body = 'sure', ts_utc = ? WHERE id = 'msg:p1:9'", (later,))
     r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail

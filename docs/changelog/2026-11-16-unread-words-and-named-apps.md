@@ -59,17 +59,24 @@
     as a code-made sender does, and reads no count or absence, also one the model put on SMS
     alone (Claude review and CodeRabbit on #265). A phone's own messages app written by name
     beside another app ("on Telegram or SMS") is searched too, on the case's apps that word
-    names, each kind apart ("MMS" is no "SMS"), and no count or absence reads the mix; the
+    names, each kind apart ("MMS" is no "SMS"), and no count or absence reads the mix; a
+    claim naming a kind the case holds no app for ("on SMS or MMS" with no MMS app) is refused
+    rather than read on the kinds it holds, unless an app holds several kinds; the
     sheet check counts those apps as the claim's own (CodeRabbit on #265). A claim that names
     one kind alone ("sent an iMessage") is searched on that kind's apps, never on the SMS app,
     and a row on a phone's own messages app of another kind is refused, whether code or the
     model chose it. A handle ("to @sms") names no phone's own messages app (CodeRabbit on
     #265). A message row the model put on fewer apps than the claim names ("Telegram or SMS"
     read on Telegram alone) is searched on all of them: a Telegram copy outside the range could
-    otherwise fail the time check of a true claim sent by SMS. Only apps the claim writes as
-    names widen it, never a plain word ("an account"), and a call keeps its own reading. A
-    row on several apps whose party the model gave as accounts is refused, since an account
-    holds one app's messages (CodeRabbit on #265). Before, "wrote on
+    otherwise fail the time check of a true claim sent by SMS. Every app the claim names
+    widens it, in any case ("Telegram or viber"), but an app whose name is also a plain word
+    ("an account", "a regular line"; "Accounts" and "Recents" join that list) only when
+    written with a capital, and a call keeps its own reading. A row on several apps whose
+    party the model gave as accounts is refused, since an account holds one app's messages,
+    and so is one whose party is a handle when the claim names those apps as alternatives
+    ("to @northstar on Telegram or SMS"), since a handle resolves to one account; "texted
+    @northstar", spread by code over the phone's own apps, still reads the app its account is
+    on (CodeRabbit on #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
@@ -77,8 +84,10 @@
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
-    it states. A length written so ("lasted 0:12:45") is not a time of day. A time inside a
-    quote that a line break wraps is the quote's, not the claim's (CodeRabbit on #265).
+    it states. A length written so ("lasted 0:12:45") is not a time of day. A time, an app
+    or any other word inside a quote that a line break wraps is the quote's, not the claim's:
+    `_unquoted`, which every reader of the claim's own words uses, now masks a wrapped quote
+    as one (CodeRabbit on #265).
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
@@ -141,11 +150,7 @@
   copies is one group. Not fixed here (CodeRabbit on #265, outside this change): the Axiom
   importer labels iMessage rows with app "SMS" while the Cellebrite importer keeps "iMessage",
   so on an Axiom case an SMS-only claim can rest on an iMessage row; settling one label at
-  import is a follow-up. The v5 phones use the LEAPP importer. A quote that a line break
-  wraps is masked as a quote only by the seconds guards and `event_windows`; the other readers
-  of quoted words (`_unquoted`, on main before this change) still read its words as the
-  claim's, so such a claim may go unproven, never pass or fail on them. Masking across line
-  breaks everywhere is a follow-up (CodeRabbit on #265).
+  import is a follow-up. The v5 phones use the LEAPP importer.
 - Affects: verdicts (fewer code-checked SUPPORTED; claims naming an app the case lacks, or
   naming one kind of contact in an absence, go untested; counts over look-alike rows go
   inconclusive); customer-facing claims: none. No privacy or network change.

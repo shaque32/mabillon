@@ -330,7 +330,10 @@ _EMAIL_RE = re.compile(r"\be-?mail(?:s|ed|ing)?\b", re.IGNORECASE)
 # Apps whose names are also plain words ("a second line", "a weak signal"). Written without a
 # capital, the word may name no app, so code reads no count or absence on it. A search for one
 # message may still include it, since searching one more app finds no message the words lack.
-_PLAIN_WORD_APPS = frozenset({"line", "signal", "session", "wire", "element"})
+# "Accounts" and "Recents" are names exports give a phone's own stores ("his accounts").
+_PLAIN_WORD_APPS = frozenset(
+    {"line", "signal", "session", "wire", "element", "accounts", "recents"}
+)
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -958,8 +961,13 @@ _QUOTE_SPAN_RE = re.compile(
 
 def _unquoted(text: str) -> str:
     """The text with quoted words blanked out, same length, so a time in a quoted message
-    ("meet me at noon") is not read as when something happened."""
-    return _QUOTE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), text)
+    ("meet me at noon") is not read as when something happened. A quote a line break wraps
+    is one quote, as the readers of the quote itself take it (`_flat`; CodeRabbit on #265);
+    the text outside quotes keeps its line breaks."""
+    out = list(text)
+    for m in _QUOTE_SPAN_RE.finditer(re.sub(r"\s", " ", text)):
+        out[m.start() : m.end()] = " " * (m.end() - m.start())
+    return "".join(out)
 
 
 def _names_unquoted(text: str, names: Iterable[str]) -> str:
@@ -4481,6 +4489,18 @@ class LocalAssumptionFiller:
             if a.strip().casefold() in WIDER_APPS or _phone_kind(a.strip()) in kinds
         ]
 
+    def _phone_kinds_lacking(self, bare: str) -> list[str]:
+        """The kinds of a phone's own messages the words name ("SMS or MMS") that no case app
+        holds: read on the kinds it does hold, the alternative goes unsearched, and a copy
+        outside the range on the other could fail a true claim (CodeRabbit on #265). Empty
+        when an app holds several kinds (WIDER_APPS), as `_phone_apps_named` reads it."""
+        apps = self._phone_message_apps()
+        if any(a.strip().casefold() in WIDER_APPS for a in apps):
+            return []
+        held = {_phone_kind(a.strip()) for a in apps}
+        kinds = dict.fromkeys(_phone_kind(w) for w in _PHONE_APP_WORD_RE.findall(bare))
+        return [k for k in kinds if k not in held]
+
     def _without_phone_names(self, text: str) -> str:
         """The text with each phone's name the expert gave written as spaces: "the WHATSAPP
         PHONE" says nothing of WhatsApp."""
@@ -4646,7 +4666,7 @@ class LocalAssumptionFiller:
             # app, which `_named_apps` leaves out. Its rows search the phone apps that word
             # names too, and no count or absence reads the mix (CodeRabbit on #265).
             phone_named = self._phone_apps_named(bare)
-            if not phone_named:
+            if not phone_named or self._phone_kinds_lacking(bare):
                 raise Reject("the claim also names a phone's own messages app the case lacks")
             if any(out[i].template_id in WHOLE_APP_TEMPLATES for i in app_rows):
                 raise Reject(
@@ -4660,15 +4680,34 @@ class LocalAssumptionFiller:
             # kind (CodeRabbit on #265)
             named_kinds = {a.casefold() for a in self._phone_apps_named(bare)}
             phone_apps = {a.casefold() for a in self._phone_message_apps()}
+            lacking = self._phone_kinds_lacking(bare)
             for i in app_rows:
                 for c in out[i].params.get("channels") or ():
                     if c.casefold() in phone_apps and c.casefold() not in named_kinds:
                         raise Reject(f"the claim names a kind of text message {c!r} does not hold")
+                    if c.casefold() in phone_apps and lacking:
+                        # "on SMS or MMS" with no MMS app: the SMS alone is not the claim's
+                        # every alternative (CodeRabbit on #265)
+                        raise Reject(
+                            f"the claim names a kind of text message ({lacking[0]}) the case"
+                            " holds no app for"
+                        )
 
         # Rows on no app, and message rows the model put on fewer apps than the claim names:
         # "Telegram or SMS" read on Telegram alone misses an SMS in the range, and a Telegram
         # copy outside it would then fail the time check of a true claim (CodeRabbit on #265).
         # A count or an absence on fewer apps is refused above.
+        # the claim names several apps as alternatives, its own words, not code's spread
+        alternatives = (
+            len(
+                {
+                    a.casefold()
+                    for a in [*apps, *(self._phone_apps_named(bare) if kinds_named else [])]
+                }
+            )
+            > 1
+        )
+
         def _parties_reach(rows_out: list[Proposal]) -> list[Proposal]:
             # "Telegram or SMS" with a party the model put on accounts: an account holds one
             # app's messages, so a row on several apps may search one of them for no one, and a
@@ -4678,10 +4717,18 @@ class LocalAssumptionFiller:
             for i in app_rows:
                 p = rows_out[i]
                 chans = {str(c).strip().casefold() for c in p.params.get("channels") or ()}
-                if len(chans) > 1 and CALL_CHANNEL not in chans and p.params.get("account_ids"):
+                if (
+                    len(chans) > 1
+                    and CALL_CHANNEL not in chans
+                    and (p.params.get("account_ids") or (p.params.get("handles") and alternatives))
+                ):
+                    # A handle on several apps resolves to one account, on one app (`parties`),
+                    # so "@northstar on Telegram or SMS" reads one of them (CodeRabbit on #265).
+                    # "texted @northstar", spread by code over the phone's own apps, names no
+                    # app: the handle reads the one its account is on, as it would on one app.
                     raise Reject(
-                        "a party is given as accounts, which do not reach every app the row"
-                        " searches"
+                        "a party is given as accounts or a handle, which do not reach every"
+                        " app the row searches"
                     )
             return rows_out
 
@@ -4695,14 +4742,14 @@ class LocalAssumptionFiller:
         if not found:
             return _parties_reach(out)  # the claim names no app: every app is searched
 
-        # A row the model scoped is widened only by apps the claim writes as names ("Telegram
-        # or SMS"), never by a plain word that may name one ("an account", "a regular line"),
-        # and a call keeps `_call_app`'s reading.
-        named_apps = {a.casefold() for a in apps}
+        # A row the model scoped is widened by every app the claim names ("Telegram or
+        # viber"; CodeRabbit on #265), but never by a plain word that may name none ("his
+        # accounts", "a regular line") unless written as a name, and a call keeps
+        # `_call_app`'s reading.
         wide = [
             a
             for a in found
-            if a.casefold() not in named_apps
+            if a.casefold() not in _PLAIN_WORD_APPS
             or any(bare[st].isupper() for st, _ in self._app_mentions(bare, a))
         ]
 
@@ -4754,7 +4801,7 @@ class LocalAssumptionFiller:
             # "sent an iMessage", "an SMS": the apps of the kinds the words name, never an SMS
             # app for an iMessage (CodeRabbit on #265)
             found = self._phone_apps_named(bare)
-            if not found:
+            if not found or self._phone_kinds_lacking(bare):
                 raise Reject("the claim names a phone's own messages app the case lacks")
             return found
         if texty:
