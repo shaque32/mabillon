@@ -9,11 +9,12 @@
   (`check_layout.py`), the reader split from the generator (`reader.py`) and the claim helpers
   from the reference claims (`claim_api.py`) so each session's copy can leave the other's
   inputs out, a draft's guards may name no traps (the harness reports what each one blocks;
-  reference and signed packs must still name them, and the pack hash leaves `blocks` out so signing a draft keeps the hash the harness tested), and the harness CLI runs several claim
-  sets together and prints one sign-off card per guard (`--claims`, `--cards`). Second step of
-  `baker/plans/rule-drafting.md`.
+  reference and signed packs must still name them, each a trap in the run, and the hash covers
+  them, so a pack is re-run with its found traps written in before it is signed), and the
+  harness CLI runs several claim sets together and prints one sign-off card per guard
+  (`--claims`, `--cards`). Second step of `baker/plans/rule-drafting.md`.
 - Where: PR #270 (branch claude/project-thread-zweeky)
-- Verified: `pytest tests/test_rulepacks.py` (46 tests) on 2026-11-18 in a Linux cloud
+- Verified: `pytest tests/test_rulepacks.py` (49 tests) on 2026-11-18 in a Linux cloud
   container (4-core Intel Xeon at 2.10 GHz, Python 3.13; machine model not recorded,
   unverified). Harness on the drafted pack, same container and date, reference and blind sets
   together: 28/28 claims as expected in each layout, 0 false supported, both guards earn their

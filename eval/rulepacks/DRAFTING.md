@@ -22,13 +22,19 @@ decides every verdict from the human-written checks.
 Each session runs in its own copy of the repository that holds only what its row allows, with
 no git history, from its own brief below, and with no context shared with the other.
 
+What each session sees is enforced by what its copy holds and by its brief. A session could
+still open a file outside its copy by path, so each one lists every file it read, and the
+orchestrating session checks that list before using its output.
+
 The drafter is blind to the claims, not to the records. In round 1 the sample files are the
 same files the harness reads, so the drafter saw every row the traps rest on, without knowing
 which. For the next evidence type, samples should come from a separate seed, so a held-out
-trap can rest on rows the drafter never saw. That is
-enforced by what the copy holds and by the brief. A session could still open a file outside its
-copy by path, so each one lists every file it read, and the orchestrating session checks that
-list before using its output.
+trap can rest on rows the drafter never saw; that is a plan, not yet done.
+
+Before signing, the traps the harness found for each guard are written into the pack's
+`blocks`, and the harness is run again on that version with every claim set the names come
+from. The pack's hash covers `blocks`, so that run's hash is the one the examiner and Arsh
+sign.
 
 ## Rounds
 

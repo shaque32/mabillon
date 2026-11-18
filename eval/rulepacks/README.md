@@ -23,7 +23,7 @@ python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-draft.json --c
 
 | File | What it is |
 |---|---|
-| `pack.py` | The pack format (pydantic), its validator and its hash (signatures, status and each guard's `blocks` left out, so signing a draft keeps the hash the harness tested) |
+| `pack.py` | The pack format (pydantic), its validator and its hash (signatures and status left out; each guard's `blocks` are hashed, so a signature covers the traps it names) |
 | `carrier.py` | Synthetic carrier call records in two invented layouts (the generator) |
 | `reader.py` | The reader that maps a carrier file through a pack's layout |
 | `claim_api.py` | What a claim looks like (`GoldClaim`) and helpers to write one |
@@ -45,9 +45,9 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
 2. **Rule-kill:** removing each guard in turn lets some trap through as a false supported that
    the full pack holds, including every trap it names. A guard that blocks nothing, or that
    names a trap no claim has, fails the gate. A draft's guards name no traps (its drafter never
-   saw them); `--cards` prints what each one blocks, for the people who sign it. A named trap
-   must be a trap in some registered claim set, but whether the guard blocks it is tested only
-   when its set is in the run: a pass on one set says nothing about traps named from another.
+   saw them); `--cards` prints what each one blocks, for the people who sign it. Every named
+   trap must be a trap in this run, so run a pack with every claim set its guards name traps
+   from: a name from a set left out of the run fails the gate rather than go untested.
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
    are mutated, once with the time moved six hours and once (for a claim about who placed a
    call) with the direction flipped.

@@ -43,6 +43,9 @@ def check(pack: RulePack, samples: Path = SAMPLES) -> dict[str, dict[str, object
         ).fetchall()
         skipped = cast(dict[str, int], loaded.coverage["skipped"])
         warnings = [f"{n} rows skipped as {k}" for k, n in skipped.items() if n and k != "sms"]
+        unsure = cast(int, loaded.coverage["unsure_times"])
+        if unsure:  # often a wrong zone: those rows keep no UTC time, so no time check sees them
+            warnings.append(f"{unsure} rows kept with no UTC time (daylight saving double or gap)")
         if not loaded.record_types:
             out[x.id] = {"error": "no row read as a call", "coverage": loaded.coverage}
             continue

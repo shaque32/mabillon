@@ -162,10 +162,10 @@ class RulePack(_Strict):
 
     def sha256(self) -> str:
         """Hash of the pack's content, so signing does not change what is signed. Left out:
-        signatures, status, and each guard's `blocks`. A guard's blocks are the harness's
-        record of which traps it is for (a draft leaves them empty and signing fills them in
-        from the report); they change no reading and no check result, so the signed pack hashes
-        the same as the draft the harness passed (code review on #270).
+        signatures and status only. Each guard's `blocks` are hashed: the gate tests every
+        trap a guard names, so a signature covers them. A draft's guards name no traps; before
+        signing, the traps the harness found are written into the pack and the harness is run
+        on that version, and that is the hash the signers sign (code review on #270).
 
         The canonical bytes are exactly this json.dumps call (keys sorted by code point, no
         spaces, UTF-8, non-ASCII kept), not RFC 8785: JCS sorts keys by UTF-16 code unit, which
@@ -173,7 +173,6 @@ class RulePack(_Strict):
         way (a pack holds only strings, ints, lists and dicts). A signing tool must reproduce
         this call."""
         body = self.model_dump(mode="json", exclude={"signatures", "status"})
-        body["guards"] = [{k: v for k, v in g.items() if k != "blocks"} for g in body["guards"]]
         canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 

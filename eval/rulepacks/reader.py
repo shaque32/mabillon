@@ -154,7 +154,7 @@ def read(text: str, layout: Layout) -> Loaded:
         ],
     }
     conn.execute(
-        "INSERT INTO source_coverage VALUES (?, 'eval.rulepacks.carrier', '0.1.0', ?)",
+        "INSERT INTO source_coverage VALUES (?, 'eval.rulepacks.reader', '0.1.0', ?)",
         (SOURCE_ID, json.dumps(coverage, sort_keys=True)),
     )
     _people(conn, accounts)

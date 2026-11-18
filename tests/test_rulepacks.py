@@ -111,18 +111,18 @@ def test_the_hash_ignores_signatures_and_status_but_not_content(pack: RulePack) 
     assert pack.without_guard("forwarded-leg").sha256() != h
 
 
-def test_signing_a_draft_keeps_the_hash_the_harness_tested(pack: RulePack) -> None:
+def test_the_hash_covers_the_traps_each_guard_names(pack: RulePack) -> None:
     draft = RulePack.model_validate(_unnamed(pack))  # guards name no traps
-    h = draft.sha256()
+    assert draft.sha256() != pack.sha256()  # writing the found traps in makes a new version
+    h = pack.sha256()  # the version the harness runs with its traps named is the one signed
     sigs = [
         Signature(role=r, name="x", signed_at_utc="2026-11-18T00:00:00Z", pack_sha256=h)
         for r in ("examiner", "owner")
     ]
-    body = pack.model_dump(mode="json")  # the same pack with blocks filled in from the report
+    body = pack.model_dump(mode="json")
     body.update(status="signed", signatures=[s.model_dump(mode="json") for s in sigs])
-    signed = RulePack.model_validate(body)
-    assert signed.sha256() == h
-    first = {**body["guards"][0], "record_types": ["forwarded"]}
+    assert RulePack.model_validate(body).sha256() == h
+    first = {**body["guards"][0], "blocks": ["t-forwarded"]}
     changed = {**body, "guards": [first, *body["guards"][1:]]}
     with pytest.raises(ValidationError, match="another version"):
         RulePack.model_validate(changed)
@@ -318,7 +318,8 @@ def test_signatures_need_a_name_and_a_time_and_a_changed_copy_is_unsigned(
 
 def test_the_sample_files_a_drafter_sees_are_the_files_the_harness_reads() -> None:
     for lid in carrier.LAYOUTS:
-        assert (check_layout.SAMPLES / f"{lid}.csv").read_text() == carrier.render(lid)
+        raw = (check_layout.SAMPLES / f"{lid}.csv").read_bytes()
+        assert raw == carrier.render(lid).encode("utf-8")  # byte for byte: no CRLF, no BOM
 
 
 def test_the_drafters_check_tool_reads_each_sample_and_names_a_missing_one(
@@ -419,10 +420,35 @@ def test_the_blind_set_is_independent_of_the_reference_claims() -> None:
     assert harness.evaluate(load(REFERENCE), blind).wrong == []
 
 
-def test_a_run_of_one_claim_set_does_not_drop_a_pack_for_traps_named_from_another() -> None:
-    rep = harness.evaluate(load(REFERENCE), harness.claim_set("blind"))
-    assert rep.unknown_traps == [] and rep.unblocked_named_traps == []
-    assert rep.passed, rep
+def test_a_trap_named_from_a_claim_set_left_out_of_the_run_fails_the_gate() -> None:
+    ref = load(REFERENCE)
+    rep = harness.evaluate(ref, harness.claim_set("blind"))
+    named = sorted(f"{g.id}:{t}" for g in ref.guards for t in g.blocks)
+    assert not rep.passed and sorted(rep.unknown_traps) == named
+    both = harness.evaluate(ref, harness.claim_set("reference") + harness.claim_set("blind"))
+    assert both.unknown_traps == [] and both.passed, both
+
+
+def test_a_guard_naming_a_blind_trap_it_does_not_block_is_dropped_on_a_reference_run(
+    pack: RulePack,
+) -> None:
+    body = pack.model_dump(mode="json")
+    body["guards"][0]["blocks"] = [*body["guards"][0]["blocks"], "b-direction-flip"]
+    rep = harness.evaluate(RulePack.model_validate(body))  # the default reference-only run
+    assert not rep.passed and rep.unknown_traps == [f"{body['guards'][0]['id']}:b-direction-flip"]
+
+
+def test_the_check_tool_warns_of_rows_with_no_utc_time(pack: RulePack, tmp_path: Path) -> None:
+    for lid in carrier.LAYOUTS:
+        (tmp_path / f"{lid}.csv").write_text(carrier.render(lid))
+    text = carrier.render("carrier-b")  # Central time: 2:30 on 2026-03-08 never happened
+    gap = "03/08/2026,02:30:00,5550100201,5550100615,MO,60,V\n"
+    (tmp_path / "carrier-b.csv").write_text(text + gap)
+    res = check_layout.check(pack, tmp_path)
+    assert res["carrier-b"]["warnings"] == [
+        "1 rows kept with no UTC time (daylight saving double or gap)"
+    ]
+    assert res["carrier-a"]["warnings"] == []
 
 
 def test_json_output_carries_the_cards_when_asked(capsys: pytest.CaptureFixture[str]) -> None:
@@ -458,8 +484,14 @@ def test_the_check_tool_hashes_the_samples_bytes(pack: RulePack, tmp_path: Path)
 def test_a_guard_naming_a_true_claim_names_no_trap(pack: RulePack) -> None:
     body = pack.model_dump(mode="json")
     body["guards"][0]["blocks"] = ["t-voicemail", "g-in-call"]
-    rep = harness.evaluate(RulePack.model_validate(body), harness.claim_set("blind"))
+    rep = harness.evaluate(RulePack.model_validate(body))
     assert rep.unknown_traps == ["voicemail-leg:g-in-call"]
+
+
+def test_the_cli_says_when_no_claim_set_is_given(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        harness.main([str(REFERENCE), "--claims", ","])
+    assert "no claim set given" in capsys.readouterr().err
 
 
 def test_a_card_says_when_rule_kill_never_ran(pack: RulePack) -> None:

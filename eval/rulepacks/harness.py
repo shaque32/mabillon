@@ -143,7 +143,7 @@ class Report:
     rule_kill: dict[str, list[str]] = field(default_factory=dict)  # guard -> traps it blocks
     unearned_guards: list[str] = field(default_factory=list)
     unblocked_named_traps: list[str] = field(default_factory=list)
-    unknown_traps: list[str] = field(default_factory=list)  # guard:name that is no claim's
+    unknown_traps: list[str] = field(default_factory=list)  # guard:name not a trap in the run
     layout_errors: list[str] = field(default_factory=list)  # missing:<id> or unknown:<id>
     template_errors: list[str] = field(default_factory=list)  # claim:template not in pack
     insensitive: list[str] = field(default_factory=list)
@@ -196,14 +196,11 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
         rep.false_supported += [f"{lid}:{c}" for c in sorted(_fs(outs))]
         rep.wrong += [f"{lid}:{o.claim_id}" for o in outs if o.got is not o.expected]
 
-    # rule-kill: each guard must let every trap it names through once removed. A name that is
-    # no claim's, in this run or any registered set, fails the gate, so a misspelled trap
-    # cannot skip its test; a named trap from a set not in this run is not tested here.
-    # Only traps the full pack holds count: one that gets through anyway is not this guard's.
-    # only traps: a guard naming a true claim names no trap (CodeRabbit on #270)
-    known = {c.id for c in claims if c.trap} | {
-        c.id for name in CLAIM_SETS for c in claim_set(name) if c.trap
-    }
+    # rule-kill: each guard must let every trap it names through once removed. Every name must
+    # be a trap in this run: a misspelling, a true claim, or a trap from a set left out of the
+    # run fails the gate, so no named trap passes untested (code review on #270). Only traps
+    # the full pack holds count: one that gets through anyway is not this guard's.
+    known = {c.id for c in claims if c.trap}
     for g in pack.guards:
         rest = tuple(x for x in pack.guards if x.id != g.id)
         through: set[str] = set()
@@ -215,7 +212,7 @@ def evaluate(pack: RulePack, claims: tuple[GoldClaim, ...] = CLAIMS) -> Report:
         for trap in g.blocks:
             if trap not in known:
                 rep.unknown_traps.append(f"{g.id}:{trap}")
-            elif trap in ids and trap not in through:
+            elif trap not in through:
                 rep.unblocked_named_traps.append(f"{g.id}:{trap}")
 
     # sensitivity: a SUPPORTED claim must not survive mutation of the records it rests on
@@ -311,8 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cards", action="store_true", help="also print one card per guard")
     args = ap.parse_args(argv)
     names = [n.strip() for n in args.claims.split(",") if n.strip()]
+    if not names:
+        ap.error(f"no claim set given; known: {', '.join(CLAIM_SETS)}")
     unknown = [n for n in names if n not in CLAIM_SETS]
-    if unknown or not names:
+    if unknown:
         ap.error(f"unknown claim set {unknown}; known: {', '.join(CLAIM_SETS)}")
     sets = {n: claim_set(n) for n in names}
     pack = load(args.pack)
@@ -339,7 +338,10 @@ def main(argv: list[str] | None = None) -> int:
     for g, traps in rep.rule_kill.items():
         print(f"  without guard {g}: {traps or 'nothing gets through (unearned)'}")
     if rep.unknown_traps:
-        print(f"  guards naming no claim: {rep.unknown_traps}")
+        print(
+            "  guards naming no trap in this run (a typo, a true claim, or a claim set not"
+            f" included): {rep.unknown_traps}"
+        )
     if rep.unblocked_named_traps:
         print(f"  named traps a guard does not block: {rep.unblocked_named_traps}")
     print(f"  insensitive supported claims: {rep.insensitive}")
