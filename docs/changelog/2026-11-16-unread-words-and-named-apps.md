@@ -140,7 +140,11 @@
   copies is one group. Not fixed here (CodeRabbit on #265, outside this change): the Axiom
   importer labels iMessage rows with app "SMS" while the Cellebrite importer keeps "iMessage",
   so on an Axiom case an SMS-only claim can rest on an iMessage row; settling one label at
-  import is a follow-up. The v5 phones use the LEAPP importer.
+  import is a follow-up. The v5 phones use the LEAPP importer. A quote that a line break
+  wraps is masked as a quote only by the seconds guards and `event_windows`; the other readers
+  of quoted words (`_unquoted`, on main before this change) still read its words as the
+  claim's, so such a claim may go unproven, never pass or fail on them. Masking across line
+  breaks everywhere is a follow-up (CodeRabbit on #265).
 - Affects: verdicts (fewer code-checked SUPPORTED; claims naming an app the case lacks, or
   naming one kind of contact in an absence, go untested; counts over look-alike rows go
   inconclusive); customer-facing claims: none. No privacy or network change.
