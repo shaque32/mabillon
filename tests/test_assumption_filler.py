@@ -4777,3 +4777,22 @@ def test_coderabbit_on_822d9d7_two_copies_of_one_count_cover_one_number(conn):
     assert kept(two) == ["message_count", "event"]
     one = "On March 21, 2026, on dev:item1, PETROV and REYES had 3 Telegram calls."
     assert kept(one) == ["message_count"]
+
+
+def test_coderabbit_on_6080aa5_then_and_handles(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a subject before "then" is a subject of its own
+    then = 'On March 12, 2026, PETROV texted @northstar and @northstar then asked: "ok".'
+    assert "a second act" in filler.unread_words(then)
+    same = 'On March 12, 2026, PETROV texted @northstar and then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(same)
+    # a handle or an address that holds a reply verb is an account, not an act
+    for one in (
+        'On March 12, 2026, PETROV wrote to @replied: "need 2 more by friday".',
+        'On March 12, 2026, PETROV wrote to replied@example.com: "need 2 more by friday".',
+        'On March 12, 2026, PETROV wrote at example.com/replied: "need 2 more by friday".',
+    ):
+        assert "a second act" not in filler.unread_words(one), one
+    assert "a second act" not in filler.unread_words(
+        'On March 12, 2026, REYES replied: "need 2 more by friday".'
+    )

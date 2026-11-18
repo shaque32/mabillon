@@ -3224,11 +3224,12 @@ _ACT_VERB_RE = re.compile(
 _LEADS_TO_QUOTE_RE = re.compile(
     r"(?:(?!,\s*(?:and|but|then)\b|;|[.!?]\s)[^\"“”])*?[\"“]", re.IGNORECASE
 )
-# What may stand between two verbs that lead to one quote when they share a subject: nothing,
-# or an adverb ('texted REYES and then asked: "..."'). A name, a handle or a pronoun is a
-# subject of its own.
+# What may stand between two verbs that lead to one quote when they share a subject, after
+# the last "and", "but", "or" or comma: nothing, or an adverb ('texted REYES and then asked:
+# "..."'). A name, a handle or a pronoun is a subject of its own, also before "then" ("and
+# REYES then asked"; CodeRabbit on #265).
 _SAME_SUBJECT_RE = re.compile(
-    r"\s*(?:(?:also|later|first|just|immediately|quickly|soon|afterwards?)\s*)*", re.IGNORECASE
+    r"\s*(?:(?:then|also|later|first|just|immediately|quickly|soon|afterwards?)\s*)*", re.IGNORECASE
 )
 # A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
 _CLOCK_WORD_RE = re.compile(r"\b(?:noon|midnight)\b", re.IGNORECASE)
@@ -3503,11 +3504,15 @@ class LocalAssumptionFiller:
         for rx in (_READ_QUOTE_RE, _ALL_RECORDED_RE, _RECORDS_SAY_RE, _REPLY_QUOTED_RE):
             if rx is _REPLY_QUOTED_RE:
                 said = _unquoted(flat)
+                # a handle or an address is an account, not an act: "to @replied" (CodeRabbit
+                # on #265)
+                owned = [x.span() for r in (_HANDLE_RE, _WEB_ADDRESS_RE) for x in r.finditer(said)]
                 replies = [
                     m
                     for m in rx.finditer(flat)
                     if _ACT_VERB_RE.fullmatch(m.group(0))
                     and said[m.start() : m.end()] == m.group(0)
+                    and not any(a <= m.start() and m.end() <= b for a, b in owned)
                 ]
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
@@ -3601,7 +3606,7 @@ class LocalAssumptionFiller:
             # REYES and asked: "..."'. A later verb with any subject of its own ("and REYES
             # wrote", ", who replied") is another act (CodeRabbit on #265).
             if q.end() not in last or not _SAME_SUBJECT_RE.fullmatch(
-                re.split(r"\b(?:and|but|then|or)\b|[,;]", bare[last[q.end()] : m.start()])[-1]
+                re.split(r"\b(?:and|but|or)\b|[,;]", bare[last[q.end()] : m.start()])[-1]
             ):
                 acts.add(("quote", q.end(), m.start()))
             last[q.end()] = m.end()
