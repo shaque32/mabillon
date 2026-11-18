@@ -519,23 +519,37 @@ def call_log_check(  # noqa: ANN001
             ), None
         return None, None  # another importer: no LEAPP call log tables
     unread = p.get("not_imported") or []
-    if any(not t.get("key") for t in unread):
+    if any("key" not in t for t in unread):
         # an import stored before each unread entry kept its artifact key: an unread call log
         # under another table name could not be told apart, so the case is rebuilt (CodeRabbit)
         return (
             "this case was imported before unread tables kept their artifact key, so an unread"
             " call log cannot be ruled out; build it again with a new --out"
         ), None
+
+    def may_hold(t: dict) -> bool:
+        # rows may be there: the importer says so, or the manifest counts some, or neither is
+        # known (fail closed); a table known to be empty passes (CodeRabbit on #269)
+        records, holds = t.get("records"), t.get("may_hold_records")
+        return holds is True or (records or 0) > 0 or (holds is None and records is None)
+
+    for t in unread:
+        if not t.get("key") and may_hold(t):
+            # an entry the manifest gives neither a key nor a table: a rebuild lists it again,
+            # so the manifest is named instead; one known empty passes (CodeRabbit on #269)
+            return (
+                f"the LEAPP manifest lists an entry with neither an artifact key nor a table"
+                f" ({_one_line(t.get('name') or 'no name')}, {t.get('records')} records) that"
+                " may hold records, so an unread call log cannot be ruled out; check the LEAPP"
+                " output before any model call"
+            ), None
     # by the importer's own artifact keys, never by table name: a manifest may name its table
     # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
     native = {str(a.get("table")) for a in leapp.get("artifacts_read") or []
               if is_native(a.get("key"))}  # fmt: skip
     for t in unread:
-        records, holds = t.get("records"), t.get("may_hold_records")
-        # rows may be there: the importer says so, or the manifest counts some, or neither is
-        # known (fail closed); a table known to be empty passes (CodeRabbit on #269)
-        rows = holds is True or (records or 0) > 0 or (holds is None and records is None)
-        if is_native(t.get("key")) and rows:
+        records = t.get("records")
+        if is_native(t.get("key")) and may_hold(t):
             return (
                 f"its call log ({_one_line(t.get('table') or 'no table named')}, {records}"
                 " records) was not read"
@@ -781,6 +795,15 @@ def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
     from core import pipeline
 
     conn = connect(out / "case.db")
+    # the case.db checked before the audit may have been swapped since: the audit runs only on
+    # the very case built.ok records (CodeRabbit on #269)
+    was = json.loads((out / "built.ok").read_text(encoding="utf-8")).get("build_id")
+    if not was or stamped_build(conn) != was:
+        conn.close()
+        raise SystemExit(
+            f"{out}/case.db is not the case built.ok records (another build's case.db);"
+            " restore the case.db it was built with, or use a new --out"
+        )
     if fake:
         from eval.pipeline_fakes import fake_components
 

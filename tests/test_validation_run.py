@@ -1012,18 +1012,21 @@ def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path, c
         hickman_run.main(first)
 
 
-def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path, monkeypatch):
-    # A build that wrote no build id to built.ok or the case's audit log (as #269's setup 5
-    # could) has nothing to tie its case.db to, so a resume stops (CodeRabbit on #269).
-    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
-            str(tmp_path / "out"), "--fake"]  # fmt: skip
-    with monkeypatch.context() as m:
-        m.setattr(hickman_run, "stamp_build", lambda conn: None)
-        assert hickman_run.main(args) == 0
-    built = json.loads((tmp_path / "out" / "built.ok").read_text(encoding="utf-8"))
-    assert built["build_id"] is None
+def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path):
+    # A build that wrote no build id to built.ok (as #269's setup 5 could) has nothing to tie
+    # its case.db to, so a resume stops (CodeRabbit on #269). The audit of such a build stops
+    # too, since it runs only on the case built.ok records.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    built["build_id"] = None
+    (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
     with pytest.raises(SystemExit, match="built.ok records no build id"):
         hickman_run.main(args)
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.audit(out, True, lambda _m: None)
 
 
 @pytest.mark.parametrize(
@@ -1105,9 +1108,19 @@ def test_a_call_log_the_manifest_counts_but_whose_table_is_empty_stops_the_build
         hickman_run.main(args)
 
 
-def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path):
-    # The importer lists a call log entry with no table as not imported; the build's check
-    # stops on it before any model call (Claude review on #269).
+@pytest.mark.parametrize(
+    ("entry", "stop"),
+    [({"artifact_key": "get_calllog", "record_count": 2},
+      r"item1: its call log \(no table named, 2 records\)"),
+     ({"record_count": 2}, r"item1: the LEAPP manifest lists an entry with neither an artifact"
+                           r" key nor a table \(Call logs, 2 records\)"),
+     ({"record_count": 0}, None)],
+)  # fmt: skip
+def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path, entry, stop):
+    # The importer lists an entry with no table as not imported; the build's check stops on a
+    # call log so listed before any model call (Claude review on #269). An entry with no key
+    # either is named as a manifest problem, since a rebuild would list it again, and one
+    # counted empty passes (CodeRabbit on #269).
     import zipfile
 
     from eval.synthetic.leapp import Lava
@@ -1118,17 +1131,32 @@ def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path):
                              "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
                              "Phone Account Package": "com.android.phone"})  # fmt: skip
     manifest, data = lv.build()
-    next(v for v in manifest["artifacts"].values() if v).append(
-        {"name": "Call logs", "artifact_key": "get_calllog", "record_count": 2}
-    )
+    next(v for v in manifest["artifacts"].values() if v).append({"name": "Call logs", **entry})
     zipped = tmp_path / "item1.zip"
     with zipfile.ZipFile(zipped, "w") as z:
         z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
         z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
     args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
             str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
-    with pytest.raises(SystemExit, match=r"item1: its call log \(no table named, 2 records\)"):
+    if stop is None:
+        assert hickman_run.main(args) == 0
+        return
+    with pytest.raises(SystemExit, match=stop):
         hickman_run.main(args)
+
+
+def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
+    # CodeRabbit on #269: a case.db swapped after the resume's checks, before the audit opens
+    # it, is refused by the audit itself.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    built["build_id"] = "0" * 32
+    (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.audit(out, True, lambda _m: None)
 
 
 def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):

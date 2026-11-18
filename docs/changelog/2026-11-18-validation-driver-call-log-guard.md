@@ -24,6 +24,9 @@
     an entry with neither a count nor a row check fails closed, one known empty passes; a
     table whose row probe SQLite cannot answer counts as possibly holding records).
   - The manifest counts records in the call log, but its table gave no row to read.
+  - The manifest lists an entry with neither an artifact key nor a table that may hold
+    records, so it cannot be ruled out as the call log (the message names the manifest
+    problem, since a rebuild would list it again); one counted 0 passes.
   - The case holds no LEAPP coverage record for the phone, and the build recorded it as read
     by the LEAPP importer or did not record its importer. A phone whose importer is not recorded
     but whose LEAPP coverage is there is checked as usual.
@@ -39,7 +42,9 @@
   `built.ok` records (each phone's stored SHA-256), and unless it is the very case that build
   made: each build writes a random build id into the case's audit log and into `built.ok`, so a
   case.db from any other build (other claims, claim ids, claim types or zones, even of the same
-  package) is refused, and so is a `built.ok` that records no build id. It also stops unless
+  package) is refused, and so is a `built.ok` that records no build id. The audit itself checks
+  the build id again when it opens case.db, so a case.db swapped after those checks is refused
+  too. It also stops unless
   every resumed phone's device still has exactly one confirmed owner (counted by person, so two
   owners of one name are two), named as `built.ok` records it and the very person the build
   stipulated (`person:<device>:owner`, not another person of that name): an owner withdrawn or changed
@@ -65,7 +70,10 @@
     FaceTime call beside them.
   - An iOS call history of FaceTime calls only passes; on a stored case, calls of an app not
     known as a call provider and no phone call stop the check.
-  - A call log entry with no table name stops the build (`no table named`).
+  - A call log entry with no table name stops the build (`no table named`); an entry with
+    neither a key nor a table stops it as a manifest problem when it may hold records and
+    passes when counted 0.
+  - The audit stops when built.ok's build id is not the one case.db holds, or is missing.
   - An unreadable call log table stops the build.
   - A resume with no case.db stops with a message.
   - A call log whose table is named other than its key is still checked, read or unread.
@@ -106,7 +114,7 @@
     import; each such row is flagged `duration_not_readable` and the coverage summary lists it.
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 64 tests pass (with `tests/test_leapp.py`, 168) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 67 tests pass (with `tests/test_leapp.py`, 171) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
