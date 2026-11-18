@@ -1038,21 +1038,58 @@ def test_a_manifest_table_name_in_other_case_reads_as_the_database_spells_it(
     tmp_path: Path,
 ) -> None:
     # A manifest naming GET_CALLLOG reads get_calllog, and its locators name get_calllog, the
-    # LAVA table; names that differ in non-ASCII letters stay distinct, as SQLite keeps them
-    # (CodeRabbit on #269).
-    def upper(manifest):  # noqa: ANN001, ANN202
-        for entries in manifest["artifacts"].values():
-            for e in entries:
-                if e["artifact_key"] == "get_calllog":
-                    e["tablename"] = e["tablename"].upper()
-        entries = next(v for v in manifest["artifacts"].values() if v)
-        entries.append({**entries[0], "tablename": "calls_\u00c4", "artifact_key": "x1"})
-        entries.append({**entries[0], "tablename": "calls_\u00e4", "artifact_key": "x2"})
-
-    lava = _lava_with(tmp_path, upper)
+    # LAVA table; an entry with no key takes the database's spelling as its key. Tables whose
+    # names differ in non-ASCII letters stay distinct, as SQLite keeps them (CodeRabbit on #269).
+    manifest, data = _android().build()
+    for entries in manifest["artifacts"].values():
+        for e in entries:
+            if e["artifact_key"] == "get_calllog":
+                e["tablename"] = e["tablename"].upper()
+    entries = next(v for v in manifest["artifacts"].values() if v)
+    for name in ("calls_\u00c4", "calls_\u00e4"):
+        # only the ASCII letters change case (str.upper would fold the non-ASCII one too)
+        entries.append({"name": name, "tablename": "CALLS_" + name[-1], "record_count": 1})
+    db = sqlite3.connect(":memory:")
+    db.deserialize(data)
+    for name in ("calls_\u00c4", "calls_\u00e4"):
+        db.execute(f'CREATE TABLE "{name}" (who TEXT)')
+        db.execute(f'INSERT INTO "{name}" VALUES (?)', (name,))
+    db.commit()
+    data = db.serialize()
+    db.close()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    buf.seek(0)
+    lava = leapp.read_lava(buf, "a.zip")
     calls = next(a for a in lava.artifacts if a.key == "get_calllog")
     assert calls.table == "get_calllog"
-    assert {"calls_\u00c4", "calls_\u00e4"} <= {a.table for a in lava.artifacts}
+    for name in ("calls_\u00c4", "calls_\u00e4"):
+        # each entry finds its own table, as SQLite folds only ASCII letters
+        art = next(a for a in lava.artifacts if a.name == name)
+        assert (art.table, art.key) == (name, name)
+        quoted = art.table.replace(chr(34), chr(34) * 2)
+        assert lava.db.execute(f'SELECT who FROM "{quoted}"').fetchall() == [(name,)]  # noqa: S608
+
+
+@pytest.mark.parametrize(("count", "refused"), [(1, True), (None, True), (0, False)])
+def test_a_call_log_listed_with_no_table_stops_the_import_unless_empty(
+    tmp_path: Path,
+    count,
+    refused,  # noqa: ANN001
+) -> None:
+    # A call log entry with no table name would be skipped and leave no coverage record, so a
+    # run could not tell it went unread (CodeRabbit on #269).
+    def tableless(manifest):  # noqa: ANN001, ANN202
+        entries = next(v for v in manifest["artifacts"].values() if v)
+        entries.append({"name": "Call logs", "artifact_key": "get_calllog", "record_count": count})
+
+    if refused:
+        with pytest.raises(ValueError, match="with no table"):
+            _lava_with(tmp_path, tableless)
+    else:
+        _lava_with(tmp_path, tableless)
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

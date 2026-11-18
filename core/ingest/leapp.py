@@ -315,15 +315,28 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     arts: list[Artifact] = []
     for category, entries in manifest["artifacts"].items():
         for e in entries if isinstance(entries, list) else []:
-            if not isinstance(e, dict) or not e.get("tablename"):
+            if not isinstance(e, dict):
                 continue
             rc = e.get("record_count")
+            if not e.get("tablename"):
+                # a phone call log listed with no table to read would leave no coverage record,
+                # so a run could not tell it was never read: unless it is known empty, the
+                # import stops (CodeRabbit on #269)
+                if e.get("artifact_key") in NATIVE_CALL_KEYS and rc != 0:
+                    db.close()
+                    raise ValueError(
+                        f"{file_name}'s manifest lists the call log {e['artifact_key']!r} with"
+                        " no table, so it cannot be read; the import stops"
+                    )
+                continue
+            table = _db_spelling(db, str(e["tablename"]))
             arts.append(
                 Artifact(
                     category=str(category),
                     name=str(e.get("name") or e["tablename"]),
-                    key=str(e.get("artifact_key") or e["tablename"]),
-                    table=_db_spelling(db, str(e["tablename"])),
+                    # with no key, the table as the database spells it names the artifact
+                    key=str(e.get("artifact_key") or table),
+                    table=table,
                     module=str(e.get("module") or ""),
                     column_map={str(k): str(v) for k, v in (e.get("column_map") or {}).items()},
                     # a count below 0 (or a bool) states nothing: unknown (CodeRabbit on #269)
