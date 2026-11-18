@@ -3745,6 +3745,12 @@ def test_a_quoted_date_or_year_is_never_the_claims(conn):
         check_window(
             D(2026, 3, 12), D(2026, 3, 13), "Monday, March 12, 2026", f"On Monday, {monday[3:]}", ""
         )
+    # a run of months with a quote inside it is still the claim's run: "May" alone is cut
+    # from it (CodeRabbit on #265)
+    run = 'In April and May "the busy month" 2026, PETROV wrote: "ok".'
+    check_window(D(2026, 4, 1), D(2026, 6, 1), 'April and May "the busy month" 2026', run, "")
+    with pytest.raises(Reject, match="cut from a longer run"):
+        check_window(D(2026, 5, 1), D(2026, 6, 1), 'May "the busy month" 2026', run, "")
     no_year = 'On March 12, PETROV wrote to REYES: "back in 2025".'
     assert af.stated_windows(no_year, "") is None
     assert af.stated_windows("On March 12", no_year) is None
@@ -3946,6 +3952,9 @@ def test_a_hyphenated_app_name_reads_its_join_like_binding(tmp_path):
     assert filler._apps_named_together(wrapped) == []
     made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
     assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Line Business"})
+    }
     joined = text.replace(" or ", " and ")
     assert filler._apps_named_together(joined) == ["Telegram and Line-Business"]
     made, _ = build_text(c, joined, ClaimType.COMMUNICATION, C05_ANSWER)

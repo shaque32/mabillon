@@ -1284,9 +1284,13 @@ def check_window(
             raise Reject("a range of whole months is the months the words state, first to last")
         # "May 2023" copied from "In April and May 2023" is the claim's run cut short: the
         # range is the whole run the claim writes around the words, never part of it.
+        # The words are found in the claim as written, quotes kept, and the runs are read with
+        # quotes masked; masking keeps the offsets ('May "the busy month" 2026'; CodeRabbit on
+        # #265).
         words = _flat(_nfc(raw_written.strip()))
-        plain_claim = _unquoted(_flat(_nfc(claim)))
-        at = plain_claim.find(words) if words else -1
+        flat_claim = _flat(_nfc(claim))
+        plain_claim = _unquoted(flat_claim)
+        at = flat_claim.find(words) if words else -1
         while at >= 0:
             for run in _MONTH_RUN_RE.finditer(plain_claim):
                 if run.start() < at + len(words) and at < run.end():
@@ -1294,7 +1298,7 @@ def check_window(
                         raise Reject(
                             "the words are cut from a longer run of months the claim states"
                         )
-            at = plain_claim.find(words, at + 1)
+            at = flat_claim.find(words, at + 1)
         return
     after = []
     for m in _DATE_RE.finditer(as_written):
