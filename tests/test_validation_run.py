@@ -872,6 +872,21 @@ def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
 
     assert "was not read" in (check(unread_upper)[0] or "")
 
+    def counted_empty(p):  # noqa: ANN001, ANN202
+        # the manifest counts calls in the call log, but its table gave no row (CodeRabbit)
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 3 if a["key"] == "get_calllog" else a["records"]
+        for t in p["tables"]:
+            t["rows_read"] = 0 if t.get("header_locator") == "get_calllog" else t["rows_read"]
+
+    assert "counts 3 records in its manifest but none was read" in (check(counted_empty)[0] or "")
+
+    def counted_read(p):  # noqa: ANN001, ANN202
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 3 if a["key"] == "get_calllog" else a["records"]
+
+    assert check(counted_read)[0] is None  # a count its table gave rows for passes
+
     def keyless(p):  # noqa: ANN001, ANN202
         p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
 
@@ -1000,6 +1015,39 @@ def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path
     built = json.loads((tmp_path / "out" / "built.ok").read_text(encoding="utf-8"))
     assert built["build_id"] is None
     with pytest.raises(SystemExit, match="built.ok records no build id"):
+        hickman_run.main(args)
+
+
+@pytest.mark.parametrize(
+    ("sql", "says"),
+    [
+        (
+            "UPDATE persons SET name = 'SUBJECT-3' WHERE id LIKE '%:owner'",
+            "is SUBJECT-3, not SUBJECT-1",
+        ),
+        ("UPDATE stipulations SET status = 'rejected'", "is no one, not SUBJECT-1"),
+    ],
+)
+def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, sql, says):
+    # An owner stipulated again as another person since the build keeps one confirmed owner,
+    # but the claims name the defined owner: the resume stops (CodeRabbit on #269).
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main(args) == 0  # unchanged, it resumes
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    conn.execute(sql)
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match=rf"item1: its confirmed device owner {says} as built"):
         hickman_run.main(args)
 
 

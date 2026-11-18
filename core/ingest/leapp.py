@@ -1324,7 +1324,7 @@ def _android_calls(c: _Ctx) -> None:
         deleted = _text(r.get("Deleted"))
         _add_call(
             c, "unknown", loc, frm, to, direction, _time(r.get("Call Date")),
-            int(dur) if dur and dur.isdigit() else None,
+            int(dur) if dur and dur.isdecimal() else None,  # not isdigit: int() refuses '²'
             None if deleted is None else deleted not in ("0", "False", "false"),
         )  # fmt: skip
 

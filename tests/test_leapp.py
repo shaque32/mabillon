@@ -1011,15 +1011,18 @@ def test_a_negative_record_count_is_unknown(tmp_path: Path) -> None:
     assert leapp._may_hold_records(lava, replace(sms, table="not_there"))
 
 
-def _lava_with(tmp_path: Path, edit) -> leapp.Lava:  # noqa: ANN001
+def _lava_zip(tmp_path: Path, edit) -> Path:  # noqa: ANN001
     manifest, data = _android().build()
     edit(manifest)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
+    path = tmp_path / "edited.zip"
+    with zipfile.ZipFile(path, "w") as z:
         z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
         z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
-    buf.seek(0)
-    return leapp.read_lava(buf, "a.zip")
+    return path
+
+
+def _lava_with(tmp_path: Path, edit) -> leapp.Lava:  # noqa: ANN001
+    return leapp.read_lava(io.BytesIO(_lava_zip(tmp_path, edit).read_bytes()), "a.zip")
 
 
 @pytest.mark.parametrize("spelling", [str.upper, str])
@@ -1112,6 +1115,30 @@ def test_a_call_log_key_in_other_case_is_read_as_the_call_log(tmp_path: Path) ->
     lava = _lava_with(tmp_path, upper)
     assert "get_calllog" in {a.key for a in lava.artifacts}
     assert "GET_CALLLOG" not in {a.key for a in lava.artifacts}
+    # and the import stores its calls under the call log's key (CodeRabbit on #269)
+    conn = _db()
+    LeappImporter(source_id="up").import_source(_lava_zip(tmp_path, upper), conn)
+    p = coverage.load(conn, "up").payload["leapp"]
+    assert "get_calllog" in {a["key"] for a in p["artifacts_read"]}
+    assert conn.execute("SELECT count(*) FROM calls WHERE locator LIKE 'get_calllog/%'").fetchone()[
+        0
+    ]
+
+
+def test_a_call_duration_that_is_not_a_decimal_number_is_unknown(tmp_path: Path) -> None:
+    # "²" passes str.isdigit but int() refuses it: the call is kept with no duration, and the
+    # import goes on (CodeRabbit on #269).
+    lv = Lava(leapp="ALEAPP")
+    for i, dur in enumerate(["²", "5"]):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{i}:00Z",
+                                 "Partner": "+19195550111", "Duration in Secs": dur,
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="d").import_source(lv.write_zip(tmp_path / "d.zip"), conn)
+    got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
+    assert got == [(None,), (5,)]
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

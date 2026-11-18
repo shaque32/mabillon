@@ -7,7 +7,7 @@
   The LEAPP coverage's `not_imported` entries now carry their artifact key and, for a table that
   failed to read, whether it may hold records (`may_hold_records`). That flag, and the importer's
   own test of whether an unread artifact may hold records, now reads a table that is there for a
-  row even when the manifest counts 0, reads a manifest count that is below 0, a bool or not a whole number as unknown, and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key takes that spelling as its key. It refuses a manifest that names one table twice (in any ASCII case), which would store each of its rows twice, and one that lists a phone call log (`get_calllog` or `callHistory`) with no table name unless its count is 0, since such an entry would leave no coverage record; neither development manifest (Android 13, iOS 15) does either. Only the table's own rows (`TABLE/rowid=N`) are
+  row even when the manifest counts 0, takes a manifest count only as a JSON integer of 0 or more (a negative number, a bool, or a number such as 1.0 or 0.0 reads as unknown), and finds a table whatever the ASCII case of its manifest name, as SQLite does; the importer then reads and cites the table as the database spells it, so a locator always names the LAVA table. An entry with no artifact key takes that spelling as its key, except a phone call log table (`get_calllog` or `callHistory` in any ASCII case), whose key is the canonical spelling while its locator keeps the database's. It refuses a manifest that names one table twice (in any ASCII case), which would store each of its rows twice, and one that lists a phone call log (`get_calllog` or `callHistory`) with no table name unless its count is the integer 0, since such an entry would leave no coverage record; neither development manifest (Android 13, iOS 15) does either. Only the table's own rows (`TABLE/rowid=N`) are
   counted, and package text in a log line is kept on one line. The build stops before the audit, so no
   model call is made, in these cases:
   - The table has rows but no phone call from it can be read as the caller check reads one: a
@@ -21,6 +21,7 @@
   - The table may hold records the import could not read at all (listed under `not_imported`;
     an entry with neither a count nor a row check fails closed, one known empty passes; a
     table whose row probe SQLite cannot answer counts as possibly holding records).
+  - The manifest counts records in the call log, but its table gave no row to read.
   - The case holds no LEAPP coverage record for the phone, and the build recorded it as read
     by the LEAPP importer or did not record its importer. A phone whose importer is not recorded
     but whose LEAPP coverage is there is checked as usual.
@@ -37,7 +38,8 @@
   `built.ok` records (each phone's stored SHA-256), and unless it is the very case that build
   made: each build writes a random build id into the case's audit log and into `built.ok`, so a
   case.db from any other build (other claims, claim ids, claim types or zones, even of the same
-  package) is refused, and so is a `built.ok` that records no build id. This is driver setup 6
+  package) is refused, and so is a `built.ok` that records no build id. It also stops unless
+  each phone's device still has exactly one confirmed owner, the one `built.ok` records. This is driver setup 6
   (setup 5 existed only on this PR's branch); a case built by an earlier setup is not resumed and
   is built again with a new `--out`. A resume whose case.db is gone stops with a message. A resume
   of a case imported before unread entries kept their artifact key stops too, since an unread
@@ -72,7 +74,10 @@
     elsewhere, and stops when it has none, or on resume when its owner stipulation was withdrawn; a phone with no LEAPP coverage record
     stops when it was read by LEAPP or its importer was not recorded, and a line break in a table name stays escaped. A resume logs the readable count as a
     build does.
-  - An unread call log keyed in other case (`GET_CALLLOG`) stops the build.
+  - On a stored case, an unread call log entry keyed in other case (`GET_CALLLOG`) stops the
+    check, and so does a call log the manifest counts records in whose table gave no row.
+  - A resume stops when its phone's confirmed device owner was changed to another person or
+    withdrawn since the build.
   - A resume whose case.db holds another import under the same phone name stops, and so does
     one whose case.db is another build of the same package that differs only in a claim's text,
     only in a claim id, or only in the zone given, and one whose build recorded no build id.
@@ -84,8 +89,10 @@
     differ in non-ASCII letters stay distinct, each read from its own rows), a manifest naming
     one table twice, in the same or other case, is refused, and so is a call log listed with no
     table unless its count is 0, and a call log key in other case is read as the call log (a key
-    that is not text is not).
-  The file's 58 tests pass (with `tests/test_leapp.py`, 155) locally (cloud container, 2026-11-18). On the G2 development case
+    that is not text is not), and the import stores its calls under that key. A call duration
+    that is not a decimal number (such as `²`) is stored as unknown instead of stopping the
+    import.
+  The file's 60 tests pass (with `tests/test_leapp.py`, 158) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -96,7 +103,8 @@
 - Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at
-  all. The verdict rules do not change, but the coverage that feeds them can: when such a table
+  all; a call log key in other ASCII case is read as the call log, and an Android call duration
+  that is not a decimal number is stored as unknown instead of stopping the import. The verdict rules do not change, but the coverage that feeds them can: when such a table
   of an app holds rows Mabillon did not read (for example a refused native-message table with
   rows and a count of 0), that app is no longer counted as read in full, so an exact count or
   absence check on it that would have passed becomes inconclusive. This is the safer reading

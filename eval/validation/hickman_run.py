@@ -547,6 +547,22 @@ def call_log_check(  # noqa: ANN001
         " AND s.status = 'confirmed') = 1)",
         (source_id, int(owner_confirmed)),
     ).fetchone()
+    # a call log the manifest counts records in but whose table gave no row: the calls it
+    # counts were never read, so no check could find them (CodeRabbit on #269)
+    got: dict[str, int] = {}
+    for t in p.get("tables") or []:
+        if isinstance(t, dict) and t.get("kind") == "calls":
+            loc = str(t.get("header_locator") or "")
+            got[loc] = got.get(loc, 0) + int(t.get("rows_read") or 0)
+    for a in leapp.get("artifacts_read") or []:
+        n = a.get("records")
+        if is_native(a.get("key")) and isinstance(n, int) and n > 0:
+            if got.get(str(a.get("table")), 0) == 0:
+                return (
+                    f"its call log ({_one_line(a.get('table'))}) counts {n} records in its"
+                    " manifest but none was read; claims about its phone calls would go"
+                    " untested, so the run stops before any model call"
+                ), None
     notes = []
     for t in p.get("tables") or []:
         if not isinstance(t, dict):
@@ -979,6 +995,27 @@ def main(argv: list[str] | None = None) -> int:
                     f"{a.out}/case.db is not the case built.ok records (another build's case.db);"
                     " restore the case.db it was built with, or use a new --out"
                 )
+            # ...and each phone's device still has the one confirmed owner it was built with:
+            # an owner changed since would leave the claims naming the defined owner with no
+            # person to find (CodeRabbit on #269)
+            for p in was_p:
+                names = sorted(
+                    str(n)
+                    for (n,) in conn.execute(
+                        "SELECT DISTINCT pe.name FROM stipulations s"
+                        " JOIN devices d ON d.id = s.subject_id"
+                        " JOIN persons pe ON pe.id = s.person_id"
+                        " WHERE d.source_id = ? AND s.kind = 'device_owner'"
+                        " AND s.status = 'confirmed'",
+                        (_sid(p),),
+                    )
+                )
+                if names != [p.get("owner")]:
+                    raise SystemExit(
+                        f"{_sid(p)}: its confirmed device owner is"
+                        f" {_one_line(', '.join(names) or 'no one')}, not {p.get('owner')} as"
+                        " built; restore the case.db it was built with, or use a new --out"
+                    )
             checks = [
                 (
                     p["source_id"],
