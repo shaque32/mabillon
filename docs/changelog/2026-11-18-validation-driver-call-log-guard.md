@@ -32,14 +32,14 @@
   Otherwise the run logs how many rows are phone calls a check can read. A resume runs the same
   check on the stored case, so a case built before this change never resumes into an audit of
   such a phone; on resume the phone's accounts count only while its device has one confirmed
-  owner, so a device_owner stipulation withdrawn since the build stops the run when its call
-  log holds a phone call a check could otherwise read (a call history of FaceTime calls only
-  needs no owner and does not stop). Before that check, a resume stops unless the case.db holds the very imports
+  owner. Before that check, a resume stops unless the case.db holds the very imports
   `built.ok` records (each phone's stored SHA-256), and unless it is the very case that build
   made: each build writes a random build id into the case's audit log and into `built.ok`, so a
   case.db from any other build (other claims, claim ids, claim types or zones, even of the same
   package) is refused, and so is a `built.ok` that records no build id. It also stops unless
-  each phone's device still has exactly one confirmed owner, the one `built.ok` records. This is driver setup 6
+  every resumed phone's device still has exactly one confirmed owner (counted by person, so two
+  owners of one name are two), named as `built.ok` records it: an owner withdrawn or changed
+  since the build stops the resume, whatever the phone's call log holds. This is driver setup 6
   (setup 5 existed only on this PR's branch); a case built by an earlier setup is not resumed and
   is built again with a new `--out`. A resume whose case.db is gone stops with a message. A resume
   of a case imported before unread entries kept their artifact key stops too, since an unread
@@ -76,8 +76,9 @@
     build does.
   - On a stored case, an unread call log entry keyed in other case (`GET_CALLLOG`) stops the
     check, and so does a call log the manifest counts records in whose table gave no row.
-  - A resume stops when its phone's confirmed device owner was changed to another person or
-    withdrawn since the build.
+  - A resume stops when its phone's confirmed device owner was changed to another person,
+    withdrawn, or joined by a second confirmed owner of the same name since the build.
+  - A build stops on a real `get_calllog` table with no row whose manifest counts 3 records.
   - A resume whose case.db holds another import under the same phone name stops, and so does
     one whose case.db is another build of the same package that differs only in a claim's text,
     only in a claim id, or only in the zone given, and one whose build recorded no build id.
@@ -90,9 +91,10 @@
     one table twice, in the same or other case, is refused, and so is a call log listed with no
     table unless its count is 0, and a call log key in other case is read as the call log (a key
     that is not text is not), and the import stores its calls under that key. A call duration
-    that is not a decimal number (such as `²`) is stored as unknown instead of stopping the
+    that is not a decimal number (such as `²`), has more digits than Python reads, or is past
+    SQLite's integer range is stored as unknown, on Android and iOS, instead of stopping the
     import.
-  The file's 60 tests pass (with `tests/test_leapp.py`, 158) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 62 tests pass (with `tests/test_leapp.py`, 161) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
@@ -103,8 +105,9 @@
 - Affects: the validation driver (`eval/`) and, in the LEAPP importer, one constant made public,
   an artifact key and `may_hold_records` added to each `not_imported` coverage entry, and a
   manifest count of 0 no longer taken on trust when the table holds a row, nor a negative one at
-  all; a call log key in other ASCII case is read as the call log, and an Android call duration
-  that is not a decimal number is stored as unknown instead of stopping the import. The verdict rules do not change, but the coverage that feeds them can: when such a table
+  all; a call log key in other ASCII case is read as the call log, and a call duration that is
+  not a decimal number or is past SQLite's integer range is stored as unknown instead of
+  stopping the import. The verdict rules do not change, but the coverage that feeds them can: when such a table
   of an app holds rows Mabillon did not read (for example a refused native-message table with
   rows and a count of 0), that app is no longer counted as read in full, so an exact count or
   absence check on it that would have passed becomes inconclusive. This is the safer reading

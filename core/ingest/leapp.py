@@ -1206,6 +1206,21 @@ def _call_notice(
 _IDENT_RE = re.compile(r"^(?:\+?[\d\s().-]{5,}|[^@\s]+@[^@\s]+)$")
 
 
+_MAX_SQLITE_INT = 2**63 - 1
+
+
+def _whole_seconds(text: str | None) -> int | None:
+    """A duration in whole seconds, or None when the text is not one: not isdigit, since int()
+    refuses '²', and more digits than int() reads is unknown too; _add_call drops a value past
+    SQLite's range (CodeRabbit on #269)."""
+    if not text or not text.isdecimal():
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def _add_call(
     c: _Ctx,
     app: str,
@@ -1218,6 +1233,8 @@ def _add_call(
     deleted: bool | None,
 ) -> None:
     w = c.w
+    if duration is not None and not 0 <= duration <= _MAX_SQLITE_INT:
+        duration = None  # SQLite cannot hold it; the call is kept (CodeRabbit on #269)
     scope = f"row:{loc}"
     from_id = w.account(app, frm, loc, scope) if frm and frm.identifier else None
     to_id = w.account(app, to, loc, scope) if to and to.identifier else None
@@ -1324,7 +1341,7 @@ def _android_calls(c: _Ctx) -> None:
         deleted = _text(r.get("Deleted"))
         _add_call(
             c, "unknown", loc, frm, to, direction, _time(r.get("Call Date")),
-            int(dur) if dur and dur.isdecimal() else None,  # not isdigit: int() refuses '²'
+            _whole_seconds(dur),
             None if deleted is None else deleted not in ("0", "False", "false"),
         )  # fmt: skip
 

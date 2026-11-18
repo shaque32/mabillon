@@ -1026,6 +1026,14 @@ def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path
             "is SUBJECT-3, not SUBJECT-1",
         ),
         ("UPDATE stipulations SET status = 'rejected'", "is no one, not SUBJECT-1"),
+        # a second confirmed owner of the same name, as a restored case could hold
+        (
+            "INSERT INTO persons (id, name, created_by) VALUES ('p2', 'SUBJECT-1', 'expert:x');"
+            "INSERT INTO stipulations (id, kind, subject_id, person_id, statement, status,"
+            " decided_by, decided_at_utc) SELECT id || '2', kind, subject_id, 'p2', statement,"
+            " status, decided_by, decided_at_utc FROM stipulations WHERE kind = 'device_owner'",
+            "is SUBJECT-1, SUBJECT-1, not SUBJECT-1",
+        ),
     ],
 )
 def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, sql, says):
@@ -1044,10 +1052,42 @@ def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, 
     assert hickman_run.main(args) == 0
     assert hickman_run.main(args) == 0  # unchanged, it resumes
     conn = sqlite3.connect(tmp_path / "out" / "case.db")
-    conn.execute(sql)
+    conn.executescript(sql)
     conn.commit()
     conn.close()
     with pytest.raises(SystemExit, match=rf"item1: its confirmed device owner {says} as built"):
+        hickman_run.main(args)
+
+
+def test_a_call_log_the_manifest_counts_but_whose_table_is_empty_stops_the_build(tmp_path):
+    # A real get_calllog table with no row and a manifest count of 3: the calls it counts were
+    # never read, so the build stops before any model call (CodeRabbit on #269).
+    import zipfile
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    manifest, data = lv.build()
+    entry = next(e for es in manifest["artifacts"].values() for e in es
+                 if e["artifact_key"] == "get_calllog")  # fmt: skip
+    entry["record_count"] = 3
+    db = sqlite3.connect(":memory:")
+    db.deserialize(data)
+    db.execute(f'DELETE FROM "{entry["tablename"]}"')
+    db.commit()
+    data = db.serialize()
+    db.close()
+    zipped = tmp_path / "item1.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"item1: .*counts 3 records in its manifest but none"):
         hickman_run.main(args)
 
 

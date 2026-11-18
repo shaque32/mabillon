@@ -1129,7 +1129,7 @@ def test_a_call_duration_that_is_not_a_decimal_number_is_unknown(tmp_path: Path)
     # "²" passes str.isdigit but int() refuses it: the call is kept with no duration, and the
     # import goes on (CodeRabbit on #269).
     lv = Lava(leapp="ALEAPP")
-    for i, dur in enumerate(["²", "5"]):
+    for i, dur in enumerate(["²", str(2**63), "9" * 5000, str(2**63 - 1), "5"]):
         lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{i}:00Z",
                                  "Partner": "+19195550111", "Duration in Secs": dur,
                                  "Phone Account Address": "+19195550100",
@@ -1138,7 +1138,23 @@ def test_a_call_duration_that_is_not_a_decimal_number_is_unknown(tmp_path: Path)
     conn = _db()
     LeappImporter(source_id="d").import_source(lv.write_zip(tmp_path / "d.zip"), conn)
     got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
-    assert got == [(None,), (5,)]
+    assert got == [(None,), (None,), (None,), (2**63 - 1,), (5,)]
+
+
+def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> None:
+    # Any importer path: a duration past SQLite's integer range is stored as unknown, and the
+    # call is kept (CodeRabbit on #269).
+    lv = Lava(leapp="iLEAPP")
+    for i, dur in enumerate([str(2**63), "00:02:05"]):
+        lv.add("callHistory", **{"Starting Timestamp": f"2024-02-01T16:0{i}:00Z",
+                                 "Service Provider": "com.apple.Telephony",
+                                 "Call Type": "Phone Call", "Call Direction": "Outgoing",
+                                 "Phone Number": ALICE, "Answered": "Yes",
+                                 "Call Duration": dur})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
+    got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
+    assert got == [(None,), (125,)]
 
 
 def test_a_received_message_that_does_not_name_the_phones_line_names_no_receivers(

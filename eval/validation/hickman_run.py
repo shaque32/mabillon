@@ -999,10 +999,11 @@ def main(argv: list[str] | None = None) -> int:
             # an owner changed since would leave the claims naming the defined owner with no
             # person to find (CodeRabbit on #269)
             for p in was_p:
-                names = sorted(
-                    str(n)
-                    for (n,) in conn.execute(
-                        "SELECT DISTINCT pe.name FROM stipulations s"
+                # by person id, so two confirmed owners of one name are two (CodeRabbit)
+                owners = sorted(
+                    (str(n), str(pid))
+                    for (pid, n) in conn.execute(
+                        "SELECT DISTINCT s.person_id, pe.name FROM stipulations s"
                         " JOIN devices d ON d.id = s.subject_id"
                         " JOIN persons pe ON pe.id = s.person_id"
                         " WHERE d.source_id = ? AND s.kind = 'device_owner'"
@@ -1010,10 +1011,11 @@ def main(argv: list[str] | None = None) -> int:
                         (_sid(p),),
                     )
                 )
-                if names != [p.get("owner")]:
+                if [n for n, _ in owners] != [p.get("owner")]:
+                    names = ", ".join(n for n, _ in owners) or "no one"
                     raise SystemExit(
                         f"{_sid(p)}: its confirmed device owner is"
-                        f" {_one_line(', '.join(names) or 'no one')}, not {p.get('owner')} as"
+                        f" {_one_line(names)}, not {p.get('owner')} as"
                         " built; restore the case.db it was built with, or use a new --out"
                     )
             checks = [
