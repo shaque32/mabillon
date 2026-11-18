@@ -638,10 +638,48 @@ _LENGTH_BEFORE_RE = re.compile(
 )
 
 
+# "09:31:04 UTC", "9:31:04 p.m.", "09:31:04-04:00": a zone or a.m./p.m. after it makes it a time
+# of day, whatever word stands before it (CodeRabbit on #265)
+_ZONED_AFTER_RE = re.compile(
+    r"\s*(?:(?i:[ap]\.?\s?m)\b|UTC\b|GMT\b|Z\b|[A-Z]{1,4}T\b|[+\-\u2212]\d{2}:?\d{2}\b)"
+)
+
+
+def _app_text(text: str) -> str:
+    """The claim's words an app may be named in: no quoted message, handle or address."""
+    return _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
+
+
+# what stands before a quote that writes it as a party's name, not as a message: a bracket
+# ('@northstar ("Daniel Petrov,")'), a role word ('to the Kik user "ThisIs DFIRTwo,"',
+# 'displayed as "Josh Hickman,"'), or the start of the sentence or a clause ('On November 6,
+# 2022, "ThisIs DfirTwo" asked'); never 'wrote to @northstar: "Petrov"'
+_PARTY_BEFORE_QUOTE_RE = re.compile(
+    r"(?i)(?:^|[(,;]|\b(?:to|from|with|by|as|user|account|contact|handle|user\s*name|username|"
+    r"name|named|called|alias|aka|known\s+as|display\s+name))\s*$"
+)
+
+
+def _each_quote_tested(quotes: list[str], tested: list[str]) -> bool:
+    """True when each quoted message has a row of its own whose tested quote holds all of it:
+    a shorter tested quote ("on my way" for "I'm on my way now") tests only part of it, and one
+    row never stands for two quotes (CodeRabbit on #265)."""
+    free = [t for t in tested if t]
+    for q in sorted(quotes, key=len, reverse=True):
+        hit = next((i for i, t in enumerate(free) if q in t), None)
+        if hit is None:
+            return False
+        free.pop(hit)
+    return True
+
+
 def _states_seconds(text: str) -> bool:
-    """True when the words state a time of day to the second ("at 9:31:04"), not a length
-    ("lasted 0:12:45")."""
-    return any(not _LENGTH_BEFORE_RE.search(text[: m.start()]) for m in _SECONDS_RE.finditer(text))
+    """True when the words state a time of day to the second ("at 9:31:04", "for 09:31:04
+    UTC"), not a length ("lasted 0:12:45")."""
+    return any(
+        _ZONED_AFTER_RE.match(text, m.end()) or not _LENGTH_BEFORE_RE.search(text[: m.start()])
+        for m in _SECONDS_RE.finditer(text)
+    )
 
 
 _TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:a\.?m|p\.?m))", re.IGNORECASE)
@@ -3620,7 +3658,9 @@ class LocalAssumptionFiller:
                 params["person_ids"] = [writer]
                 code_made = True
 
-        channels = self._channels(_unquoted(claim.text), p.channels, tpl.id)
+        # a handle ("to @sms on Telegram") or an address names an account, not an app
+        # (CodeRabbit on #265)
+        channels = self._channels(_app_text(claim.text), p.channels, tpl.id)
         if channels:
             params["channels"] = channels
 
@@ -3671,7 +3711,7 @@ class LocalAssumptionFiller:
                     # The app the model wrote the person on scopes their accounts, as the
                     # channel it is, which the claim must name; without it a message on any of
                     # their apps would do (Codex on #152).
-                    (on,) = self._channels(_unquoted(claim.text), [acc.app], tpl.id)
+                    (on,) = self._channels(_app_text(claim.text), [acc.app], tpl.id)
                     if channels and on not in channels:
                         raise Reject(
                             f"{written!r} is written on {on}, which the proposal's channels"
@@ -4312,21 +4352,21 @@ class LocalAssumptionFiller:
         iMessage (Codex on #164); None when the case holds no such app. Empty when the claim
         names no app."""
         words = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
-        if _PHONE_APP_WORD_RE.search(_HANDLE_RE.sub(" ", words)) and not self._named_apps(
-            claim_text
-        ):
-            # "PETROV wrote an SMS": the kinds the words name, as `_claim_scope` binds them,
-            # never the iMessage store beside it, which `_bind_named_app` would refuse
-            # (CodeRabbit on #265); None when the case holds no app of those kinds
-            return self._phone_apps_named(_HANDLE_RE.sub(" ", words)) or None
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
         # word, as `_bind_named_app` binds none (CodeRabbit on #265)
-        if named := self._scope_apps(
+        named = self._scope_apps(
             self._named_apps(claim_text),
             _HANDLE_RE.sub(
                 " ", _ADDRESS_RE.sub(" ", _unquoted(self._without_phone_names(_nfc(claim_text))))
             ),
-        ):
+        )
+        if _PHONE_APP_WORD_RE.search(_HANDLE_RE.sub(" ", words)) and not named:
+            # "PETROV wrote an SMS" ("on his second line" too, on a case with Line): the kinds
+            # the words name, as `_claim_scope` binds them, never the iMessage store beside it,
+            # which `_bind_named_app` would refuse (CodeRabbit on #265); None when the case
+            # holds no app of those kinds
+            return self._phone_apps_named(_HANDLE_RE.sub(" ", words)) or None
+        if named:
             return named
         phone = [  # with an app that holds a phone's messages (iOS "Native Messages")
             app
@@ -4936,17 +4976,16 @@ class LocalAssumptionFiller:
                 return re.sub(r"[\W_]+", "", _nfc(x).casefold())
 
             names = {key(n) for n in self._names(claim.text)}
+            flat = _flat(claim.text)
             quotes = [
                 q
-                for q in (
-                    " ".join(_nfc(m.group(0)[1:-1]).casefold().split())
-                    for m in _QUOTE_SPAN_RE.finditer(_flat(claim.text))
-                )
-                if q and key(q) not in names
+                for m in _QUOTE_SPAN_RE.finditer(flat)
+                if (q := " ".join(_nfc(m.group(0)[1:-1]).casefold().split()))
+                # a name only where the claim writes it as a party: in brackets, or after "to",
+                # "user", "account" and the like, never 'wrote "ok"' (CodeRabbit on #265)
+                and not (key(q) in names and _PARTY_BEFORE_QUOTE_RE.search(flat[: m.start()]))
             ]
-            if len(quotes) > 1 and any(
-                not any(t and (t in q or q in t) for t in tested) for q in quotes
-            ):
+            if len(quotes) > 1 and not _each_quote_tested(quotes, tested):
                 words = ["a second quoted message"]
         if not words:
             return out

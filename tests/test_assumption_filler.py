@@ -4358,9 +4358,22 @@ def test_coderabbit_round_on_4a9bc77(tmp_path):
         'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday on'
         ' Signal".'
     )
-    on_signal = [{**p, "channels": ["Signal"]} for p in C05_ANSWER]
-    made, _ = build_text(c, quoted, ClaimType.COMMUNICATION, on_signal)
-    assert all("Signal" not in a.params.channels for a in made), [a.params for a in made]
+    said = "need 2 more by friday on Signal"
+    on_signal = [{**p, "channels": ["Signal"], "quoted_text": said} for p in C05_ANSWER]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, on_signal)
+    assert [d.reason for d in f.drops] == ["the claim does not name the channel 'Signal'"] * 2
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+    }
+    # the model's own rows on the app the claim names are kept, on that app
+    on_telegram = [{**p, "channels": ["Telegram"], "quoted_text": said} for p in C05_ANSWER]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, on_telegram)
+    assert not f.drops, f.drops
+    assert {(a.template_id, a.params.channels, a.params.quoted_text) for a in made} == {
+        ("sender", ("Telegram",), said),
+        ("record_time", ("Telegram",), said),
+    }
     # 3. "Facebook" alone beside a held "Facebook Messenger" is an app the case lacks
     assert filler._names_an_app_the_case_lacks("on Facebook and Facebook Messenger")
     assert not filler._names_an_app_the_case_lacks("on Facebook Messenger")
@@ -4402,3 +4415,56 @@ def test_coderabbit_round_on_4a9bc77(tmp_path):
     named = one.replace("@northstar:", '@northstar ("Daniel  Petrov,"):')
     made, _ = build_text(c, named, ClaimType.COMMUNICATION, C05_ANSWER)
     assert {a.template_id for a in made} == {"sender", "record_time"}
+
+
+def test_coderabbit_round_on_4ecf6d3(tmp_path):
+    # Findings from CodeRabbit's review of 4ecf6d3 on #265.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+        "INSERT INTO threads VALUES ('thr:line', 'item1', 'w', 'dev:item1', 'Line', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # 1. "an SMS on his second line", on a case with Line: code's own sender searches SMS,
+    # never every phone app with the iMessage store
+    line = (
+        'On March 12, 2026, PETROV sent an SMS on his second line to @northstar: "need 2 more'
+        ' by friday".'
+    )
+    assert filler._message_apps(line) == ["SMS"]
+    # 2. a handle ("@sms") names an account, never the SMS app
+    handle = 'On March 12, 2026, PETROV wrote to @sms on Telegram: "need 2 more by friday".'
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, f = build_text(c, handle, ClaimType.COMMUNICATION, on_sms)
+    assert [d.reason for d in f.drops] == ["the claim does not name the channel 'SMS'"] * 2
+    assert all(a.params.channels == ("Telegram",) for a in made), [a.params for a in made]
+    # 3. a zoned clock time to the second is a time of day, whatever word stands before it
+    assert _states_seconds("logged for 09:31:04 UTC")
+    assert _states_seconds("for 9:31:04 p.m.")
+    assert _states_seconds("for 09:31:04-04:00")
+    assert not _states_seconds("lasted 0:12:45")
+    assert not _states_seconds("for 0:12:45 at most")
+    # 4. each quoted message needs its own row whose quote holds all of it
+    two = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then'
+        ' "I\'m on my way now".'
+    )
+
+    def rows(sent: str, timed: str) -> list[dict]:
+        return [{**C05_ANSWER[0], "quoted_text": sent}, {**C05_ANSWER[1], "quoted_text": timed}]
+
+    def kinds(text: str, answer: list[dict]) -> set[str]:
+        made, _ = build_text(c, text, ClaimType.COMMUNICATION, answer)
+        return {a.template_id for a in made}
+
+    full = "need 2 more by friday"
+    assert kinds(two, rows(full, "I'm on my way now")) == {"sender", "record_time"}
+    assert "event" in kinds(two, rows(full, "on my way"))  # a part of the second quote
+    assert "event" in kinds(two, rows(full, full))  # one quote's rows never stand for both
+    # 5. a quote is a party's name only where the claim writes it as a party
+    said = (
+        'On March 12, 2026, PETROV wrote to @northstar: "Petrov" and then "need 2 more by friday".'
+    )
+    assert "event" in kinds(said, C05_ANSWER)
+    bracketed = 'On March 12, 2026, PETROV wrote to @northstar ("Petrov"): "need 2 more by friday".'
+    assert kinds(bracketed, C05_ANSWER) == {"sender", "record_time"}
