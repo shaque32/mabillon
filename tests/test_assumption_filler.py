@@ -4541,3 +4541,48 @@ def test_a_phone_named_after_a_message_kind_gives_code_s_sender_no_kind(tmp_path
     assert filler._message_apps(imsg) == ["iMessage"]
     made, f = build_text(c, imsg, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
     assert {a.template_id: a.params.channels for a in made}.get("sender") == ("iMessage",), f.drops
+
+
+def test_a_phone_named_after_an_app_off_the_case_keeps_code_s_sender(tmp_path):
+    # "the SMS TELEGRAM PHONE" names a phone, not Telegram: on a case with no Telegram, the
+    # check for an app the case lacks reads the claim without the phone's name, so code's own
+    # sender stands (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["SMS SIGNAL PHONE"], "expert:Test Expert", lambda: at)
+    text = (
+        'On March 12, 2026, on the SMS SIGNAL PHONE, PETROV wrote to @northstar: "need 2 more'
+        ' by friday".'
+    )
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id for a in made} == {"sender", "record_time"}, f.drops
+    # Signal written apart from the phone's name still stops code's sender
+    signal = text.replace("PETROV wrote to", "PETROV wrote on Signal to")
+    made, f = build_text(c, signal, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}
+
+
+def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
+    # a phone the expert named "the SMS": "sent an SMS on the SMS" cannot tell the phone from
+    # the kind, so code's own sender searches no app and the claim stays the expert's
+    # (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["the SMS"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, PETROV sent an SMS on the SMS to @northstar: "need 2 more by friday".'
+    )
+    assert filler._message_apps(text) is None
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}

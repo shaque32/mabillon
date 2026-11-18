@@ -4329,7 +4329,10 @@ class LocalAssumptionFiller:
         apps = self._message_apps(claim.text)
         if apps is None:
             return out  # a phone's messages, in a case that holds none
-        if not apps and _names_an_app_off_the_case(_unquoted(_nfc(claim.text))):
+        # a phone's name names no app: "the SIGNAL PHONE" keeps code's sender (CodeRabbit)
+        if not apps and _names_an_app_off_the_case(
+            _unquoted(self._without_phone_names(_nfc(claim.text)))
+        ):
             return out  # "the Signal message" on a case with no Signal (Codex on #169)
         if apps:  # the search stays on the apps named
             params["channels"] = apps
@@ -4348,6 +4351,8 @@ class LocalAssumptionFiller:
         names no app."""
         # a phone's name names no app, kind or cue: "the WHATSAPP PHONE" no WhatsApp, "the SMS
         # PHONE" no SMS (CodeRabbit on #265)
+        if self._phone_named_as_an_app(_nfc(claim_text)):
+            return None  # "the SMS" for a phone: its name and the kind read the same
         unphoned = self._without_phone_names(_nfc(claim_text))
         words = _ADDRESS_RE.sub(" ", _unquoted(unphoned))
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
@@ -4594,6 +4599,24 @@ class LocalAssumptionFiller:
         except Reject:
             return text  # a phone's name in lower case: its words stay, and may name an app
         return _blank(text, [(st, en) for _, st, en in spans])
+
+    def _phone_named_as_an_app(self, text: str) -> bool:
+        """True when the claim writes a phone by a name that is only an app's or a kind's ("the
+        SMS", "TELEGRAM"): where the claim writes that word, code cannot tell the phone from
+        the app, so its own sender searches none (CodeRabbit on #265)."""
+        try:
+            spans = self._phone_spans(text)
+        except Reject:
+            return False  # a phone's name in lower case: its words stay, as before
+        for _, st, en in spans:
+            bare = re.sub(r"(?i)^the\s+", "", text[st:en]).strip()
+            if _PHONE_APP_WORD_RE.fullmatch(bare) or any(
+                (a, b) == (0, len(bare))
+                for app in self._named_apps(bare)
+                for a, b in self._app_mentions(bare, app)
+            ):
+                return True
+        return False
 
     def _apps_named_together(self, claim_text: str) -> list[str]:
         """The words naming the claim's apps, as one phrase, when it names two or more and
@@ -5062,7 +5085,9 @@ class LocalAssumptionFiller:
             phones = self._written_phones(_unquoted(_nfc(claim.text)))
             if quote is None or apps is None or len(phones) > 1:
                 return out
-            if not apps and _names_an_app_off_the_case(_unquoted(_nfc(claim.text))):
+            if not apps and _names_an_app_off_the_case(
+                _unquoted(self._without_phone_names(_nfc(claim.text)))
+            ):
                 return out  # "the Signal message" on a case with no Signal (Codex on #169)
             if self._names_a_recipient(_unquoted(_nfc(claim.text))):
                 # "REYES received a Telegram message reading ...": a time on anyone's
