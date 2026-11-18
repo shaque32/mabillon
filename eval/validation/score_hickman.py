@@ -874,14 +874,51 @@ def score(
         # (Claude review on #269)
         parts["score.json"].write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
         parts["score.md"].write_text(render(result), encoding="utf-8")
-        for n in names:
-            os.replace(parts[n], out / n)
-        os.replace(db, out / "scored.db")
+        _publish({out / n: parts[n] for n in names} | {out / "scored.db": db})
     finally:
         db.unlink(missing_ok=True)
         for part in parts.values():
             part.unlink(missing_ok=True)
     return result
+
+
+def _publish(staged: dict[Path, Path]) -> None:
+    """Put each staged file at its target, all or none. Each earlier file is moved aside first
+    and put back if any later move fails, so a failure partway (a Windows file lock, say)
+    never leaves a new score.json beside an old score.md or scored.db (CodeRabbit on #269).
+    A put-back that fails too is reported, since the folder may then hold a mix."""
+    kept: dict[Path, Path] = {}  # target -> its earlier file, moved aside
+    placed: list[Path] = []
+    try:
+        for target, part in staged.items():
+            if target.exists():
+                aside = target.with_name(f"{target.name}.old")
+                os.replace(target, aside)
+                kept[target] = aside
+            os.replace(part, target)
+            placed.append(target)
+    except BaseException as e:
+        lost = []
+        for target in placed:
+            if target not in kept:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    lost.append(target.name)
+        for target, aside in kept.items():
+            try:
+                os.replace(aside, target)
+            except OSError:
+                lost.append(target.name)
+        if lost:
+            raise RuntimeError(
+                f"publishing the score failed ({e}) and {', '.join(lost)} could not be put "
+                f"back, so {next(iter(staged)).parent} may hold old and new score files "
+                "together; score again"
+            ) from e
+        raise
+    for aside in kept.values():
+        aside.unlink(missing_ok=True)
 
 
 def _score(

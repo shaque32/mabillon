@@ -1862,16 +1862,42 @@ def test_the_final_check_holds_its_lock_until_the_completed_write(tmp_path, monk
         conn.set_trace_callback(trace.append)
         return conn
 
+    # The final check is the one gate check made while the pipeline runs; its trace position
+    # is taken when it runs (CodeRabbit on #269), not found as the last BEGIN IMMEDIATE, so a
+    # commit after it followed by a new lock before the completed write still fails here.
+    in_audit: list[bool] = []
+    at_check: list[int] = []
+    from core import pipeline
+
+    real_run, real_stop = pipeline.run_audit, hickman_run.case_stop
+
+    def run_audit(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        in_audit.append(True)
+        try:
+            return real_run(*a, **k)
+        finally:
+            in_audit.clear()
+
+    def case_stop(conn, built):  # noqa: ANN001, ANN202
+        if in_audit:
+            assert conn.in_transaction
+            at_check.append(len(trace))
+        return real_stop(conn, built)
+
     monkeypatch.setattr(hickman_run, "open_existing", traced)
+    monkeypatch.setattr(pipeline, "run_audit", run_audit)
+    monkeypatch.setattr(hickman_run, "case_stop", case_stop)
     hickman_run.audit(out, True, lambda _m: None, built=built)
     upper = [t.strip().upper() for t in trace]
-    lock = max(i for i, t in enumerate(upper) if t.startswith("BEGIN IMMEDIATE"))
+    assert len(at_check) == 1, at_check
+    lock = at_check[0] - 1
+    assert upper[lock].startswith("BEGIN IMMEDIATE"), upper[lock]  # the check's own lock
     done = next(
         i for i, t in enumerate(upper)
         if i > lock and t.startswith("UPDATE PIPELINE_RUNS SET STATUS")
     )  # fmt: skip
     between = upper[lock + 1 : done]
-    assert not any(t.startswith(("COMMIT", "ROLLBACK", "END")) for t in between), between
+    assert not any(t.startswith(("COMMIT", "ROLLBACK", "END", "BEGIN")) for t in between), between
     assert "STATUS = 'COMPLETED'" in upper[done]
 
 

@@ -746,6 +746,53 @@ def test_a_failed_render_leaves_an_earlier_score_in_place(scored, tmp_path, monk
     assert sorted(p.name for p in out.iterdir()) == sorted(before)
 
 
+@pytest.mark.parametrize("fails_on", ["score.md", "scored.db"])
+def test_a_move_that_fails_partway_puts_the_earlier_score_back(
+    scored, tmp_path, monkeypatch, fails_on
+):
+    # CodeRabbit on #269: the three files are moved in one at a time, so a move that fails
+    # after score.json is in place must put every earlier file back, not leave a mix
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: f"earlier {n}".encode() for n in ("scored.db", "score.json", "score.md")}
+    for n, b in before.items():
+        (out / n).write_bytes(b)  # marked, so a new file in its place shows
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == fails_on and Path(src).name.endswith(".part"):
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(PermissionError, match="in use"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+def test_a_put_back_that_fails_says_the_folder_may_be_mixed(scored, tmp_path, monkeypatch):
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == "scored.db" or Path(src).name == "score.json.old":
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(RuntimeError, match="could not be put back") as e:
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert "score.json" in str(e.value) and "old and new score files" in str(e.value)
+
+
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="reads open files from /proc")
 def test_no_connection_is_left_open_on_a_file_the_scorer_moves(scored, tmp_path, monkeypatch):
     # Windows CI on #269: a file still open cannot be renamed there, so every connection on the
