@@ -1602,6 +1602,24 @@ def test_a_final_check_and_stopped_write_that_both_fail_leave_no_completed_run(
         conn.close()
 
 
+def test_a_case_with_no_claim_to_audit_is_refused_before_any_run(tmp_path):
+    # CodeRabbit on #269: with no claim the pipeline never calls the final check, so the
+    # audit refuses such a case instead of storing an unchecked completed run.
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE claims SET status = 'removed'")
+    runs = conn.execute("SELECT count(*) FROM pipeline_runs").fetchone()[0]
+    conn.close()
+    with pytest.raises(SystemExit, match="holds no claim to audit"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    assert conn.execute("SELECT count(*) FROM pipeline_runs").fetchone()[0] == runs
+    conn.close()
+
+
 def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
     # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
     # before any model call instead of passing without a word.

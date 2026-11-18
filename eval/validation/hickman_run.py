@@ -933,6 +933,10 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         stop = case_stop(conn, built)
         if stop:
             raise SystemExit(stop)
+        if not pipeline.load_claims(conn):
+            # with no claim the pipeline never calls the final check below, so a run with no
+            # claims would be stored as completed unchecked (CodeRabbit on #269)
+            raise SystemExit(f"{out}/case.db holds no claim to audit; check the claims file")
         if fake:
             from eval.pipeline_fakes import fake_components
 
