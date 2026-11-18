@@ -4786,6 +4786,11 @@ def test_coderabbit_on_6080aa5_then_and_handles(conn):
     assert "a second act" in filler.unread_words(then)
     same = 'On March 12, 2026, PETROV texted @northstar and then asked: "need 2 more by friday".'
     assert "a second act" not in filler.unread_words(same)
+    # with no "and", a bare "then" joins the two verbs (CodeRabbit on 6b6b213)
+    bare_then = 'On March 12, 2026, PETROV texted @northstar then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(bare_then)
+    other = 'On March 12, 2026, PETROV texted @northstar then @northstar asked: "ok".'
+    assert "a second act" in filler.unread_words(other)
     # a handle or an address that holds a reply verb is an account, not an act
     for one in (
         'On March 12, 2026, PETROV wrote to @replied: "need 2 more by friday".',

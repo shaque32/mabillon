@@ -45,7 +45,8 @@
     number"); a second act in plain words (", and @northstar wrote to PETROV", "called REYES
     before REYES called him") gets the event, while verbs that lead to one quoted message are
     one act ('texted REYES and asked: "..."') only when the later verb has no subject of its
-    own (", and REYES wrote", ", who replied", "and REYES then asked" are a second act; a
+    own (", and REYES wrote", ", who replied", "and REYES then asked" are a second act, while a bare
+    "then" with no "and" before it joins one subject's verbs; a
     verb inside a handle or an address is no act; CodeRabbit on #265); so does a time of day outside every kept range
     ("at 9 p.m. and at 10 p.m."); "exchanged", "conversation" and "chatted" are plain only
     beside a count of both sides (each way, or with no one-way side, as case01 C03's "13

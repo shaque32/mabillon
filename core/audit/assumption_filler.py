@@ -3231,6 +3231,17 @@ _LEADS_TO_QUOTE_RE = re.compile(
 _SAME_SUBJECT_RE = re.compile(
     r"\s*(?:(?:then|also|later|first|just|immediately|quickly|soon|afterwards?)\s*)*", re.IGNORECASE
 )
+
+
+def _later_clause(gap: str) -> str:
+    """The words between two verbs that belong to the later one: those after the last "and",
+    "but", "or", comma or semicolon, or, with none of those, after the last "then"."""
+    parts = re.split(r"\b(?:and|but|or)\b|[,;]", gap, flags=re.IGNORECASE)
+    if len(parts) > 1:
+        return parts[-1]
+    return re.split(r"\bthen\b", gap, flags=re.IGNORECASE)[-1]
+
+
 # A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
 _CLOCK_WORD_RE = re.compile(r"\b(?:noon|midnight)\b", re.IGNORECASE)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
@@ -3604,9 +3615,11 @@ class LocalAssumptionFiller:
                 continue
             # verbs leading to one quote are one act only with one subject: 'PETROV texted
             # REYES and asked: "..."'. A later verb with any subject of its own ("and REYES
-            # wrote", ", who replied") is another act (CodeRabbit on #265).
+            # wrote", ", who replied") is another act (CodeRabbit on #265). With no "and", "but",
+            # "or" or comma between them, a bare "then" joins them instead: "texted @northstar
+            # then asked" is one act, "texted @northstar then @northstar asked" two.
             if q.end() not in last or not _SAME_SUBJECT_RE.fullmatch(
-                re.split(r"\b(?:and|but|or)\b|[,;]", bare[last[q.end()] : m.start()])[-1]
+                _later_clause(bare[last[q.end()] : m.start()])
             ):
                 acts.add(("quote", q.end(), m.start()))
             last[q.end()] = m.end()
