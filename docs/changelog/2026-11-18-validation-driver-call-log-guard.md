@@ -61,7 +61,7 @@
   name and published only once complete, never without the audited case, and an earlier
   attempt's `results.zip` is removed as the attempt starts, before any check can refuse it.
   One invocation at a time owns the output directory: it creates `run.lock` exclusively
-  before its first write there and removes it when it ends, and a second invocation stops
+  before its first write there and removes it when it ends, even if writing its PID fails, and a second invocation stops
   while the lock exists (a run killed outright leaves the file, and the message says to
   delete it). The resume and the audit open case.db without ever
   creating it, so a case.db moved away stops the run instead of leaving an empty file, and the
@@ -150,7 +150,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 81 tests pass (with `tests/test_leapp.py`, 189) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 82 tests pass (with `tests/test_leapp.py`, 190) locally (cloud container, 2026-11-18). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

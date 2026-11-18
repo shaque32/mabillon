@@ -1056,9 +1056,12 @@ def main(argv: list[str] | None = None) -> int:
             f"{lock} exists: another run is using {a.out}. If none is (a run killed outright"
             " leaves it behind), delete that file and run again."
         ) from None
-    os.write(fd, f"{os.getpid()}\n".encode())
-    os.close(fd)
+    # The lock is ours from here on, so it is released even if the PID write fails.
     try:
+        try:
+            os.write(fd, f"{os.getpid()}\n".encode())
+        finally:
+            os.close(fd)
         return _attempt(a, phones, defs, defined, setup)
     finally:
         lock.unlink(missing_ok=True)
