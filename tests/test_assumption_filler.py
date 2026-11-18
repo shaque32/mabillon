@@ -4494,6 +4494,9 @@ def test_coderabbit_round_on_4ecf6d3(tmp_path):
         'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then, "Petrov".'
     )
     assert "event" in kinds(comma, C05_ANSWER)
+    # nor is a trailing phrase a subject's verb: "Petrov" on Telegram is a message
+    trailing = comma.replace('"Petrov".', '"Petrov" on Telegram.')
+    assert "event" in kinds(trailing, C05_ANSWER)
     from core.audit.assumption_filler import _quote_is_a_party
 
     subject = 'On November 6, 2022, "ThisIs DfirTwo" asked SUBJECT-1, "Can you delete it?"'

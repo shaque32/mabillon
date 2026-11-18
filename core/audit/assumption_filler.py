@@ -651,10 +651,10 @@ _PARTY_BEFORE_QUOTE_RE = re.compile(
     r"name|named|called|alias|aka|known\s+as|display\s+name))\s*$"
 )
 # a quote at the start of the sentence or a clause is a party only as the clause's subject,
-# with the clause's verb after it ('On November 6, 2022, "ThisIs DfirTwo" asked'); 'and then,
-# "Petrov".' is a message (CodeRabbit on #265)
+# with a verb of saying right after it (`_SUBJECT_AFTER_QUOTE_RE`: 'On November 6, 2022,
+# "ThisIs DfirTwo" asked'); 'and then, "Petrov".' and 'and then, "Petrov" on Telegram.' are
+# messages (CodeRabbit on #265)
 _CLAUSE_START_RE = re.compile(r"(?:^|,)\s*$")
-_SUBJECT_AFTER_QUOTE_RE = re.compile(r"\s+(?!(?:and|or|then|but|plus|nor)\b)[A-Za-z]", re.I)
 
 
 def _quote_is_a_party(flat: str, start: int, end: int) -> bool:
@@ -2888,6 +2888,9 @@ _SAYING = (
     r"messaged|replied|replies|replying|asked|asks|posted|posts|stated|states|stating|answered|"
     r"responded|typed|read|reads|reading"
 )
+# the verb that makes a quote at a clause's start its subject ('"ThisIs DfirTwo" asked'):
+# a verb of saying, never a trailing phrase ('"Petrov" on Telegram'; CodeRabbit on #265)
+_SUBJECT_AFTER_QUOTE_RE = re.compile(rf"[\s,]*(?:{_SAYING})\b", re.IGNORECASE)
 # Words that may name who sent a quoted message, anywhere outside quotes ("which @northstar
 # sent", "after receiving it from X", "writing"): with any of them, no record_time is made
 # without a sender, so a writer the claim names is never left untested (PAST-30 fill a). "a
