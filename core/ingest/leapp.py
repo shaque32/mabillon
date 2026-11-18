@@ -195,7 +195,8 @@ class Lava:
     calls_from_other_packages: int = 0
     # artifacts refused for their shape (ctx.failed): never read, never used as a copy source
     refused: set[int] = field(default_factory=set)
-    _headers: dict[str, set[str]] = field(default_factory=dict, repr=False)
+    # each table's columns as stored; two manifest entries can share a table with other maps
+    _columns: dict[str, list[str]] = field(default_factory=dict, repr=False)
     # record kinds stored from a table read as another kind (a chat table's call notices)
     extra_kinds: set[RecordKind] = field(default_factory=set)
 
@@ -208,11 +209,11 @@ class Lava:
 
     def headers(self, art: Artifact) -> set[str]:
         """The artifact's columns, as LEAPP wrote their headers (none when the table is missing)."""
-        if art.table not in self._headers:
+        if art.table not in self._columns:
             quoted = art.table.replace(chr(34), chr(34) * 2)
-            cols = [r[1] for r in self.db.execute(f'PRAGMA table_info("{quoted}")')]
-            self._headers[art.table] = {art.column_map.get(c, c) for c in cols}
-        return self._headers[art.table]
+            info = self.db.execute(f'PRAGMA table_info("{quoted}")')
+            self._columns[art.table] = [r[1] for r in info]
+        return {art.column_map.get(c, c) for c in self._columns[art.table]}
 
     def rows(self, art: Artifact) -> Iterator[tuple[int, dict[str, Any]]]:
         """(rowid, {header as LEAPP wrote it: value}) for each row of the artifact's table; none
@@ -1120,7 +1121,11 @@ def _call_notice(
     the sender places the call. Any other notice is stored with no sides and flagged, so the
     app's calls are not held in full."""
     seconds = notice["seconds"]
-    checked = notice["outcome"] == _CHECKED_OUTCOME and seconds is not None
+    checked = (
+        notice["outcome"] == _CHECKED_OUTCOME
+        and seconds is not None
+        and not seconds.startswith("-")
+    )
     kind = {MessageDirection.OUTGOING: CallDirection.OUTGOING,
             MessageDirection.INCOMING: CallDirection.INCOMING}.get(direction)  # fmt: skip
     frm: Party | None = sender

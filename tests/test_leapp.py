@@ -1358,6 +1358,29 @@ def test_a_notice_with_no_direction_is_flagged_once(tmp_path: Path) -> None:
     assert "call_not_incoming_outgoing_or_missed" not in flags
 
 
+def test_a_notice_with_a_negative_length_is_not_a_checked_call(tmp_path: Path) -> None:
+    # CodeRabbit on #268: only a length of zero or more was seen.
+    lv = _android()
+    _telegram(lv, "[Phone call (call id 638, outcome hung up, duration seconds -1)]")
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert _calls(conn, "Telegram") == [
+        ("get_telegrammessages/rowid=1", "unknown", None, None, None)
+    ]
+    flags = _telegram_flags(coverage.load(conn, "and").payload)
+    assert flags["call_not_incoming_outgoing_or_missed"] == 1
+
+
+def test_two_entries_on_one_table_each_read_their_own_column_map() -> None:
+    # CodeRabbit on #268: the column cache holds stored names, mapped per entry.
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE t (a TEXT, b TEXT)")
+    lava = leapp.Lava({}, db, "m", "d", "ALEAPP", None, [])
+    one = leapp.Artifact("x", "1", "k1", "t", "m", {"a": "A"}, None, None)
+    two = leapp.Artifact("x", "2", "k2", "t", "m", {"a": "Z"}, None, None)
+    assert lava.headers(one) == {"A", "b"} and lava.headers(two) == {"Z", "b"}
+
+
 def test_a_recovered_call_notice_is_a_possible_copy(tmp_path: Path) -> None:
     # Claude review on #268: a recovered call may repeat a live one, so a count over it is
     # inconclusive, as for a recovered message.
