@@ -668,19 +668,19 @@ def r2(db: Path, run: dict, mapped: list[GoldClaim], tested: list[str]) -> dict[
     from core.db import connect
     from core.review.redecide import redecide
     from eval.simulated_expert import SIM_EXPERT, GoldKey, review
-
-    conn = connect(db)
-    now = datetime.now(UTC)  # after the audit, so the rules' new run is the latest one
-    decided = review(conn, GoldKey(mapped), run["manifest"], lambda: now)
-    again = redecide(conn, SIM_EXPERT, lambda: now)
-    latest = pipeline.last_run(conn)
-    if latest is None or latest["run_id"] != again.run_id:
-        raise SystemExit(f"score: the rules' run {again.run_id} is not the latest completed run")
-    preds = pipeline.predictions(conn)
     from eval.validation.card import _verdicts
 
-    verdicts = _verdicts(conn, again.run_id)
-    conn.close()
+    # closed even when a step raises, so score() can remove scored.db.part on Windows
+    with closing(connect(db)) as conn:
+        now = datetime.now(UTC)  # after the audit, so the rules' new run is the latest one
+        decided = review(conn, GoldKey(mapped), run["manifest"], lambda: now)
+        again = redecide(conn, SIM_EXPERT, lambda: now)
+        latest = pipeline.last_run(conn)
+        if latest is None or latest["run_id"] != again.run_id:
+            why = f"score: the rules' run {again.run_id} is not the latest completed run"
+            raise SystemExit(why)
+        preds = pipeline.predictions(conn)
+        verdicts = _verdicts(conn, again.run_id)
     checks = load_checks(db, [g.claim_id for g in mapped])
     card = build_card(mapped, preds, verdicts, checks)
     over_tested = build_card([g for g in mapped if g.claim_id in tested], preds, verdicts, checks)

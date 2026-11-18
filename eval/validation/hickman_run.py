@@ -958,6 +958,9 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
             if done == total:
                 final_check()
+                checked.append(done)
+
+        checked: list[int] = []  # set once the final check passed; empty if no claim ran
 
         def final_check() -> None:
             """The gates again once every claim is saved, before the pipeline stores the run as
@@ -1006,6 +1009,13 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
                     {"run_id": result.run_id, "error": why, "stopped": True},
                 )
 
+        if not checked:
+            # the claims were removed between the check above and the pipeline's own read, so
+            # no claim ran, the final check never ran, and the pipeline stored an empty run as
+            # completed: it is stopped here, so no scorer or report takes it (CodeRabbit on #269)
+            why = "no claim was audited, so the run is not scored; check the claims file"
+            unscored(why)
+            raise SystemExit(why)
         try:
             if conn.in_transaction:  # the pipeline's own writes end before this read
                 conn.commit()

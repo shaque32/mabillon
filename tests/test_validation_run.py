@@ -1620,6 +1620,41 @@ def test_a_case_with_no_claim_to_audit_is_refused_before_any_run(tmp_path):
     conn.close()
 
 
+def test_a_run_whose_claims_go_before_the_pipeline_reads_them_is_stopped(tmp_path, monkeypatch):
+    # CodeRabbit on #269: claims removed between the driver's check and the pipeline's own
+    # read leave an empty run, which the pipeline stores as completed with no final check. The
+    # driver stores it as stopped, so no scorer or report takes it.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.load_claims
+    reads: list[int] = []
+
+    def gone_after_first(conn):  # noqa: ANN001, ANN202
+        reads.append(1)
+        if len(reads) == 1:
+            return real(conn)
+        with conn:
+            conn.execute("UPDATE claims SET status = 'removed'")
+        return real(conn)
+
+    conn = sqlite3.connect(out / "case.db")
+    before = {r[0] for r in conn.execute("SELECT id FROM pipeline_runs")}
+    conn.close()
+    (out / hickman_run.AUDITED).unlink(missing_ok=True)
+    monkeypatch.setattr(pipeline, "load_claims", gone_after_first)
+    with pytest.raises(SystemExit, match="no claim was audited"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    runs = dict(conn.execute("SELECT id, status FROM pipeline_runs"))
+    conn.close()
+    new = set(runs) - before
+    assert len(new) == 1 and runs[new.pop()] == "stopped"  # never completed, so never scored
+    assert not (out / hickman_run.AUDITED).exists()
+
+
 def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
     # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
     # before any model call instead of passing without a word.
