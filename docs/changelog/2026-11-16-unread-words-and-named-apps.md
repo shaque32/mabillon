@@ -38,7 +38,8 @@
     number only when it is one ("one of 10000 that day" is a count). "Answered" is plain only
     beside a row that tests a call's length, and a length a
     row does not test is read beside one it tests ("one minute and a quarter hour")
-    (CodeRabbit on #265).
+    (CodeRabbit on #265). "On SMS and MMS" is two kinds joined, so it gets the event, while
+    "SMS or MMS" stays alternatives (CodeRabbit on #265).
   - The app the claim names (`_bind_named_app`). A message row the model leaves on no app gets the
     app the claim names from code ("on Viber", "texted" is the phone's own messages app). A claim
     naming an app the case does not hold, or an email, gets no such row and stays unproven, also
@@ -59,7 +60,11 @@
     alone (Claude review and CodeRabbit on #265). A phone's own messages app written by name
     beside another app ("on Telegram or SMS") is searched too, on the case's apps that word
     names, each kind apart ("MMS" is no "SMS"), and no count or absence reads the mix; the
-    sheet check counts those apps as the claim's own (CodeRabbit on #265). Before, "wrote on
+    sheet check counts those apps as the claim's own (CodeRabbit on #265). A claim that names
+    one kind alone ("sent an iMessage") is searched on that kind's apps, never on the SMS app,
+    and a row on a phone's own messages app of another kind is refused, whether code or the
+    model chose it. A handle ("to @sms") names no phone's own messages app (CodeRabbit on
+    #265). Before, "wrote on
     Viber" passed on a WhatsApp message, and "no contact on Signal" was CONTRADICTED by WhatsApp
     messages. An app whose name is also a plain word ("his second line") gets no count or absence
     unless the claim writes it with a capital, whether code or the model chose it (Greptile on
@@ -67,7 +72,8 @@
   - Times to the second (`check_window`). A claim that states a time with seconds ("9:31:04",
     "21:14:05Z", "T21:14:05") gets no minute range, nor a whole day from a tie to an event
     ("the day after the RAID, at 2026-03-21T21:14:05Z"), so it is no longer tested by one wider than
-    it states. A length written so ("lasted 0:12:45") is not a time of day.
+    it states. A length written so ("lasted 0:12:45") is not a time of day. A time inside a
+    quote that a line break wraps is the quote's, not the claim's (CodeRabbit on #265).
   - Look-alike rows in a count (`core/audit/checks/count.py`, `look_alike`, count 1.3.0, then
     1.3.1 on merging #264's count 1.2.1 guard, which it keeps). Rows
     that repeat an earlier row's words within 2 seconds, on any app and from any sender, make
@@ -89,7 +95,9 @@
     rows too, so "exchanged at least 2" over A's "ok", B's "ok" a second later to no one
     named, and B's "sure" is held open, and B's row is cited, though not beside a fail on the
     counted rows. A look-alike whose every row names one side as sender stays that side's
-    message, so A's copy with no receiver never takes A's message away (CodeRabbit on #265).
+    message, so A's copy with no receiver never takes A's message away. Only the rows beside
+    the side that may hold no message are cited, and the note for the expert is left off a
+    fail on the counted rows (CodeRabbit on #265).
   - Testability sheet check (`core/audit/testability.py`, `eval/run_pipeline.py`, step 0.3.0).
     An app code binds from the claim's own words (`LocalAssumptionFiller.claim_apps`) is not
     counted as naming more than the signed sheet, as a party the claim names is not. Without
@@ -103,7 +111,8 @@
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
   main, the full local test run passes (4,702 passed, 9 skipped, before the last round of
-  fixes; the filler, check and count suites pass after it, 1,270), and
+  fixes; the filler, check, count, fill, LEAPP, replay, override, testability and timeline
+  suites pass after it), and
   `make eval-model-free` on case01 is unchanged (accuracy 1.00, false supported 0). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on

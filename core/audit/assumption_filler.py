@@ -1219,7 +1219,8 @@ def check_window(
     """
     if end <= start:
         raise Reject("window ends before it starts")
-    if _states_seconds(_unquoted(claim)):
+    # a quote that wraps a line is still a quote (CodeRabbit on #265)
+    if _states_seconds(_unquoted(_flat(_nfc(claim)))):
         # "at 9:21:45 a.m.": a range in whole minutes would pass a message at 9:21:10
         raise Reject(
             "the claim states a time to the second, which a range in minutes does not test"
@@ -3043,6 +3044,14 @@ _SPOKEN_LENGTH_RE = re.compile(
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
+
+
+def _phone_kind(word: str) -> str:
+    """The kind of a phone's own messages a word or an app's name writes ("SMS", "MMS",
+    "RCS", "iMessage"), each kind apart: "i-Messages" is "imessage", "MMS" is no "sms"."""
+    return re.sub(r"[-\s]", "", word.casefold()).replace("imessages", "imessage")
+
+
 # A length no row tests, read as words no check reads: the spoken lengths, and "a quarter
 # hour" (CodeRabbit on #265). Only `_SPOKEN_LENGTH_RE` is ever blanked as a tested length.
 _UNTESTED_LENGTH_RE = re.compile(
@@ -4117,7 +4126,7 @@ class LocalAssumptionFiller:
             if len(tied) != 1:  # two tied days: never picked by the model's day
                 raise Reject("the time range is not one the claim plainly states")
             (w,) = tied
-            if _states_seconds(_unquoted(claim.text)):
+            if _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
                 # "the day after the RAID, at 2026-03-12T21:14:05Z": a whole day would pass a
                 # message at any second of it (CodeRabbit on #265)
                 raise Reject(
@@ -4446,9 +4455,13 @@ class LocalAssumptionFiller:
         messages. Empty when the claim names none. The sheet check does not count them against
         a sheet that names no app (core/audit/testability.py), as they are the claim's own."""
         claim_text = self._without_phone_names(_nfc(claim_text))
-        bare = _ADDRESS_RE.sub(" ", _unquoted(claim_text))
+        # a handle ("to @sms") names an account, not an app (CodeRabbit on #265)
+        bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(claim_text)))
         apps = self._named_apps(claim_text)
-        if not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
+        if not apps and _PHONE_APP_WORD_RE.search(bare):
+            # "sent an iMessage": the kinds the words name, as `_bind_named_app` binds them
+            apps = self._phone_apps_named(bare)
+        elif not apps and (_TEXT_MESSAGE_RE.search(bare) or _IMESSAGE_RE.search(bare)):
             apps = self._phone_message_apps()
         elif apps and _PHONE_APP_WORD_RE.search(bare):
             # "on Telegram or SMS": the phone apps the word names are the claim's too, as
@@ -4461,15 +4474,11 @@ class LocalAssumptionFiller:
         "MMS", "RCS", "iMessage"), each kind apart, and an app that holds several kinds
         ("Native Messages", WIDER_APPS), where the expert-only event then reads which kind a
         row was (`_add_unread_event`)."""
-
-        def kind(word: str) -> str:
-            return re.sub(r"[-\s]", "", word.casefold()).replace("imessages", "imessage")
-
-        kinds = {kind(w) for w in _PHONE_APP_WORD_RE.findall(bare)}
+        kinds = {_phone_kind(w) for w in _PHONE_APP_WORD_RE.findall(bare)}
         return [
             a
             for a in self._phone_message_apps()
-            if a.strip().casefold() in WIDER_APPS or kind(a.strip()) in kinds
+            if a.strip().casefold() in WIDER_APPS or _phone_kind(a.strip()) in kinds
         ]
 
     def _without_phone_names(self, text: str) -> str:
@@ -4514,8 +4523,9 @@ class LocalAssumptionFiller:
                 spans.append((st, en, app))
         for m in _PHONE_APP_WORD_RE.finditer(bare):
             if not any(st < m.end() and m.start() < en for st, en, _ in spans):
-                kind = "imessage" if "imessage" in m.group(0).casefold() else "sms"
-                spans.append((*m.span(), kind))
+                # "SMS and MMS" are two kinds, as `_phone_apps_named` reads them (CodeRabbit
+                # on #265)
+                spans.append((*m.span(), _phone_kind(m.group(0))))
         if len({a for *_, a in spans} | set(missing)) < 2:
             return []
         spans.sort()
@@ -4561,7 +4571,8 @@ class LocalAssumptionFiller:
         # "the TELEGRAM PHONE" names a phone, not an app (`_absence_parties`; CodeRabbit on
         # #265)
         text = self._without_phone_names(_nfc(claim.text))
-        bare = _ADDRESS_RE.sub(" ", _unquoted(text))
+        # a handle ("to @sms") names an account, not an app (CodeRabbit on #265)
+        bare = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(text)))
         apps = self._named_apps(text)
 
         def plain_word(app: str) -> bool:
@@ -4642,12 +4653,29 @@ class LocalAssumptionFiller:
                     "the claim names a phone's own messages app beside another app, so no"
                     " count or absence is read"
                 )
+        kinds_named = bool(_PHONE_APP_WORD_RE.search(bare))
+        if kinds_named:
+            # "sent an iMessage": a row on a phone's own messages app the words do not name
+            # ("SMS"), whether code or the model chose it, may pass on a message of another
+            # kind (CodeRabbit on #265)
+            named_kinds = {a.casefold() for a in self._phone_apps_named(bare)}
+            phone_apps = {a.casefold() for a in self._phone_message_apps()}
+            for i in app_rows:
+                for c in out[i].params.get("channels") or ():
+                    if c.casefold() in phone_apps and c.casefold() not in named_kinds:
+                        raise Reject(f"the claim names a kind of text message {c!r} does not hold")
         rows = [i for i in app_rows if not out[i].params.get("channels")]
         if not rows:
             return out
         if apps:
             # "texted REYES on Telegram": the app the claim names
             found = list(dict.fromkeys([*apps, *phone_named]))
+        elif kinds_named:
+            # "sent an iMessage", "an SMS": the apps of the kinds the words name, never an SMS
+            # app for an iMessage (CodeRabbit on #265)
+            found = self._phone_apps_named(bare)
+            if not found:
+                raise Reject("the claim names a phone's own messages app the case lacks")
         elif texty:
             # every app of a phone's own messages, as for a code-made sender ("texted" may be
             # SMS or iMessage; `_message_apps`, Codex on #164); a count or an absence reads one
@@ -4715,7 +4743,9 @@ class LocalAssumptionFiller:
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
             # either, and no check reads that it was on each (CodeRabbit on #265)
             words = self._apps_named_together(claim.text)
-        if not words and (named := _PHONE_APP_WORD_RE.search(_unquoted(_nfc(claim.text)))):
+        if not words and (
+            named := _PHONE_APP_WORD_RE.search(_HANDLE_RE.sub(" ", _unquoted(_nfc(claim.text))))
+        ):
             # "sent an SMS" searched on an app that holds more than SMS ("Native Messages":
             # iMessage and SMS together, as LEAPP and a UFDR store them) may pass on an
             # iMessage; no check reads which of the two a row was (CodeRabbit on #265)

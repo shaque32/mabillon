@@ -124,13 +124,32 @@ def each_way_rests_on_look_alikes(
     `beside` are rows never counted (timed rows that name no sender or no receiver) read
     for look-alikes too: "B to no one 'ok'" a second after "A to B 'ok'" may be B's message
     (CodeRabbit on #265). `groups` passes the groups of `rows` + `beside` when already read."""
+    return bool(each_way_open_sides(rows, a_ids, b_ids, beside, groups))
+
+
+def each_way_open_sides(
+    rows: list[Row],
+    a_ids: set[str],
+    b_ids: set[str],
+    beside: list[Row] | None = None,
+    groups: list[list[Row]] | None = None,
+) -> list[set[str]]:
+    """The sides (`a_ids`, `b_ids`) whose rows may hold no message of their own
+    (`each_way_rests_on_look_alikes`)."""
     pool = rows + (beside or [])
     if groups is None:
         groups = look_alike_groups(pool)
-    return any(
-        fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids) == 0
+    return [
+        ids
         for ids in (a_ids, b_ids)
-    )
+        if fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids) == 0
+    ]
+
+
+_EACH_WAY_OPEN = (
+    "A message each way rests on rows that repeat another's words and time, which may be one "
+    "message; an expert must decide which rows are the same message"
+)
 
 
 class CountCheck(TemplateCheck):
@@ -290,24 +309,26 @@ class CountCheck(TemplateCheck):
             # each way is never one side's count, so `between` holds the counted rows alone;
             # the timed rows with no sender or receiver are read beside them here
             ew_groups = look_alike_groups(counted + timed_unplaced) if timed_unplaced else groups
-            if not one_side_silent and each_way_rests_on_look_alikes(
-                counted, a_ids, b_ids, timed_unplaced, ew_groups
-            ):
+            open_sides = (
+                []
+                if one_side_silent
+                else each_way_open_sides(counted, a_ids, b_ids, timed_unplaced, ew_groups)
+            )
+            if open_sides:
                 each_way_open = True
-                # the rows never counted that a side's rows may be copies of, cited
+                # the rows never counted that the open side's rows may be copies of, cited;
+                # not those beside a side that still holds a message of its own (CodeRabbit on
+                # #265)
                 ids_counted = {r.id for r in counted}
+                open_ids = {r.id for r in counted if any(r.sender in ids for ids in open_sides)}
                 each_way_peers = [
                     r
                     for g in ew_groups
-                    if any(x.id in ids_counted for x in g)
+                    if any(x.id in open_ids for x in g)
                     for r in g
                     if r.id not in ids_counted
                 ]
-                lines.append(
-                    "A message each way rests on rows that repeat another's words and time, "
-                    "which may be one message; an expert must decide which rows are the same "
-                    "message"
-                )
+                lines.append(_EACH_WAY_OPEN)
         n, want, op = len(counted), p.expected_count, p.count_op
         lines.insert(0, f"Counted {n}; the claim says {_OPS[op]} {want}")
         deleted = sum(1 for r in counted if r.deleted)
@@ -390,6 +411,10 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.PASS if n >= want else CheckOutcome.INCONCLUSIVE
         else:
             outcome = CheckOutcome.PASS if full else CheckOutcome.INCONCLUSIVE
+        if each_way_open and outcome is not CheckOutcome.INCONCLUSIVE:
+            # a fail on too many counted rows needs no expert to read the direction (CodeRabbit
+            # on #265)
+            lines.remove(_EACH_WAY_OPEN)
         if outcome is CheckOutcome.INCONCLUSIVE and n < want:
             lines.append("Finding fewer than claimed does not mean the others never existed")
         # The outcome rests on the rows that may be among them too (CodeRabbit on #264).

@@ -4029,6 +4029,47 @@ def test_more_findings_on_5da573d(tmp_path, conn):
     assert made == []
     made, _ = build_text(c, claim.format("SMS"), ClaimType.COMMUNICATION, C05_ANSWER)
     assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
     # the sheet check reads the phone app the claim names beside another
     sms = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
     assert sms.claim_apps(claim.format("SMS")) == {"telegram", "sms"}
+
+
+def test_more_findings_on_37917c7(tmp_path):
+    # CodeRabbit on #265, on 37917c7.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    c = _case_with(tmp_path / "a")
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # a handle names an account, not a phone's own messages app
+    text = 'On March 12, 2026, PETROV wrote to @sms on Telegram: "need 2 more by friday".'
+    assert filler.claim_apps(text) == {"telegram"}
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram"})}
+    # SMS and MMS are two kinds, joined by "and" and alternatives by "or"
+    text = 'On March 12, 2026, PETROV wrote to @northstar on SMS {} MMS: "need 2 more by friday".'
+    assert filler._apps_named_together(text.format("and"))
+    assert filler._apps_named_together(text.format("or")) == []
+    # an iMessage is never read on the SMS app, whether code or the model scoped the row
+    both = _case_with(
+        tmp_path / "b",
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV sent @northstar an iMessage: "need 2 more by friday".'
+    made, _ = build_text(both, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {("iMessage",)}
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    texted = text.replace("sent @northstar an iMessage", "texted @northstar an iMessage")
+    made, sms = build_text(both, texted, ClaimType.COMMUNICATION, on_sms)
+    assert made == []
+    assert any("kind of text message" in d.reason for d in sms.drops)
+    assert LocalAssumptionFiller(FakeModel("{}"), both, template=DRAFT).claim_apps(text) == {
+        "imessage"
+    }
+    # a time to the second inside a quote a line break wraps is the quote's, not the claim's
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday", adding'
+        ' "back at\n9:31:04".'
+    )
+    made, wrapped = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not any("to the second" in d.reason for d in wrapped.drops)

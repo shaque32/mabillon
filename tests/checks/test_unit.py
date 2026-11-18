@@ -792,6 +792,18 @@ def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None
     r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
     assert r.outcome is CheckOutcome.FAIL, r.detail
     assert "msg:p1:8" not in r.record_ids
+    assert "each way rests" not in r.detail  # no expert needed for that fail
+    # Bee's "sure" with its own copy to no one named still holds Bee's message, so only the
+    # "ok" copy is cited (CodeRabbit on #265)
+    (sure_at,) = conn.execute("SELECT ts_utc FROM messages WHERE id = 'msg:p1:2'").fetchone()
+    _march_message(conn, "msg:p1:9", "a:p1:b")
+    later = sure_at.replace(sure_at[17:19], f"{int(sure_at[17:19]) + 1:02d}", 1)
+    conn.execute("UPDATE messages SET body = 'sure', ts_utc = ? WHERE id = 'msg:p1:9'", (later,))
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:8" in r.record_ids
+    assert "msg:p1:9" not in r.record_ids
+    conn.execute("DELETE FROM messages WHERE id = 'msg:p1:9'")
     # Ay's own copy with no receiver keeps Ay's message Ay's (CodeRabbit on #265)
     conn.execute("UPDATE messages SET sender_account_id = 'a:p1:own' WHERE id = 'msg:p1:8'")
     r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
