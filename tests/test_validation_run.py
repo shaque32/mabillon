@@ -4,6 +4,7 @@ with stand-in components. The real run is on the public Hickman phone with the l
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import zipfile
@@ -1358,11 +1359,31 @@ def test_one_run_at_a_time_uses_an_out_dir(ufdr, tmp_path):
     assert hickman_run.main(args) == 0
     assert not (out / hickman_run.LOCK).exists()  # released when the run ends
     before = (out / "results.zip").read_bytes()
-    (out / hickman_run.LOCK).write_text("12345\n", encoding="utf-8")  # another run holds it
-    with pytest.raises(SystemExit, match="another run is using"):
+    # another run holds it: this test's own process stands in for that run
+    (out / hickman_run.LOCK).write_text(f"{os.getpid()}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match=rf"another run \(process {os.getpid()}\) is using"):
         hickman_run.main(args)
     assert (out / hickman_run.LOCK).exists()  # never taken from its holder
     assert (out / "results.zip").read_bytes() == before  # nor its files touched
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the PID is checked on POSIX only")
+def test_a_lock_left_by_a_killed_run_says_so_and_is_kept(ufdr, tmp_path):
+    # Claude review on #269: a run killed outright leaves run.lock behind; the message says its
+    # process is gone, but the lock is still never taken over automatically
+    import subprocess
+    import sys
+
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    gone = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],  # noqa: S603
+                          check=True, capture_output=True, text=True).stdout.strip()  # fmt: skip
+    (out / hickman_run.LOCK).write_text(f"{gone}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match=rf"process {gone}, which took it, is not running"):
+        hickman_run.main(args)
+    assert (out / hickman_run.LOCK).exists()
 
 
 def test_a_lock_whose_pid_write_fails_is_released(ufdr, tmp_path, monkeypatch):

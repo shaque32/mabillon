@@ -952,6 +952,10 @@ def _score(
 
     result = {
         "scorer_version": SCORER_VERSION,
+        # a zip with no build id predates the driver's final check (the v4 runs): it is scored,
+        # but its score says the driver never re-checked its owners and call logs before
+        # publishing it (Claude review on #269)
+        "driver_checked": run_record.get("build_id") is not None,
         "results_sha256": _sha256(results),
         "keys_sha256": key_hashes,
         "audit_run": run["run_id"],
@@ -1123,6 +1127,13 @@ def render(s: dict[str, Any]) -> str:
         f" `{s['results_sha256']}`, scorer {s.get('scorer_version', 'before 1.2.0')}.",
         "",
     ]
+    if s.get("driver_checked") is False:
+        lines += [
+            "This results.zip has no build id: it was made before the driver's final check, so"
+            " its owners and call logs were not re-checked before it was published. Quote no"
+            " number from it as a v5 result.",
+            "",
+        ]
     if "v4_bars" in s:
         lines += _v4_lines(s)
     if "coverage" in s:

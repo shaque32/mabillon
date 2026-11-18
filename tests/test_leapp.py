@@ -1275,6 +1275,24 @@ def test_an_ios_call_duration_sqlite_cannot_hold_is_unknown(tmp_path: Path) -> N
     assert t["flag_counts"].get("duration_not_readable") == 2
 
 
+def test_an_ios_call_duration_stored_as_a_real_is_read(tmp_path: Path) -> None:
+    # Claude review on #269: iOS lengths go through the same reader as app calls, so a REAL
+    # such as 104.0 (or a fraction) is read in whole seconds, not flagged as unreadable
+    lv = Lava(leapp="iLEAPP")
+    for i, dur in enumerate([104.0, "83.5", "00:02:05"]):
+        lv.add("callHistory", **{"Starting Timestamp": f"2024-02-01T16:0{i}:00Z",
+                                 "Service Provider": "com.apple.Telephony",
+                                 "Call Type": "Phone Call", "Call Direction": "Outgoing",
+                                 "Phone Number": ALICE, "Answered": "Yes",
+                                 "Call Duration": dur})  # fmt: skip
+    conn = _db()
+    LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / "i.zip"), conn)
+    got = conn.execute("SELECT duration_s FROM calls ORDER BY ts_utc").fetchall()
+    assert got == [(104,), (83,), (125,)]
+    (t,) = coverage.load(conn, "ios").payload["tables"]
+    assert "duration_not_readable" not in t.get("flag_counts", {})
+
+
 def test_an_app_call_duration_int_refuses_is_unknown_not_rounded() -> None:
     # 5000 zeros then 2**53 + 1: parse_duration refuses it, and the float fallback would round
     # it to 2**53, a wrong length a duration check could select on (CodeRabbit on #269).

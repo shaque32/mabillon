@@ -1186,10 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        raise SystemExit(
-            f"{lock} exists: another run is using {a.out}. If none is (a run killed outright"
-            " leaves it behind), delete that file and run again."
-        ) from None
+        raise SystemExit(f"{lock} exists: {_lock_holder(lock)}") from None
     # The lock is ours from here on, so it is released even if the PID write fails.
     try:
         try:
@@ -1199,6 +1196,30 @@ def main(argv: list[str] | None = None) -> int:
         return _attempt(a, phones, defs, defined, setup)
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _lock_holder(lock: Path) -> str:
+    """What the operator needs to know about a run.lock this invocation could not take. It is
+    never removed here: taking over a lock whose holder is alive would mix two attempts in one
+    results.zip, and a stuck lock stops the run before any model call. A process killed
+    outright (SIGKILL, out of memory, a reboot) leaves it behind; on POSIX the PID it names is
+    checked, so the message says so (Claude review on #269)."""
+    advice = f"if none is, delete {lock} and run again to resume"
+    try:
+        pid = int(lock.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return f"another run may be using {lock.parent}; {advice}"
+    if os.name == "posix" and pid > 0:
+        try:
+            os.kill(pid, 0)  # signal 0 only asks whether the process exists
+        except ProcessLookupError:
+            return (
+                f"process {pid}, which took it, is not running on this machine, so that run"
+                f" was likely killed outright; delete {lock} and run again to resume"
+            )
+        except OSError:
+            pass  # it exists under another user
+    return f"another run (process {pid}) is using {lock.parent}; {advice}"
 
 
 def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001

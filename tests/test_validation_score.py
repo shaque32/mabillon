@@ -751,7 +751,15 @@ def test_a_zip_whose_case_db_is_another_builds_is_refused(scored, tmp_path, monk
         score_hickman.score(older, base / "keys", base / "dump", tmp_path / "out")
     # a zip made before build ids (the v4 runs) has neither, and is scored by its run id alone
     monkeypatch.setattr(score_hickman, "stamped_build", lambda _conn: None)
-    assert score_hickman.score(older, base / "keys", base / "dump", tmp_path / "old")["r1"]
+    old = score_hickman.score(older, base / "keys", base / "dump", tmp_path / "old")
+    assert old["r1"] and old["driver_checked"] is False  # and its score says so
+    assert "made before the driver's final check" in (tmp_path / "old" / "score.md").read_text(
+        encoding="utf-8"
+    )
+    monkeypatch.undo()
+    new = score_hickman.score(run / "results.zip", base / "keys", base / "dump", tmp_path / "new")
+    assert new["driver_checked"] is True
+    assert "final check" not in (tmp_path / "new" / "score.md").read_text(encoding="utf-8")
 
 
 def test_a_refused_zip_leaves_an_earlier_score_in_place(scored, tmp_path):

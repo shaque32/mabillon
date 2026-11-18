@@ -198,7 +198,8 @@ class Lava:
     refused: set[int] = field(default_factory=set)
     # manifest entries that name no table: never read, listed as not imported (Claude review)
     tableless: list[dict[str, Any]] = field(default_factory=list)
-    # each table's columns as stored; two manifest entries can share a table with other maps
+    # each table's columns as stored, read once per table (read_lava refuses two entries it
+    # reads on one table; an entry it never reads may still name a table another one reads)
     _columns: dict[str, list[str]] = field(default_factory=dict, repr=False)
     # each table's rows probe (_may_hold_records), asked once per table (Claude review on #269)
     _has_rows: dict[str, bool | None] = field(default_factory=dict, repr=False)
@@ -1326,7 +1327,7 @@ def _ios_calls(c: _Ctx) -> None:
                 c.w.account(app, other, loc, f"row:{loc}")
         _add_call(
             c, app, loc, frm, to, direction, _time(r.get("Starting Timestamp")),
-            _hms(_text(r.get("Call Duration"))), None, r.get("Call Duration"),
+            _seconds(r.get("Call Duration")), None, r.get("Call Duration"),
         )  # fmt: skip
 
 
