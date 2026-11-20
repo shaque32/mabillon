@@ -5097,6 +5097,28 @@ def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
             "",
             "record_time",
         )
+    # a range ending at 2 a.m. on the next day does not end at its midnight (CodeRabbit on
+    # 2238b1d)
+    late = "From 11:55 p.m. on March 12, 2026 to 2 a.m. on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12, 23, 55),
+            D(2026, 3, 13),
+            late,
+            late + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
+    # nor does a midnight that is not the range's end beside that day
+    other = "On March 12, 2026 near midnight and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), other, other + ", PETROV wrote.", "", "record_time"
+        )
+    through = "From 10 p.m. on March 12, 2026 through March 13, 2026 at midnight"
+    check_window(
+        D(2026, 3, 12, 22), D(2026, 3, 13), through, through + ", PETROV wrote.", "", "record_time"
+    )
     # midnight written as a clock time is still midnight
     clock = "From 10 p.m. on March 12, 2026 to 12 a.m. on March 13, 2026"
     check_window(

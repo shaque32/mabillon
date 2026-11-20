@@ -1132,6 +1132,31 @@ def _date_stated(d: date, mentions: list[_DateMention], years: set[int]) -> bool
     return False
 
 
+# "to midnight on March 13", "until 12 a.m., March 13", "through March 13 at midnight": the
+# words end the range at the midnight that starts a day
+_TO_MIDNIGHT_RE = re.compile(
+    r"(?:\b(?:to|until|till|through|thru)\s+|[-\u2013\u2014]\s*)"
+    r"(?:(?P<before>[^.;:]{0,30}?)\s+at\s+)?"
+    r"(?:midnight\b|12(?::00)?\s*a\.?m\.?(?![a-z])|00:00\b)"
+    r"(?P<after>[^;:]{0,30})",
+    re.IGNORECASE,
+)
+
+
+def _ends_at_midnight_of(text: str, d: date, years: set[int]) -> bool:
+    """True when the words end a range at midnight with day d named right beside it."""
+    for m in _TO_MIDNIGHT_RE.finditer(text):
+        if m.group("before"):
+            beside = m.group("before")  # "through March 13 at midnight"
+        else:
+            beside = re.sub(r"^,?\s*(?:on\s+)?", "", m.group("after"))  # "midnight on March 13"
+            if not re.match(r"(?:[A-Za-z]+,?\s+)?(?:[A-Za-z]+\.?\s+\d|\d)", beside):
+                continue
+        if _date_stated(d, date_mentions(beside)[:1], years):
+            return True
+    return False
+
+
 _WD_BEFORE_RE = re.compile(rf"\b({_WD_RE}),?\s+$", re.IGNORECASE)
 # "two days after", "shortly after": the range is offset from the date by words code does
 # not read
@@ -1392,11 +1417,12 @@ def check_window(
         days = [
             start.date() + timedelta(days=i) for i in range((last.date() - start.date()).days + 1)
         ]
-        if end.time() == time(0, 0) and (time(0, 0) in times or re.search(r"\bmidnight\b", low)):
-            # "from 10 p.m. on March 12 to midnight on March 13": a range whose words state
-            # midnight may end at the midnight that starts the day it names (CodeRabbit on
-            # #265). Any other time does not: "at 11:50 p.m. on March 12 and on March 13" and
-            # a range of whole days ("On March 12 and on March 13") still need March 13 inside
+        if end.time() == time(0, 0) and _ends_at_midnight_of(as_written, end.date(), years):
+            # "from 10 p.m. on March 12 to midnight on March 13": a range whose words end it at
+            # midnight on a day may end at the midnight that starts that day (CodeRabbit on
+            # #265). Nothing else does: "at 11:50 p.m. on March 12 and on March 13", "from
+            # 11:55 p.m. on March 12 to 2 a.m. on March 13" and a range of whole days ("On
+            # March 12 and on March 13") still need March 13 inside
             days.append(end.date())
         for m in date_mentions(as_written):
             if not any(_date_stated(d, [m], years) for d in days):
