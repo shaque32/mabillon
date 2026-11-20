@@ -199,6 +199,10 @@
   - A stored call at 9999-12-31T23:59:59Z or 0001-01-01T00:00:00Z stops the run like an
     unparsable time; results.zip is not published without its run.json or case.db; the report
     never creates a missing audited copy; a UNC path's URI has an empty authority.
+  - The scorer removes a journal left beside an earlier `scored.db` before putting the new one
+    in place, scores a `results.ZIP` in any case of its extension, and its check reader opens a
+    path holding `#` or `?` (the URI is escaped); a LEAPP entry with no name, key or table is
+    listed as an unnamed entry of its category, not with an empty name.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
     manifest counts 0, a negative manifest count reads as unknown (and a count of False or 0.0 is not taken as empty), a table whose row probe
     fails may hold records, a manifest table name in other case still finds its table and is
@@ -217,10 +221,15 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 108 tests pass (with `tests/test_leapp.py`, 222; `tests/test_validation_score.py`'s 38 pass too) locally (cloud container, 2026-11-20). On the G2 development case
-  (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
-  or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
-  calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.
+  The file's 108 tests pass (with `tests/test_leapp.py`, 223; `tests/test_validation_score.py`'s 41 pass too) locally (cloud container, 2026-11-20). On the G2 development case
+  (Android 13 and iOS 15 LEAPP output; last run at this PR's 2c9ffbc with main merged in, run52,
+  cloud container, 2026-11-20, fake model, no spend), neither phone is stopped, on build or
+  resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed calls
+  on Android 13 name no caller), and the coverage as the G2 log prints it (apps read in full,
+  each not-imported entry with its key and `may_hold_records`, records per table) is the same as
+  on every earlier rerun of this PR. The stored payload itself gains `key` and
+  `may_hold_records` on each `not_imported` entry, which is why a case built before this PR is
+  refused on resume. `make check` runs on GitHub CI.
 - Open: a call log where only a few rows are readable passes and is only logged; no share is
   set as a stop. Only LEAPP coverage names these tables, so a UFDR phone is never checked here.
   The v5 phones themselves are not opened before the run, so whether they would be stopped is

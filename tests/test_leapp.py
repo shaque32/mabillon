@@ -1941,3 +1941,16 @@ def test_an_artifact_key_that_is_not_text_takes_its_key_from_the_table(tmp_path:
     payload = coverage.load(conn, "t").payload
     assert [a["key"] for a in payload["leapp"]["artifacts_read"]] == ["get_calllog"]
     assert conn.execute("SELECT count(*) FROM calls").fetchone()[0] == 1
+
+
+def test_an_entry_with_no_name_key_or_table_is_listed_by_its_category(tmp_path: Path) -> None:
+    # Claude review on #269: an entry naming nothing was listed with an empty name.
+    def nameless(manifest: dict) -> None:
+        manifest["artifacts"].setdefault("Call Logs", []).append({"record_count": 5})
+
+    conn = _db()
+    LeappImporter(source_id="t").import_source(_lava_zip(tmp_path, nameless), conn)
+    rows = [t for t in coverage.load(conn, "t").payload["not_imported"] if t["table"] is None]
+    assert [(t["name"], t["may_hold_records"]) for t in rows] == [
+        ("an unnamed Call Logs entry", True)
+    ]

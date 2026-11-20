@@ -363,7 +363,8 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
                 # (and a run's call-log check) shows it was never read; unless the manifest
                 # counts it empty it may hold records (CodeRabbit and Claude review on #269)
                 tableless.append(
-                    {"name": str(e.get("name") or key or ""), "category": str(category),
+                    {"name": str(e.get("name") or key or f"an unnamed {category} entry"),
+                     "category": str(category),
                      "key": key, "records": rc}
                 )  # fmt: skip
                 continue

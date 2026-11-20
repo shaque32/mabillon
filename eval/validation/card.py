@@ -93,7 +93,13 @@ def contradicted_basis(v: RunVerdict) -> str:
 
 
 def _open_ro(db: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{db.resolve()}?mode=ro", uri=True)
+    """db read-only, by a URI that escapes '#', '?' and '%' in the path (a bare path there
+    makes SQLite open another file) and gives a Windows UNC path an empty authority (Claude
+    review on #269)."""
+    uri = db.resolve().as_uri()
+    if not uri.startswith("file:///"):
+        uri = "file:////" + uri.removeprefix("file://")
+    return sqlite3.connect(f"{uri}?mode=ro", uri=True)
 
 
 def _verdicts(conn: sqlite3.Connection, run_id: str) -> dict[str, RunVerdict]:

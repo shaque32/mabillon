@@ -5,8 +5,10 @@ and the scorer maps the keys by content, scores R1, and runs the simulated exper
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -897,3 +899,40 @@ def test_no_connection_is_left_open_on_a_file_the_scorer_moves(scored, tmp_path,
 
     monkeypatch.setattr(score_hickman.os, "replace", checked)
     score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+
+
+def test_a_stale_journal_beside_the_published_scored_db_is_removed(scored, tmp_path):
+    # Claude review on #269: a journal left beside an earlier scored.db would be rolled into the
+    # new one the next time it is opened
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    stale = out / "scored.db-journal"
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert not stale.exists()
+    with closing(sqlite3.connect(out / "scored.db")) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
+def test_a_results_zip_with_an_upper_case_extension_is_scored(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    upper = tmp_path / "RESULTS.ZIP"
+    shutil.copyfile(run / "results.zip", upper)
+    got = score_hickman.score(upper, base / "keys", base / "dump", tmp_path / "out")
+    assert got["scorer_version"] == score_hickman.SCORER_VERSION
+
+
+def test_the_check_reader_opens_a_path_with_uri_characters(tmp_path):
+    # Claude review on #269: a bare path in a SQLite URI cuts at '#' or '?' and opens another
+    # file, so the reader escapes it
+    from core.db import apply_schema
+    from eval.validation.card import load_checks
+
+    folder = tmp_path / "run#2?x"
+    folder.mkdir()
+    db = folder / "scored.db"
+    with closing(sqlite3.connect(db)) as conn:
+        apply_schema(conn)
+    assert load_checks(db, ["C01"]) == []

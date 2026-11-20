@@ -700,7 +700,7 @@ def _copy_db(results: Path, db: Path) -> dict[str, Any]:
     Only a results.zip is scored: the driver publishes one only after its final check passed
     on the case it audited, so a case.db on its own may hold a completed run the driver never
     verified (one whose final check failed) and is refused (CodeRabbit on #269)."""
-    if results.suffix != ".zip":
+    if results.suffix.lower() != ".zip":
         raise SystemExit(
             f"{results}: score the results.zip the run published, not a case.db on its own"
         )
@@ -882,6 +882,11 @@ def score(
         # (Claude review on #269)
         parts["score.json"].write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
         parts["score.md"].write_text(render(result), encoding="utf-8")
+        # a journal an earlier killed write left beside scored.db would be rolled into the new
+        # copy the next time it is opened, so it goes before the copy is put in place (Claude
+        # review on #269)
+        for s in SQLITE_SIDECARS:
+            (out / f"scored.db{s}").unlink(missing_ok=True)
         _publish({out / n: parts[n] for n in names} | {out / "scored.db": db})
     finally:
         db.unlink(missing_ok=True)
