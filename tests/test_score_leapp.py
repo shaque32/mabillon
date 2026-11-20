@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -122,7 +123,7 @@ def test_bar_8_compares_every_table_of_both_phones_and_passes(case):
     a = got["phones"]["and"]["tables"]
     assert a["get_googlemessages"] == {
         "kind": "message", "mabillon": 1, "skipped_confirmed": 1, "reader": 2,
-        "null_dedupe_rows": 0, "pass": True,
+        "null_dedupe_rows": 0, "null_key_records": 0, "pass": True,
     }  # fmt: skip
     assert (a["get_sms_mms"]["mabillon"], a["get_sms_mms"]["reader"]) == (3, 3)
     assert (a["get_sms_mms_mms"]["mabillon"], a["get_sms_mms_mms"]["reader"]) == (1, 1)
@@ -201,13 +202,29 @@ def test_a_skipped_row_the_table_does_not_hold_is_not_confirmed(case):
     )
 
 
+ALICE = "+19195550111"
+BOB = "+19195550122"
+
+
 def _gm(**over) -> dict:  # noqa: ANN003
     return {"direction": "Incoming", "message": "hi", "message_type": "text/plain",
-            "message_timestamp": 100, **over}  # fmt: skip
+            "message_timestamp": 100, "message_sender": ALICE,
+            "other_participantconversation_name": "Alice Ames", **over}  # fmt: skip
 
 
-def _sms(**over) -> dict:  # noqa: ANN003
-    return {"type": "Received", "body": "hi", "date": 101, "__table__": "get_sms_mms", **over}
+def _sms(**over) -> tuple[str, list[dict]]:  # noqa: ANN003
+    return "get_sms_mms", [{"type": "Received", "body": "hi", "date": 101, "address": ALICE,
+                            **over}]  # fmt: skip
+
+
+def _mms(*parts: tuple[str | None, str | None], **over) -> tuple[str, list[dict]]:  # noqa: ANN003
+    """An MMS as ALEAPP writes it: one row per part (body, media)."""
+    row = {"direction": "Received", "date": 100, "from_address": ALICE, "to_address": "+1919555",
+           **over}  # fmt: skip
+    return "get_sms_mms_mms", [{**row, "body": b, "media": m} for b, m in parts]
+
+
+PATH = "/data/user_de/0/com.android.providers.telephony/app_parts/PART_1_a.jpg"
 
 
 @pytest.mark.parametrize(
@@ -216,27 +233,48 @@ def _sms(**over) -> dict:  # noqa: ANN003
         ([_gm()], _sms(), None),
         ([_gm(message_timestamp=97)], _sms(), "more than 2 seconds"),
         ([_gm(message="hi!")], _sms(), "its text is not"),
+        # runs of white space read as one space, as the importer compares text
+        ([_gm(message="see  you\nsoon")], _sms(body="see you soon"), None),
         ([_gm(direction="Outgoing")], _sms(), "its direction is not"),
-        ([_gm(direction="Outgoing")], _sms(type="Sent"), None),
+        ([_gm(direction="Outgoing", other_participantconversation_name="(919) 555-0111")],
+         _sms(type="Sent"), None),
         ([_gm(message_timestamp=None)], _sms(), "a time is missing"),
         ([_gm(), _gm(message=None, message_timestamp=101)], _sms(), "the rows disagree on it"),
+        # two texts in one group may be two messages: the importer never pairs it
+        ([_gm(), _gm(message="there")], _sms(body="hi there"), "joins several texts"),
         # an ALEAPP MMS part whose file was not found holds its path in body: an attachment
-        (
-            [_gm(message=None, message_type="image/jpeg")],
-            {"direction": "Received", "body": "/data/user_de/0/x/app_parts/PART_1_a.jpg",
-             "media": "", "date": 100, "__table__": "get_sms_mms_mms"},
-            None,
-        ),
-        (
-            [_gm(message=None, message_type="image/jpeg")],
-            _sms(body=""),
-            "one side has an attachment",
-        ),
-        ([_gm()], None, "is not one row"),
+        ([_gm(message=None, message_type="image/jpeg")], _mms((PATH, None)), None),
+        ([_gm(message=None, message_type="image/jpeg")],
+         _mms(("/storage/emulated/0/x/parts/PART_9.jpg", None)), None),
+        ([_gm(message=None, message_type="image/jpeg")], _sms(body=""),
+         "has 1 attachment(s), the SMS or MMS 0"),
+        # a multi-part MMS: its text parts and its media parts, every row of the msg_id
+        ([_gm(message="look"), _gm(message=None, message_type="image/jpeg",
+                                    attachment_location="/d/p/c.jpg"),
+          _gm(message=None, message_type="image/png")],
+         _mms(("look", None), (None, "media/abc.jpg"), (PATH, None)), None),
+        ([_gm(message="look"), _gm(message=None, message_type="image/jpeg")],
+         _mms(("look", None), (None, "media/abc.jpg"), (PATH, None)),
+         "has 1 attachment(s), the SMS or MMS 2"),
+        # the other party: a received message's sender against the SMS's address
+        ([_gm(message_sender=BOB)], _sms(), "its other party is not"),
+        ([_gm(message_sender="Bob")], _sms(), "cannot be compared"),
+        ([_gm(message_sender="(919) 555-0111")], _sms(), None),
+        ([_gm()], _mms(("hi", None), from_address="insert-address-token"), "cannot be compared"),
+        # a sent message named by display name: the phone's contacts give its number
+        ([_gm(direction="Outgoing")], _sms(type="Sent"), None),
+        ([_gm(direction="Outgoing", other_participantconversation_name="Bob Barr")],
+         _sms(type="Sent"), "cannot be compared"),
+        ([_gm(direction="Outgoing")], _sms(type="Sent", address=BOB), "its other party is not"),
+        ([_gm(direction="Outgoing", other_participantconversation_name=ALICE)],
+         _mms(("hi", None), direction="Sent", to_address=f"{ALICE},{BOB}"), "cannot be compared"),
+        ([_gm()], None, "is not in the LAVA tables"),
+        ([_gm()], ("get_sms_mms", []), "is not in the LAVA tables"),
+        ([_gm()], ("get_sms_mms", [_sms()[1][0], _sms()[1][0]]), "is not in the LAVA tables"),
     ],
 )  # fmt: skip
 def test_a_pair_is_confirmed_only_when_every_field_agrees(parts, native, why):
-    got = score_leapp._pair_problem(parts, native)
+    got = score_leapp._pair_problem(parts, native, {"Alice Ames": [score_leapp._handle(ALICE)]})
     assert got is None if why is None else why in (got or "")
 
 
@@ -275,14 +313,55 @@ def test_each_phone_is_the_file_the_run_read(tmp_path):
         score_leapp.open_phones(record, {"and": zips["and"]}, score_leapp.KINDS_FILE, work)
 
 
-def test_a_phone_zip_with_two_databases_is_refused(tmp_path):
-    zipped = _android().write_zip(tmp_path / "a.zip")
-    with zipfile.ZipFile(zipped, "a") as z:
-        z.writestr("other/_lava_artifacts.db", b"")
+def _zip(tmp_path: Path, members: dict[str, bytes]) -> Path:
+    path = tmp_path / "p.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    return path
+
+
+def test_the_phone_zip_is_read_as_lava_names_its_files(tmp_path):
+    manifest, data = _android().build()
+    good = data
+    other = _ios().build()[1]
+    # a .json manifest, and the database its lava_db_name names beside it; a stale default-named
+    # database elsewhere in the zip is never the one read
+    m = json.dumps({**manifest, "lava_db_name": "x.db"}).encode()
+    zipped = _zip(tmp_path, {"out/_lava_data.json": m, "out/x.db": good,
+                             "old/_lava_artifacts.db": other})  # fmt: skip
     folder = tmp_path / "f"
     folder.mkdir()
-    with pytest.raises(SystemExit, match="holds 2 _lava_artifacts.db, not one"):
+    score_leapp._extract(zipped, folder)
+    assert (folder / dump_lava.DATABASE).read_bytes() == good
+    assert json.loads((folder / dump_lava.MANIFEST).read_text("utf-8"))["lava_db_name"] == "x.db"
+
+
+@pytest.mark.parametrize(
+    ("members", "why"),
+    [
+        ({"a/_lava_data.lava": b"{}", "b/_lava_data.json": b"{}"}, "holds 2 LEAPP manifests"),
+        ({"a/_lava_artifacts.db": b""}, "holds 0 LEAPP manifests"),
+        ({"a/_lava_data.lava": b"{}", "_lava_artifacts.db": b""}, "but not _lava_artifacts.db"),
+        ({"a/_lava_data.lava": b"[1]", "a/_lava_artifacts.db": b""}, "is not a LEAPP manifest"),
+        ({"a/_lava_data.lava": b"\xff", "a/_lava_artifacts.db": b""}, "is not a LEAPP manifest"),
+    ],
+)
+def test_a_phone_zip_without_one_manifest_and_its_database_is_refused(tmp_path, members, why):
+    folder = tmp_path / "f"
+    folder.mkdir()
+    with pytest.raises(SystemExit, match=why):
+        score_leapp._extract(_zip(tmp_path, members), folder)
+
+
+def test_a_database_over_the_size_limit_is_refused_before_it_is_unpacked(tmp_path, monkeypatch):
+    zipped = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(score_leapp, "MAX_DB_BYTES", 1000)
+    folder = tmp_path / "f"
+    folder.mkdir()
+    with pytest.raises(SystemExit, match="unpacks to .* bytes, over 1,000"):
         score_leapp._extract(zipped, folder)
+    assert not (folder / dump_lava.DATABASE).exists()
 
 
 def test_a_run_mixing_leapp_and_ufdr_phones_is_refused():
@@ -353,7 +432,7 @@ def test_a_leapp_run_is_scored_with_its_phones_and_bar_8_by_table(leapp_run):
     md = (out / "score.md").read_text("utf-8")
     assert md.startswith("# Validation score (LEAPP phones: and)")
     assert "### and: PASS" in md
-    assert "| get_googlemessages | message | 1 | 1 | 2 | yes |" in md
+    assert "| get_googlemessages | message | 1 | 1 | 2 | 0 | yes |" in md
 
 
 def test_a_leapp_run_is_never_scored_with_a_ufdr_dump_or_without_its_phones(leapp_run):
@@ -367,3 +446,95 @@ def test_a_leapp_run_is_never_scored_with_a_ufdr_dump_or_without_its_phones(leap
     with pytest.raises(SystemExit, match="is not the and file the run read"):
         score_hickman.main([*base, "--phone", f"and={other}"])
     assert not (tmp / "s2" / "score.json").exists()
+
+
+# ---------------------------------------------------------------- review findings on #271
+
+
+def _one_phone(tmp_path: Path, lv) -> tuple[sqlite3.Connection, dict[str, LavaPhone]]:  # noqa: ANN001
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON")
+    apply_schema(conn)
+    zipped = lv.write_zip(tmp_path / "and.zip")
+    LeappImporter(source_id="and").import_source(zipped, conn)
+    return conn, {"and": _phone(tmp_path, "and", zipped)}
+
+
+def test_the_google_messages_copy_of_a_multi_part_mms_is_confirmed(tmp_path):
+    # MMS 40 is three rows (text, media, a part's path); its Google Messages copy is three
+    # parts with the same text and two attachments, a second later
+    lv = _android()
+    for text, kind, loc in (("look", "text/plain", None), (None, "image/jpeg", "/d/p/a.jpg"),
+                            (None, "image/jpeg", None)):  # fmt: skip
+        lv.add(
+            "get_googleMessages",
+            **{"Message Timestamp": "2024-03-02T09:00:01Z", "Direction": "Incoming",
+               "Message Sender": "+19195550111", "Other Participant/Conversation Name": "Alice",
+               "Message": text, "Message Type": kind, "Attachment Location": loc,
+               "Conversation ID": "9"},
+        )  # fmt: skip
+    conn, phones = _one_phone(tmp_path, lv)
+    skipped = _skipped(conn, phones)
+    assert sorted(skipped["and"]["confirmed"].values()) == [
+        "get_sms_mms/msg_id=5",
+        *["get_sms_mms_mms/msg_id=40"] * 3,
+    ]
+    assert skipped["and"]["not_confirmed"] == []
+    got = score_leapp.import_counts(conn, phones, skipped)
+    assert got["pass"], got["phones"]["and"]["tables"]["get_googlemessages"]
+    ids, why = _map(conn, phones, "lava:and:get_googlemessages:6")
+    assert why == "" and _locators(conn, ids) == {"get_sms_mms_mms/msg_id=40"}
+
+
+def test_a_skipped_copy_paired_with_another_partys_sms_is_not_confirmed(case):
+    # SMS 5 ("where are you", from Alice) stands for the Google Messages copy; the same text
+    # from another number is not that message, however close in time
+    conn, phones = case
+    with closing(sqlite3.connect(phones["and"].folder / dump_lava.DATABASE)) as db:
+        db.execute("UPDATE get_sms_mms SET address = '+19195550122' WHERE msg_id = '5'")
+        db.commit()
+    skipped = _skipped(conn, phones)
+    assert skipped["and"]["not_confirmed"][0]["why"] == "its other party is not the SMS or MMS's"
+    assert not score_leapp.import_counts(conn, phones, skipped)["pass"]
+
+
+def test_rows_with_an_empty_dedupe_value_count_as_the_importer_reads_them(tmp_path):
+    lv = _android()
+    # an SMS with no MSG ID is a record of its own, named by its row id
+    lv.add(
+        "get_sms_mms",
+        **{
+            "Date": "2024-03-04T12:00:00Z",
+            "Type": "Received",
+            "Address": "+19195550111",
+            "Body": "no id",
+            "Thread ID": "2",
+        },
+    )
+    # a two-part RCS message with no sender is one message, its parts grouped as the importer
+    # groups them (an empty value is one value)
+    for text, kind, loc in (("pic", "text/plain", None), (None, "image/jpeg", "/d/p/z.jpg")):
+        lv.add(
+            "get_googleMessages",
+            **{"Message Timestamp": "2024-03-05T08:00:00Z", "Direction": "Incoming",
+               "Message Sender": None, "Other Participant/Conversation Name": "Group",
+               "Message": text, "Message Type": kind, "Attachment Location": loc,
+               "Conversation ID": "12"},
+        )  # fmt: skip
+    conn, phones = _one_phone(tmp_path, lv)
+    got = score_leapp.import_counts(conn, phones, _skipped(conn, phones))
+    t = got["phones"]["and"]["tables"]
+    assert (t["get_sms_mms"]["null_dedupe_rows"], t["get_sms_mms"]["null_key_records"]) == (1, 1)
+    assert t["get_googlemessages"]["null_key_records"] == 1
+    assert got["pass"], t
+    # a key on the second part names the message the first part named
+    ids, why = _map(conn, phones, "lava:and:get_googlemessages:5")
+    assert why == "" and _locators(conn, ids) == {"get_googlemessages/rowid=4"}
+    ids, why = _map(conn, phones, "lava:and:get_sms_mms:4")
+    assert why == "" and _locators(conn, ids) == {"get_sms_mms/rowid=4"}
+
+
+def test_a_real_column_named_rowid_is_never_a_row_id_locator():
+    rows = [{score_leapp.ROWID: 3, "rowid": "7", "OID": "8", "msg_id": "5"}]
+    got = score_leapp._candidates("t", rows)
+    assert got == {"t/rowid=3", "t/msg_id=5"}

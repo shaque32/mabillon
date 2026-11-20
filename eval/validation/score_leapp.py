@@ -20,10 +20,14 @@ scorer two things the UFDR path gets from dump_ufdr.py:
    contacts (one contact row per identifier counts once; a call notice read from a chat table
    as a call counts for that table). The importer's skipped Google Messages rows are added
    to Mabillon's side only where this module confirms each one's pair: the same direction, the
-   same text (an ALEAPP MMS body that is a part's path is an attachment, not text), an
-   attachment on both sides or neither, at most SAME_MESSAGE_SECONDS apart, and no SMS or MMS
-   standing for two skipped rows. The rule is restated here from the importer's stated
+   same text with runs of white space read as one space (an ALEAPP MMS body that is a part's
+   path is an attachment, not text), as many attachments on each side, the same other party,
+   at most SAME_MESSAGE_SECONDS apart, one text at most on the Google Messages side, and no SMS
+   or MMS standing for two skipped rows. The rule is restated here from the importer's stated
    behaviour, not imported, so a change to the importer cannot also change this check.
+   A row whose dedupe value is empty is a record of its own in the importer (a Google Messages
+   message groups its parts with the empty value as one value), and the reader leaves such rows
+   out of its count, so this module adds them to the reader's side by that rule.
    Bar 8 passes when every table's counts agree, every skipped row's pair is confirmed, and
    no record comes from a table the kinds file does not read.
 """
@@ -33,12 +37,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import zipfile
 from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from core.contracts import GoldClaim
@@ -53,7 +58,15 @@ GOOGLE_MESSAGES = "get_googlemessages"
 # seconds apart (core/ingest/leapp.py states two seconds).
 SAME_MESSAGE_SECONDS = 2
 # ALEAPP writes an MMS part whose file it did not find as the part's path in the body.
-_PART_PATH_RE = re.compile(r"^/data/\S*/app_parts/\S+$")
+_PART_PATH_RE = re.compile(r"^/\S*/(?:app_parts|parts)/\S+$")
+# A handle as both stores write it: a number (digits, spaces, + ( ) . -) or an email.
+_HANDLE_RE = re.compile(r"^(?:\+?[\d\s().-]{5,}|[^@\s]+@[^@\s]+)$")
+# LAVA names its manifest either way; the manifest names its database (lava_db_name).
+MANIFEST_NAMES = (MANIFEST, "_lava_data.json")
+MAX_MANIFEST_BYTES = 256 * 1024 * 1024
+MAX_DB_BYTES = 8 * 1024 * 1024 * 1024
+# The names SQLite reads as a row's id; a real column so named is never a locator's row id.
+_ROWID_NAMES = ("_rowid_", "rowid", "oid")
 _DIRECTION = {"incoming": "received", "outgoing": "sent"}
 # The name each row read here carries its SQLite row id under (no LEAPP table has the column).
 ROWID = "mabillon_score_rowid"
@@ -73,7 +86,13 @@ class LavaPhone:
         uri = f"{(self.folder / DATABASE).resolve().as_uri()}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
         conn.row_factory = sqlite3.Row
+        # a value as the importer compares it: text, stripped, None as empty
+        conn.create_function(NORM, 1, lambda v: _value(v) or "", deterministic=True)
         return conn
+
+
+# The SQL function a LavaPhone connection reads a value through, as the importer does.
+NORM = "mabillon_score_norm"
 
 
 def _sha256(path: Path) -> str:
@@ -101,14 +120,43 @@ def is_leapp_run(record: dict[str, Any]) -> bool:
     return importers == {"leapp"}
 
 
+def _member_size(z: zipfile.ZipFile, member: str, limit: int, zip_path: Path) -> None:
+    size = z.getinfo(member).file_size
+    if size > limit:
+        raise SystemExit(f"score: {member} in {zip_path} unpacks to {size:,} bytes, over {limit:,}")
+
+
 def _extract(zip_path: Path, folder: Path) -> None:
-    """The phone zip's one manifest and its one database, copied into folder."""
+    """The phone zip's one manifest and the database it names beside it, copied into folder as
+    MANIFEST and DATABASE: the files a LAVA reader takes, found as LAVA names them (either
+    manifest name, the manifest's lava_db_name in the manifest's own folder)."""
     with zipfile.ZipFile(zip_path) as z:
-        for name in (MANIFEST, DATABASE):
-            members = [m for m in z.namelist() if m.rsplit("/", 1)[-1] == name]
-            if len(members) != 1:
-                raise SystemExit(f"score: {zip_path} holds {len(members)} {name}, not one")
-            (folder / name).write_bytes(z.read(members[0]))
+        names = z.namelist()
+        found = [
+            n
+            for n in names
+            if PurePosixPath(n).name in MANIFEST_NAMES and not n.startswith("__MACOSX/")
+        ]
+        if len(found) != 1:
+            raise SystemExit(f"score: {zip_path} holds {len(found)} LEAPP manifests, not one")
+        man = found[0]
+        _member_size(z, man, MAX_MANIFEST_BYTES, zip_path)
+        raw = z.read(man)
+        try:
+            manifest = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as err:
+            raise SystemExit(f"score: {man} in {zip_path} is not a LEAPP manifest") from err
+        if not isinstance(manifest, dict):
+            raise SystemExit(f"score: {man} in {zip_path} is not a LEAPP manifest")
+        db_name = str(manifest.get("lava_db_name") or DATABASE)
+        parent = str(PurePosixPath(man).parent)
+        db_member = db_name if parent == "." else f"{parent}/{db_name}"
+        if db_member not in names:
+            raise SystemExit(f"score: {zip_path} holds {man} but not {db_name} beside it")
+        _member_size(z, db_member, MAX_DB_BYTES, zip_path)
+        (folder / MANIFEST).write_bytes(raw)
+        with z.open(db_member) as src, (folder / DATABASE).open("wb") as dst:
+            shutil.copyfileobj(src, dst, 1 << 20)
 
 
 def open_phones(
@@ -124,15 +172,19 @@ def open_phones(
     kinds, _ = load_kinds(kinds_path)
     out: dict[str, LavaPhone] = {}
     for sid, path in sorted(given.items()):
-        digest = _sha256(path)
+        folder = work / f"lava-{len(out)}"
+        folder.mkdir(parents=True)
+        # one copy is hashed and read, so the bytes read are the bytes the hash checked
+        snap = folder / "phone.zip"
+        shutil.copyfile(path, snap)
+        digest = _sha256(snap)
         if digest != in_run[sid].get("sha256"):
             raise SystemExit(
                 f"score: {path} is not the {sid} file the run read (SHA-256 {digest}, the run"
                 f" read {in_run[sid].get('sha256')})"
             )
-        folder = work / f"lava-{len(out)}"
-        folder.mkdir(parents=True)
-        _extract(path, folder)
+        _extract(snap, folder)
+        snap.unlink()
         reader = dump_lava.read(folder, kinds)
         out[sid] = LavaPhone(sid, folder, digest, reader, {fold(t): s for t, s in kinds.items()})
     return out
@@ -151,7 +203,7 @@ def _rowid_alias(conn: sqlite3.Connection, table: str) -> str:
     """A name for the row id that no real column takes (a LEAPP table may have a column called
     rowid)."""
     real = {fold(r[1]) for r in conn.execute(f"PRAGMA table_info({quote(table)})")}
-    alias = next((a for a in ("_rowid_", "rowid", "oid") if a not in real), None)
+    alias = next((a for a in _ROWID_NAMES if a not in real), None)
     if alias is None or ROWID in real:
         raise SystemExit(f"score: table {table!r} has no free name for its row id")
     return alias
@@ -160,8 +212,10 @@ def _rowid_alias(conn: sqlite3.Connection, table: str) -> str:
 def _rows(
     conn: sqlite3.Connection, table: str, rowid: int, dedupe: str | list[str] | None
 ) -> list[dict[str, Any]]:
-    """The key row and, when the kinds file groups the table by dedupe columns and none is null
-    in that row, every row that shares their values. Each row carries its row id under ROWID."""
+    """The key row and, when the kinds file groups the table by dedupe columns, every row that
+    shares their values, each read as the importer reads it (text, stripped). A row whose one
+    dedupe column is empty is a record of its own; a table grouped by several columns (Google
+    Messages) groups an empty value as one value. Each row carries its row id under ROWID."""
     alias = _rowid_alias(conn, table)
     # Names are quoted, and each is one the database itself lists (sqlite_master, table_info).
     sql = f"SELECT {alias} AS {ROWID}, * FROM {quote(table)}"  # noqa: S608
@@ -172,10 +226,11 @@ def _rows(
     cols = [dedupe] if isinstance(dedupe, str) else list(dedupe or [])
     by_fold = {fold(c): c for c in first if c != ROWID}
     keys = [by_fold[fold(c)] for c in cols if fold(c) in by_fold]
-    if not cols or len(keys) != len(cols) or any(first[k] is None for k in keys):
+    if not cols or len(keys) != len(cols) or (len(keys) == 1 and _value(first[keys[0]]) is None):
         return [first]
-    where = " AND ".join(f"{quote(k)} = ?" for k in keys)
-    return [dict(r) for r in conn.execute(f"{sql} WHERE {where}", [first[k] for k in keys])]
+    where = " AND ".join(f"{NORM}({quote(k)}) = ?" for k in keys)
+    params = [_value(first[k]) or "" for k in keys]
+    return [dict(r) for r in conn.execute(f"{sql} WHERE {where}", params)]
 
 
 def _value(v: object) -> str | None:
@@ -185,12 +240,15 @@ def _value(v: object) -> str | None:
 
 def _candidates(table: str, rows: list[dict[str, Any]]) -> set[str]:
     """Every locator a record made from these rows could have: `<table>/rowid=<n>` for each
-    row, and `<table>/<column>=<value>` for each column with a value."""
+    row, and `<table>/<column>=<value>` for each column with a value. A real column named as
+    SQLite names the row id is left out: its value is not the row's id."""
     out: set[str] = set()
     for r in rows:
         out.add(f"{table}/rowid={r[ROWID]}")
         for col, v in r.items():
-            if col != ROWID and (s := _value(v)) is not None:
+            if col == ROWID or fold(col) in _ROWID_NAMES:
+                continue
+            if (s := _value(v)) is not None:
                 out.add(f"{table}/{col}={s}")
     return out
 
@@ -225,17 +283,20 @@ def skipped_rows(case: sqlite3.Connection, sid: str) -> list[dict[str, Any]]:
     return list(leapp.get("google_messages_skipped") or [])
 
 
-def _same_as_row(conn: sqlite3.Connection, tables: dict[str, str], same_as: str) -> dict | None:
-    """The SMS or MMS row a skipped row names (`get_sms_mms/msg_id=5`), when exactly one."""
+def _same_as_rows(
+    conn: sqlite3.Connection, tables: dict[str, str], same_as: str
+) -> tuple[str, list[dict[str, Any]]] | None:
+    """(table, rows) of the SMS or MMS a skipped row names (`get_sms_mms/msg_id=5`): an SMS's
+    one row, or every part row of an MMS (ALEAPP writes one row per part)."""
     m = re.fullmatch(r"(get_sms_mms|get_sms_mms_mms)/(msg_id|rowid)=(\S+)", same_as or "")
     if not m or fold(m.group(1)) not in tables:
         return None
     table = tables[fold(m.group(1))]
     alias = _rowid_alias(conn, table)
-    col = alias if m.group(2) == "rowid" else "msg_id"
-    sql = f"SELECT {alias} AS {ROWID}, * FROM {quote(table)} WHERE {quote(col)} = ?"  # noqa: S608
+    where = f"{alias} = ?" if m.group(2) == "rowid" else f"{NORM}({quote('msg_id')}) = ?"
+    sql = f"SELECT {alias} AS {ROWID}, * FROM {quote(table)} WHERE {where} ORDER BY {alias}"  # noqa: S608
     rows = [dict(r) for r in conn.execute(sql, (m.group(3),))]
-    return {**rows[0], "__table__": fold(table)} if len(rows) == 1 else None
+    return fold(table), rows
 
 
 def _epoch(v: object) -> float | None:
@@ -250,34 +311,137 @@ def _epoch(v: object) -> float | None:
         return None
 
 
-def _pair_problem(parts: list[dict[str, Any]], native: dict[str, Any] | None) -> str | None:
+def _flat(text: str) -> str:
+    """Text with every run of white space read as one space, as the importer compares it."""
+    return " ".join(text.split())
+
+
+def _handle(v: object) -> str | None:
+    """A number as its digits, an email casefolded; None for a display name or nothing."""
+    s = _value(v)
+    if s is None:
+        return None
+    s = re.sub(r"^(?:[A-Za-z]:|tel:|mailto:)", "", s).strip()
+    if not _HANDLE_RE.match(s):
+        return None
+    if "@" in s:
+        return s.casefold()
+    return re.sub(r"\D", "", s) or None
+
+
+def _same_handle(a: str, b: str) -> bool:
+    """Equal, or one number is the other after a country code of up to three digits, the
+    shorter one at least ten digits ("+19195550111" and "(919) 555-0111")."""
+    if a == b:
+        return True
+    if "@" in a or "@" in b:
+        return False
+    short, long = sorted((a, b), key=len)
+    return len(short) >= 10 and long.endswith(short) and len(long) - len(short) <= 3
+
+
+def _one_handle(values: list[object]) -> str | None:
+    """The one handle these values name, or None when they name none or several."""
+    got: list[str] = []
+    for v in values:
+        for part in re.split(r"[,\r\n]+", _value(v) or ""):
+            if (h := _handle(part)) is not None and not any(_same_handle(h, x) for x in got):
+                got.append(h)
+            elif h is None and _value(part):
+                return None  # a party that is not a handle: it cannot be compared
+    return got[0] if len(got) == 1 else None
+
+
+def contact_handles(conn: sqlite3.Connection, tables: dict[str, str]) -> dict[str, list[str]]:
+    """ALEAPP contacts: display name -> the handles of its phone numbers."""
+    out: dict[str, list[str]] = {}
+    table = tables.get("contacts")
+    if table is None:
+        return out
+    cols = {fold(r[1]) for r in conn.execute(f"PRAGMA table_info({quote(table)})")}
+    if not {"display_name", "phone_number"} <= cols:
+        return out
+    sql = f"SELECT display_name, phone_number FROM {quote(table)}"  # noqa: S608
+    for name, number in conn.execute(sql):
+        if (n := _value(name)) and (h := _handle(number)):
+            out.setdefault(n, []).append(h)
+    return out
+
+
+def _gm_party(parts: list[dict[str, Any]], contacts: dict[str, list[str]]) -> str | None:
+    """A Google Messages message's other party: the sender of a received one; for a sent one,
+    the conversation's name when it is a handle, else the one number the phone's contacts give
+    that name. None when it cannot be told."""
+    first = parts[0]
+    if fold(_value(first.get("direction")) or "") == "incoming":
+        return _handle(first.get("message_sender"))
+    label = first.get("other_participantconversation_name")
+    if (h := _handle(label)) is not None:
+        return h
+    nums = contacts.get(_value(label) or "", [])
+    if nums and all(_same_handle(nums[0], n) for n in nums[1:]):
+        return nums[0]
+    return None
+
+
+def _native_party(table: str, rows: list[dict[str, Any]], direction: str) -> str | None:
+    first = rows[0]
+    if table == "get_sms_mms":
+        return _one_handle([first.get("address")])
+    if direction == "received":
+        frm = _value(first.get("from_address"))
+        return None if frm is None or fold(frm) == "insert-address-token" else _handle(frm)
+    return _one_handle([first.get(k) for k in ("to_address", "cc", "bcc")])
+
+
+def _pair_problem(
+    parts: list[dict[str, Any]],
+    native: tuple[str, list[dict[str, Any]]] | None,
+    contacts: dict[str, list[str]] | None = None,
+) -> str | None:
     """Why a skipped Google Messages message is not shown to be its SMS or MMS, or None."""
     if not parts:
         return "its rows are not in the table"
-    if native is None:
-        return "the SMS or MMS it names is not one row of the LAVA tables"
+    if native is None or not native[1] or (native[0] == "get_sms_mms" and len(native[1]) != 1):
+        return "the SMS or MMS it names is not in the LAVA tables"
+    table, rows = native
     g_dir = {fold(_value(p.get("direction")) or "") for p in parts}
-    n_dir = fold(_value(native.get("type") or native.get("direction")) or "")
-    if len(g_dir) != 1 or _DIRECTION.get(next(iter(g_dir))) != n_dir:
+    n_dir = {fold(_value(r.get("type") or r.get("direction")) or "") for r in rows}
+    if len(g_dir) != 1 or len(n_dir) != 1 or _DIRECTION.get(next(iter(g_dir))) != next(iter(n_dir)):
         return "its direction is not the SMS or MMS's"
-    g_text = "".join(
-        p.get("message") or ""
+    texts = [s for p in parts if (s := _value(p.get("message")))]
+    if len(texts) > 1:
+        return "it joins several texts, which may be several messages"
+    g_text = _flat(texts[0] if texts else "")
+    g_media = sum(
+        1
         for p in parts
-        if fold(_value(p.get("message_type")) or "text/plain") == "text/plain"
-    ).strip()
-    g_media = any(
-        fold(_value(p.get("message_type")) or "text/plain") != "text/plain" for p in parts
+        if _value(p.get("attachment_location"))
+        or not fold(_value(p.get("message_type")) or "text/plain").startswith("text/")
     )
-    body = (native.get("body") or "").strip()
-    path_body = native["__table__"] == "get_sms_mms_mms" and bool(_PART_PATH_RE.match(body))
-    n_text = "" if path_body else body
-    n_media = path_body or bool(_value(native.get("media")))
-    if g_text != n_text:
+    n_texts: list[str] = []
+    n_media = 0
+    for r in rows:
+        body = _value(r.get("body"))
+        if table == "get_sms_mms_mms":
+            n_media += 1 if _value(r.get("media")) else 0
+            if body and _PART_PATH_RE.match(body):
+                n_media += 1
+                continue
+        if body:
+            n_texts.append(body)
+    if g_text != _flat("\n".join(n_texts)):
         return "its text is not the SMS or MMS's"
     if g_media != n_media:
-        return "one side has an attachment and the other none"
+        return f"it has {g_media} attachment(s), the SMS or MMS {n_media}"
+    g_party = _gm_party(parts, contacts or {})
+    n_party = _native_party(table, rows, next(iter(n_dir)))
+    if g_party is None or n_party is None:
+        return "its other party cannot be compared with the SMS or MMS's"
+    if not _same_handle(g_party, n_party):
+        return "its other party is not the SMS or MMS's"
     g_t = {_epoch(p.get("message_timestamp")) for p in parts}
-    n_t = _epoch(native.get("date"))
+    n_t = _epoch(rows[0].get("date"))
     if None in g_t or n_t is None or len(g_t) != 1:
         return "a time is missing or the rows disagree on it"
     if abs(next(iter(g_t)) - n_t) > SAME_MESSAGE_SECONDS:  # type: ignore[operator]
@@ -294,6 +458,7 @@ def confirm_skipped(case: sqlite3.Connection, phone: LavaPhone) -> dict[str, Any
     with closing(phone.connect()) as conn:
         tables = _tables(conn)
         gm = tables.get(GOOGLE_MESSAGES)
+        contacts = contact_handles(conn, tables)
         claimed = Counter(s.get("same_as") for s in skipped)
         for s in skipped:
             rows = [int(r) for r in s.get("rows") or [] if isinstance(r, int)]
@@ -307,7 +472,7 @@ def confirm_skipped(case: sqlite3.Connection, phone: LavaPhone) -> dict[str, Any
             elif claimed[s.get("same_as")] > 1:
                 why = "the SMS or MMS it names stands for another skipped row too"
             else:
-                why = _pair_problem(parts, _same_as_row(conn, tables, s.get("same_as")))
+                why = _pair_problem(parts, _same_as_rows(conn, tables, s.get("same_as")), contacts)
             if why is None:
                 for i in rows:
                     confirmed[i] = s["same_as"]
@@ -391,6 +556,30 @@ def _locator_table(locator: str) -> str:
     return fold(locator.split("/", 1)[0])
 
 
+def null_key_records(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) -> int:
+    """The records the importer makes from rows the reader leaves out of its count (a dedupe
+    column NULL): one per row for a table grouped by one column (the importer names it by its
+    row id), and for a table grouped by several (Google Messages) one per distinct group, an
+    empty value read as one value, that no row the reader counts already stands for."""
+    cols = [dedupe] if isinstance(dedupe, str) else list(dedupe or [])
+    if not cols:
+        return 0
+    real = {fold(r[1]): r[1] for r in conn.execute(f"PRAGMA table_info({quote(table)})")}
+    keys = [real[fold(c)] for c in cols if fold(c) in real]
+    if len(keys) != len(cols):
+        return 0  # the reader refuses a table without its dedupe columns
+    names = ", ".join(quote(k) for k in keys)
+    sql = f"SELECT {names} FROM {quote(table)}"  # noqa: S608
+    counted: set[tuple[str, ...]] = set()
+    left_out: list[tuple[str, ...]] = []
+    for row in conn.execute(sql):
+        norm = tuple(_value(v) or "" for v in row)
+        (left_out.append if any(v is None for v in row) else counted.add)(norm)
+    if len(keys) == 1:
+        return len(left_out)
+    return len(set(left_out) - counted)
+
+
 def import_counts(
     case: sqlite3.Connection, phones: dict[str, LavaPhone], skipped: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
@@ -408,21 +597,28 @@ def import_counts(
         conf = skipped[sid]
         n_conf = len(conf["confirmed"])
         rows: dict[str, dict[str, Any]] = {}
-        for table, t in sorted(phone.reader["tables"].items()):
-            if t["kind"] == dump_lava.SKIP:
-                continue
-            mine = ours.pop(fold(table), 0)
-            # the reader counts a Google Messages message by its distinct dedupe values, the
-            # importer lists each skipped message's rows: a skipped message counts once
-            added = _confirmed_messages(conf) if fold(table) == GOOGLE_MESSAGES else 0
-            rows[table] = {
-                "kind": t["kind"],
-                "mabillon": mine,
-                "skipped_confirmed": added,
-                "reader": t["count"],
-                "null_dedupe_rows": t.get("null_dedupe_rows", 0),
-                "pass": mine + added == t["count"],
-            }
+        with closing(phone.connect()) as lava:
+            in_db = _tables(lava)
+            for table, t in sorted(phone.reader["tables"].items()):
+                if t["kind"] == dump_lava.SKIP:
+                    continue
+                mine = ours.pop(fold(table), 0)
+                # the reader counts a Google Messages message by its distinct dedupe values, the
+                # importer lists each skipped message's rows: a skipped message counts once
+                added = _confirmed_messages(conf) if fold(table) == GOOGLE_MESSAGES else 0
+                nulls = 0
+                if t.get("null_dedupe_rows") and fold(table) in in_db:
+                    spec = phone.kinds.get(fold(table), {})
+                    nulls = null_key_records(lava, in_db[fold(table)], spec.get("dedupe"))
+                rows[table] = {
+                    "kind": t["kind"],
+                    "mabillon": mine,
+                    "skipped_confirmed": added,
+                    "reader": t["count"],
+                    "null_dedupe_rows": t.get("null_dedupe_rows", 0),
+                    "null_key_records": nulls,
+                    "pass": mine + added == t["count"] + nulls,
+                }
         extra = dict(sorted(ours.items()))  # records from a table the reader does not count
         ok = all(r["pass"] for r in rows.values()) and not extra and not conf["not_confirmed"]
         every = every and ok

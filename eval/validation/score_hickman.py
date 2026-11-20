@@ -1247,22 +1247,23 @@ def _leapp_count_lines(counts: dict[str, Any]) -> list[str]:
     """Bar 8 on LEAPP, phone by phone and table by table (score_leapp.import_counts)."""
     lines = [
         "Each table the kinds file reads: Mabillon's records from it (distinct locators), the"
-        " Google Messages copies the importer skipped whose pair the scorer confirmed, and the"
-        " reader's count (dump_lava).",
+        " Google Messages copies the importer skipped whose pair the scorer confirmed, the"
+        " reader's count (dump_lava), and the records the importer makes from rows the reader"
+        " leaves out (an empty dedupe value: one record per row, or per Google Messages group).",
         "",
     ]
     for sid, p in counts["phones"].items():
         lines += [
             f"### {sid}: {'PASS' if p['pass'] else 'FAIL'}",
             "",
-            "| Table | Kind | Mabillon | Skipped, confirmed | Reader | Same |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| Table | Kind | Mabillon | Skipped, confirmed | Reader | Empty key | Same |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
         for t, r in p["tables"].items():
             same = "yes" if r["pass"] else "NO"
             lines.append(
                 f"| {t} | {r['kind']} | {r['mabillon']} | {r['skipped_confirmed']}"
-                f" | {r['reader']} | {same} |"
+                f" | {r['reader']} | {r.get('null_key_records', 0)} | {same} |"
             )
         lines.append("")
         if p["skipped_not_confirmed"]:
