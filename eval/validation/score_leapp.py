@@ -82,6 +82,7 @@ class LavaPhone:
     sha256: str
     reader: dict[str, Any]  # dump_lava.read on the folder
     kinds: dict[str, dict]  # the kinds file, by folded table name
+    kinds_sha256: str = ""  # the hash of the kinds file as it was read for this phone
 
     def connect(self) -> sqlite3.Connection:
         uri = f"{(self.folder / DATABASE).resolve().as_uri()}?mode=ro"
@@ -174,7 +175,7 @@ def open_phones(
             f"score: give --phone for exactly the run's phones {sorted(in_run)}, not"
             f" {sorted(given)}"
         )
-    kinds, _ = load_kinds(kinds_path)
+    kinds, kinds_sha256 = load_kinds(kinds_path)
     out: dict[str, LavaPhone] = {}
     for sid, path in sorted(given.items()):
         if not path.is_file():
@@ -193,7 +194,8 @@ def open_phones(
         _extract(snap, folder)
         snap.unlink()
         reader = dump_lava.read(folder, kinds)
-        out[sid] = LavaPhone(sid, folder, digest, reader, {fold(t): s for t, s in kinds.items()})
+        folded = {fold(t): s for t, s in kinds.items()}
+        out[sid] = LavaPhone(sid, folder, digest, reader, folded, kinds_sha256)
     return out
 
 
@@ -295,7 +297,10 @@ def _same_as_rows(
 ) -> tuple[str, list[dict[str, Any]]] | None:
     """(table, rows) of the SMS or MMS a skipped row names (`get_sms_mms/msg_id=5`): an SMS's
     one row, or every part row of an MMS (ALEAPP writes one row per part)."""
-    m = re.fullmatch(r"(get_sms_mms|get_sms_mms_mms)/(msg_id|rowid)=(\S+)", same_as or "")
+    # the importer names the table as the database spells it, so its letter case is ignored
+    m = re.fullmatch(
+        r"((?i:get_sms_mms|get_sms_mms_mms))/(msg_id|rowid)=(\S+)", same_as or "", re.ASCII
+    )
     if not m or fold(m.group(1)) not in tables:
         return None
     table = tables[fold(m.group(1))]
@@ -511,8 +516,10 @@ def map_lava_keys(
     unmapped: list[dict[str, str]] = []
     groups: dict[str, dict[str, list[str]]] = {}
     n_keys = 0
-    conns = {sid: p.connect() for sid, p in phones.items()}
+    conns: dict[str, sqlite3.Connection] = {}
     try:
+        for sid, p in phones.items():
+            conns[sid] = p.connect()  # one at a time, so a failed connect closes the others
         tables = {sid: _tables(c) for sid, c in conns.items()}
         for g in gold:
             ids: list[str] = []
@@ -612,6 +619,24 @@ def empty_key_adjustment(
     return importer - len(reader_groups)
 
 
+def reader_problems(phone: LavaPhone) -> dict[str, Any]:
+    """What the reader found wrong with the LEAPP output itself. A table the kinds file counts
+    that the manifest lists but the database does not hold, or whose manifest record count
+    differs from its rows, fails bar 8: a count of 0 against 0 there is no evidence."""
+    r = phone.reader
+    missing = dict(r.get("tables_not_in_database") or {})
+    differs = list(r.get("manifest_count_differs") or [])
+    counted = {
+        t for t, spec in phone.kinds.items() if spec.get("kind") not in (None, dump_lava.SKIP)
+    }
+    return {
+        "tables_not_in_database": missing,
+        "manifest_count_differs": differs,
+        "tables_not_in_manifest": list(r.get("tables_not_in_manifest") or []),
+        "counted_tables": sorted(t for t in [*missing, *differs] if fold(t) in counted),
+    }
+
+
 def import_counts(
     case: sqlite3.Connection, phones: dict[str, LavaPhone], skipped: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
@@ -652,7 +677,13 @@ def import_counts(
                     "pass": mine + added == t["count"] + nulls,
                 }
         extra = dict(sorted(ours.items()))  # records from a table the reader does not count
-        ok = all(r["pass"] for r in rows.values()) and not extra and not conf["not_confirmed"]
+        problems = reader_problems(phone)
+        ok = (
+            all(r["pass"] for r in rows.values())
+            and not extra
+            and not conf["not_confirmed"]
+            and not problems["counted_tables"]
+        )
         every = every and ok
         out["phones"][sid] = {
             "tables": rows,
@@ -661,6 +692,7 @@ def import_counts(
             "skipped_rows_confirmed": n_conf,
             "skipped_not_confirmed": conf["not_confirmed"],
             "reader_tables_not_counted": phone.reader["tables_not_counted"],
+            "reader_problems": problems,
             "reader": {
                 k: phone.reader[k]
                 for k in (

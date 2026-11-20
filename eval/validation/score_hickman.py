@@ -891,7 +891,7 @@ def score(
     out: Path,
     repeat_of: Path | None = None,
     phones: dict[str, Path] | None = None,
-    kinds: Path = score_leapp.KINDS_FILE,
+    kinds: Path | None = None,
 ) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     # scored under a temporary name, put in place with the score files only once scoring
@@ -966,7 +966,7 @@ def _score(
     db: Path,
     repeat_of: Path | None,
     phones: dict[str, Path],
-    kinds: Path,
+    kinds: Path | None,
 ) -> dict[str, Any]:
     from core.db import connect
 
@@ -974,23 +974,26 @@ def _score(
     leapp = score_leapp.is_leapp_run(run_record)
     if leapp and (dump is not None or not phones):
         raise SystemExit("score: a LEAPP run is scored with --phone for each phone, not --dump")
-    if not leapp and (dump is None or phones):
-        raise SystemExit("score: a UFDR run is scored with --dump, not --phone")
+    if not leapp and (dump is None or phones or kinds is not None):
+        raise SystemExit("score: a UFDR run is scored with --dump, not --phone or --kinds")
     gold, key_hashes = load_keys(keys)
     source: dict[str, Any] = {"kind": "leapp" if leapp else "ufdr"}
 
     # closed on every path, so score() can remove the temporary copy (on Windows too); the
-    # phones' LAVA copies are removed with their folder
-    with tempfile.TemporaryDirectory() as work, closing(connect(db)) as conn:
+    # phones' LAVA copies (a database can be gigabytes) are made beside the score, not in the
+    # system's temporary folder, and removed with their folder
+    with tempfile.TemporaryDirectory(dir=out) as work, closing(connect(db)) as conn:
         run = _published_run(conn, results, run_record)
         check_key_covers(conn, gold)
         if leapp:
-            lava = score_leapp.open_phones(run_record, phones, kinds, Path(work))
+            kinds_path = kinds or score_leapp.KINDS_FILE
+            lava = score_leapp.open_phones(run_record, phones, kinds_path, Path(work))
             skipped = {sid: score_leapp.confirm_skipped(conn, p) for sid, p in lava.items()}
             mapped, mapping = score_leapp.map_lava_keys(conn, gold, lava, skipped)
             counts = score_leapp.import_counts(conn, lava, skipped)
             source |= {
-                "kinds_sha256": score_leapp.load_kinds(kinds)[1],
+                # the hash of the kinds as open_phones read them, never a second read
+                "kinds_sha256": next(iter(lava.values())).kinds_sha256,
                 "phones_sha256": {sid: p.sha256 for sid, p in lava.items()},
             }
         else:
@@ -1273,6 +1276,20 @@ def _leapp_count_lines(counts: dict[str, Any]) -> list[str]:
                 for x in p["skipped_not_confirmed"]
             ]
             lines.append("")
+        problems = p.get("reader_problems") or {}
+        if problems.get("counted_tables"):
+            lines += [
+                "The LEAPP output disagrees with itself on counted tables (bar 8 fails): "
+                + ", ".join(problems["counted_tables"])
+                + ".",
+                "",
+            ]
+        if problems.get("tables_not_in_database"):
+            missing = ", ".join(f"{t} ({n})" for t, n in problems["tables_not_in_database"].items())
+            lines += [f"Listed in the manifest but not in the database: {missing}.", ""]
+        if problems.get("manifest_count_differs"):
+            differs = ", ".join(problems["manifest_count_differs"])
+            lines += [f"Manifest record count differs from the rows: {differs}.", ""]
         if p["records_from_tables_not_counted"]:
             extra = ", ".join(f"{t} {n}" for t, n in p["records_from_tables_not_counted"].items())
             lines += [f"Records from tables the reader does not count: {extra}.", ""]
@@ -1294,8 +1311,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--kinds",
         type=Path,
-        default=score_leapp.KINDS_FILE,
-        help="the LAVA tables bar 8 reads, by kind (default eval/validation/lava_kinds.json)",
+        help="a LEAPP run's LAVA tables bar 8 reads, by kind (default"
+        " eval/validation/lava_kinds.json)",
     )
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument(

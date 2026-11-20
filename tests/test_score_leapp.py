@@ -616,3 +616,74 @@ def test_a_phone_path_that_is_not_a_zip_file_is_refused_cleanly(tmp_path):
             record, {**zips, "and": tmp_path / "missing.zip"}, score_leapp.KINDS_FILE,
             tmp_path / "w2",
         )  # fmt: skip
+
+
+# ---------------------------------------------------------------- second Claude review on #271
+
+
+def test_a_pair_named_with_the_table_in_another_letter_case_is_confirmed(case):
+    # the importer names a table as the database spells it
+    conn, phones = case
+    before = _skipped(conn, phones)["and"]
+    assert before["confirmed"] and not before["not_confirmed"]
+
+    def upper(s: list[dict[str, Any]]) -> None:
+        for e in s:
+            table, _, rest = e["same_as"].partition("/")
+            e["same_as"] = f"{table.upper()}/{rest}"
+
+    _set_skipped(conn, "and", upper)
+    after = _skipped(conn, phones)["and"]
+    assert len(after["confirmed"]) == len(before["confirmed"]) and not after["not_confirmed"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "fails"),
+    [
+        ("tables_not_in_database", {"get_sms_mms_mms": 500}, True),
+        ("manifest_count_differs", ["GET_SMS_MMS"], True),
+        ("tables_not_in_database", {"wifinetworks": 3}, False),  # a table bar 8 does not count
+        ("tables_not_in_manifest", ["stray_chats"], False),  # shown, never a count
+    ],
+)
+def test_the_reader_s_problems_with_the_leapp_output_are_kept_and_fail_counted_tables(
+    case, field, value, fails
+):
+    conn, phones = case
+    assert score_leapp.import_counts(conn, phones, _skipped(conn, phones))["pass"]
+    phones["and"].reader[field] = value
+    got = score_leapp.import_counts(conn, phones, _skipped(conn, phones))
+    problems = got["phones"]["and"]["reader_problems"]
+    assert problems[field] == value
+    assert got["pass"] is not fails and got["phones"]["and"]["pass"] is not fails
+    lines = "\n".join(score_hickman._leapp_count_lines(got))
+    assert ("disagrees with itself on counted tables" in lines) is fails
+
+
+def test_a_failed_connect_closes_the_phones_already_open(case, tmp_path):
+    conn, phones = case
+    opened: list[sqlite3.Connection] = []
+    first = phones["and"]
+
+    def connect() -> sqlite3.Connection:
+        c = LavaPhone.connect(first)
+        opened.append(c)
+        return c
+
+    object.__setattr__(first, "connect", connect)
+    broken = LavaPhone("ios", tmp_path / "missing", "0" * 64, phones["ios"].reader, {})
+    with pytest.raises(sqlite3.Error):
+        score_leapp.map_lava_keys(conn, [], {"and": first, "ios": broken}, {})
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].execute("SELECT 1")
+
+
+def test_the_kinds_hash_is_the_one_the_phones_were_read_with(leapp_run):
+    results, keys, zipped, tmp = leapp_run
+    out = tmp / "score-hash"
+    args = ["--results", str(results), "--keys", str(keys), "--out", str(out)]
+    assert score_hickman.main([*args, "--phone", f"and={zipped}"]) == 0
+    s = json.loads((out / "score.json").read_text("utf-8"))
+    assert s["source"]["kinds_sha256"] == score_leapp.load_kinds(score_leapp.KINDS_FILE)[1]
+    assert not [p for p in out.iterdir() if p.is_dir()]  # the phones' copies are gone

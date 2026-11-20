@@ -31,23 +31,29 @@
   - Bar 8 compares, per phone and per table the kinds file reads, Mabillon's records from that
     table (distinct locators in messages, calls and contacts) plus the confirmed skipped copies
     with the reader's count; it passes only when every table agrees, every skipped copy is
-    confirmed and no record comes from a table the reader does not count. `score.md` shows
-    the table per phone.
+    confirmed, no record comes from a table the reader does not count, and the LEAPP output
+    agrees with itself on every counted table (a table its manifest lists but its database does
+    not hold, or whose manifest record count differs from its rows, fails, since 0 against 0
+    there is no evidence). `score.md` shows the table per phone and what the reader found wrong.
   - The kinds file moves into the repo as `eval/validation/lava_kinds.json` (the `--kinds`
     default), extended with the seven tables added since #264 (ALEAPP Telegram, iLEAPP
     Snapchat and five app call tables); a test pins that it names exactly the importer's
-    tables. The UFDR path and every measure are unchanged; `score.json` gains `source`.
+    tables. The UFDR path and every measure are unchanged; `score.json` gains `source`, whose
+    `kinds_sha256` is the hash of the kinds file as the phones were read with it. The phones'
+    LAVA copies are made in a folder beside the score, not in the system's temporary folder.
 - Where: branch `claude/project-thread-ds0ify`, its own PR on main after #265 and #269 merged.
-- Verified: `tests/test_score_leapp.py` (79 tests, cloud container, 2026-11-20): row-to-record
+- Verified: `tests/test_score_leapp.py` (86 tests, cloud container, 2026-11-20): row-to-record
   mapping on both phones of one case (multi-row MMS, RCS and iOS attachment rows, a skipped
   copy, a table name in other case), every refusal reason, bar 8 passing and failing (a missing
   record, a record from an uncounted table, a wrong or shared pair, a skipped row not in the
   table, another party's SMS), each pair field (party, attachment count, white space, several
-  texts, a multi-part MMS, whole seconds, a time that is not finite, the direction column), repeated empty dedupe values
-  and a record lost among them, a skipped entry whose rows are not row ids, a key on a table the
+  texts, a multi-part MMS, whole seconds, a time that is not finite, the direction column, the
+  table named in another letter case), repeated empty dedupe values and a record lost among
+  them, the reader's problems with the LEAPP output, a failed connect, a skipped entry whose rows are not row ids, a key on a table the
   importer does not read, the zip's manifest and database as LAVA names them, the size limit, a
   path that is not a zip file, the phone hash and set checks, and the whole scorer on a
-  driver run. Each guard was mutated and a test failed, except the explicit "every skipped copy
+  driver run; `tests/test_validation_score.py` pins that a UFDR run refuses `--phone` and
+  `--kinds`. Each guard was mutated and a test failed, except the explicit "every skipped copy
   confirmed" term of bar 8, which a table count already fails on. On the G2 development pair
   (Android 13 and iOS 15 LEAPP output, driver run60 on main 975e37e, Linux cloud container,
   2026-11-20, fake model, no spend): all 1,043 rows of the counted tables map to a record, all
@@ -64,4 +70,5 @@
   around it (" 5" beside "5") is two values to the reader and one to the importer, so it can
   make a correct table FAIL (never PASS); none occurs on the development pair.
 - Affects: the validation scorer (`eval/`) only. No capability, privacy, model or customer claim.
-- Status doc: no change
+- Status doc: pending: header "Other versions": "validation scorer 1.5.0" (as the 2026-11-16
+  entry's pending edit sets it) becomes "validation scorer 1.6.0" (#271)

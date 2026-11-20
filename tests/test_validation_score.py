@@ -972,3 +972,14 @@ def test_the_check_reader_opens_a_path_with_uri_characters(tmp_path, char):
     with closing(sqlite3.connect(db)) as conn:
         apply_schema(conn)
     assert load_checks(db, ["C01"]) == []
+
+
+def test_a_ufdr_run_refuses_the_leapp_arguments(scored, tmp_path):
+    # each path refuses the other's arguments, --kinds included (Claude review on #271)
+    run, _ = scored
+    base = run.parent
+    args = (run / "results.zip", base / "keys", base / "dump", tmp_path / "out")
+    with pytest.raises(SystemExit, match="not --phone or --kinds"):
+        score_hickman.score(*args, kinds=score_hickman.score_leapp.KINDS_FILE)
+    with pytest.raises(SystemExit, match="not --phone or --kinds"):
+        score_hickman.score(*args, phones={"and": base / "keys"})
