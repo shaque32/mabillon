@@ -1296,7 +1296,7 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
     db.execute("CREATE TABLE persons (id TEXT, name TEXT)")
     db.execute("CREATE TABLE stipulations (person_id TEXT, kind TEXT)")
     db.execute("CREATE TABLE assumptions (id INTEGER PRIMARY KEY, claim_id TEXT,"
-               " template_id TEXT, params_json TEXT, is_core INTEGER)")  # fmt: skip
+               " template_id TEXT, params_json TEXT, text TEXT, is_core INTEGER)")  # fmt: skip
     kept = {
         "C12": [  # every sheet row: counts
             ("sender", {"person_ids": [PETROV], "quoted_text": QUOTE_C12}),
@@ -1312,9 +1312,9 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
         db.execute("INSERT INTO claims VALUES (?, ?)", (cid, GOLD[cid]["text"]))
         for template_id, params in rows:
             db.execute(
-                "INSERT INTO assumptions (claim_id, template_id, params_json, is_core)"
-                " VALUES (?, ?, ?, 1)",
-                (cid, template_id, json.dumps(params)),
+                "INSERT INTO assumptions (claim_id, template_id, params_json, text, is_core)"
+                " VALUES (?, ?, ?, ?, 1)",
+                (cid, template_id, json.dumps(params), f"{template_id} row."),
             )
     step = SimpleNamespace(
         sheet=testability.sheet_named(SHEET),
@@ -1332,3 +1332,27 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
         "first_pass_matching_the_sheet": 1,
         "first_pass_naming_another_person_phone_or_window": 0,
     }
+
+
+def test_code_s_event_for_unread_words_is_no_mismatch_under_the_parties_check(conn):
+    """Claude review on #265: the event filler 12 adds for words no check reads names nothing
+    the claim's other rows do not, and only an expert carries it, so SHEET_CHECK_PARTIES does
+    not count its template against a sheet that has none. The strict SHEET_CHECK still does,
+    and a model's own event still counts."""
+    filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
+    sheet = testability.sheet_named(SHEET)["C12"]
+    c12 = claim("C12")
+    c = c12.model_copy(update={"text": c12.text[:-1] + ", and REYES never replied."})
+    outcome, reasons, got, kept = testability.check_answer(
+        filler, c, C12_WITH_REYES, sheet, testability.SHEET_CHECK_PARTIES
+    )
+    assert (outcome, reasons) == ("proposed", []), reasons
+    assert got.code_templates == {"event"} and "event" in {a.template_id for a in kept}
+    old = testability.check_answer(filler, c, C12_WITH_REYES, sheet, testability.SHEET_CHECK)
+    assert old[0] == "mismatch"
+    assert "names the template 'event', which the signed sheet does not name" in old[1]
+    assert testability.code_events(
+        [("event", "x happened." + " Filled from the claim's wording.")]
+    ) == {"event"}
+    assert testability.code_events([("event", "x happened.")]) == frozenset()
+    assert testability.code_events([("sender", "y.")]) == frozenset()

@@ -1270,6 +1270,14 @@ def months_stated(text: str) -> tuple[datetime, datetime] | None:
     return datetime(first[0], first[1], 1), datetime(after[0], after[1], 1)
 
 
+def _tested(template_id: str) -> bool:
+    """True when a check reads the template's rows (an unknown or unnamed template counts as
+    read, so it is held to every rule); False for an event, a meaning or a role, which only an
+    expert carries."""
+    t = TEMPLATES.get(template_id)
+    return t is None or bool(t.checks)
+
+
 def check_window(
     start: datetime,
     end: datetime,
@@ -1286,11 +1294,14 @@ def check_window(
       For no_contact, "first ... on X" leaves the start open too.
     - With a time of day in the range's own words, each closed end is within 15 minutes of a
       stated time. Without one, the range is whole days (midnight to midnight).
+    - For a template a check reads (`_tested`), no time stated to the second, which a range in
+      minutes does not test. An event's or a meaning's range has no check: the expert who
+      carries it reads the seconds (Claude review on #265).
     """
     if end <= start:
         raise Reject("window ends before it starts")
     # a quote that wraps a line is still a quote (CodeRabbit on #265)
-    if _states_seconds(_unquoted(_flat(_nfc(claim)))):
+    if _tested(template_id) and _states_seconds(_unquoted(_flat(_nfc(claim)))):
         # "at 9:21:45 a.m.": a range in whole minutes would pass a message at 9:21:10
         raise Reject(
             "the claim states a time to the second, which a range in minutes does not test"
@@ -1958,11 +1969,18 @@ _OTHER_CALL_APPS_CAP_RE = re.compile(
 # missing-app guard only (`LocalAssumptionFiller._names_an_app_the_case_lacks`): "no contact on
 # TikTok" on a case with no TikTok was read on every app (Claude review on #265).
 _OTHER_MESSAGE_APPS_RE = re.compile(
-    r"\b(?:tik\s?tok|groupme|slack|gmail|outlook|hotmail|yahoo|twitter|reddit|tinder|"
-    r"grindr|hinge|bumble|linkedin|kakao\s?talk|wechat|imo|botim|zangi|briar|protonmail|"
-    r"proton\s+mail|google\s+chat|marco\s+polo|voxer|zello|pinterest|tumblr|twitch|"
-    r"steam|xbox|playstation|roblox|venmo|cash\s?app|paypal|zelle)\b",
+    r"\b(?:tik\s?tok|groupme|gmail|hotmail|twitter|reddit|tinder|"
+    r"grindr|linkedin|kakao\s?talk|wechat|botim|zangi|protonmail|"
+    r"proton\s+mail|google\s+chat|marco\s+polo|voxer|zello|pinterest|tumblr|"
+    r"xbox|playstation|roblox|venmo|cash\s?app|paypal|zelle)\b",
     re.IGNORECASE,
+)
+# Those whose names are also plain words count only as capitalised or in capitals, as the
+# calling apps do: "the outlook for Friday" or "a steam cleaner" names no app (Claude review on
+# #265).
+_OTHER_MESSAGE_APPS_CAP_RE = re.compile(
+    r"\b(?:Slack|SLACK|Outlook|OUTLOOK|Yahoo|YAHOO|Hinge|HINGE|Bumble|BUMBLE|Imo|IMO|"
+    r"Briar|BRIAR|Twitch|TWITCH|Steam|STEAM)\b"
 )
 
 
@@ -3048,9 +3066,15 @@ def coverage_gap(
         return "the claim dates itself from another day but no assumption tests a time range"
     if time_mentions(_unquoted(claim.text)) and not any(time_mentions(r) for r in raws):
         return "the claim states a time of day but no time range states one"
-    if _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
+    timed = [
+        p
+        for p in proposals
+        if _tested(p.template_id) and isinstance(p.params, dict) and p.params.get("window")
+    ]
+    if timed and _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
         # "at 9:31:04": no check tests a time to the second, whatever path its range took
-        # (CodeRabbit on #265)
+        # (CodeRabbit on #265); a range only an event or a meaning holds has no check, and the
+        # expert who carries it reads the seconds (Claude review on #265)
         return "the claim states a time to the second, which no check tests"
     if _QUOTED_MESSAGE.search(claim.text) and "sender" not in kept:
         quotes = [m.group(0)[1:-1].strip() for m in _QUOTE_SPAN_RE.finditer(_flat(claim.text))]
@@ -3169,8 +3193,19 @@ _UNPLAIN_PHRASES_RE = re.compile(
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)
-    r"(?:his|her|their|its|my|your)\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone)\s+)?"
-    r"numbers?|"
+    r"(?:his|her|their|its|my|your|our)\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone|work|"
+    r"personal|other)\s+)?(?:numbers?|phones?|cells?|mobiles?|lines?|accounts?|handles?|"
+    r"usernames?|ids?|devices?)|"
+    # "sent @northstar a phone number", "texted REYES the account number", "a date and a time":
+    # what the message held, which no check reads (Claude review on #265)
+    r"(?:sent|send|sends|sending|texted|text|texts|texting|messaged|gave|give|gives|giving|"
+    r"shared|forwarded|provided)\s+(?:@?[\w.-]+\s+)?(?:a|an|the|some)\s+(?:(?:phone|cell|"
+    r"mobile|telephone|account|bank|contact|new)\s+)?(?:numbers?|usernames?|accounts?|names?|"
+    r"handles?|ids?|identifiers?|dates?|times?|address(?:es)?|phones?)|"
+    # "13 messages each day", "a message a day", "in one day": a rate or a single day, which a
+    # count over a whole range does not read (Claude review on #265)
+    r"(?:each|every|per|a|an|one|a\s+single|in\s+(?:a|an|one|a\s+single))\s+(?:day|week|month|"
+    r"night|morning|afternoon|evening|weekday|weekend)|(?:each|every|per)\s+(?:hour|minute)|"
     r"(?:seconds?|minutes?|hours?|days?|moments?|shortly|soon|just|right|immediately)\s+"
     r"(?:after|before|later|earlier|prior)|"
     # "after a Telegram call", "during the call", "before their conversation": an act timed
@@ -4071,7 +4106,13 @@ class LocalAssumptionFiller:
             pass  # a sender is picked by its words and party; the time is record_time's job
         elif p.window is not None:
             try:
-                params["window"] = self._window(claim.text, para, p.window, device_ids, tpl.id)
+                params["window"] = self._window(
+                    claim.text,
+                    para,
+                    p.window,
+                    device_ids,
+                    tpl.id,
+                )
             except Reject as refused:
                 # The model's range is refused; use the range the claim states that day.
                 try:
@@ -4378,7 +4419,7 @@ class LocalAssumptionFiller:
             if len(tied) != 1:  # two tied days: never picked by the model's day
                 raise Reject("the time range is not one the claim plainly states")
             (w,) = tied
-            if _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
+            if _tested(template_id) and _states_seconds(_unquoted(_flat(_nfc(claim.text)))):
                 # "the day after the RAID, at 2026-03-12T21:14:05Z": a whole day would pass a
                 # message at any second of it (CodeRabbit on #265)
                 raise Reject(
@@ -4409,7 +4450,14 @@ class LocalAssumptionFiller:
         if len(stated) != 1:
             raise Reject("the time range is not one the claim plainly states")
         (w,) = stated
-        check_window(w.start, w.end, w.raw, claim.text, para, template_id)
+        check_window(
+            w.start,
+            w.end,
+            w.raw,
+            claim.text,
+            para,
+            template_id,
+        )
         return self._zoned_window(w.zone, w.start, w.end, device_ids, w.raw, w.stated)
 
     def the_quote(self, claim: Claim, out: list[Proposal]) -> str | None:
@@ -4807,6 +4855,7 @@ class LocalAssumptionFiller:
                     _OTHER_CALL_APPS_RE,
                     _OTHER_CALL_APPS_CAP_RE,
                     _OTHER_MESSAGE_APPS_RE,
+                    _OTHER_MESSAGE_APPS_CAP_RE,
                 )
             ) or any(
                 (a, b) == (0, len(bare))
@@ -5066,15 +5115,16 @@ class LocalAssumptionFiller:
         def short(i: int) -> bool:
             p = out[i]
             given = {str(c).strip().casefold() for c in p.params.get("channels") or ()}
+            # a call keeps `_call_app`'s reading, also with no app given: "called REYES and
+            # then texted him" never moves the call's time onto SMS (Claude review on #265)
+            if CALL_CHANNEL in given or (
+                p.template_id == "record_time" and not p.params.get("quoted_text")
+            ):
+                return False
             if not given:
                 return True
-            call = CALL_CHANNEL in given or (
-                p.template_id == "record_time" and not p.params.get("quoted_text")
-            )
-            return (
-                not call
-                and p.template_id not in WHOLE_APP_TEMPLATES
-                and any(a.casefold() not in given for a in wide)
+            return p.template_id not in WHOLE_APP_TEMPLATES and any(
+                a.casefold() not in given for a in wide
             )
 
         rows = [i for i in app_rows if short(i)]
@@ -5952,7 +6002,12 @@ class LocalAssumptionFiller:
         # case lacks, while the "Facebook" inside "Facebook Messenger" is not (CodeRabbit on
         # #265)
         held = [sp for a in self._named_apps(bare) for sp in self._app_mentions(bare, a)]
-        for rx in (_OTHER_CALL_APPS_RE, _OTHER_CALL_APPS_CAP_RE, _OTHER_MESSAGE_APPS_RE):
+        for rx in (
+            _OTHER_CALL_APPS_RE,
+            _OTHER_CALL_APPS_CAP_RE,
+            _OTHER_MESSAGE_APPS_RE,
+            _OTHER_MESSAGE_APPS_CAP_RE,
+        ):
             for m in rx.finditer(bare):
                 if " ".join(m.group(0).casefold().split()) == "video":
                     continue
@@ -6906,7 +6961,12 @@ class LocalAssumptionFiller:
         return True
 
     def _window(
-        self, claim_text: str, para: str, w: _Window, device_ids: list[str], template_id: str
+        self,
+        claim_text: str,
+        para: str,
+        w: _Window,
+        device_ids: list[str],
+        template_id: str,
     ) -> Any:
         if not _verbatim(w.as_written, claim_text):
             raise Reject("the window's words are not written in the claim")

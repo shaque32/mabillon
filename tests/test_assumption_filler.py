@@ -4834,3 +4834,101 @@ def test_coderabbit_on_087536e_pronoun_after_an_address(conn):
         'On March 12, 2026, PETROV texted @north-who then asked: "need 2 more by friday".',
     ):
         assert "a second act" not in filler.unread_words(one), one
+
+
+# ---------------------------------------------------------------- Claude review on e60eb11
+
+
+@pytest.mark.parametrize("unit", ["each day", "a day", "per day", "in one day", "every hour"])
+def test_claude_review_on_e60eb11_a_rate_or_one_day_is_no_total(conn, unit):
+    # 13 messages spread over March 10-31 are no "13 each day" nor 13 "in one day"
+    text = GOLD["C03"]["text"][:-1] + f" {unit}."
+    made, _ = build_text(conn, text, ClaimType.COUNT, GOOD["C03"])
+    assert "event" in {a.template_id for a in made}, text
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "PETROV sent @northstar a phone number:",
+        "PETROV sent @northstar the account number:",
+        "PETROV sent @northstar a username:",
+        "PETROV sent @northstar a date and a time:",
+        "PETROV wrote to @northstar from her phone:",
+        "PETROV wrote to @northstar on their account:",
+    ],
+)
+def test_claude_review_on_e60eb11_what_the_message_held_is_read(conn, words):
+    text = f'On March 12, 2026, {words} "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, text
+
+
+def test_claude_review_on_e60eb11_her_phone_on_a_count(conn):
+    text = GOLD["C03"]["text"][:-1] + " on her phone."
+    made, _ = build_text(conn, text, ClaimType.COUNT, GOOD["C03"])
+    assert "event" in {a.template_id for a in made}
+
+
+def test_claude_review_on_e60eb11_a_message_still_reads_plain(conn):
+    for text in (
+        C05_TEXT,
+        'On March 12, 2026, PETROV sent @northstar a message reading: "need 2 more by friday".',
+    ):
+        made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+        assert sorted(a.template_id for a in made) == ["record_time", "sender"], text
+
+
+def test_claude_review_on_e60eb11_a_call_keeps_its_own_reading(conn):
+    # a call's time row on no app, in a claim that also names SMS, is never moved onto SMS
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    call = Proposal("record_time", {"person_ids": [PETROV]}, is_core=True)
+    for text in (
+        "On March 9, 2026, PETROV called REYES and then texted him.",
+        "On March 9, 2026, PETROV called REYES after an SMS.",
+    ):
+        c = Claim(
+            id="X1",
+            paragraph_id=claim("C05").paragraph_id,
+            text=text,
+            claim_type=ClaimType.COMMUNICATION,
+            status=ClaimStatus.ACCEPTED,
+        )
+        (row,) = filler._bind_named_app(c, [call])
+        assert not row.params.get("channels"), (text, row.params)
+
+
+def test_claude_review_on_e60eb11_an_event_claim_keeps_its_rows_with_seconds(conn):
+    text = "Officers seized the phone from PETROV at 09:31:04 a.m. on March 12, 2026."
+    props = [
+        P(
+            "event",
+            people=["PETROV"],
+            window=W("at 09:31:04 a.m. on March 12, 2026", "2026-03-12T09:31", "2026-03-12T09:32"),
+        )
+    ]
+    made, filler = build_text(conn, text, ClaimType.EVENT, props)
+    assert [a.template_id for a in made] == ["event"], filler.drops
+    # a communication claim stated to the second is still refused
+    text = (
+        'At 09:31:04 a.m. on March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    )
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W("At 09:31:04 a.m. on March 12, 2026", "2026-03-12T09:31", "2026-03-12T09:32"),
+        ),
+    ]
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "record_time" not in {a.template_id for a in made}
+
+
+def test_claude_review_on_e60eb11_plain_words_name_no_app(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    assert not filler._names_an_app_the_case_lacks("PETROV texted REYES about the outlook")
+    assert not filler._names_an_app_the_case_lacks("a steam cleaner and a door hinge, imo")
+    assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on Slack")
+    assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on OUTLOOK")

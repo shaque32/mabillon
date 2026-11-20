@@ -193,7 +193,23 @@
     under, excuses neither parties nor these apps (Claude review on #265). Other apps a try names still
     count, and so does a plain-word app the claim writes without a capital ("his recents"),
     which code binds no row to. The step's version goes to 0.3.0, so verify-bundle notes a 0.2.0 try as not re-run
-    instead of failing it on filler 12's new rows (CodeRabbit on #265).
+    instead of failing it on filler 12's new rows (CodeRabbit on #265). The event code adds for
+    words no check reads is not counted either under that check (`testability.code_events`):
+    it names nothing the claim's other rows do not, and only an expert carries it, so a try is
+    no longer a mismatch for that event alone (Claude review on #265; tested in
+    `tests/test_testability.py`, not measured on a testability run).
+  - After the second Claude review on #265 (on e60eb11): a rate or a single day ("13 messages
+    each day", "a day", "in one day", "every hour") is read, since a count over a whole range
+    reads neither; so is what a message held ("sent @northstar a phone number", "the account
+    number", "a username", "a date and a time") and a phone, account or line written only
+    with a possessive ("from her phone", "on their account"), which no check binds. A call's
+    time row on no app keeps the call app's reading when the claim also names a message app
+    ("called REYES and then texted him" no longer searches the call on SMS). A time stated to
+    the second is refused only on rows a check reads (a time, a count, an absence); a range
+    held only by an event or a meaning row, which only an expert carries, is kept for the
+    expert, as before this PR, so such a claim no longer loses every row. App names that are also plain
+    words ("outlook", "steam", "slack", "hinge", "imo") name an app only when capitalised or
+    in capitals, so "the outlook for Friday" no longer drops a claim.
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
@@ -203,15 +219,15 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  1,717 tests, pass on the final head on 2026-11-18 in a Linux cloud container with 4 vCPUs,
+  with the rule-pack suite 1,785 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
-  case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-18, final
+  case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-20, final
   head). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing; this PR's cloud
   session, 2026-11-16 to 2026-11-18): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only; this
-  PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-18) leaves
+  PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-20) leaves
   every check outcome unchanged and adds the expert-only event to 20 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
   Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:
@@ -235,7 +251,7 @@
 - Status doc: pending: header "Other versions": filler 12, count 1.3.1 (this entry's 1.3.0 plus #264's 1.2.1 guard; it replaces #264's count 1.2.1), testability step 0.3.0. Section 2, step 5
   (Assumptions): add "a communication, timing or count claim with words no check reads gets a
   code-made event that only an expert can carry; a message row gets the app the claim names;
-  a time stated to the second gets no minute range". Section on the count check: add "since
+  a row a check reads gets no minute range for a time stated to the second". Section on the count check: add "since
   1.3.0, rows repeating another row's words within 2 seconds, on any app and from any sender,
   make the count inconclusive when merging them could change the answer; since 1.3.1 they are
   read over both sides before a count of one side's messages".

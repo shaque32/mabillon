@@ -98,7 +98,13 @@ from core.audit.assumption_filler import (
     phone_digits,
     unquoted_time_quote,
 )
-from core.audit.assumptions import CODE_ONLY_TEMPLATES, Proposal, from_proposal, templates_for
+from core.audit.assumptions import (
+    CODE_ONLY_TEMPLATES,
+    Proposal,
+    from_proposal,
+    is_code_made,
+    templates_for,
+)
 from core.audit.checks._common import key
 from core.audit.invariants import InvariantViolation
 from core.contracts import (
@@ -116,8 +122,9 @@ from core.review.device_names import logged_names, name_key
 # 0.2.0: the claim-only check (outcome "outside"), the checks each try ran ("check"), the
 # proposed assumptions' texts in each entry, and the examiner's decisions from the claim page.
 # 0.3.0: tries run through filler 12 (an event for words no check reads, the app a claim names)
-# and the sheet check leaves out the apps code binds from the claim's words (`claim_apps`), so a
-# 0.2.0 try is noted as not re-run rather than failing verify-bundle (CodeRabbit on #265).
+# and the sheet check leaves out the apps code binds from the claim's words (`claim_apps`) and
+# code's event for words no check reads (`code_events`), so a 0.2.0 try is noted as not re-run
+# rather than failing verify-bundle (CodeRabbit and the Claude review on #265).
 VERSION = "0.3.0"
 PROMPT_FILE = "agent_testability.md"  # signed copy only; the eval may name the draft
 PLACEHOLDERS = frozenset({"claim", "paragraph", "templates", "channels", "lookups", "refused"})
@@ -132,7 +139,8 @@ SHEET_CHECK = "claim and sheet"  # the eval's: the claim-only check, then the si
 # The eval's sheet check from 2026-11-08 (Arsh: the go/no-go scores both passes together, and a
 # party the claim names is not a wrong person): as SHEET_CHECK, except that a person the claim's
 # own words name, named only as a party to the record (PARTY_TEMPLATES), is not counted as one
-# the sheet does not name, nor an app code binds from the claim's own words (`claim_apps`).
+# the sheet does not name, nor an app code binds from the claim's own words (`claim_apps`), nor
+# code's event for words no check reads (`code_events`).
 # Logs that say SHEET_CHECK (or no check) replay with SHEET_CHECK, which excuses neither.
 SHEET_CHECK_PARTIES = "claim and sheet, parties the claim names"
 # Templates whose person_ids are who the record was between, not its sender, the one its words
@@ -294,6 +302,11 @@ class Named:
     # filler 12), which the sheet check does not count either (set only under
     # SHEET_CHECK_PARTIES). Not in the payload.
     claim_apps: frozenset[str] = frozenset()
+    # Of `templates`, the event code adds for words no check reads (filler 12,
+    # `_add_unread_event`), which the sheet check does not count either (set only under
+    # SHEET_CHECK_PARTIES; Claude review on #265). It names no one and nothing the claim's
+    # other rows do not, and only an expert can carry it. Not in the payload.
+    code_templates: frozenset[str] = frozenset()
 
     def payload(self) -> dict[str, list[Any]]:
         return {
@@ -402,7 +415,8 @@ def mismatch(repair: Named, sheet: Named) -> list[str]:
     """What the repaired set names that the sheet does not. Empty: the same people, phones,
     windows, accounts, handles, apps, templates and quoted words as the sheet, or fewer. A
     person in `repair.parties` (a party the claim's own words name) is not counted, nor an app
-    in `repair.claim_apps` (one code binds from the claim's own words)."""
+    in `repair.claim_apps` (one code binds from the claim's own words), nor a template in
+    `repair.code_templates` (code's event for words no check reads)."""
     out = []
     for what, got, want in (
         ("person", repair.people - repair.parties, sheet.people),
@@ -411,13 +425,22 @@ def mismatch(repair: Named, sheet: Named) -> list[str]:
         ("account", repair.accounts, sheet.accounts),
         ("handle", repair.handles, sheet.handles),
         ("app", repair.apps - repair.claim_apps, sheet.apps),
-        ("template", repair.templates, sheet.templates),
+        ("template", repair.templates - repair.code_templates, sheet.templates),
         ("quoted words", repair.quotes, sheet.quotes),
     ):
         for x in sorted(got - want):
             shown = " to ".join(x) if isinstance(x, tuple) else repr(x)
             out.append(f"names the {what} {shown}, which the signed sheet does not name")
     return out
+
+
+def code_events(rows: Iterable[tuple[str, str]]) -> frozenset[str]:
+    """{"event"} when a set of (template id, assumption text) holds an event and every event
+    in it is code-made (its text ends with CODE_MADE_NOTE): the event filler 12 adds for words
+    no check reads, which copies its parties, phones, range and apps from the claim's other
+    rows. Empty otherwise, so a model's own event still counts against the sheet."""
+    events = [text for template_id, text in rows if template_id == "event"]
+    return frozenset({"event"}) if events and all(map(is_code_made, events)) else frozenset()
 
 
 def claim_parties(
@@ -614,6 +637,7 @@ def check_answer(
             got,
             parties=claim_parties(filler, claim.text, rows),
             claim_apps=filler.claim_apps(claim.text),
+            code_templates=code_events((a.template_id, a.text) for a in assumptions if a.is_core),
         )
     outside = outside_claim(filler, claim, got)
     if outside:

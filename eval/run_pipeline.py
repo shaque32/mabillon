@@ -738,10 +738,13 @@ def both_passes(
     conn = step.conn
     texts = dict(conn.execute("SELECT id, text FROM claims"))
     core: dict[str, list[tuple[str, dict]]] = {}
-    for cid, template_id, params in conn.execute(
-        "SELECT claim_id, template_id, params_json FROM assumptions WHERE is_core = 1 ORDER BY id"
+    core_texts: dict[str, list[tuple[str, str]]] = {}
+    for cid, template_id, params, text in conn.execute(
+        "SELECT claim_id, template_id, params_json, text FROM assumptions WHERE is_core = 1"
+        " ORDER BY id"
     ):
         core.setdefault(cid, []).append((template_id, json.loads(params)))
+        core_texts.setdefault(cid, []).append((template_id, text))
     people = sheet_people(conn)
     wanted: dict[str, list[tuple[str, dict]]] = {}
     for r in sheet_rows:
@@ -759,6 +762,7 @@ def both_passes(
             testability.named(rows),
             parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
             claim_apps=step.filler.claim_apps(texts.get(cid, "")),
+            code_templates=testability.code_events(core_texts.get(cid, ())),
         )
         diff = testability.mismatch(got, want)
         match = not diff and not left_out(rows, wanted.get(cid, ()))
