@@ -3787,7 +3787,12 @@ class LocalAssumptionFiller:
         # An account's or person's name in the case is read only where the claim writes it as
         # a name, not as a plain lower-case word: an account shown as "Photo" never hides
         # "sent a photo" (Claude review on #265).
+        # "sent texts": more than one message, plain only beside a count, so a plural is never
+        # blanked as an app's alias or an account's name ("Texts"; CodeRabbit on #265)
+        plural = set() if "count" in tests else {"texts", "text messages", "imessages", "messages"}
         for n in sorted({n for n in self._names(bare) if len(n) > 2}, key=len, reverse=True):
+            if " ".join(n.casefold().split()) in plural:
+                continue
             for m in re.finditer(rf"(?<!\w){re.escape(n)}(?!\w)", bare, re.IGNORECASE):
                 if not re.fullmatch(r"[^\W\d_A-Z]+(?:\s+[^\W\d_A-Z]+)*", m.group(0)):
                     cut.append(m.span())
@@ -3799,9 +3804,6 @@ class LocalAssumptionFiller:
         apps = {c.casefold() for c in self.channels()} - {CALL_CHANNEL}
         apps |= {a.casefold() for words in APP_ALIASES.values() for a in words}
         apps |= set(APP_ALIASES)
-        # "sent texts": more than one message, plain only beside a count, so a plural is never
-        # blanked as an app's alias (CodeRabbit on #265)
-        plural = set() if "count" in tests else {"texts", "text messages", "imessages", "messages"}
         for n in sorted(apps - plural, key=len, reverse=True):
             # the same matcher as binding: "Line-Business" is Line Business (CodeRabbit on #265)
             cut += [

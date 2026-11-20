@@ -5238,3 +5238,15 @@ def test_coderabbit_on_8c1c5aa_a_number_is_a_second_writer(conn):
     assert "a second writer" not in filler.unread_words(one)
     # a plural beside a count is the count's word
     assert not filler.unread_words("PETROV sent @northstar 3 texts", tests={"count"})
+
+
+def test_coderabbit_on_5b569da_an_account_named_like_a_plural_hides_no_plural(tmp_path):
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO accounts (id, source_id, locator, device_id, app, identifier, display_name)"
+        " VALUES ('acct:item1:Telegram:texts', 'item1', 'x', NULL, 'Telegram', '556', 'Texts')",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, PETROV sent TEXTS to @northstar: "need 2 more by friday".'
+    assert "texts" in filler.unread_words(text)
+    assert not filler.unread_words(text.replace("TEXTS", "3 TEXTS"), tests={"count"})
