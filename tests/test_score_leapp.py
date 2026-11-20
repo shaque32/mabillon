@@ -282,6 +282,12 @@ PATH = "/data/user_de/0/com.android.providers.telephony/app_parts/PART_1_a.jpg"
         ([_gm()], ("get_sms_mms_mms", [{**_mms(("hi", None))[1][0]},
                                        {**_mms((None, None))[1][0], "date": 110}]),
          "more than 2 seconds"),
+        # a time that is not finite is a missing time, never a crash
+        ([_gm()], ("get_sms_mms_mms", [{**_mms(("hi", None))[1][0]},
+                                       {**_mms((None, None))[1][0], "date": "NaN"}]),
+         "a time is missing"),
+        ([_gm(message_timestamp=float("inf"))], _sms(), "a time is missing"),
+        ([_gm()], _sms(date="-Infinity"), "a time is missing"),
         # an MMS's direction is its Direction column, never another column named type
         ([_gm()], _mms(("hi", None), type="Sent"), None),
         ([_gm()], _sms(type=None, direction="Received"), "its direction is not"),
@@ -564,17 +570,18 @@ def test_a_real_column_named_rowid_is_never_a_row_id_locator():
 
 
 def test_repeated_empty_dedupe_values_are_each_a_record_and_a_lost_one_fails(tmp_path):
-    # three SMS rows with msg_id "", " " and NULL: the importer makes three records, the reader
-    # counts "" and " " as two values and leaves NULL out
+    # four SMS rows with msg_id "", " ", "" and NULL: the importer makes four records, the reader
+    # counts "" and " " as two values and leaves NULL out, so a NULL-only adjustment falls short
     lv = _android()
-    for i, mid in enumerate(("", " ", None)):
+    for i, mid in enumerate(("", " ", "", None)):
         lv.add("get_sms_mms", **{"Date": f"2024-03-04T12:0{i}:00Z", "Type": "Received",
                                  "Address": "+19195550111", "Body": f"empty {i}",
                                  "MSG ID": mid, "Thread ID": "2"})  # fmt: skip
     conn, phones = _one_phone(tmp_path, lv)
     got = score_leapp.import_counts(conn, phones, _skipped(conn, phones))
     t = got["phones"]["and"]["tables"]["get_sms_mms"]
-    assert (t["mabillon"], t["reader"], t["empty_key_adjustment"]) == (6, 5, 1)
+    assert (t["mabillon"], t["reader"], t["empty_key_adjustment"]) == (7, 5, 2)
+    assert t["null_dedupe_rows"] == 1
     assert got["pass"]
     conn.execute("DELETE FROM messages WHERE source_id = 'and' AND locator = 'get_sms_mms/rowid=5'")
     assert not score_leapp.import_counts(conn, phones, _skipped(conn, phones))["pass"]

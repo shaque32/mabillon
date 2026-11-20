@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -306,15 +307,18 @@ def _same_as_rows(
 
 
 def _epoch(v: object) -> float | None:
+    """A time in seconds, or None when it is missing, not a number, or not finite."""
     if isinstance(v, bool):
         return None
     if isinstance(v, int | float):
-        return float(v)
-    s = _value(v)
-    try:
-        return float(s) if s is not None else None
-    except ValueError:
-        return None
+        t: float | None = float(v)
+    else:
+        s = _value(v)
+        try:
+            t = float(s) if s is not None else None
+        except ValueError:
+            return None
+    return t if t is not None and math.isfinite(t) else None
 
 
 def _flat(text: str) -> str:

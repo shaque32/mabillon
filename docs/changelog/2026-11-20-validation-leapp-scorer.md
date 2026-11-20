@@ -38,12 +38,12 @@
     Snapchat and five app call tables); a test pins that it names exactly the importer's
     tables. The UFDR path and every measure are unchanged; `score.json` gains `source`.
 - Where: branch `claude/project-thread-ds0ify`, its own PR on main after #265 and #269 merged.
-- Verified: `tests/test_score_leapp.py` (76 tests, cloud container, 2026-11-20): row-to-record
+- Verified: `tests/test_score_leapp.py` (79 tests, cloud container, 2026-11-20): row-to-record
   mapping on both phones of one case (multi-row MMS, RCS and iOS attachment rows, a skipped
   copy, a table name in other case), every refusal reason, bar 8 passing and failing (a missing
   record, a record from an uncounted table, a wrong or shared pair, a skipped row not in the
   table, another party's SMS), each pair field (party, attachment count, white space, several
-  texts, a multi-part MMS, whole seconds, the direction column), repeated empty dedupe values
+  texts, a multi-part MMS, whole seconds, a time that is not finite, the direction column), repeated empty dedupe values
   and a record lost among them, a skipped entry whose rows are not row ids, a key on a table the
   importer does not read, the zip's manifest and database as LAVA names them, the size limit, a
   path that is not a zip file, the phone hash and set checks, and the whole scorer on a
