@@ -94,7 +94,13 @@
   the driver removes one beside `audited.db` too, though its backup rewrites every page
   anyway); every connection on the copy, including the
   check reader in `eval/validation/card.py`, is closed first, since Windows cannot move a file
-  that is still open. The final check tests that the
+  that is still open. results.zip always holds the audited case.db and run.json (a missing one
+  stops it; only a report the invariants refused may be left out), the report reads the audited
+  copy read-only and stops by name if it is gone instead of creating an empty one, and the
+  driver opens its case.db by a URI that also works on a Windows share (`file:////server/share`,
+  since SQLite refuses a URI authority). A stored call time counts as readable only if it also
+  converts to local time in any zone (9999-12-31T23:59:59Z parses, but is in year 10000 east of
+  UTC, where a check prints it in the phone's zone). The final check tests that the
   case still passes the gates, not that it equals what the audit read: a change made and
   reversed while the audit ran, or one that leaves the gates passing (such as a call time moved
   to another readable time), is not detected, and model calls made before a refusal are still
@@ -190,6 +196,9 @@
     one whose case.db is another build of the same package that differs only in a claim's text,
     only in a claim id, or only in the zone given, and one whose build recorded no build id.
   - A timed call on a phone with no line of its own stops the build.
+  - A stored call at 9999-12-31T23:59:59Z or 0001-01-01T00:00:00Z stops the run like an
+    unparsable time; results.zip is not published without its run.json or case.db; the report
+    never creates a missing audited copy; a UNC path's URI has an empty authority.
   - `tests/test_leapp.py`: an artifact whose table holds a row may hold records even when the
     manifest counts 0, a negative manifest count reads as unknown (and a count of False or 0.0 is not taken as empty), a table whose row probe
     fails may hold records, a manifest table name in other case still finds its table and is
@@ -208,7 +217,7 @@
     than `int()` reads (before, the second stopped the import).
     An unread entry of Telegram's message key under a category that does not name Telegram
     keeps Telegram from being read in full, unless its count is 0.
-  The file's 100 tests pass (with `tests/test_leapp.py`, 214; `tests/test_validation_score.py`'s 38 pass too) locally (cloud container, 2026-11-18). On the G2 development case
+  The file's 108 tests pass (with `tests/test_leapp.py`, 222; `tests/test_validation_score.py`'s 38 pass too) locally (cloud container, 2026-11-20). On the G2 development case
   (Android 13 and iOS 15 LEAPP output, #268 96cc425 + #267), neither phone is stopped, on build
   or resume: 66 of 108 and 13 of 22 call log rows are phone calls a check can read (4 missed
   calls on Android 13 name no caller), and the stored coverage is unchanged. `make check` runs on GitHub CI.

@@ -54,7 +54,7 @@ import time
 import zipfile
 from contextlib import closing, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from core.audit.assumption_filler import NATIVE_CALL_APP
@@ -108,12 +108,23 @@ def stamp_build(conn) -> str:  # noqa: ANN001
     return build_id
 
 
+def _db_uri(db: Path, mode: str) -> str:
+    """A SQLite URI for db in `mode`. as_uri() writes a Windows UNC path (\\\\server\\share\\x)
+    as file://server/share/x, an authority SQLite refuses, so the server and share go into the
+    path with an empty authority instead (file:////server/share/x; CodeRabbit on #269)."""
+    return f"{_no_authority(db.resolve().as_uri())}?mode={mode}"
+
+
+def _no_authority(uri: str) -> str:
+    return "file:////" + uri.removeprefix("file://") if not uri.startswith("file:///") else uri
+
+
 def open_existing(db: Path, missing: str | None = None) -> sqlite3.Connection:
     """Open a case.db read-write but never create it: a case.db moved away stops the run with
     `missing` (or the restore advice), not with an empty file left in its place (CodeRabbit on
     #269). The driver's cases are never encrypted."""
     try:
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=rw", uri=True)
+        conn = sqlite3.connect(_db_uri(db, "rw"), uri=True)
     except sqlite3.OperationalError as e:
         raise SystemExit(
             missing
@@ -508,10 +519,25 @@ def _marks(values: list[str]) -> str:
     return ", ".join("?" * len(values))
 
 
+# The widest offsets a zone can have (under a day either way): a time that converts to both
+# converts to the phone's local time in any zone, as the checks print it (local_str).
+_WIDEST_OFFSETS = (
+    timezone(timedelta(hours=23, minutes=59)),
+    timezone(-timedelta(hours=23, minutes=59)),
+)
+
+
 def _ts_ok(value: object) -> int:
-    """1 when the caller check's time parser reads the stored value as a time, else 0."""
+    """1 when the caller check's time parser reads the stored value as a time that converts to
+    any zone's local time, else 0: 9999-12-31T23:59:59Z parses, but in Asia/Tokyo it is in year
+    10000, and the check would fail on it after model calls were made (CodeRabbit on #269)."""
     try:
-        return int(isinstance(value, str) and _ts(value) is not None)
+        t = _ts(value) if isinstance(value, str) else None
+        if t is None:
+            return 0
+        for zone in _WIDEST_OFFSETS:
+            t.astimezone(zone)
+        return 1
     except (ValueError, TypeError, OverflowError):
         return 0
 
@@ -1097,7 +1123,12 @@ def report(out: Path, log, db: str = "case.db") -> dict:  # noqa: ANN001
 
     path = out / "report.html"
     path.unlink(missing_ok=True)  # never ship a report from an earlier attempt
-    conn = connect(out / db)
+    # read-only and never created: a copy gone since the audit stops the run by name, not with
+    # an empty database's report (CodeRabbit on #269)
+    try:
+        conn = sqlite3.connect(_db_uri(out / db, "ro"), uri=True)
+    except sqlite3.OperationalError as e:
+        raise SystemExit(f"{out / db} is missing ({e}); no report written") from e
     try:
         write_report(conn, path)
     except InvariantViolation as e:
@@ -1414,24 +1445,31 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     run["report"] = report(a.out, log, AUDITED)
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     plog.close()
-    part = a.out / "results.zip.part"  # published only once written in full
+    publish_results(a.out)
+    print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
+    return 0
+
+
+def publish_results(out: Path) -> Path:
+    """Write out/results.zip, published only once written in full. case.db (from the audited
+    copy) and run.json always go in, so a missing one stops it: run.json names the audit the
+    scorer confirms (CodeRabbit on #269). A report the invariants refused is left out."""
+    part = out / "results.zip.part"
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
             for name in RESULT_FILES:
-                if name == "case.db":  # always written, so a missing case stops the zip
+                src = out / (AUDITED if name == "case.db" else name)
+                if name in ("case.db", "run.json"):
                     try:
-                        z.write(a.out / AUDITED, name)
+                        z.write(src, name)
                     except FileNotFoundError as e:
-                        raise SystemExit(
-                            f"{a.out / AUDITED} is missing; results.zip not published"
-                        ) from e
-                elif (a.out / name).exists():
-                    z.write(a.out / name, name)
-        part.replace(a.out / "results.zip")
+                        raise SystemExit(f"{src} is missing; results.zip not published") from e
+                elif src.exists():
+                    z.write(src, name)
+        part.replace(out / "results.zip")
     finally:
         part.unlink(missing_ok=True)
-    print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
-    return 0
+    return out / "results.zip"
 
 
 if __name__ == "__main__":

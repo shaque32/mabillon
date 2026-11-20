@@ -1841,7 +1841,10 @@ def test_a_call_log_with_a_row_no_longer_stored_stops_beside_readable_calls(tmp_
         hickman_run.main(args)
 
 
-def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_path):
+# 'March 1st' does not parse; 9999-12-31T23:59:59Z parses, but is in year 10000 in a zone east
+# of UTC, where the check prints it in the phone's local time (CodeRabbit on #269)
+@pytest.mark.parametrize("bad", ["March 1st", "9999-12-31T23:59:59Z", "0001-01-01T00:00:00Z"])
+def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_path, bad):
     # Claude review on #269: the caller check parses every call time it reads, so a stored
     # time it cannot parse would stop the audit partway through, after model calls; the gate
     # stops it first, even beside readable phone calls.
@@ -1861,7 +1864,7 @@ def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_pa
     assert hickman_run.main(args) == 0
     conn = sqlite3.connect(out / "case.db")
     with conn:
-        conn.execute("UPDATE calls SET ts_utc = 'March 1st' WHERE id = (SELECT max(id) FROM calls)")
+        conn.execute("UPDATE calls SET ts_utc = ? WHERE id = (SELECT max(id) FROM calls)", (bad,))
     conn.close()
     with pytest.raises(SystemExit, match=r"1 of its stored calls has a time the checks cannot"):
         hickman_run.main(args)
@@ -2065,3 +2068,48 @@ def test_two_packages_of_one_name_swapped_between_phones_are_refused(pair, tmp_p
     swapped = _two([two / "Report.ufdr", one / "Report.ufdr"], tmp_path, {"phones": PHONES})
     with pytest.raises(SystemExit, match="was built from Report.ufdr"):
         hickman_run.main(swapped)
+
+
+def test_an_ordinary_call_time_converts_to_every_zone_and_the_year_9999_edge_does_not():
+    assert hickman_run._ts_ok("2024-03-01T15:00:00Z") == 1
+    assert hickman_run._ts_ok("9998-12-30T00:00:00Z") == 1
+    assert hickman_run._ts_ok("9999-12-31T23:59:59Z") == 0
+    assert hickman_run._ts_ok(None) == 0
+
+
+def test_a_unc_path_gets_an_empty_uri_authority():
+    # CodeRabbit on #269: SQLite refuses file://server/share/x (an authority), so a case.db on a
+    # Windows share opens as file:////server/share/x; a local path is unchanged.
+    assert hickman_run._no_authority("file://server/share/case.db") == (
+        "file:////server/share/case.db"
+    )
+    assert hickman_run._no_authority("file:///home/u/case.db") == "file:///home/u/case.db"
+    assert hickman_run._no_authority("file:///C:/u/case.db") == "file:///C:/u/case.db"
+
+
+def test_the_report_never_creates_a_missing_audited_copy(tmp_path):
+    # CodeRabbit on #269: the report opens the audited copy read-only, never creating it.
+    with pytest.raises(SystemExit, match="audited.db is missing"):
+        hickman_run.report(tmp_path, print, hickman_run.AUDITED)
+    assert not (tmp_path / hickman_run.AUDITED).exists()
+    assert not (tmp_path / "report.html").exists()
+
+
+@pytest.mark.parametrize("gone", ["run.json", "case.db"])
+def test_results_zip_is_not_published_without_its_run_json_or_case(tmp_path, gone):
+    # CodeRabbit on #269: run.json names the audit the scorer confirms, so like the case it
+    # always goes in; a report the invariants refused may be left out.
+    (tmp_path / hickman_run.AUDITED).write_bytes(b"db")
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    (tmp_path / (hickman_run.AUDITED if gone == "case.db" else gone)).unlink()
+    with pytest.raises(SystemExit, match="is missing; results.zip not published"):
+        hickman_run.publish_results(tmp_path)
+    assert not (tmp_path / "results.zip").exists()
+    assert not (tmp_path / "results.zip.part").exists()
+
+
+def test_results_zip_holds_its_case_and_run_json_and_no_refused_report(tmp_path):
+    (tmp_path / hickman_run.AUDITED).write_bytes(b"db")
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    with zipfile.ZipFile(hickman_run.publish_results(tmp_path)) as z:
+        assert sorted(z.namelist()) == ["case.db", "run.json"]
