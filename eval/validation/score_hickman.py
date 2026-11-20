@@ -882,11 +882,6 @@ def score(
         # (Claude review on #269)
         parts["score.json"].write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
         parts["score.md"].write_text(render(result), encoding="utf-8")
-        # a journal an earlier killed write left beside scored.db would be rolled into the new
-        # copy the next time it is opened, so it goes before the copy is put in place (Claude
-        # review on #269)
-        for s in SQLITE_SIDECARS:
-            (out / f"scored.db{s}").unlink(missing_ok=True)
         _publish({out / n: parts[n] for n in names} | {out / "scored.db": db})
     finally:
         db.unlink(missing_ok=True)
@@ -899,15 +894,20 @@ def _publish(staged: dict[Path, Path]) -> None:
     """Put each staged file at its target, all or none. Each earlier file is moved aside first
     and put back if any later move fails, so a failure partway (a Windows file lock, say)
     never leaves a new score.json beside an old score.md or scored.db (CodeRabbit on #269).
-    A put-back that fails too is reported, since the folder may then hold a mix."""
-    kept: dict[Path, Path] = {}  # target -> its earlier file, moved aside
+    A put-back that fails too is reported, since the folder may then hold a mix.
+    A target's SQLite sidecars (a journal an earlier killed write left beside scored.db) move
+    aside and back with it: left in place, SQLite would roll an old journal into the new copy,
+    and an earlier copy put back without its journal could not recover (Claude review and
+    CodeRabbit on #269)."""
+    kept: dict[Path, Path] = {}  # an earlier file (a target or its sidecar) -> where it went
     placed: list[Path] = []
     try:
         for target, part in staged.items():
-            if target.exists():
-                aside = target.with_name(f"{target.name}.old")
-                os.replace(target, aside)
-                kept[target] = aside
+            for old in (target, *(target.with_name(target.name + s) for s in SQLITE_SIDECARS)):
+                if old.exists():
+                    aside = old.with_name(f"{old.name}.old")
+                    os.replace(old, aside)
+                    kept[old] = aside
             os.replace(part, target)
             placed.append(target)
     except BaseException as e:

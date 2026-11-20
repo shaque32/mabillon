@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import sys
 import zipfile
 from contextlib import closing
 from pathlib import Path
@@ -861,6 +862,31 @@ def test_a_move_that_fails_partway_puts_the_earlier_score_back(
     assert sorted(p.name for p in out.iterdir()) == sorted(before)
 
 
+def test_an_earlier_scored_db_is_put_back_with_its_journal(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: a journal beside the earlier scored.db moves aside and back with it,
+    # so a failed publish leaves the pair SQLite needs to recover, and a good one leaves none
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    journal = out / "scored.db-journal"
+    journal.write_bytes(_hot_journal(tmp_path / "killed"))
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "scored.db-journal")}
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == "scored.db" and Path(src).name.endswith(".part"):
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(PermissionError, match="in use"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert not list(out.glob("*.old"))
+
+
 def test_a_put_back_that_fails_says_the_folder_may_be_mixed(scored, tmp_path, monkeypatch):
     import os
 
@@ -924,13 +950,23 @@ def test_a_results_zip_with_an_upper_case_extension_is_scored(scored, tmp_path):
     assert got["scorer_version"] == score_hickman.SCORER_VERSION
 
 
-def test_the_check_reader_opens_a_path_with_uri_characters(tmp_path):
+@pytest.mark.parametrize(
+    "char",
+    [
+        "#",
+        "%",
+        pytest.param(
+            "?", marks=pytest.mark.skipif(sys.platform == "win32", reason="not in Windows names")
+        ),
+    ],
+)
+def test_the_check_reader_opens_a_path_with_uri_characters(tmp_path, char):
     # Claude review on #269: a bare path in a SQLite URI cuts at '#' or '?' and opens another
     # file, so the reader escapes it
     from core.db import apply_schema
     from eval.validation.card import load_checks
 
-    folder = tmp_path / "run#2?x"
+    folder = tmp_path / f"run{char}2"
     folder.mkdir()
     db = folder / "scored.db"
     with closing(sqlite3.connect(db)) as conn:
