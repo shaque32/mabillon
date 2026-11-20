@@ -211,7 +211,8 @@
     words ("outlook", "steam", "slack", "hinge", "imo") name an app only when capitalised or
     in capitals, so "the outlook for Friday" no longer drops a claim.
   - After CodeRabbit's review of 22b0736: the same plain-word rule holds for a case's own
-    app ("about the outlook" binds no row to the case's Outlook). A claim that names its app
+    app ("about the outlook" binds no row to the case's Outlook, and a model's Outlook on a
+    message row is dropped). A claim that names its app
     ("texted @northstar on Telegram") keeps only that app on a row the model put on more, so
     an SMS record never passes for it; a count or absence on another app is refused. A
     second date that no range covers ("On March 12 and on March 13") is read by the

@@ -3886,6 +3886,16 @@ class LocalAssumptionFiller:
         channels = self._channels(_app_text(claim.text), p.channels, tpl.id)
         unphoned = _app_text(self._without_phone_names(_nfc(claim.text)))
         channels = [c for c in channels if self._names_channel(unphoned, c, tpl.id)]
+        if tpl.id not in WHOLE_APP_TEMPLATES:
+            # a plain word names no app unless written as a name: a model's Outlook on "texted
+            # REYES about the outlook" is dropped, so no Outlook record passes for it
+            # (CodeRabbit on #265); a count or absence on one is refused in `_bind_named_app`
+            channels = [
+                c
+                for c in channels
+                if c.strip().casefold() not in _PLAIN_WORD_APPS
+                or self._written_as_name(unphoned, c.strip())
+            ]
         if channels:
             params["channels"] = channels
 

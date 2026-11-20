@@ -4999,3 +4999,18 @@ def test_coderabbit_on_22b0736_only_the_unread_words_event_is_marked(conn):
     assert is_unread_event("event", event.text), event.text
     # an event code only repaired (a window it filled) is the model's, not an unread-words one
     assert not is_unread_event("event", "PETROV met REYES. Filled from the claim's wording.")
+
+
+def test_coderabbit_on_cd16272_a_models_plain_word_app_is_dropped(conn, monkeypatch):
+    # the case holds Outlook: a model's Outlook on "about the outlook" is dropped from the
+    # message rows, so no Outlook record passes for them; "on Outlook" keeps it
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Outlook"])
+    for words, kept in (("about the outlook", False), ("on Outlook", True)):
+        text = f'On March 12, 2026, PETROV wrote to @northstar {words}: "need 2 more by friday".'
+        answer = [{**p, "channels": ["Outlook"]} for p in C05_ANSWER]
+        made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+        rows = [a for a in made if a.template_id in ("sender", "record_time")]
+        assert rows, (text, filler.drops)
+        for a in rows:
+            assert ("Outlook" in a.params.channels) is kept, (text, a.params.channels)
