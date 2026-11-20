@@ -18,15 +18,21 @@ app loads a pack. Records load as `SourceKind.SYNTHETIC`.
 ```
 python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-reference.json
 python -m eval.rulepacks.harness <pack.json> --json   # the full report
+python -m eval.rulepacks.harness eval/rulepacks/packs/carrier-cdr-draft.json --claims reference,blind --cards
 ```
 
 | File | What it is |
 |---|---|
-| `pack.py` | The pack format (pydantic), its validator and its hash (signatures and status left out) |
-| `carrier.py` | Synthetic carrier call records in two invented layouts, and the reader that maps them through a pack's layout |
-| `carrier_claims.py` | 10 reference claims: 3 true, 7 traps, each with its expected verdict |
-| `harness.py` | Runs a pack and applies the gate below |
+| `pack.py` | The pack format (pydantic), its validator and its hash (signatures and status left out; each guard's `blocks` are hashed, so a signature covers the traps it names) |
+| `carrier.py` | Synthetic carrier call records in two invented layouts (the generator) |
+| `reader.py` | The reader that maps a carrier file through a pack's layout |
+| `claim_api.py` | What a claim looks like (`GoldClaim`) and helpers to write one |
+| `carrier_claims.py` | 10 reference claims: 3 true, 7 traps, each with its expected verdict (the development set) |
+| `harness.py` | Runs a pack over one or more claim sets and applies the gate below |
 | `packs/carrier-cdr-reference.json` | Hand-built reference pack the tests use; not drafted and not signed |
+| `DRAFTING.md` | How an AI session drafts a pack and a blind session writes its traps, with both fixed briefs |
+| `formats/` | The invented carriers' format guides and sample files, all a drafter is given |
+| `check_layout.py` | The drafter's one tool: validates a pack and reads each sample, knowing no claims |
 
 ## The gate
 
@@ -36,9 +42,16 @@ A pack is dropped (exit code 1, `DROP`) unless all of these hold:
    lists every assumption template the claims use.
 1. **Every claim as expected**, in every layout: zero false supported, and no true claim or
    contradiction lost to a guard that blocks too much.
-2. **Rule-kill:** removing each guard in turn lets every trap it names through as a false
-   supported that the full pack holds. A guard that blocks nothing, or that names a trap no
-   claim has, fails the gate.
+2. **Rule-kill:** removing each guard in turn lets some trap through as a false supported that
+   the full pack holds, including every trap it names. A guard that blocks nothing, or that
+   names a trap no claim has, fails the gate. As the drafter writes them, a draft's guards name
+   no traps (the drafter never saw them); `--cards` prints what each one blocks, for the people
+   who sign it. Every named
+   trap must be a trap in this run, so run a pack with every claim set its guards name traps
+   from: a name from a set left out of the run fails the gate rather than go untested. Before
+   signing, the found traps are written into the (still draft) pack and the gate is run on it
+   with the examiner-reviewed claims; the hash covers `blocks` but not the claim labels, so a
+   label changed after that run means running the gate again (DRAFTING.md).
 3. **Sensitivity:** every SUPPORTED claim stops being SUPPORTED when the records it rests on
    are mutated, once with the time moved six hours and once (for a claim about who placed a
    call) with the direction flipped.
@@ -70,5 +83,6 @@ local time that daylight saving repeats or skips with its raw value and no UTC t
 | t-holder | unproven | a subscriber record is not proof of who used the number (core rule: links stay proposed) |
 | t-zone-utc, t-zone-central | unproven | a printed UTC or Central time read as Eastern |
 
-These test the harness. A drafted pack's own traps come from a separate session that never sees
-the draft, plus an examiner's, plus a sealed held-out set.
+These test the harness and are the development set. A drafted pack's own traps come from a
+separate session that never sees the draft (`DRAFTING.md`), then an examiner's, then a sealed
+held-out set.
