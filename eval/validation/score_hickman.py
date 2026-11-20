@@ -40,18 +40,21 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 from collections import Counter
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from core.contracts import GoldClaim, Stance, Verdict
 from eval.validation.card import build_card, load_checks, rate, render_markdown
-from eval.validation.hickman_run import TYPE_ALIASES
+from eval.validation.hickman_run import SQLITE_SIDECARS, TYPE_ALIASES, stamped_build
 
 KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # 1.0.0: #134. 1.1.0: coverage (#142). 1.2.0: a claim is tested only with a first-pass verdict,
@@ -63,7 +66,9 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # which merge two SMS chats with one counterpart into one thread (signed by Arsh 2026-11-16).
 # 1.5.0: validation v5's bar 4 measure beside v4's: no core assumption left open (Arsh's
 # card, 2026-11-16).
-SCORER_VERSION = "1.5.0"
+# 1.5.1: no measure changed; only the results.zip a run published is scored, and only when its
+# case's last completed audit is the one its run.json names, in the same build (#269).
+SCORER_VERSION = "1.5.1"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
@@ -665,19 +670,19 @@ def r2(db: Path, run: dict, mapped: list[GoldClaim], tested: list[str]) -> dict[
     from core.db import connect
     from core.review.redecide import redecide
     from eval.simulated_expert import SIM_EXPERT, GoldKey, review
-
-    conn = connect(db)
-    now = datetime.now(UTC)  # after the audit, so the rules' new run is the latest one
-    decided = review(conn, GoldKey(mapped), run["manifest"], lambda: now)
-    again = redecide(conn, SIM_EXPERT, lambda: now)
-    latest = pipeline.last_run(conn)
-    if latest is None or latest["run_id"] != again.run_id:
-        raise SystemExit(f"score: the rules' run {again.run_id} is not the latest completed run")
-    preds = pipeline.predictions(conn)
     from eval.validation.card import _verdicts
 
-    verdicts = _verdicts(conn, again.run_id)
-    conn.close()
+    # closed even when a step raises, so score() can remove scored.db.part on Windows
+    with closing(connect(db)) as conn:
+        now = datetime.now(UTC)  # after the audit, so the rules' new run is the latest one
+        decided = review(conn, GoldKey(mapped), run["manifest"], lambda: now)
+        again = redecide(conn, SIM_EXPERT, lambda: now)
+        latest = pipeline.last_run(conn)
+        if latest is None or latest["run_id"] != again.run_id:
+            why = f"score: the rules' run {again.run_id} is not the latest completed run"
+            raise SystemExit(why)
+        preds = pipeline.predictions(conn)
+        verdicts = _verdicts(conn, again.run_id)
     checks = load_checks(db, [g.claim_id for g in mapped])
     card = build_card(mapped, preds, verdicts, checks)
     over_tested = build_card([g for g in mapped if g.claim_id in tested], preds, verdicts, checks)
@@ -689,17 +694,56 @@ def r2(db: Path, run: dict, mapped: list[GoldClaim], tested: list[str]) -> dict[
     }
 
 
-def _copy_db(results: Path, db: Path) -> dict[str, Any] | None:
-    """Copy the run's case.db out of results.zip (or as given) and return its run.json."""
-    if results.suffix == ".zip":
-        with zipfile.ZipFile(results) as z:
-            with z.open("case.db") as src, db.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-            if "run.json" in z.namelist():
-                return json.loads(z.read("run.json"))
-        return None
-    shutil.copyfile(results, db)
-    return None
+def _copy_db(results: Path, db: Path) -> dict[str, Any]:
+    """Copy the run's case.db out of results.zip and return its run.json.
+
+    Only a results.zip is scored: the driver publishes one only after its final check passed
+    on the case it audited, so a case.db on its own may hold a completed run the driver never
+    verified (one whose final check failed) and is refused (CodeRabbit on #269)."""
+    if results.suffix.lower() != ".zip":
+        raise SystemExit(
+            f"{results}: score the results.zip the run published, not a case.db on its own"
+        )
+    with zipfile.ZipFile(results) as z:
+        if "run.json" not in z.namelist():
+            raise SystemExit(f"{results} holds no run.json, so its audit cannot be confirmed")
+        if "case.db" not in z.namelist():
+            raise SystemExit(f"{results} holds no case.db, so there is no audit to score")
+        # a journal a killed earlier copy left beside db would be rolled into the new copy
+        # when SQLite opens it, so it goes first (Claude review on #269)
+        for s in SQLITE_SIDECARS:
+            db.with_name(db.name + s).unlink(missing_ok=True)
+        with z.open("case.db") as src, db.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+        return json.loads(z.read("run.json"))
+
+
+def _published_run(conn: sqlite3.Connection, results: Path, record: dict[str, Any]) -> dict:
+    """The case's last completed audit, refused unless it is the one the run's run.json names
+    (the audit the driver checked before publishing), in the build run.json names.
+
+    Run ids are unique only within one case, so the build id the driver stamps in case.db must
+    match run.json's too, or one build's run.json with another's case.db would pass. A zip made
+    before build ids (the v4 runs) has neither, and is checked by its run id alone; one with
+    only one of the two is refused (CodeRabbit on #269)."""
+    from core import pipeline
+
+    stamped, named_build = stamped_build(conn), record.get("build_id")
+    if stamped != named_build:
+        raise SystemExit(
+            f"{results}: run.json names build {named_build}, but its case.db holds build"
+            f" {stamped}; score only the results.zip the run published"
+        )
+    run = pipeline.last_run(conn)
+    if run is None:
+        raise SystemExit(f"{results}: no completed audit in case.db")
+    named = (record.get("audit") or {}).get("run_id")
+    if named != run["run_id"]:
+        raise SystemExit(
+            f"{results}: run.json names audit {named}, but the case's last completed audit is"
+            f" {run['run_id']}; score only the results.zip the run published"
+        )
+    return run
 
 
 def r1_card(
@@ -720,24 +764,24 @@ def r1_card(
     }
 
 
-def last_verdicts(results: Path, work: Path) -> dict[str, str]:
-    """Each claim's verdict in the last completed run of another pass's results."""
+def last_verdicts(results: Path) -> tuple[dict[str, str], bool]:
+    """Each claim's verdict in the last completed run of another pass's results, read from a
+    private temporary copy, so a refused zip leaves nothing in the score directory, and whether
+    the driver checked that zip before publishing it (it has a build id; CodeRabbit on #269)."""
     from core import pipeline
     from core.db import connect
 
-    db = work / "repeat.db"
-    _copy_db(results, db)
-    conn = connect(db)
-    run = pipeline.last_run(conn)
-    if run is None:
-        raise SystemExit(f"{results}: no completed audit in case.db")
-    out = {}
-    for claim_id in run["manifest"]:
-        v = pipeline.load_verdict(conn, claim_id, run["run_id"])
-        if v is not None:
-            out[claim_id] = v.verdict.value
-    conn.close()
-    return out
+    with tempfile.TemporaryDirectory() as work:
+        db = Path(work) / "repeat.db"
+        record = _copy_db(results, db)
+        with closing(connect(db)) as conn:
+            run = _published_run(conn, results, record)
+            out = {}
+            for claim_id in run["manifest"]:
+                v = pipeline.load_verdict(conn, claim_id, run["run_id"])
+                if v is not None:
+                    out[claim_id] = v.verdict.value
+    return out, record.get("build_id") is not None
 
 
 def repeat(first: dict[str, dict[str, Any]], second: dict[str, str]) -> dict[str, Any]:
@@ -825,31 +869,98 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
 def score(
     results: Path, keys: Path, dump: Path, out: Path, repeat_of: Path | None = None
 ) -> dict[str, Any]:
-    from core import pipeline
+    out.mkdir(parents=True, exist_ok=True)
+    # scored under a temporary name, put in place with the score files only once scoring
+    # succeeds, so a refused or failed zip leaves an earlier score as it was (CodeRabbit)
+    db = out / "scored.db.part"
+    names = ("score.json", "score.md")
+    parts = {n: out / f"{n}.part" for n in names}
+    try:
+        result = _score(results, keys, dump, out, db, repeat_of)
+        # both score files are rendered and written in full before any file is put in place,
+        # so a failed render or write leaves the earlier scored.db and score files together
+        # (Claude review on #269)
+        parts["score.json"].write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+        parts["score.md"].write_text(render(result), encoding="utf-8")
+        _publish({out / n: parts[n] for n in names} | {out / "scored.db": db})
+    finally:
+        db.unlink(missing_ok=True)
+        for part in parts.values():
+            part.unlink(missing_ok=True)
+    return result
+
+
+def _publish(staged: dict[Path, Path]) -> None:
+    """Put each staged file at its target, all or none. Each earlier file is moved aside first
+    and put back if any later move fails, so a failure partway (a Windows file lock, say)
+    never leaves a new score.json beside an old score.md or scored.db (CodeRabbit on #269).
+    A put-back that fails too is reported, since the folder may then hold a mix.
+    A target's SQLite sidecars (a journal an earlier killed write left beside scored.db) move
+    aside and back with it: left in place, SQLite would roll an old journal into the new copy,
+    and an earlier copy put back without its journal could not recover (Claude review and
+    CodeRabbit on #269)."""
+    kept: dict[Path, Path] = {}  # an earlier file (a target or its sidecar) -> where it went
+    placed: list[Path] = []
+    try:
+        for target, part in staged.items():
+            for old in (target, *(target.with_name(target.name + s) for s in SQLITE_SIDECARS)):
+                if old.exists():
+                    aside = old.with_name(f"{old.name}.old")
+                    os.replace(old, aside)
+                    kept[old] = aside
+            os.replace(part, target)
+            placed.append(target)
+    except BaseException as e:
+        lost = []
+        for target in placed:
+            if target not in kept:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    lost.append(target.name)
+        for target, aside in kept.items():
+            try:
+                os.replace(aside, target)
+            except OSError:
+                lost.append(target.name)
+        if lost:
+            raise RuntimeError(
+                f"publishing the score failed ({e}) and {', '.join(lost)} could not be put "
+                f"back, so {next(iter(staged)).parent} may hold old and new score files "
+                "together; score again"
+            ) from e
+        raise
+    for aside in kept.values():
+        aside.unlink(missing_ok=True)
+
+
+def _score(
+    results: Path, keys: Path, dump: Path, out: Path, db: Path, repeat_of: Path | None
+) -> dict[str, Any]:
     from core.db import connect
 
-    out.mkdir(parents=True, exist_ok=True)
-    db = out / "scored.db"
     run_record = _copy_db(results, db)  # the run's own run.json: versions, machine, times
     gold, key_hashes = load_keys(keys)
     by_index, chats, dump_counts = load_dump(dump)
 
-    conn = connect(db)
-    run = pipeline.last_run(conn)
-    if run is None:
-        raise SystemExit(f"{results}: no completed audit in case.db")
-    check_key_covers(conn, gold)
-    mapped, mapping = map_keys(conn, gold, by_index, chats)
-    r1 = r1_measures(conn, run, mapped)
-    ready = key_recall(conn, run, mapping["groups"])
-    labels = label_counts(conn, run, mapped)
-    counts = import_counts(conn, dump_counts)
-    covered = coverage(run, mapped, r1)
-    first_card = r1_card(conn, run, mapped, covered["tested_claims"])
-    conn.close()
+    # closed on every path, so score() can remove the temporary copy (on Windows too)
+    with closing(connect(db)) as conn:
+        run = _published_run(conn, results, run_record)
+        check_key_covers(conn, gold)
+        mapped, mapping = map_keys(conn, gold, by_index, chats)
+        r1 = r1_measures(conn, run, mapped)
+        ready = key_recall(conn, run, mapping["groups"])
+        labels = label_counts(conn, run, mapped)
+        counts = import_counts(conn, dump_counts)
+        covered = coverage(run, mapped, r1)
+        first_card = r1_card(conn, run, mapped, covered["tested_claims"])
 
     result = {
         "scorer_version": SCORER_VERSION,
+        # a zip with no build id predates the driver's final check (the v4 runs): it is scored,
+        # but its score says the driver never re-checked its owners and call logs before
+        # publishing it (Claude review on #269)
+        "driver_checked": run_record.get("build_id") is not None,
         "results_sha256": _sha256(results),
         "keys_sha256": key_hashes,
         "audit_run": run["run_id"],
@@ -865,11 +976,11 @@ def score(
         "r2": r2(db, run, mapped, covered["tested_claims"]),
     }
     if repeat_of is not None:
-        result["repeat"] = repeat(r1["per_claim"], last_verdicts(repeat_of, out))
+        second, second_checked = last_verdicts(repeat_of)
+        result["repeat"] = repeat(r1["per_claim"], second)
         result["repeat_results_sha256"] = _sha256(repeat_of)
+        result["repeat_driver_checked"] = second_checked  # driver_checked stays pass 1's
     result["v4_bars"] = v4_bars(result)
-    (out / "score.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-    (out / "score.md").write_text(render(result), encoding="utf-8")
     return result
 
 
@@ -993,6 +1104,7 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
         lines += [
             "### Pass 2 against pass 1, by kind",
             "",
+            *([UNCHECKED_REPEAT, ""] if s.get("repeat_driver_checked") is False else []),
             "| Kind | Same | Flips |",
             "|---|---|---|",
         ]
@@ -1012,6 +1124,12 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
     return lines
 
 
+UNCHECKED_REPEAT = (
+    "The pass 2 results.zip given with --repeat has no build id: it was made before the"
+    " driver's final check, so quote no bar 6 number from it as a v5 result."
+)
+
+
 def render(s: dict[str, Any]) -> str:
     r1 = s["r1"]
     m = s["key_mapping"]
@@ -1023,6 +1141,15 @@ def render(s: dict[str, Any]) -> str:
         f" `{s['results_sha256']}`, scorer {s.get('scorer_version', 'before 1.2.0')}.",
         "",
     ]
+    if s.get("driver_checked") is False:
+        lines += [
+            "This results.zip has no build id: it was made before the driver's final check, so"
+            " its owners and call logs were not re-checked before it was published. Quote no"
+            " number from it as a v5 result.",
+            "",
+        ]
+    if s.get("repeat_driver_checked") is False:
+        lines += [UNCHECKED_REPEAT, ""]
     if "v4_bars" in s:
         lines += _v4_lines(s)
     if "coverage" in s:
@@ -1053,7 +1180,7 @@ def render(s: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--results", type=Path, required=True, help="results.zip, or a case.db")
+    ap.add_argument("--results", type=Path, required=True, help="the results.zip the run published")
     ap.add_argument("--keys", type=Path, required=True, help="the folder holding the keys")
     ap.add_argument("--dump", type=Path, required=True, help="the independent dump's folder")
     ap.add_argument("--out", type=Path, required=True)

@@ -452,6 +452,11 @@ _FLAG_WORDS: dict[str, tuple[Level, str]] = {
     ),
     "no_body_or_attachment": ("info", "{n} {have} neither text nor an attachment."),
     "no_time": ("attention", "{n} {have} no time in the {container}, so no time was set."),
+    "duration_not_readable": (
+        "attention",
+        "{n} {have} a call length in the {container} that Mabillon could not read as whole "
+        "seconds, so {them} {be} imported with length unknown.",
+    ),
 }
 
 
@@ -865,6 +870,23 @@ def summarize(c: SourceCoverage) -> CoverageSummary:
         failed = [e for e in not_imported if e.get("read_failed")]
         not_imported = [e for e in not_imported if not e.get("read_failed")]
         for e in failed:
+            if not e.get("may_hold_records", True):
+                # counted empty: its records are not missing, but the read still failed
+                items.append(
+                    CoverageItem(
+                        "info",
+                        "leapp_artifact_empty_not_read",
+                        (
+                            _q(e.get("name")),
+                            _t(
+                                f" could not be read: {e.get('reason')}. No records are "
+                                "known to be missing from it: its table is empty, or the "
+                                "LEAPP output counts none and has no table for it."
+                            ),
+                        ),
+                    )
+                )
+                continue
             items.append(
                 CoverageItem(
                     "attention",

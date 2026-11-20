@@ -43,19 +43,22 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 import zipfile
+from contextlib import closing, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from core.audit.assumption_filler import NATIVE_CALL_APP
-from core.audit.checks._common import namespace
+from core.audit.checks._common import _ts, namespace
 from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
 
@@ -83,8 +86,76 @@ TYPE_ALIASES = {"content": "content_meaning"}
 RESULT_FILES = ("case.db", "run.json", "report.html", "progress.log")
 # How build() sets the case up. A case built by an earlier setup is not resumed: run 1's case
 # (setup 1) had no phone name and no SUBJECT-2; run 2's (setup 2) had no account for SUBJECT-2;
-# setup 3 (v4) held one phone and did not record what its import read (setup 4 records each).
-SETUP = 4
+# setup 3 (v4) held one phone and did not record what its import read (setup 4 records each);
+# setup 4 did not tie the case.db to its build, so a case.db restored from another build of the
+# same packages (other claims, ids, types or zones) could not be told apart (setup 5 does, by a
+# build id in both built.ok and the case's audit log; CodeRabbit on #269). Setup 5, on #269's
+# branch only, could leave the id out of both; setup 6 always writes it, and a resume refuses a
+# built.ok that records none.
+SETUP = 6
+BUILD_ACTION = "validation.build"
+
+
+def stamp_build(conn) -> str:  # noqa: ANN001
+    """Write a new build id to the case's audit log and return it, for built.ok to record."""
+    import uuid
+
+    from core.review import audit_log
+
+    build_id = uuid.uuid4().hex
+    audit_log.append(conn, datetime.now(UTC), ACTOR, BUILD_ACTION, {"build_id": build_id})
+    conn.commit()
+    return build_id
+
+
+def _db_uri(db: Path, mode: str) -> str:
+    """A SQLite URI for db in `mode`. as_uri() writes a Windows UNC path (\\\\server\\share\\x)
+    as file://server/share/x, an authority SQLite refuses, so the server and share go into the
+    path with an empty authority instead (file:////server/share/x; CodeRabbit on #269)."""
+    return f"{_no_authority(db.resolve().as_uri())}?mode={mode}"
+
+
+def _no_authority(uri: str) -> str:
+    return "file:////" + uri.removeprefix("file://") if not uri.startswith("file:///") else uri
+
+
+def open_existing(db: Path, missing: str | None = None) -> sqlite3.Connection:
+    """Open a case.db read-write but never create it: a case.db moved away stops the run with
+    `missing` (or the restore advice), not with an empty file left in its place (CodeRabbit on
+    #269). The driver's cases are never encrypted."""
+    try:
+        conn = sqlite3.connect(_db_uri(db, "rw"), uri=True)
+    except sqlite3.OperationalError as e:
+        raise SystemExit(
+            missing
+            or f"{db} is gone since the run checked it ({e}); restore the case.db it was built"
+            " with, or use a new --out"
+        ) from e
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def check_build(conn, out: Path, built: dict) -> None:  # noqa: ANN001
+    """Stop unless the open case.db holds the build `built` records."""
+    if not built.get("build_id"):
+        raise SystemExit(
+            f"{out}/built.ok records no build id, so its case.db cannot be tied to its"
+            " build; use a new --out"
+        )
+    if stamped_build(conn) != built["build_id"]:
+        raise SystemExit(
+            f"{out}/case.db is not the case built.ok records (another build's case.db);"
+            " restore the case.db it was built with, or use a new --out"
+        )
+
+
+def stamped_build(conn) -> str | None:  # noqa: ANN001
+    """The build id the case's audit log holds (the last one written), or None."""
+    row = conn.execute(
+        "SELECT payload_json FROM audit_log WHERE action = ? ORDER BY seq DESC LIMIT 1",
+        (BUILD_ACTION,),
+    ).fetchone()
+    return json.loads(row[0]).get("build_id") if row else None
 
 
 def sha256_file(path: Path) -> str:
@@ -289,8 +360,10 @@ def build(  # noqa: ANN001
     out: Path,
     log,
     defined: dict[str, str] | None = None,
-) -> list[dict]:
-    """Build the case. Returns what each phone's import recorded (importer, file hash, zone)."""
+) -> tuple[list[dict], str]:
+    """Build the case. Returns what each phone's import recorded (importer, file hash, zone)
+    and the build id, stamped on the connection that built the case, so no other case.db put
+    in its place between two connections can carry it (CodeRabbit on #269)."""
     from core.ingest.govdoc import PdfGovDocIngester
     from core.ingest.pick import report_importer
     from core.ingest.source_file import InputChanged
@@ -387,6 +460,14 @@ def build(  # noqa: ANN001
                 log(
                     f"{ph.source_id}: no zone recorded or given; its times cannot be read as stated"
                 )
+            # A phone call log with rows but no call a check can read (each row placed by
+            # another app, or of no direction or time) would leave the claims about its phone
+            # calls unreadable: the run stops here, before any model call (gate G5b).
+            stop, note = call_log_check(conn, ph.source_id, importer.name)
+            if stop:
+                raise SystemExit(f"{ph.source_id}: {stop}")
+            if note:
+                log(f"{ph.source_id}: {note}")
             actions.stipulate_device_owner(conn, dev, ph.owner, ACTOR)
         _, paragraphs = PdfGovDocIngester(DocKind.AFFIDAVIT).ingest(
             render_affidavit(claims, out / "affidavit.pdf"), conn
@@ -405,6 +486,7 @@ def build(  # noqa: ANN001
             pid = actions.add_person(conn, name, ACTOR)
             if name in defined:
                 linked[name] = link_defined_number(conn, pid, defined[name])
+        build_id = stamp_build(conn)
     finally:
         conn.close()
     log(
@@ -413,7 +495,7 @@ def build(  # noqa: ANN001
         + f"; other people: {', '.join(others) or 'none'}"
         + "".join(f"; {n} linked to {len(ids)} accounts by number" for n, ids in linked.items())
     )
-    return imported
+    return imported, build_id
 
 
 def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
@@ -424,6 +506,252 @@ def zones_seen(conn, source_id: str) -> list[str]:  # noqa: ANN001
     cov = coverage.load(conn, source_id)
     device = (cov.payload.get("leapp") or {}).get("device") or {} if cov else {}
     return sorted({z["zone"] for z in device.get("zones_seen", [])})
+
+
+def _one_line(value: object) -> str:
+    """A package's text, kept on one log line (a table name with a line break must not read
+    as a separate driver entry; CodeRabbit on #269)."""
+    return str(value).replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _marks(values: list[str]) -> str:
+    """One SQL parameter mark per value."""
+    return ", ".join("?" * len(values))
+
+
+# The widest offsets a zone can have (under a day either way): a time that converts to both
+# converts to the phone's local time in any zone, as the checks print it (local_str).
+_WIDEST_OFFSETS = (
+    timezone(timedelta(hours=23, minutes=59)),
+    timezone(-timedelta(hours=23, minutes=59)),
+)
+
+
+def _ts_ok(value: object) -> int:
+    """1 when the caller check's time parser reads the stored value as a time that converts to
+    any zone's local time, else 0: 9999-12-31T23:59:59Z parses, but in Asia/Tokyo it is in year
+    10000, and the check would fail on it after model calls were made (CodeRabbit on #269)."""
+    try:
+        t = _ts(value) if isinstance(value, str) else None
+        if t is None:
+            return 0
+        for zone in _WIDEST_OFFSETS:
+            t.astimezone(zone)
+        return 1
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
+def call_log_check(  # noqa: ANN001
+    conn, source_id: str, importer: str | None, *, owner_confirmed: bool = False
+) -> tuple[str | None, str | None]:
+    """(why the run stops, what to log) for the phone's own call log (v5 readiness gate G5b).
+
+    It stops when a call log table of the phone (LEAPP's `get_calllog` or `callHistory`) holds
+    rows but no phone call (app NATIVE_CALL_APP) was stored from it with a time and the other
+    party on the side its direction names: every row was placed by another app (ALEAPP's
+    Samsung samples name another package), had no direction, no other party or no readable
+    time, so no check could read any of the phone's calls.
+    Calls of a provider app in the same table (FaceTime on iOS) are not phone calls and do not
+    count. It stops too when such a table holds records the import could not read at all.
+    Otherwise it logs how many phone calls a check can read. A
+    UFDR's coverage names no such table: never stopped here. A LEAPP phone (by `importer`, as
+    the build recorded it) whose case holds no LEAPP coverage record stops: its call log
+    cannot be checked. With `owner_confirmed` (on resume, after the build stipulated the
+    owner), the phone's own accounts count only on a device with exactly one confirmed
+    device_owner stipulation, as the caller check reads them: a stipulation withdrawn since the
+    build stops the run."""
+    from core.audit.checks.caller import _PLACED_BY_OTHER, _PLACED_BY_PHONE
+    from core.ingest import coverage
+    from core.ingest.leapp import IMPORTER_NAME, IOS_CALL_APPS, NATIVE_CALL_KEYS
+
+    def is_native(key: object) -> bool:  # any ASCII case, as the importer reads it (CodeRabbit)
+        return isinstance(key, str) and key.isascii() and key.lower() in native_keys
+
+    native_keys = {k.lower() for k in NATIVE_CALL_KEYS}
+
+    # a time counts only when the caller check's own parser reads it (CodeRabbit on #269)
+    conn.create_function("mabillon_ts_ok", 1, _ts_ok, deterministic=True)
+    # a stored call time the caller check cannot parse would stop the audit partway through,
+    # after model calls; any app, any importer, since the check reads every call of an
+    # account (Claude review on #269)
+    (bad_ts,) = conn.execute(
+        "SELECT count(*) FROM calls WHERE source_id = ? AND ts_utc IS NOT NULL"
+        " AND ts_utc != '' AND NOT mabillon_ts_ok(ts_utc)",  # '' reads as no time, no stop
+        (source_id,),
+    ).fetchone()
+    if bad_ts:
+        return (
+            f"{bad_ts} of its stored calls {'has' if bad_ts == 1 else 'have'} a time the checks"
+            " cannot read, so the caller check would stop partway through the audit; check the"
+            " import before any model call"
+        ), None
+
+    cov = coverage.load(conn, source_id)
+    p = cov.payload if cov else {}
+    leapp = p.get("leapp")
+    if leapp is None:
+        # a LEAPP phone whose record is gone (a case.db swapped on resume), or a phone whose
+        # importer was not recorded, fails closed (CodeRabbit on #269)
+        if importer == IMPORTER_NAME:
+            return (
+                "its LEAPP import left no coverage record in this case, so its call log cannot"
+                " be checked; restore the case.db it was built with, or build it again with a"
+                " new --out"
+            ), None
+        if importer is None:
+            return (
+                "the build did not record which importer read it, so its call log cannot be"
+                " checked; build it again with a new --out"
+            ), None
+        return None, None  # another importer: no LEAPP call log tables
+    unread = p.get("not_imported") or []
+    if any("key" not in t for t in unread):
+        # an import stored before each unread entry kept its artifact key: an unread call log
+        # under another table name could not be told apart, so the case is rebuilt (CodeRabbit)
+        return (
+            "this case was imported before unread tables kept their artifact key, so an unread"
+            " call log cannot be ruled out; build it again with a new --out"
+        ), None
+
+    def may_hold(t: dict) -> bool:
+        # rows may be there: the importer says so, or the manifest counts some, or neither is
+        # known (fail closed); a table known to be empty passes (CodeRabbit on #269)
+        records, holds = t.get("records"), t.get("may_hold_records")
+        return holds is True or (records or 0) > 0 or (holds is None and records is None)
+
+    for t in unread:
+        if not str(t.get("key") or "").strip() and may_hold(t):
+            # an entry the manifest gives neither a key nor a table: a rebuild lists it again,
+            # so the manifest is named instead; one known empty passes (CodeRabbit on #269)
+            return (
+                f"the LEAPP manifest lists an entry with neither an artifact key nor a table"
+                f" ({_one_line(t.get('name') or 'no name')}, {t.get('records')} records) that"
+                " may hold records, so an unread call log cannot be ruled out; check the LEAPP"
+                " output before any model call"
+            ), None
+    # by the importer's own artifact keys, never by table name: a manifest may name its table
+    # otherwise (CodeRabbit on #269). The tables are only for the locators of stored calls.
+    native = {str(a.get("table")) for a in leapp.get("artifacts_read") or []
+              if is_native(a.get("key"))}  # fmt: skip
+    if not native and not any(is_native(t.get("key")) for t in unread):
+        # no call log entry at all, read or not: claims about its calls would go untested
+        # without a word (Claude review on #269)
+        return (
+            "its LEAPP output lists no phone call log (get_calllog or callHistory), so claims"
+            " about its phone calls would go untested; check the LEAPP output before any model"
+            " call"
+        ), None
+    for t in unread:
+        records = t.get("records")
+        if is_native(t.get("key")) and may_hold(t):
+            return (
+                f"its call log ({_one_line(t.get('table') or 'no table named')}, {records}"
+                " records) was not read"
+                f" ({_one_line(t.get('reason'))}); claims about its phone calls would go"
+                " untested, so the run stops before any model call"
+            ), None
+    # The caller check puts the phone's owner on a call only through the phone's own accounts
+    # (person_party: the accounts on the device a confirmed device_owner stipulation names):
+    # with none, no call on it can be read, whatever its rows hold (CodeRabbit on #269).
+    # On resume the owner was stipulated at build: it must still be one confirmed owner, since
+    # a withdrawn stipulation leaves the accounts but no owner a check can read (CodeRabbit).
+    (owned,) = conn.execute(
+        "SELECT count(*) FROM accounts a JOIN devices d ON d.id = a.device_id"
+        " WHERE d.source_id = ? AND (? = 0 OR (SELECT count(DISTINCT s.person_id)"
+        " FROM stipulations s WHERE s.kind = 'device_owner' AND s.subject_id = d.id"
+        " AND s.status = 'confirmed') = 1)",
+        (source_id, int(owner_confirmed)),
+    ).fetchone()
+    # a call log the manifest counts more records in than its table gave: the calls it counts
+    # past those were never read, so no check could find them (CodeRabbit on #269)
+    got: dict[str, int] = {}
+    for t in p.get("tables") or []:
+        if isinstance(t, dict) and t.get("kind") == "calls":
+            loc = str(t.get("header_locator") or "")
+            got[loc] = got.get(loc, 0) + int(t.get("rows_read") or 0)
+    for a in leapp.get("artifacts_read") or []:
+        n = a.get("records")
+        if is_native(a.get("key")) and isinstance(n, int) and n > 0:
+            read = got.get(str(a.get("table")), 0)
+            if read < n:
+                return (
+                    f"its call log ({_one_line(a.get('table'))}) counts {n} records in its"
+                    f" manifest but {read or 'none'} {'was' if read < 2 else 'were'} read;"
+                    " claims about its phone calls would go untested, so the run stops before"
+                    " any model call"
+                ), None
+    by_phone, by_other = sorted(_PLACED_BY_PHONE), sorted(_PLACED_BY_OTHER)
+    known = sorted(set(IOS_CALL_APPS.values()))
+    notes = []
+    for t in p.get("tables") or []:
+        if not isinstance(t, dict):
+            continue
+        table = str(t.get("header_locator") or "")
+        read = int(t.get("rows_read") or 0)
+        if t.get("kind") != "calls" or table not in native or read == 0:
+            continue
+        # this table's own rows only ("TABLE/rowid=N"), never another table whose name starts
+        # with this one and a slash (CodeRabbit on #269)
+        own = (len(table) + 1, f"{table}/", len(table) + 2)
+        # a call a check can read, as the caller check reads it (_placed_by, by its own
+        # direction sets): a known time, and the other side stored where the direction puts it
+        # (not the phone's own line, whose account carries the phone's device), the phone's side
+        # empty or its own (CodeRabbit and Claude review on #269). One pass gives the phone
+        # calls, the readable ones, every call stored, and those of an app that is neither the
+        # phone nor a known provider app (FaceTime).
+        rows, sided, stored, unknown_app = conn.execute(
+            "SELECT coalesce(sum(c.app = ?), 0), coalesce(sum(c.app = ?"  # noqa: S608 (marks only; values bound)
+            " AND mabillon_ts_ok(c.ts_utc) AND CASE"
+            f" WHEN c.direction IN ({_marks(by_phone)}) THEN t.id IS NOT NULL"
+            " AND t.device_id IS NOT c.device_id"
+            " AND (f.id IS NULL OR f.device_id IS c.device_id)"
+            f" WHEN c.direction IN ({_marks(by_other)}) THEN f.id IS NOT NULL"
+            " AND f.device_id IS NOT c.device_id"
+            " AND (t.id IS NULL OR t.device_id IS c.device_id)"
+            f" ELSE 0 END), 0), count(*), coalesce(sum(c.app NOT IN ({_marks(known)})), 0)"
+            " FROM calls c"
+            " LEFT JOIN accounts f ON f.id = c.from_account_id"
+            " LEFT JOIN accounts t ON t.id = c.to_account_id"
+            " WHERE c.source_id = ?"
+            " AND substr(c.locator, 1, ?) = ? AND instr(substr(c.locator, ?), '/') = 0",
+            (NATIVE_CALL_APP, NATIVE_CALL_APP, *by_phone, *by_other, *known, source_id, *own),
+        ).fetchone()
+        # fewer calls stored than rows read: the importer stores one call per row, so a call
+        # may be gone, whatever the rest of the log holds (CodeRabbit on #269)
+        if stored < read:
+            return (
+                f"its call log ({_one_line(table)}) has {read} rows read but {stored} calls"
+                " stored, so a call may be missing; claims about its phone calls would go"
+                " untested, so the run stops before any model call"
+            ), None
+        # no phone call to read, and a row that is no phone call or a call of an app Mabillon
+        # does not know as a provider (an iOS phone provider written another way would read
+        # so): stop. A FaceTime-only history passes (Claude review and CodeRabbit on #269).
+        if sided == 0 and (rows > 0 or unknown_app > 0):
+            flags = ", ".join(f"{k} {v}" for k, v in sorted((t.get("flag_counts") or {}).items()))
+            return (
+                f"its call log ({_one_line(table)}) has {read} rows but no phone call a check can"
+                f" read was stored (flags: {_one_line(flags or 'none')}"
+                + (
+                    f"; {unknown_app} calls of an app not known as a call provider"
+                    if unknown_app
+                    else ""
+                )
+                + "); claims about its phone"
+                " calls would go untested, so the run stops before any model call"
+            ), None
+        if sided and not owned:
+            return (
+                f"its call log ({_one_line(table)}) has {sided} phone calls with the other party"
+                " stored, but the phone has no account of its own in the case (no line or handle"
+                " the import tied to it"
+                + (", or no one confirmed device owner" if owner_confirmed else "")
+                + "), so no check can put its owner on a call; claims about"
+                " its phone calls would go untested, so the run stops before any model call"
+            ), None
+        notes.append(f"{_one_line(table)}: {sided} of {read} rows are phone calls a check can read")
+    return None, ("; ".join(notes) or None)
 
 
 def number_digits(identifier: str, app: str | None = None) -> str | None:
@@ -568,39 +896,211 @@ def cloud_components(conn, model):  # noqa: ANN001, ANN201
     return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
 
 
-def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
-    from core import pipeline
-
-    conn = connect(out / "case.db")
-    if fake:
-        from eval.pipeline_fakes import fake_components
-
-        comps = fake_components()
-    elif cloud_model is not None:
-        comps = cloud_components(conn, cloud_model)
-    else:
-        comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
-    # The run 3 plan keeps the challenge step off (on by default since #162), so run 3 changes
-    # only the filler and stays comparable to run 2. The audit's configuration records it.
-    comps.challenge = False
-
-    def progress(done: int, total: int, d) -> None:  # noqa: ANN001
-        spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
-        log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
-
-    t = time.monotonic()
-    result = pipeline.run_audit(conn, comps, progress=progress)
-    tally: dict[str, int] = {}
-    for d in result.decisions:
-        tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
-    calls = {
-        purpose: {"calls": n, "first_utc": first, "last_utc": last}
-        for purpose, n, first, last in conn.execute(
-            "SELECT r.purpose, COUNT(*), MIN(c.at_utc), MAX(c.at_utc) FROM model_calls c"
-            " JOIN model_runs r ON r.id = c.model_run_id GROUP BY r.purpose"
+def owner_stop(conn, phones: list[dict]) -> str | None:  # noqa: ANN001
+    """Why a case may not be audited: a phone's device no longer has the one confirmed owner
+    the build stipulated (an owner changed since would leave the claims naming the defined owner
+    with no person to find; CodeRabbit on #269), or None."""
+    for p in phones:
+        # by person id, so two confirmed owners of one name are two, and the one the
+        # build stipulated (person:<device>:owner), not another of that name (CodeRabbit)
+        owners = sorted(
+            (str(n), str(pid), str(did))
+            for (pid, n, did) in conn.execute(
+                "SELECT DISTINCT s.person_id, pe.name, d.id FROM stipulations s"
+                " JOIN devices d ON d.id = s.subject_id"
+                " JOIN persons pe ON pe.id = s.person_id"
+                " WHERE d.source_id = ? AND s.kind = 'device_owner'"
+                " AND s.status = 'confirmed'",
+                (_sid(p),),
+            )
         )
-    }
-    conn.close()
+        if [n for n, _, _ in owners] != [p.get("owner")]:
+            names = ", ".join(n for n, _, _ in owners) or "no one"
+            return (
+                f"{_sid(p)}: its confirmed device owner is"
+                f" {_one_line(names)}, not {p.get('owner')} as"
+                " built; restore the case.db it was built with, or use a new --out"
+            )
+        (_, pid, did) = owners[0]
+        if pid != f"person:{did}:owner":
+            return (
+                f"{_sid(p)}: its confirmed device owner is {p.get('owner')} under"
+                f" {_one_line(pid)}, not the person the build stipulated; restore the"
+                " case.db it was built with, or use a new --out"
+            )
+    return None
+
+
+LOCK = "run.lock"  # held by the one invocation using DIR
+AUDITED = "audited.db"  # the copy of the audited case the report and results.zip are made from
+SQLITE_SIDECARS = ("-journal", "-wal", "-shm")  # files SQLite keeps beside a database
+REFUSED = "the device owners or call log changed during the audit, so it is not scored"
+
+
+def case_stop(conn, built: dict) -> str | None:  # noqa: ANN001
+    """Why the case on `conn` no longer is the one `built` records as checked: a device owner
+    changed (owner_stop) or a phone's call log that no longer passes gate G5b."""
+    stop = owner_stop(conn, sorted(built.get("phones") or [], key=_sid))
+    if stop:
+        return stop
+    for p in sorted(built.get("imported") or [], key=_sid):
+        why, _ = call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True)
+        if why:
+            return f"{p['source_id']}: {why}"
+    return None
+
+
+def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
+    """Audit the case in out/case.db. `built` is the build record main() checked or wrote, not
+    read again from disk, so a built.ok swapped together with its case.db is refused too. On
+    success out/audited.db is a copy of the audited case, taken on the connection that ran the
+    checks and the audit, which the report and results.zip are made from (never case.db read
+    again by path; CodeRabbit on #269)."""
+    from core import pipeline
+    from core.review import audit_log
+
+    # never ship an earlier attempt's copy; a journal a killed copy left goes too (the backup
+    # below rewrites every page anyway, so this is belt and braces; Claude review on #269)
+    for name in (AUDITED, *(f"{AUDITED}{s}" for s in SQLITE_SIDECARS)):
+        (out / name).unlink(missing_ok=True)
+
+    # The case.db checked before the audit may have been swapped or changed since: the audit
+    # runs only on the very case that record names, with the owners it was built with
+    # (CodeRabbit on #269).
+    conn = open_existing(out / "case.db")
+    try:
+        check_build(conn, out, built)
+        # ...and each phone's call log still passes gate G5b on this connection, so a call row
+        # changed since the build or resume check stops the run before any model call. A
+        # change after this check is caught by the same check after the audit (CodeRabbit).
+        stop = case_stop(conn, built)
+        if stop:
+            raise SystemExit(stop)
+        if not pipeline.load_claims(conn):
+            # with no claim the pipeline never calls the final check below, so a run with no
+            # claims would be stored as completed unchecked (CodeRabbit on #269)
+            raise SystemExit(f"{out}/case.db holds no claim to audit; check the claims file")
+        if fake:
+            from eval.pipeline_fakes import fake_components
+
+            comps = fake_components()
+        elif cloud_model is not None:
+            comps = cloud_components(conn, cloud_model)
+        else:
+            comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
+        # The run 3 plan keeps the challenge step off (on by default since #162), so run 3
+        # changes only the filler and stays comparable to run 2. The audit's configuration
+        # records it.
+        comps.challenge = False
+        # a run an earlier attempt left running (its final check and stopped write both failed,
+        # or it was interrupted) is stopped now: run.lock makes this the only audit on the case
+        pipeline.mark_stale_runs_stopped(conn)
+
+        def progress(done: int, total: int, d) -> None:  # noqa: ANN001
+            spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
+            log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
+            if done == total:
+                final_check()
+                checked.append(done)
+
+        checked: list[int] = []  # set once the final check passed; empty if no claim ran
+
+        def final_check() -> None:
+            """The gates again once every claim is saved, before the pipeline stores the run as
+            completed. The audit reads its stipulations and calls after the check above, so an
+            owner or call row changed in between (or during the run) leaves its verdicts on a
+            case the gates did not pass. The check holds the write lock (BEGIN IMMEDIATE), and
+            the pipeline's completed write joins that transaction, so nothing changes between
+            the check and that write. A stop or a failed check raises RunStopped: the pipeline
+            stores the run as stopped, never completed, and its finished claims stay reusable.
+            If even that write fails, or the check is interrupted (Ctrl+C), the run stays
+            running, which no scorer or report takes either (pipeline.last_run), and the next
+            start marks it stopped (CodeRabbit on #269)."""
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                stop = case_stop(conn, built)
+            except Exception as e:
+                why = f"the final check could not run, so it is not scored: {e}"
+                raise pipeline.RunStopped(why) from e
+            if stop:
+                raise pipeline.RunStopped(f"{REFUSED}: {stop}")
+
+        t = time.monotonic()
+        try:
+            result = pipeline.run_audit(conn, comps, progress=progress)
+        except pipeline.RunStopped as e:
+            raise SystemExit(str(e)) from e
+
+        # The run passed the final check before it was stored as completed. The copy below is
+        # taken after that write, so the same check runs again in the copy's read transaction:
+        # the copy then holds the owners and call log a check passed. A change made after the
+        # run completed still stops the run here and marks it stopped, so no scorer or report
+        # takes it (pipeline.last_run), while its finished claims stay reusable.
+        def unscored(why: str) -> None:
+            """Store the run as stopped with `why`, so it is never the case's completed audit."""
+            conn.rollback()  # end the read before the refusal is written
+            with conn:
+                conn.execute(
+                    "UPDATE pipeline_runs SET status = 'stopped', note = ? WHERE id = ?",
+                    (why, result.run_id),
+                )
+                audit_log.append(
+                    conn,
+                    datetime.now(UTC),
+                    ACTOR,
+                    pipeline.HALT_ACTION,
+                    {"run_id": result.run_id, "error": why, "stopped": True},
+                )
+
+        if not checked:
+            # the claims were removed between the check above and the pipeline's own read, so
+            # no claim ran, the final check never ran, and the pipeline stored an empty run as
+            # completed: it is stopped here, so no scorer or report takes it (CodeRabbit on #269)
+            why = "no claim was audited, so the run is not scored; check the claims file"
+            try:
+                unscored(why)
+            except sqlite3.Error as e:
+                # the empty run stays completed in case.db, but no audited.db, report or zip
+                # is made for this attempt, and the scorer refuses a bare case.db
+                raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
+            raise SystemExit(why)
+        try:
+            if conn.in_transaction:  # the pipeline's own writes end before this read
+                conn.commit()
+            conn.execute("BEGIN")
+            stop = case_stop(conn, built)
+        except BaseException as e:
+            # the check itself failed or was interrupted (a database locked by another writer,
+            # Ctrl+C): it is stored as stopped where the database allows it; if even that write
+            # fails, the run keeps its completed status, which the final check above earned,
+            # but no audited.db, report or zip is made from it
+            with suppress(sqlite3.Error):
+                unscored(f"the final check could not run, so it is not scored: {e}")
+            raise
+        if stop:
+            why = f"{REFUSED}: {stop}"
+            try:
+                unscored(why)
+            except sqlite3.Error as e:  # the reason, not a traceback (Claude review on #269)
+                raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
+            raise SystemExit(why)
+        try:
+            with closing(sqlite3.connect(out / AUDITED)) as copy:
+                conn.backup(copy)
+        finally:
+            conn.commit()
+        tally: dict[str, int] = {}
+        for d in result.decisions:
+            tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+        calls = {
+            purpose: {"calls": n, "first_utc": first, "last_utc": last}
+            for purpose, n, first, last in conn.execute(
+                "SELECT r.purpose, COUNT(*), MIN(c.at_utc), MAX(c.at_utc) FROM model_calls c"
+                " JOIN model_runs r ON r.id = c.model_run_id GROUP BY r.purpose"
+            )
+        }
+    finally:
+        conn.close()
     return {
         "run_id": result.run_id,
         "fake": result.fake,
@@ -614,15 +1114,21 @@ def audit(out: Path, fake: bool, log, cloud_model=None) -> dict:  # noqa: ANN001
     }
 
 
-def report(out: Path, log) -> dict:  # noqa: ANN001
-    """Write report.html. A report the invariants refuse is left out and said so: the audit's
-    results are in case.db either way, and the score is read from there."""
+def report(out: Path, log, db: str = "case.db") -> dict:  # noqa: ANN001
+    """Write report.html from `db` (the driver passes audited.db, the copy of the audited case).
+    A report the invariants refuse is left out and said so: the audit's results are in that copy
+    either way, and the scorer reads the case.db inside results.zip, made from the same copy."""
     from core.audit.invariants import InvariantViolation
     from core.report.html import write_report
 
     path = out / "report.html"
     path.unlink(missing_ok=True)  # never ship a report from an earlier attempt
-    conn = connect(out / "case.db")
+    # read-only and never created: a copy gone since the audit stops the run by name, not with
+    # an empty database's report (CodeRabbit on #269)
+    try:
+        conn = sqlite3.connect(_db_uri(out / db, "ro"), uri=True)
+    except sqlite3.OperationalError as e:
+        raise SystemExit(f"{out / db} is missing ({e}); no report written") from e
     try:
         write_report(conn, path)
     except InvariantViolation as e:
@@ -705,6 +1211,52 @@ def main(argv: list[str] | None = None) -> int:
         "phones": [ph.record() for ph in phones],
     }
     a.out.mkdir(parents=True, exist_ok=True)
+    # One invocation owns DIR at a time, from its first write through publication, so a
+    # results.zip never mixes two attempts' files (CodeRabbit on #269).
+    lock = a.out / LOCK
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit(f"{lock} exists: {_lock_holder(lock)}") from None
+    # The lock is ours from here on, so it is released even if the PID write fails.
+    try:
+        try:
+            os.write(fd, f"{os.getpid()}\n".encode())
+        finally:
+            os.close(fd)
+        return _attempt(a, phones, defs, defined, setup)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _lock_holder(lock: Path) -> str:
+    """What the operator needs to know about a run.lock this invocation could not take. It is
+    never removed here: taking over a lock whose holder is alive would mix two attempts in one
+    results.zip, and a stuck lock stops the run before any model call. A process killed
+    outright (SIGKILL, out of memory, a reboot) leaves it behind; on POSIX the PID it names is
+    checked, so the message says so (Claude review on #269)."""
+    advice = f"if none is, delete {lock} and run again to resume"
+    try:
+        pid = int(lock.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return f"another run may be using {lock.parent}; {advice}"
+    if os.name == "posix" and pid > 0:
+        try:
+            os.kill(pid, 0)  # signal 0 only asks whether the process exists
+        except ProcessLookupError:
+            return (
+                f"process {pid}, which took it, is not running on this machine, so that run"
+                f" was likely killed outright; delete {lock} and run again to resume"
+            )
+        except OSError:
+            pass  # it exists under another user
+    return f"another run (process {pid}) is using {lock.parent}; {advice}"
+
+
+def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
+    """One attempt on DIR, run while main() holds its lock."""
+    # an earlier attempt's results never stand for this one, even if this one is refused
+    (a.out / "results.zip").unlink(missing_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 
     def log(msg: str) -> None:
@@ -723,7 +1275,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{a.claims}: SHA-256 {claims_sha}, expected {a.claims_sha256}")
     claims = load_claims(a.claims)
     built = a.out / "built.ok"  # the inputs the case in DIR was built from
-    if built.exists():
+    # decided once: a built.ok that vanishes or appears mid-run never turns a resume into a
+    # build (which deletes the checked case.db) or skips both (CodeRabbit on #269)
+    resuming = built.exists()
+    if resuming:
         was = json.loads(built.read_text(encoding="utf-8"))
         if was.get("setup", 1) != SETUP:
             raise SystemExit(
@@ -773,6 +1328,48 @@ def main(argv: list[str] | None = None) -> int:
             if ph.sha256 and ph.sha256 != h:
                 raise SystemExit(f"--phone-sha256: {ph.path} has SHA-256 {h}, not {ph.sha256}")
         imported, report_sha = was["imported"], was.get("report_xml_sha256")
+        # A case built before the call-log guard (gate G5b) resumes only when each phone's
+        # stored import passes it too, so a paid resume never audits a phone whose calls no
+        # check can read (CodeRabbit on #269).
+        conn = open_existing(
+            a.out / "case.db", f"{a.out}: built.ok is there but case.db is not; use a new --out"
+        )
+        try:
+            # the case.db must hold the very imports built.ok records: one restored from another
+            # run under the same phone names would pass the check with its own calls (CodeRabbit)
+            for p in imported:
+                row = conn.execute(
+                    "SELECT sha256 FROM sources WHERE id = ?", (p["source_id"],)
+                ).fetchone()
+                if row is None or row[0] != p["sha256"]:
+                    raise SystemExit(
+                        f"{p['source_id']}: {a.out}/case.db does not hold the import built.ok"
+                        f" records ({p['file']} {p['sha256']}); restore the case.db it was built"
+                        " with, or use a new --out"
+                    )
+            # ...and is this very build's: another build of the same packages may hold other
+            # claims, claim ids or types, or zones, none of which the sources show (CodeRabbit)
+            check_build(conn, a.out, was)
+            # ...and each phone's device still has the one confirmed owner it was built with:
+            # an owner changed since would leave the claims naming the defined owner with no
+            # person to find (CodeRabbit on #269)
+            stop = owner_stop(conn, was_p)
+            if stop:
+                raise SystemExit(stop)
+            checks = [
+                (
+                    p["source_id"],
+                    *call_log_check(conn, p["source_id"], p.get("importer"), owner_confirmed=True),
+                )
+                for p in imported
+            ]
+        finally:
+            conn.close()
+        for sid, stop, note in checks:
+            if stop:
+                raise SystemExit(f"{sid}: {stop}")
+            if note:
+                log(f"{sid}: {note}")  # as a fresh build logs it (CodeRabbit on #269)
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -781,25 +1378,29 @@ def main(argv: list[str] | None = None) -> int:
         machine=machine(),
         claims={"file": a.claims.name, "sha256": claims_sha, "n": len(claims)},
     )
-    if not built.exists():
+    if not resuming:
         report_sha = None
         if a.ufdr is not None:
             log("checking the phone package's report.xml")
             report_sha = report_xml_sha256(a.ufdr)
             if a.report_sha256 and report_sha != a.report_sha256:
                 raise SystemExit(f"report.xml SHA-256 {report_sha}, expected {a.report_sha256}")
-        imported = build(phones, claims, a.out, log, defined)
+        imported, build_id = build(phones, claims, a.out, log, defined)
         inputs = {
             "claims_sha256": claims_sha,
             "report_xml_sha256": report_sha,
             "setup": SETUP,
             **setup,
             "imported": imported,
+            "build_id": build_id,
         }
         built.write_text(json.dumps(inputs), encoding="utf-8")
+        was = inputs  # the record the audit checks the case.db against
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
     # written still records what the case was built from (CodeRabbit on #267).
     run["phones"] = imported
+    # the build whose case.db the zip holds, so the scorer can tie the two (CodeRabbit on #269)
+    run["build_id"] = was["build_id"]
     run["phone_zone_given"] = phones[0].zone if len(phones) == 1 else None
     run["source_id"] = setup["source_id"]
     run["definitions"] = defs
@@ -822,7 +1423,7 @@ def main(argv: list[str] | None = None) -> int:
         run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": ["assumptions", "stance"]}
     try:
         try:
-            run["audit"] = audit(a.out, a.fake, log, cloud_model)
+            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was)
         finally:
             if cloud_model is not None:
                 total = run.setdefault("cloud", {"sessions": []})
@@ -838,15 +1439,37 @@ def main(argv: list[str] | None = None) -> int:
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"
-    run["report"] = report(a.out, log)
+    # The report and results.zip are made from the copy of the audited case, never case.db
+    # read again by path, so they hold the audited build whatever case.db holds by then
+    # (CodeRabbit on #269).
+    run["report"] = report(a.out, log, AUDITED)
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     plog.close()
-    with zipfile.ZipFile(a.out / "results.zip", "w", zipfile.ZIP_DEFLATED) as z:
-        for name in RESULT_FILES:
-            if (a.out / name).exists():
-                z.write(a.out / name, name)
+    publish_results(a.out)
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
     return 0
+
+
+def publish_results(out: Path) -> Path:
+    """Write out/results.zip, published only once written in full. case.db (from the audited
+    copy) and run.json always go in, so a missing one stops it: run.json names the audit the
+    scorer confirms (CodeRabbit on #269). A report the invariants refused is left out."""
+    part = out / "results.zip.part"
+    try:
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
+            for name in RESULT_FILES:
+                src = out / (AUDITED if name == "case.db" else name)
+                if name in ("case.db", "run.json"):
+                    try:
+                        z.write(src, name)
+                    except FileNotFoundError as e:
+                        raise SystemExit(f"{src} is missing; results.zip not published") from e
+                elif src.exists():
+                    z.write(src, name)
+        part.replace(out / "results.zip")
+    finally:
+        part.unlink(missing_ok=True)
+    return out / "results.zip"
 
 
 if __name__ == "__main__":

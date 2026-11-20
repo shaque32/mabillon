@@ -4,6 +4,7 @@ with stand-in components. The real run is on the public Hickman phone with the l
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import zipfile
@@ -589,6 +590,7 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
             **{
                 "Call Date": "2024-03-01T15:00:00Z",
                 "Partner": "+19195550111",
+                "Phone Account Address": "+19195550100",
                 "Raw Call Type (as stored)": "1",
                 "Duration in Secs": "5",
             },
@@ -631,6 +633,1384 @@ def test_a_leapp_phone_takes_the_given_zone_only_when_it_records_none(tmp_path):
         hickman_run.main(args)
 
 
+@pytest.mark.parametrize(
+    ("rows", "stops"),
+    [
+        ([("com.samsung.android.dialer", "1"), ("com.samsung.android.dialer", "2")], True),
+        ([("com.android.phone", "99"), ("com.android.phone", "98")], True),
+        ([("com.samsung.android.dialer", "1"), ("com.android.phone", "2")], False),
+        ([(None, "1")], False),
+    ],
+)
+def test_a_call_log_no_check_can_read_stops_the_build_before_any_model_call(
+    tmp_path, monkeypatch, rows, stops
+):
+    # Gate G5b: a call log whose every row was placed by another app (a Samsung phone names
+    # its own dialer package) or has no direction stores no call with a side, so every call
+    # claim on the phone would go untested: the build stops before the audit.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for i, (package, kind) in enumerate(rows):
+        values = {"Call Date": f"2024-03-01T15:0{i}:00Z", "Partner": "+19195550111",
+                  "Phone Account Address": "+19195550100",
+                  "Raw Call Type (as stored)": kind, "Duration in Secs": "5"}  # fmt: skip
+        if package:
+            values["Phone Account Package"] = package
+        lv.add("get_calllog", **values)
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    why = rf"item1: its call log \(get_calllog\) has {len(rows)} rows"
+    if not stops:
+        assert hickman_run.main(args) == 0
+        assert hickman_run.main(args) == 0  # and a resume passes it too, and logs the count
+        logged = (tmp_path / "out" / "progress.log").read_text(encoding="utf-8")
+        assert logged.count("rows are phone calls a check can read") == 2
+        return
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "built.ok").exists()
+    # A case built before the guard is not resumed either (CodeRabbit on #269).
+    with monkeypatch.context() as m:
+        m.setattr(hickman_run, "call_log_check", lambda conn, sid, importer, **_k: (None, None))
+        assert hickman_run.main(args) == 0
+    assert (tmp_path / "out" / "built.ok").exists()
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+
+
+def _ios_calls(tmp_path: Path, rows: list[tuple[str, str]]) -> list[str]:
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="iLEAPP")
+    for i, (provider, direction) in enumerate(rows):
+        lv.add("callHistory", **{"Starting Timestamp": f"2024-03-01T15:0{i}:00Z",
+                                 "Service Provider": provider, "Call Direction": direction,
+                                 "Phone Number": "+19195550111", "Answered": "Yes"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+
+def test_facetime_calls_do_not_hide_a_phone_call_log_no_check_can_read(tmp_path):
+    # FaceTime rows in callHistory are stored with sides under their own app: they are not
+    # phone calls, so phone calls with no direction still stop the run (Claude review on #269).
+    rows = [
+        ("com.apple.Telephony", ""),
+        ("com.apple.Telephony", ""),
+        ("com.apple.FaceTime", "Outgoing"),
+    ]
+    with pytest.raises(SystemExit, match=r"callhistory\) has 3 rows.*direction_not_stated 2"):
+        hickman_run.main(_ios_calls(tmp_path, rows))
+
+
+def test_a_call_history_of_facetime_calls_only_is_not_stopped(tmp_path, capsys):
+    assert hickman_run.main(_ios_calls(tmp_path, [("com.apple.FaceTime", "Outgoing")])) == 0
+    assert "callhistory: 0 of 1 rows are phone calls a check can read" in capsys.readouterr().out
+
+
+def test_a_call_log_the_import_could_not_read_stops_the_build(tmp_path, monkeypatch):
+    # A call log table the importer could not read is listed only under not_imported: the run
+    # stops on it too (Claude review on #269).
+    import eval.synthetic.leapp as synth
+
+    monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+    lv = synth.Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Partner": "+19195550111", "Duration in Secs": "5"})
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"its call log \(get_calllog, 1 records\) was not read"):
+        hickman_run.main(args)
+    # the importer keeps the entry's key and whether it may hold rows (CodeRabbit on #269)
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    (raw,) = conn.execute("SELECT payload_json FROM source_coverage").fetchone()
+    conn.close()
+    (entry,) = [t for t in json.loads(raw)["not_imported"] if t["table"] == "get_calllog"]
+    assert (entry["key"], entry["may_hold_records"]) == ("get_calllog", True)
+
+
+def test_a_refused_call_log_with_rows_stops_the_build_when_the_manifest_counts_none(
+    tmp_path, monkeypatch
+):
+    # A manifest count of 0 is not taken on trust when the table is there: a refused call log
+    # with a row may hold records, and one with none is empty (CodeRabbit on #269).
+    import zipfile
+
+    import eval.synthetic.leapp as synth
+
+    monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+
+    def built(rows: int, out: str) -> list[str]:
+        lv = synth.Lava(leapp="ALEAPP")
+        lv.tables["get_calllog"] = [{"Partner": "+19195550111", "Duration in Secs": "5"}] * rows
+        manifest, data = lv.build()
+        for entries in manifest["artifacts"].values():
+            for e in entries:
+                if e["artifact_key"] == "get_calllog":
+                    e["record_count"] = 0
+        zipped = tmp_path / f"{out}.zip"
+        with zipfile.ZipFile(zipped, "w") as z:
+            z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+            z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+            z.writestr("LEAPP_Reports_x/_HTML/index.html", "<html></html>")
+        return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+    with pytest.raises(SystemExit, match=r"its call log \(get_calllog, 0 records\) was not read"):
+        hickman_run.main(built(1, "one"))
+    assert hickman_run.main(built(0, "none")) == 0  # a refused table with no row is empty
+
+
+def test_a_call_log_of_untimed_calls_stops_the_build(tmp_path):
+    # A sided phone call whose time cannot be read is no call a check can read (CodeRabbit on
+    # #269): the same import with a readable time passes.
+    from eval.synthetic.leapp import Lava
+
+    def args(when: object, out: str, own: str | None = "+19195550100") -> list[str]:
+        lv = Lava(leapp="ALEAPP")
+        lv.add("get_calllog", **{"Call Date": when, "Partner": "+19195550111",
+                                 "Phone Account Address": own,
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+        zipped = lv.write_zip(tmp_path / f"{out}.zip")
+        return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+    with pytest.raises(SystemExit, match=r"no phone call a check can read"):
+        hickman_run.main(args(10**18, "untimed"))  # past any date Python can hold
+    # a timed call on a phone with no line of its own: no check can put its owner on it
+    with pytest.raises(SystemExit, match=r"no account of its own"):
+        hickman_run.main(args("2024-03-01T15:00:00Z", "unowned", own=None))
+    assert hickman_run.main(args("2024-03-01T15:00:00Z", "timed")) == 0
+
+
+@pytest.mark.parametrize("unread", [False, True])
+def test_the_call_log_is_found_by_its_key_when_its_table_is_named_otherwise(
+    tmp_path, monkeypatch, unread
+):
+    # The importer reads a call log by its artifact key; a manifest whose table for that key
+    # has another name is still checked (CodeRabbit on #269).
+    import eval.synthetic.leapp as synth
+
+    name = synth.sanitize
+    monkeypatch.setattr(synth, "sanitize", lambda n: "calls_t" if n == "get_calllog" else name(n))
+    if unread:
+        monkeypatch.setitem(synth.HEADERS, "get_calllog", ("Partner", "Duration in Secs"))
+    lv = synth.Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Raw Call Type (as stored)": "1", "Duration in Secs": "5",
+                             "Phone Account Package": "com.samsung.android.dialer"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    why = r"\(calls_t, 1 records\) was not read" if unread else r"\(calls_t\) has 1 rows"
+    with pytest.raises(SystemExit, match=why):
+        hickman_run.main(args)
+
+
+def test_the_call_log_check_reads_only_what_the_stored_case_says(tmp_path):
+    # CodeRabbit on #269: unread entries with no count, entries with no key, another table
+    # whose name starts with the call log's, and a table name with a line break.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = (tmp_path / "out" / "case.db").read_bytes()
+
+    def check(edit_payload=None, sql=(), source="item1", importer="leapp", owner=False):  # noqa: ANN001, ANN202
+        db = tmp_path / "check.db"
+        db.write_bytes(built)
+        conn = sqlite3.connect(db)
+        conn.execute("PRAGMA foreign_keys = ON")  # as core.db.connect opens it
+        (raw,) = conn.execute(
+            "SELECT payload_json FROM source_coverage WHERE source_id = 'item1'"
+        ).fetchone()
+        p = json.loads(raw)
+        if edit_payload:
+            edit_payload(p)
+        conn.execute(
+            "UPDATE source_coverage SET payload_json = ? WHERE source_id = 'item1'",
+            (json.dumps(p),),
+        )
+        for q in sql:
+            conn.execute(q)
+        conn.commit()
+        try:
+            return hickman_run.call_log_check(conn, source, importer, owner_confirmed=owner)
+        finally:
+            conn.close()
+
+    assert check() == (None, "get_calllog: 1 of 1 rows are phone calls a check can read")
+    db = sqlite3.connect(tmp_path / "out" / "case.db")
+    sides = db.execute("SELECT from_account_id, to_account_id FROM calls").fetchall()
+    db.close()
+    assert len(sides) == 1 and all(sides[0])  # the phone's own line and the other party
+
+    def unread(holds):  # noqa: ANN001, ANN202
+        def edit(p):  # noqa: ANN001, ANN202
+            entry = {"table": "calls_x", "key": "get_calllog", "records": None}
+            p["not_imported"].append({**entry, "reason": "bad", "may_hold_records": holds})
+
+        return edit
+
+    assert "was not read" in (check(unread(True))[0] or "")
+    assert check(unread(False))[0] is None  # known to be empty
+    assert "was not read" in (check(unread(None))[0] or "")  # nothing known: fails closed
+
+    def unread_upper(p):  # noqa: ANN001, ANN202
+        # a call log key in other ASCII case is still the call log (CodeRabbit on #269)
+        entry = {"table": "calls_x", "key": "GET_CALLLOG", "records": 4}
+        p["not_imported"].append({**entry, "reason": "bad", "may_hold_records": True})
+
+    assert "was not read" in (check(unread_upper)[0] or "")
+
+    def counted_empty(p):  # noqa: ANN001, ANN202
+        # the manifest counts calls in the call log, but its table gave no row (CodeRabbit)
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 3 if a["key"] == "get_calllog" else a["records"]
+        for t in p["tables"]:
+            t["rows_read"] = 0 if t.get("header_locator") == "get_calllog" else t["rows_read"]
+
+    assert "counts 3 records in its manifest but none was read" in (check(counted_empty)[0] or "")
+
+    def counted_read(p):  # noqa: ANN001, ANN202
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 3 if a["key"] == "get_calllog" else a["records"]
+
+    # a count above the rows its table gave stops too: the calls past those were never read
+    assert "counts 3 records in its manifest but 1 was read" in (check(counted_read)[0] or "")
+
+    def counted_all(p):  # noqa: ANN001, ANN202
+        for a in p["leapp"]["artifacts_read"]:
+            a["records"] = 1 if a["key"] == "get_calllog" else a["records"]
+
+    assert check(counted_all)[0] is None  # a count its table gave every row for passes
+
+    def keyless(p):  # noqa: ANN001, ANN202
+        p["not_imported"].append({"table": "calls_x", "records": 3, "reason": "missing columns"})
+
+    assert "build it again" in (check(keyless)[0] or "")
+    # the call log's own row loses its sides; a sided call stored under "get_calllog/second"
+    # (a copy of that row, with its real accounts) is another table's and must not make it
+    # readable
+    other = ("INSERT INTO calls (id, source_id, locator, device_id, app, from_account_id,"
+             " to_account_id, direction, ts_utc) SELECT id || 'b', source_id,"
+             " 'get_calllog/second/rowid=9', device_id, app, from_account_id, to_account_id,"
+             " direction, ts_utc FROM calls")  # fmt: skip
+    no_sides = ("UPDATE calls SET from_account_id = NULL, to_account_id = NULL"
+                " WHERE locator NOT LIKE 'get_calllog/second/%'")  # fmt: skip
+    assert "no phone call a check can read" in (check(sql=(no_sides,))[0] or "")
+    assert "no phone call a check can read" in (check(sql=(other, no_sides))[0] or "")
+    # calls of an app not known as a provider, and no phone call: an iOS phone provider
+    # written another way would read so, so the check stops; FaceTime calls only pass
+    # (Claude review on #269)
+    voip = "UPDATE calls SET app = 'com.example.voip'"
+    assert "1 calls of an app not known as a call provider" in (check(sql=(voip,))[0] or "")
+    assert check(sql=("UPDATE calls SET app = 'FaceTime'",)) == (
+        None, "get_calllog: 0 of 1 rows are phone calls a check can read"
+    )  # fmt: skip
+    # a call with a side but no time is no call a check can read (CodeRabbit on #269)
+    no_time = "UPDATE calls SET ts_utc = NULL"
+    assert "no phone call a check can read" in (check(sql=(no_time,))[0] or "")
+    # nor one whose other party is not where its direction puts it: an outgoing call with only
+    # the phone's own line, or the same row read as incoming (CodeRabbit on #269)
+    no_callee = "UPDATE calls SET to_account_id = NULL"
+    assert "no phone call a check can read" in (check(sql=(no_callee,))[0] or "")
+    turned = "UPDATE calls SET direction = 'incoming'"
+    assert "no phone call a check can read" in (check(sql=(turned,))[0] or "")
+    # an outgoing call with the callee and no line of the phone is read (as the caller check),
+    # while the phone has an account of its own elsewhere in the case...
+    no_line = "UPDATE calls SET from_account_id = NULL"
+    assert check(sql=(no_line,))[0] is None
+    # ...and with no account of its own, no check can put its owner on a call (CodeRabbit)
+    unowned = "UPDATE accounts SET device_id = NULL"
+    assert "no account of its own" in (check(sql=(no_line, unowned))[0] or "")
+    # on resume the build's owner stipulation must still be one confirmed owner: withdrawn,
+    # the accounts stay but no check can read the owner's side (CodeRabbit on #269)
+    assert check(owner=True)[0] is None
+    withdrawn = (
+        "UPDATE stipulations SET status = 'rejected', decided_by = 'expert:x',"
+        " decided_at_utc = '2026-11-18T00:00:00Z'"
+    )
+    assert check(sql=(withdrawn,))[0] is None  # at build, before the owner is stipulated
+    assert "no one confirmed device owner" in (check(sql=(withdrawn,), owner=True)[0] or "")
+    # a LEAPP phone whose coverage is not in the case, or whose importer the build did not
+    # record, fails closed; another importer's phone is not checked (CodeRabbit on #269)
+    assert "left no coverage record" in (check(source="item9")[0] or "")
+    assert "did not record which importer" in (check(source="item9", importer=None)[0] or "")
+    assert check(source="item9", importer="ufdr") == (None, None)
+
+    def newline(p):  # noqa: ANN001, ANN202
+        for t in [*p["tables"], *p["leapp"]["artifacts_read"]]:
+            if (t.get("header_locator") or t.get("table")) == "get_calllog":
+                t["header_locator" if "header_locator" in t else "table"] = "get_calllog\nX: ok"
+
+    stop, _ = check(newline)
+    assert stop and "\n" not in stop and "get_calllog\\nX: ok" in stop
+
+
+def test_a_resume_stops_when_case_db_holds_another_import(tmp_path):
+    # A case.db restored from another run under the same phone name would pass the call-log
+    # check with its own calls: the resume first checks it holds the import built.ok records
+    # (CodeRabbit on #269).
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    conn.execute("UPDATE sources SET sha256 = ? WHERE id = 'item1'", ("0" * 64,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match=r"item1: .*case.db does not hold the import built.ok"):
+        hickman_run.main(args)
+
+
+@pytest.mark.parametrize("change", ["text", "claim_id", "zone"])
+def test_a_resume_refuses_another_builds_case_db_of_the_same_package(tmp_path, change):
+    # Two builds of one package under one phone name that differ in a claim's text, only in
+    # a claim id, or only in the zone given: the second build's case.db restored into the
+    # first's output passes the phone check, but is not the case built.ok records, so the
+    # resume stops (CodeRabbit on #269).
+    import shutil
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    other = tmp_path / "other"
+    other.mkdir()
+    row = {**CLAIMS[0]}
+    if change == "text":
+        row["text"] = row["text"].replace("Signal", "WhatsApp")
+    elif change == "claim_id":
+        row["claim_id"] = "C99"
+    other_claims = _claims(other, [row, *CLAIMS[1:]]) if change != "zone" else _claims(other)
+
+    def args(claims: Path, out: str, zone: str) -> list[str]:
+        return ["--phone", f"item1={zipped}", "--claims", str(claims), "--out",
+                str(tmp_path / out), "--fake", "--phone-zone", zone]  # fmt: skip
+
+    first = args(_claims(tmp_path), "a", "America/New_York")
+    zone_b = "America/Chicago" if change == "zone" else "America/New_York"
+    assert hickman_run.main(first) == 0
+    assert hickman_run.main(args(other_claims, "b", zone_b)) == 0
+    assert hickman_run.main(first) == 0  # its own case.db resumes
+    shutil.copy(tmp_path / "b" / "case.db", tmp_path / "a" / "case.db")
+    with pytest.raises(SystemExit, match=r"case.db is not the case built.ok records"):
+        hickman_run.main(first)
+
+
+def test_a_resume_refuses_a_case_whose_build_recorded_no_build_id(ufdr, tmp_path):
+    # A build that wrote no build id to built.ok (as #269's setup 5 could) has nothing to tie
+    # its case.db to, so a resume stops (CodeRabbit on #269). The audit of such a build stops
+    # too, since it runs only on the case built.ok records.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    built["build_id"] = None
+    (out / "built.ok").write_text(json.dumps(built), encoding="utf-8")
+    with pytest.raises(SystemExit, match="built.ok records no build id"):
+        hickman_run.main(args)
+    with pytest.raises(SystemExit, match="built.ok records no build id"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+
+
+@pytest.mark.parametrize(
+    ("sql", "says"),
+    [
+        (
+            "UPDATE persons SET name = 'SUBJECT-3' WHERE id LIKE '%:owner'",
+            "is SUBJECT-3, not SUBJECT-1",
+        ),
+        ("UPDATE stipulations SET status = 'rejected'", "is no one, not SUBJECT-1"),
+        # a second confirmed owner of the same name, as a restored case could hold
+        (
+            "INSERT INTO persons (id, name, created_by) VALUES ('p2', 'SUBJECT-1', 'expert:x');"
+            "INSERT INTO stipulations (id, kind, subject_id, person_id, statement, status,"
+            " decided_by, decided_at_utc) SELECT id || '2', kind, subject_id, 'p2', statement,"
+            " status, decided_by, decided_at_utc FROM stipulations WHERE kind = 'device_owner'",
+            "is SUBJECT-1, SUBJECT-1, not SUBJECT-1",
+        ),
+        # the one confirmed owner moved to another person of the same name
+        (
+            "INSERT INTO persons (id, name, created_by) VALUES ('p2', 'SUBJECT-1', 'expert:x');"
+            "UPDATE stipulations SET person_id = 'p2' WHERE kind = 'device_owner'",
+            "is SUBJECT-1 under p2, not the person the build stipulated",
+        ),
+    ],
+)
+def test_a_resume_stops_when_the_device_owner_changed_since_the_build(tmp_path, sql, says):
+    # An owner stipulated again as another person since the build keeps one confirmed owner,
+    # but the claims name the defined owner: the resume stops (CodeRabbit on #269).
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main(args) == 0  # unchanged, it resumes
+    conn = sqlite3.connect(tmp_path / "out" / "case.db")
+    conn.executescript(sql)
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match=rf"item1: its confirmed device owner {says}"):
+        hickman_run.main(args)
+
+
+def test_a_call_log_the_manifest_counts_but_whose_table_is_empty_stops_the_build(tmp_path):
+    # A real get_calllog table with no row and a manifest count of 3: the calls it counts were
+    # never read, so the build stops before any model call (CodeRabbit on #269).
+    import zipfile
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    manifest, data = lv.build()
+    entry = next(e for es in manifest["artifacts"].values() for e in es
+                 if e["artifact_key"] == "get_calllog")  # fmt: skip
+    entry["record_count"] = 3
+    db = sqlite3.connect(":memory:")
+    db.deserialize(data)
+    db.execute(f'DELETE FROM "{entry["tablename"]}"')
+    db.commit()
+    data = db.serialize()
+    db.close()
+    zipped = tmp_path / "item1.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"item1: .*counts 3 records in its manifest but none"):
+        hickman_run.main(args)
+
+
+@pytest.mark.parametrize(
+    ("entry", "stop"),
+    [({"artifact_key": "get_calllog", "record_count": 2},
+      r"item1: its call log \(no table named, 2 records\)"),
+     ({"record_count": 2}, r"item1: the LEAPP manifest lists an entry with neither an artifact"
+                           r" key nor a table \(Call logs, 2 records\)"),
+     ({"record_count": 0}, None),
+     ({"artifact_key": " ", "record_count": 2},
+      r"item1: the LEAPP manifest lists an entry with neither an artifact key nor a table")],
+)  # fmt: skip
+def test_a_call_log_listed_with_no_table_stops_the_build(tmp_path, entry, stop):
+    # The importer lists an entry with no table as not imported; the build's check stops on a
+    # call log so listed before any model call (Claude review on #269). An entry with no key
+    # either is named as a manifest problem, since a rebuild would list it again, and one
+    # counted empty passes (CodeRabbit on #269).
+    import zipfile
+
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    manifest, data = lv.build()
+    next(v for v in manifest["artifacts"].values() if v).append({"name": "Call logs", **entry})
+    zipped = tmp_path / "item1.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        z.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    if stop is None:
+        assert hickman_run.main(args) == 0
+        return
+    with pytest.raises(SystemExit, match=stop):
+        hickman_run.main(args)
+
+
+def test_the_audit_runs_only_on_the_case_built_ok_records(ufdr, tmp_path):
+    # CodeRabbit on #269: a case.db swapped after the resume's checks, before the audit opens
+    # it, is refused by the audit itself, against the record the run checked, so swapping
+    # built.ok along with it is refused too.
+    out, other = tmp_path / "out", tmp_path / "other"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    assert [p.get("owner") for p in built["phones"]] == ["SUBJECT-1"]  # the owners it rechecks
+    for name in ("case.db", "built.ok"):  # another build's files, both swapped in
+        shutil.copy(other / name, out / name)
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    # the very build, but its owner stipulation withdrawn after the resume's checks
+    built = json.loads((other / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match="its confirmed device owner is no one, not SUBJECT-1"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+
+
+def test_a_resume_audits_with_the_record_it_checked_not_built_ok_read_again(
+    ufdr, tmp_path, monkeypatch
+):
+    # CodeRabbit on #269: main() hands the audit the record its resume checked, so a case.db
+    # swapped together with its built.ok after those checks is refused through main() too.
+    out, other = tmp_path / "out", tmp_path / "other"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert hickman_run.main([*args[:-2], str(other), "--fake"]) == 0
+    real = hickman_run.machine
+
+    def swapped_first():  # noqa: ANN202  # called after the resume's checks, before the audit
+        for name in ("case.db", "built.ok"):
+            shutil.copy(other / name, out / name)
+        return real()
+
+    monkeypatch.setattr(hickman_run, "machine", swapped_first)
+    with pytest.raises(SystemExit, match="is not the case built.ok records"):
+        hickman_run.main(args)
+    conn = sqlite3.connect(out / "case.db")  # refused by the audit, not after it: no new run
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    conn.close()
+
+
+def test_the_audit_checks_the_call_log_again_before_any_model_call(tmp_path, monkeypatch):
+    # CodeRabbit on #269: call rows made unreadable after the resume's checks are refused by
+    # the audit itself, on the connection it audits with, before the pipeline runs.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    real = hickman_run.machine
+
+    def untimed_first():  # noqa: ANN202  # called after the resume's checks, before the audit
+        conn = sqlite3.connect(out / "case.db")
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        conn.close()
+        return real()
+
+    monkeypatch.setattr(hickman_run, "machine", untimed_first)
+    with pytest.raises(SystemExit, match=r"item1: .*no phone call a check can read"):
+        hickman_run.main(args)
+    conn = sqlite3.connect(out / "case.db")  # refused by the audit, not after it: no new run
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    conn.close()
+
+
+def test_the_audit_never_creates_a_case_db_moved_away(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    (out / "case.db").rename(tmp_path / "moved.db")
+    with pytest.raises(SystemExit, match="is gone since the run checked it"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    assert not (out / "case.db").exists()
+
+
+@pytest.mark.parametrize("when", ["report", "zip"])
+def test_the_report_and_zip_ship_only_the_audited_build(ufdr, tmp_path, monkeypatch, when):
+    # CodeRabbit on #269: the report and results.zip are made from the copy the audit took on
+    # its checked connection, so another build's case.db put at out/case.db while the report
+    # reads (then put back) or before the zip is written never reaches them.
+    out, other = tmp_path / "out", tmp_path / "other"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    (tmp_path / "o").mkdir()
+    marked = [{**CLAIMS[0], "text": CLAIMS[0]["text"] + " OTHER BUILD"}, *CLAIMS[1:]]
+    other_args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path / "o", marked)),
+                  "--out", str(other), "--fake"]  # fmt: skip
+    assert hickman_run.main(other_args) == 0
+    real_report = hickman_run.report
+    kept = tmp_path / "kept.db"
+
+    def report_then(o, log, *a):  # noqa: ANN001, ANN002, ANN202
+        shutil.copy(o / "case.db", kept)
+        shutil.copy(other / "case.db", o / "case.db")
+        r = real_report(o, log, *a)
+        if when == "report":  # only while the report read, then put back
+            shutil.copy(kept, o / "case.db")
+        return r
+
+    monkeypatch.setattr(hickman_run, "report", report_then)
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    shipped = tmp_path / "shipped.db"
+    with zipfile.ZipFile(out / "results.zip") as z, z.open("case.db") as src:
+        shipped.write_bytes(src.read())
+    conn = sqlite3.connect(shipped)
+    try:
+        assert hickman_run.stamped_build(conn) == built["build_id"]
+        assert conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0] == 1
+    finally:
+        conn.close()
+    other_built = json.loads((other / "built.ok").read_text(encoding="utf-8"))
+    assert other_built["build_id"] != built["build_id"]
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "OTHER BUILD" not in html  # the other build's claim text never reaches the report
+    assert "OTHER BUILD" in (other / "report.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("journal", ["delete", "wal"])
+def test_the_copy_holds_the_owners_the_final_check_passed(ufdr, tmp_path, monkeypatch, journal):
+    # CodeRabbit on #269: the final owner check and the copy read in one transaction, so an
+    # owner withdrawn by another connection between the two never reaches audited.db. Under
+    # the default rollback journal the withdrawal waits on that read; under WAL it commits,
+    # and the copy still holds the snapshot the check passed.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    if journal == "wal":  # build first, then resume on a WAL case.db
+        assert hickman_run.main(args) == 0
+        conn = sqlite3.connect(out / "case.db")
+        assert conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        conn.close()
+    real_check, real_audit, audited = hickman_run.owner_stop, pipeline.run_audit, []
+
+    def audit_then(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        r = real_audit(*a, **k)
+        audited.append(True)
+        return r
+
+    def then_withdraw(conn, phones):  # noqa: ANN001, ANN202
+        r = real_check(conn, phones)
+        if audited and len(audited) == 1:  # the check after the audit, before the copy
+            audited.append(True)
+            other = sqlite3.connect(out / "case.db", timeout=0.2)
+            try:
+                with other:
+                    other.execute(
+                        "UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'"
+                    )
+            except sqlite3.OperationalError as e:
+                assert journal == "delete" and "locked" in str(e)  # held off by the read
+            finally:
+                other.close()
+        return r
+
+    monkeypatch.setattr(pipeline, "run_audit", audit_then)
+    monkeypatch.setattr(hickman_run, "owner_stop", then_withdraw)
+    assert hickman_run.main(args) == 0
+    assert len(audited) == 2  # the withdrawal was tried
+
+    def owner(db: Path) -> str:
+        conn = sqlite3.connect(db)
+        try:
+            return conn.execute(
+                "SELECT status FROM stipulations WHERE kind = 'device_owner'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    shipped = tmp_path / "shipped.db"
+    with zipfile.ZipFile(out / "results.zip") as z, z.open("case.db") as src:
+        shipped.write_bytes(src.read())
+    assert owner(shipped) == "confirmed"
+    assert owner(out / "case.db") == ("rejected" if journal == "wal" else "confirmed")
+
+
+def test_one_run_at_a_time_uses_an_out_dir(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    assert not (out / hickman_run.LOCK).exists()  # released when the run ends
+    before = (out / "results.zip").read_bytes()
+    # another run holds it: this test's own process stands in for that run
+    (out / hickman_run.LOCK).write_text(f"{os.getpid()}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match=rf"another run \(process {os.getpid()}\) is using"):
+        hickman_run.main(args)
+    assert (out / hickman_run.LOCK).exists()  # never taken from its holder
+    assert (out / "results.zip").read_bytes() == before  # nor its files touched
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the PID is checked on POSIX only")
+def test_a_lock_left_by_a_killed_run_says_so_and_is_kept(ufdr, tmp_path):
+    # Claude review on #269: a run killed outright leaves run.lock behind; the message says its
+    # process is gone, but the lock is still never taken over automatically
+    import subprocess
+    import sys
+
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    gone = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],  # noqa: S603
+                          check=True, capture_output=True, text=True).stdout.strip()  # fmt: skip
+    (out / hickman_run.LOCK).write_text(f"{gone}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match=rf"process {gone}, which took it, is not running"):
+        hickman_run.main(args)
+    assert (out / hickman_run.LOCK).exists()
+
+
+def test_a_lock_whose_pid_write_fails_is_released(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+
+    def full(fd, data):  # noqa: ANN001, ANN202
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(hickman_run.os, "write", full)
+    with pytest.raises(OSError, match="No space left"):
+        hickman_run.main(args)
+    assert not (out / hickman_run.LOCK).exists()
+
+
+def test_a_refused_resume_leaves_no_earlier_results_zip(ufdr, tmp_path):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0 and (out / "results.zip").exists()
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+    conn.close()
+    with pytest.raises(SystemExit, match="confirmed device owner"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists()
+
+
+def test_a_failed_attempt_leaves_no_earlier_results_zip(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0 and (out / "results.zip").exists()
+
+    def broken(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise SystemExit("audit broke")
+
+    monkeypatch.setattr(hickman_run, "audit", broken)
+    with pytest.raises(SystemExit, match="audit broke"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists()
+
+
+def test_a_zip_without_the_audited_case_is_never_published(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    real = hickman_run.report
+
+    def report_then(o, *a):  # noqa: ANN001, ANN002, ANN202
+        r = real(o, *a)
+        (o / hickman_run.AUDITED).unlink()
+        return r
+
+    monkeypatch.setattr(hickman_run, "report", report_then)
+    with pytest.raises(SystemExit, match="audited.db is missing; results.zip not published"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists() and not (out / "results.zip.part").exists()
+
+
+def test_a_zip_that_fails_to_write_is_never_published(ufdr, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    real = zipfile.ZipFile.write
+
+    def failing(self, filename, arcname=None, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if arcname == "report.html":
+            raise OSError("disk full")
+        return real(self, filename, arcname, *a, **k)
+
+    monkeypatch.setattr(zipfile.ZipFile, "write", failing)
+    with pytest.raises(OSError, match="disk full"):
+        hickman_run.main(args)
+    assert not (out / "results.zip").exists() and not (out / "results.zip.part").exists()
+
+
+def test_a_built_ok_gone_mid_run_never_turns_a_resume_into_a_build(ufdr, tmp_path, monkeypatch):
+    # CodeRabbit on #269: the build-or-resume choice is made once, so a built.ok removed
+    # after the resume's checks never starts a build that deletes the checked case.db.
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    real = hickman_run.owner_stop
+
+    def gone(conn, phones):  # noqa: ANN001, ANN202
+        (out / "built.ok").unlink(missing_ok=True)
+        return real(conn, phones)
+
+    monkeypatch.setattr(hickman_run, "owner_stop", gone)
+    monkeypatch.setattr(
+        hickman_run, "build", lambda *a, **k: pytest.fail("a resume started a build")
+    )
+    assert hickman_run.main(args) == 0
+
+
+def test_an_owner_changed_during_the_audit_stops_the_run_unscored(ufdr, tmp_path, monkeypatch):
+    # CodeRabbit on #269: the audit reads its stipulations after the driver's owner check, so
+    # an owner withdrawn in between (here, as the audit starts) is caught when it returns.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out", str(out),
+            "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.run_audit
+
+    def withdrawn_first(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with conn:
+            conn.execute("UPDATE stipulations SET status = 'rejected' WHERE kind = 'device_owner'")
+        return real(conn, *a, **k)
+
+    monkeypatch.setattr(pipeline, "run_audit", withdrawn_first)
+    with pytest.raises(SystemExit, match="call log changed during the audit, so it is not scored"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    # the refused run is stored as stopped, never the case's completed audit, and no copy of
+    # it is left for a report or zip
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status, note),) = conn.execute(
+            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert status == "stopped" and note.startswith(hickman_run.REFUSED)
+        completed = [r[0] for r in conn.execute(
+            "SELECT id FROM pipeline_runs WHERE status = 'completed'")]  # fmt: skip
+        assert len(completed) == 1  # only the first, unrefused audit
+        assert pipeline.last_run(conn)["run_id"] == completed[0]
+        halted = conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE action = ?", (pipeline.HALT_ACTION,)
+        ).fetchone()[0]
+        assert halted == 1
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def _android_args(tmp_path: Path) -> list[str]:
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_calllog", **{"Call Date": "2024-03-01T15:00:00Z", "Partner": "+19195550111",
+                             "Phone Account Address": "+19195550100",
+                             "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                             "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    return ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+
+
+def test_a_call_log_changed_during_the_audit_stops_the_run_unscored(tmp_path, monkeypatch):
+    # CodeRabbit on #269: the audit reads its calls after the driver's checks, so a call log
+    # made unreadable in between (here, as the audit starts) is caught when it returns, by the
+    # same check in the same read as the copy.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.run_audit
+
+    def untimed_first(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        return real(conn, *a, **k)
+
+    monkeypatch.setattr(pipeline, "run_audit", untimed_first)
+    with pytest.raises(SystemExit, match=r"changed during the audit.*no phone call a check can"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status, note),) = conn.execute(
+            "SELECT status, note FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert status == "stopped" and note.startswith(hickman_run.REFUSED)
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_a_final_check_and_stopped_write_that_both_fail_leave_no_completed_run(
+    tmp_path, monkeypatch
+):
+    # CodeRabbit on #269: the final check runs before the pipeline stores the run as completed,
+    # so when the check fails and the write that stores the run as stopped fails too, the run
+    # is still not the case's completed audit, and its finished claims stay for reuse.
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    first = pipeline.last_run(conn)["run_id"]
+    conn.close()
+    real_stop, real_append, calls = hickman_run.case_stop, audit_log.append, []
+
+    def fails_at_the_final_check(conn, built):  # noqa: ANN001, ANN202
+        calls.append(1)
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        return real_stop(conn, built)
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("database is locked")
+        return real_append(conn, at, actor, action, payload)
+
+    monkeypatch.setattr(hickman_run, "case_stop", fails_at_the_final_check)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        assert pipeline.last_run(conn)["run_id"] == first
+        ((rid, status),) = conn.execute(
+            "SELECT id, status FROM pipeline_runs ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert rid != first and status == "running"
+        assert pipeline.finished_claims(conn, rid)
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+    # the driver's next audit stops the run left running before it starts its own
+    monkeypatch.setattr(audit_log, "append", real_append)
+    monkeypatch.setattr(hickman_run, "case_stop", real_stop)
+    hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        ((status,),) = conn.execute("SELECT status FROM pipeline_runs WHERE id = ?", (rid,))
+        assert status == "stopped"
+        assert pipeline.last_run(conn)["run_id"] not in (first, rid)
+    finally:
+        conn.close()
+
+
+def test_a_case_with_no_claim_to_audit_is_refused_before_any_run(tmp_path):
+    # CodeRabbit on #269: with no claim the pipeline never calls the final check, so the
+    # audit refuses such a case instead of storing an unchecked completed run.
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE claims SET status = 'removed'")
+    runs = conn.execute("SELECT count(*) FROM pipeline_runs").fetchone()[0]
+    conn.close()
+    with pytest.raises(SystemExit, match="holds no claim to audit"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    assert conn.execute("SELECT count(*) FROM pipeline_runs").fetchone()[0] == runs
+    conn.close()
+
+
+def test_a_run_whose_claims_go_before_the_pipeline_reads_them_is_stopped(tmp_path, monkeypatch):
+    # CodeRabbit on #269: claims removed between the driver's check and the pipeline's own
+    # read leave an empty run, which the pipeline stores as completed with no final check. The
+    # driver stores it as stopped, so no scorer or report takes it.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real = pipeline.load_claims
+    reads: list[int] = []
+
+    def gone_after_first(conn):  # noqa: ANN001, ANN202
+        reads.append(1)
+        if len(reads) == 1:
+            return real(conn)
+        with conn:
+            conn.execute("UPDATE claims SET status = 'removed'")
+        return real(conn)
+
+    conn = sqlite3.connect(out / "case.db")
+    before = {r[0] for r in conn.execute("SELECT id FROM pipeline_runs")}
+    conn.close()
+    (out / hickman_run.AUDITED).unlink(missing_ok=True)
+    monkeypatch.setattr(pipeline, "load_claims", gone_after_first)
+    with pytest.raises(SystemExit, match="no claim was audited"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    runs = dict(conn.execute("SELECT id, status FROM pipeline_runs"))
+    conn.close()
+    new = set(runs) - before
+    assert len(new) == 1 and runs[new.pop()] == "stopped"  # never completed, so never scored
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_an_empty_run_whose_stop_write_fails_publishes_nothing(tmp_path, monkeypatch):
+    # CodeRabbit on #269: if the empty run cannot be stored as stopped, it stays completed, but
+    # a resume through main() exits with the reason before any report or results.zip, and the
+    # earlier attempt's results.zip is gone from the publication path.
+    import sys
+
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    args = _android_args(tmp_path)  # one set of inputs: a rewritten zip would change its hash
+    assert hickman_run.main(args) == 0
+    assert (out / "results.zip").exists()  # the earlier attempt published one
+    real, append = pipeline.load_claims, audit_log.append
+
+    def gone_in_the_pipeline(conn):  # noqa: ANN001, ANN202
+        if sys._getframe(1).f_code.co_name == "run_audit":  # only the pipeline's own read
+            with conn:
+                conn.execute("UPDATE claims SET status = 'removed'")
+        return real(conn)
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("disk I/O error")
+        return append(conn, at, actor, action, payload)
+
+    reports: list[object] = []
+    monkeypatch.setattr(pipeline, "load_claims", gone_in_the_pipeline)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    monkeypatch.setattr(hickman_run, "report", lambda *a, **k: reports.append(a))
+    with pytest.raises(SystemExit, match="storing it as stopped failed"):
+        hickman_run.main(args)
+    monkeypatch.undo()
+    assert reports == []  # no report was made
+    assert not (out / "results.zip").exists()
+    assert not (out / "results.zip.part").exists()
+    assert not (out / hickman_run.AUDITED).exists()
+    conn = sqlite3.connect(out / "case.db")
+    assert (
+        conn.execute("SELECT count(*) FROM pipeline_runs WHERE status = 'stopped'").fetchone()[0]
+        == 0
+    )  # the stop write failed, as the test meant
+    conn.close()
+
+
+def test_a_leapp_phone_with_no_call_log_entry_stops_the_build(tmp_path):
+    # Claude review on #269: a LEAPP output that lists no call log at all, read or not, stops
+    # before any model call instead of passing without a word.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    lv.add("get_sms_mms", **{"Date": "2024-03-01T15:00:00Z", "Address": "+19195550111",
+                             "Type": "1", "Body": "hi"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    with pytest.raises(SystemExit, match=r"item1: its LEAPP output lists no phone call log"):
+        hickman_run.main(args)
+
+
+@pytest.mark.parametrize(
+    ("failing", "raised"),
+    [
+        (2, SystemExit),  # the final check, before the pipeline stores the run as completed
+        (3, sqlite3.OperationalError),  # the copy's check, after it is stored as completed
+    ],
+)
+def test_a_final_check_that_fails_leaves_the_run_unscored(tmp_path, monkeypatch, failing, raised):
+    # CodeRabbit on #269: a final check that raises (such as on a locked database) stores the
+    # run as stopped, never the case's completed audit, with its finished claims kept.
+    from core import pipeline
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    conn = sqlite3.connect(out / "case.db")
+    first = pipeline.last_run(conn)["run_id"]
+    conn.close()
+    real, calls = hickman_run.case_stop, []
+
+    def fails_after_the_audit(conn, built):  # noqa: ANN001, ANN202
+        calls.append(1)
+        if len(calls) == failing:
+            raise sqlite3.OperationalError("database is locked")
+        return real(conn, built)
+
+    monkeypatch.setattr(hickman_run, "case_stop", fails_after_the_audit)
+    with pytest.raises(raised, match="database is locked"):
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    conn = sqlite3.connect(out / "case.db")
+    try:
+        assert pipeline.last_run(conn)["run_id"] == first
+        ((rid, status, note),) = conn.execute(
+            "SELECT id, status, note FROM pipeline_runs"
+            " ORDER BY started_at_utc DESC, id DESC LIMIT 1"
+        )
+        assert rid != first
+        assert status == "stopped" and "final check could not run" in note
+        # its halt entry names the failure, and its finished claims stay for reuse
+        rows = conn.execute(
+            "SELECT payload_json FROM audit_log WHERE action = ?", (pipeline.HALT_ACTION,)
+        )
+        halts = [json.loads(p) for (p,) in rows]
+        assert any(h["run_id"] == rid and "final check could not run" in h["error"] for h in halts)
+        assert pipeline.finished_claims(conn, rid)
+    finally:
+        conn.close()
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_a_call_time_the_caller_check_cannot_parse_is_not_readable(tmp_path):
+    # CodeRabbit on #269: the gate counts a time only when the caller check's own parser reads
+    # it, so a stored value that is no time stops the run instead of failing in the audit.
+    out = tmp_path / "out"
+    args = _android_args(tmp_path)
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = 'not-a-time'")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"item1: .*has a time the checks cannot read"):
+        hickman_run.main(args)
+
+
+def test_a_call_history_with_a_row_read_but_no_longer_stored_stops_the_run(tmp_path):
+    # CodeRabbit on #269: the importer stores one call per row read, so a history of FaceTime
+    # calls with fewer calls stored than rows read (a phone call may be gone) stops; one whose
+    # every row is stored passes.
+    out = tmp_path / "out"
+    args = _ios_calls(tmp_path, [("com.apple.FaceTime", "Outgoing")] * 2)
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("DELETE FROM calls WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"callhistory\) has 2 rows read but 1 calls stored"):
+        hickman_run.main(args)
+
+
+def test_a_call_log_with_a_row_no_longer_stored_stops_beside_readable_calls(tmp_path):
+    # CodeRabbit on #269: fewer calls stored than rows read stops the run even when the phone
+    # still has phone calls a check can read, since the missing one may be the call a claim
+    # rests on.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("DELETE FROM calls WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    with pytest.raises(SystemExit, match=r"get_calllog\) has 2 rows read but 1 calls stored"):
+        hickman_run.main(args)
+
+
+# 'March 1st' does not parse; 9999-12-31T23:59:59Z parses, but is in year 10000 in a zone east
+# of UTC, where the check prints it in the phone's local time (CodeRabbit on #269)
+@pytest.mark.parametrize("bad", ["March 1st", "9999-12-31T23:59:59Z", "0001-01-01T00:00:00Z"])
+def test_a_stored_call_time_no_check_can_read_stops_before_any_model_call(tmp_path, bad):
+    # Claude review on #269: the caller check parses every call time it reads, so a stored
+    # time it cannot parse would stop the audit partway through, after model calls; the gate
+    # stops it first, even beside readable phone calls.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = ? WHERE id = (SELECT max(id) FROM calls)", (bad,))
+    conn.close()
+    with pytest.raises(SystemExit, match=r"1 of its stored calls has a time the checks cannot"):
+        hickman_run.main(args)
+
+
+def test_an_empty_stored_call_time_reads_as_no_time_and_does_not_stop(tmp_path):
+    # Claude review on #269: the caller check reads '' as no time and goes on, so only a time
+    # it would fail to parse stops the run.
+    from eval.synthetic.leapp import Lava
+
+    lv = Lava(leapp="ALEAPP")
+    for minute in (0, 1):
+        lv.add("get_calllog", **{"Call Date": f"2024-03-01T15:0{minute}:00Z",
+                                 "Partner": "+19195550111",
+                                 "Phone Account Address": "+19195550100",
+                                 "Raw Call Type (as stored)": "2", "Duration in Secs": "5",
+                                 "Phone Account Package": "com.android.phone"})  # fmt: skip
+    zipped = lv.write_zip(tmp_path / "item1.zip")
+    out = tmp_path / "out"
+    args = ["--phone", f"item1={zipped}", "--claims", str(_claims(tmp_path)), "--out",
+            str(out), "--fake", "--phone-zone", "America/New_York"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    conn = sqlite3.connect(out / "case.db")
+    with conn:
+        conn.execute("UPDATE calls SET ts_utc = '' WHERE id = (SELECT max(id) FROM calls)")
+    conn.close()
+    assert hickman_run.main(args) == 0
+
+
+def test_a_stale_journal_beside_the_audited_copy_is_removed_first(tmp_path):
+    # Claude review on #269: a hot journal a killed copy left beside audited.db goes before the
+    # next copy is made. SQLite's backup rewrites every page of the copy after rolling such a
+    # journal back, so the shipped copy is sound with or without the removal (checked by
+    # mutation); this pins that it stays so. The scorer's copy is the one a journal corrupts.
+    out = tmp_path / "out"
+    args = _android_args(tmp_path)
+    assert hickman_run.main(args) == 0
+    stale = out / f"{hickman_run.AUDITED}-journal"
+    from tests.test_validation_score import _hot_journal
+
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    assert hickman_run.main(args) == 0
+    assert not stale.exists()
+    with zipfile.ZipFile(out / "results.zip") as z:  # the shipped copy is a sound database
+        (tmp_path / "shipped.db").write_bytes(z.read("case.db"))
+    conn = sqlite3.connect(tmp_path / "shipped.db")
+    assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    conn.close()
+
+
+def test_a_stop_after_the_run_whose_stop_write_fails_gives_the_reason(tmp_path, monkeypatch):
+    # Claude review on #269: the check after the run stops it, and the write that stores it as
+    # stopped fails too: the reason is still what the operator sees, not a database traceback,
+    # and no copy is made for a report or zip.
+    from core import pipeline
+    from core.review import audit_log
+
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    real, append = pipeline.run_audit, audit_log.append
+
+    def untimed_after(conn, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        result = real(conn, *a, **k)
+        with conn:
+            conn.execute("UPDATE calls SET ts_utc = NULL")
+        return result
+
+    def no_halt(conn, at, actor, action, payload):  # noqa: ANN001, ANN202
+        if action == pipeline.HALT_ACTION:
+            raise sqlite3.OperationalError("disk I/O error")
+        return append(conn, at, actor, action, payload)
+
+    monkeypatch.setattr(pipeline, "run_audit", untimed_after)
+    monkeypatch.setattr(audit_log, "append", no_halt)
+    with pytest.raises(SystemExit, match=r"^" + hickman_run.REFUSED + r".*storing it as stopped"
+                       r" failed: disk I/O error"):  # fmt: skip
+        hickman_run.audit(out, True, lambda _m: None, built=built)
+    assert not (out / hickman_run.AUDITED).exists()
+
+
+def test_the_final_check_holds_its_lock_until_the_completed_write(tmp_path, monkeypatch):
+    # Claude review on #269: the final check's guarantee rests on core/pipeline.py writing the
+    # run as completed in the transaction the check opened, with no commit between the last
+    # progress call and that write. This pins that order, so a pipeline change that ends the
+    # transaction in between fails here.
+    out = tmp_path / "out"
+    assert hickman_run.main(_android_args(tmp_path)) == 0
+    built = json.loads((out / "built.ok").read_text(encoding="utf-8"))
+    trace: list[str] = []
+    real = hickman_run.open_existing
+
+    def traced(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        conn = real(*a, **k)
+        conn.set_trace_callback(trace.append)
+        return conn
+
+    # The final check is the one gate check made while the pipeline runs; its trace position
+    # is taken when it runs (CodeRabbit on #269), not found as the last BEGIN IMMEDIATE, so a
+    # commit after it followed by a new lock before the completed write still fails here.
+    in_audit: list[bool] = []
+    at_check: list[int] = []
+    from core import pipeline
+
+    real_run, real_stop = pipeline.run_audit, hickman_run.case_stop
+
+    def run_audit(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        in_audit.append(True)
+        try:
+            return real_run(*a, **k)
+        finally:
+            in_audit.clear()
+
+    def case_stop(conn, built):  # noqa: ANN001, ANN202
+        if in_audit:
+            assert conn.in_transaction
+            at_check.append(len(trace))
+        return real_stop(conn, built)
+
+    monkeypatch.setattr(hickman_run, "open_existing", traced)
+    monkeypatch.setattr(pipeline, "run_audit", run_audit)
+    monkeypatch.setattr(hickman_run, "case_stop", case_stop)
+    hickman_run.audit(out, True, lambda _m: None, built=built)
+    upper = [t.strip().upper() for t in trace]
+    assert len(at_check) == 1, at_check
+    lock = at_check[0] - 1
+    assert upper[lock].startswith("BEGIN IMMEDIATE"), upper[lock]  # the check's own lock
+    done = next(
+        i for i, t in enumerate(upper)
+        if i > lock and t.startswith("UPDATE PIPELINE_RUNS SET STATUS")
+    )  # fmt: skip
+    between = upper[lock + 1 : done]
+    assert not any(t.startswith(("COMMIT", "ROLLBACK", "END", "BEGIN")) for t in between), between
+    assert "STATUS = 'COMPLETED'" in upper[done]
+
+
+def test_a_resume_with_no_case_db_says_so(ufdr, tmp_path):
+    args = ["--ufdr", str(ufdr), "--claims", str(_claims(tmp_path)), "--out",
+            str(tmp_path / "out"), "--fake"]  # fmt: skip
+    assert hickman_run.main(args) == 0
+    (tmp_path / "out" / "case.db").unlink()
+    with pytest.raises(SystemExit, match="built.ok is there but case.db is not"):
+        hickman_run.main(args)
+    assert not (tmp_path / "out" / "case.db").exists()
+
+
 def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp_path):
     # One zone in the phone's tables plus a zone value the importer could not read: the
     # package records no zone, but a given zone must still match the one its tables name.
@@ -642,6 +2022,7 @@ def test_a_leapp_phone_whose_one_zone_was_not_recorded_still_refuses_another(tmp
         **{
             "Call Date": "2024-03-01T15:00:00Z",
             "Partner": "+19195550111",
+            "Phone Account Address": "+19195550100",
             "Raw Call Type (as stored)": "1",
             "Duration in Secs": "5",
         },
@@ -687,3 +2068,48 @@ def test_two_packages_of_one_name_swapped_between_phones_are_refused(pair, tmp_p
     swapped = _two([two / "Report.ufdr", one / "Report.ufdr"], tmp_path, {"phones": PHONES})
     with pytest.raises(SystemExit, match="was built from Report.ufdr"):
         hickman_run.main(swapped)
+
+
+def test_an_ordinary_call_time_converts_to_every_zone_and_the_year_9999_edge_does_not():
+    assert hickman_run._ts_ok("2024-03-01T15:00:00Z") == 1
+    assert hickman_run._ts_ok("9998-12-30T00:00:00Z") == 1
+    assert hickman_run._ts_ok("9999-12-31T23:59:59Z") == 0
+    assert hickman_run._ts_ok(None) == 0
+
+
+def test_a_unc_path_gets_an_empty_uri_authority():
+    # CodeRabbit on #269: SQLite refuses file://server/share/x (an authority), so a case.db on a
+    # Windows share opens as file:////server/share/x; a local path is unchanged.
+    assert hickman_run._no_authority("file://server/share/case.db") == (
+        "file:////server/share/case.db"
+    )
+    assert hickman_run._no_authority("file:///home/u/case.db") == "file:///home/u/case.db"
+    assert hickman_run._no_authority("file:///C:/u/case.db") == "file:///C:/u/case.db"
+
+
+def test_the_report_never_creates_a_missing_audited_copy(tmp_path):
+    # CodeRabbit on #269: the report opens the audited copy read-only, never creating it.
+    with pytest.raises(SystemExit, match="audited.db is missing"):
+        hickman_run.report(tmp_path, print, hickman_run.AUDITED)
+    assert not (tmp_path / hickman_run.AUDITED).exists()
+    assert not (tmp_path / "report.html").exists()
+
+
+@pytest.mark.parametrize("gone", ["run.json", "case.db"])
+def test_results_zip_is_not_published_without_its_run_json_or_case(tmp_path, gone):
+    # CodeRabbit on #269: run.json names the audit the scorer confirms, so like the case it
+    # always goes in; a report the invariants refused may be left out.
+    (tmp_path / hickman_run.AUDITED).write_bytes(b"db")
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    (tmp_path / (hickman_run.AUDITED if gone == "case.db" else gone)).unlink()
+    with pytest.raises(SystemExit, match="is missing; results.zip not published"):
+        hickman_run.publish_results(tmp_path)
+    assert not (tmp_path / "results.zip").exists()
+    assert not (tmp_path / "results.zip.part").exists()
+
+
+def test_results_zip_holds_its_case_and_run_json_and_no_refused_report(tmp_path):
+    (tmp_path / hickman_run.AUDITED).write_bytes(b"db")
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    with zipfile.ZipFile(hickman_run.publish_results(tmp_path)) as z:
+        assert sorted(z.namelist()) == ["case.db", "run.json"]

@@ -5,8 +5,11 @@ and the scorer maps the keys by content, scores R1, and runs the simulated exper
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+import sys
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -531,7 +534,7 @@ def test_the_r1_card_scores_the_run_before_any_review(scored):
     assert bars["2"]["pass"] is True and bars["3"]["pass"] is True
     assert bars["8_import_counts"]["pass"] is True
     assert "6" not in bars  # no pass 2 given
-    assert s["scorer_version"] == "1.5.0"
+    assert s["scorer_version"] == "1.5.1"
 
 
 def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
@@ -543,7 +546,35 @@ def test_pass_2_is_compared_claim_by_claim(scored, tmp_path):
     assert s["repeat"]["same"]["k"] == 3 and s["repeat"]["same"]["n"] == 3
     assert s["v4_bars"]["6"]["pass"] is True
     assert set(s["v4_bars"]["6"]["by_type"]) == {r["type"] for r in s["r1"]["per_claim"].values()}
-    assert "Pass 2 against pass 1, by kind" in (tmp_path / "out" / "score.md").read_text("utf-8")
+    md = (tmp_path / "out" / "score.md").read_text("utf-8")
+    assert "Pass 2 against pass 1, by kind" in md
+    assert s["repeat_driver_checked"] is True and score_hickman.UNCHECKED_REPEAT not in md
+
+
+def test_an_unchecked_pass_2_is_marked_beside_bar_6(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: a pass 2 zip with no build id (made before the final check) is still
+    # compared, but its status is kept beside pass 1's and the repeat section says so
+    run, _ = scored
+    base = run.parent
+
+    def no_build(r: dict) -> None:
+        r.pop("build_id")
+
+    older = _rezip(run, tmp_path / "older.zip", no_build)
+    real = score_hickman.stamped_build
+    calls: list[int] = []
+
+    def unstamped_second(conn):  # noqa: ANN001, ANN202
+        calls.append(1)
+        return real(conn) if len(calls) == 1 else None  # pass 1 keeps its stamp
+
+    monkeypatch.setattr(score_hickman, "stamped_build", unstamped_second)
+    s = score_hickman.score(
+        run / "results.zip", base / "keys", base / "dump", tmp_path / "out", older
+    )
+    assert s["driver_checked"] is True and s["repeat_driver_checked"] is False
+    md = (tmp_path / "out" / "score.md").read_text("utf-8")
+    assert md.count(score_hickman.UNCHECKED_REPEAT) == 2  # at the top and beside bar 6
     assert "Validation v4 bars" in (tmp_path / "out" / "score.md").read_text("utf-8")
 
 
@@ -645,3 +676,299 @@ def test_an_open_core_assumption_is_one_no_check_or_item_settles():
     # inconclusive only, or no check and no supporting item; a context row never counts
     assert score_hickman._open_core(conn, manifest, "C", items) == ["a:inc", "a:none"]
     conn.close()
+
+
+def test_only_the_published_results_zip_is_scored(scored, tmp_path):
+    # CodeRabbit on #269: the driver publishes results.zip only after its final check passed,
+    # so a case.db on its own, or a zip whose case's last completed audit is not the one its
+    # run.json names, may hold an audit the driver never verified and is refused.
+    run, _ = scored
+    base = run.parent
+    with pytest.raises(SystemExit, match="not a case.db on its own"):
+        score_hickman.score(run / "case.db", base / "keys", base / "dump", tmp_path / "out")
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    record = json.loads(members["run.json"])
+    record["audit"]["run_id"] = "run:another"
+    members["run.json"] = json.dumps(record).encode()
+    other = tmp_path / "results.zip"
+    with zipfile.ZipFile(other, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    with pytest.raises(SystemExit, match="run.json names audit run:another"):
+        score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out2")
+
+
+def test_a_zip_with_no_case_db_is_refused_by_name(scored, tmp_path):
+    # Claude review on #269: a refusal that names what is missing, not a KeyError
+    run, _ = scored
+    base = run.parent
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist() if n != "case.db"}
+    other = tmp_path / "results.zip"
+    with zipfile.ZipFile(other, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    with pytest.raises(SystemExit, match="holds no case.db"):
+        score_hickman.score(other, base / "keys", base / "dump", tmp_path / "out")
+
+
+def test_a_stale_journal_beside_the_scored_copy_is_removed_first(scored, tmp_path):
+    # Claude review on #269: a hot journal a killed copy left beside scored.db.part would be
+    # rolled into the fresh copy when SQLite opens it
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    out.mkdir()
+    stale = out / "scored.db.part-journal"
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    result = score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert not stale.exists()
+    assert result["scorer_version"] == score_hickman.SCORER_VERSION  # scored from a sound copy
+
+
+def _hot_journal(work: Path) -> bytes:
+    """The rollback journal a process killed mid-write leaves: SQLite rolls it into whatever
+    database file it finds beside it."""
+    import subprocess
+    import sys
+
+    work.mkdir()
+    db = work / "x.db"
+    code = (
+        "import os, sqlite3, sys\n"
+        "c = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "c.execute('PRAGMA cache_size=1')\n"
+        "c.execute('CREATE TABLE t(v)')\n"
+        "c.executemany('INSERT INTO t VALUES (?)', [('x' * 500,) for _ in range(200)])\n"
+        "c.execute('BEGIN')\n"
+        "c.execute(\"UPDATE t SET v = 'y'\")\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", code, str(db)], check=True)  # noqa: S603 (fixed code)
+    return (work / "x.db-journal").read_bytes()
+
+
+def _rezip(run: Path, path: Path, edit) -> Path:  # noqa: ANN001
+    with zipfile.ZipFile(run / "results.zip") as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    record = json.loads(members["run.json"])
+    edit(record)
+    members["run.json"] = json.dumps(record).encode()
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    return path
+
+
+def test_a_zip_whose_case_db_is_another_builds_is_refused(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: run ids are unique only within one case, so run.json must name the
+    # build stamped in its case.db too; another build's run.json with the same run id is refused
+    run, _ = scored
+    base = run.parent
+    record = json.loads((run / "run.json").read_text("utf-8"))
+    assert record["build_id"]  # the driver records it
+
+    def other_build(r: dict) -> None:
+        r["build_id"] = "another"
+
+    def no_build(r: dict) -> None:
+        r.pop("build_id")
+
+    swapped = _rezip(run, tmp_path / "swapped.zip", other_build)
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(swapped, base / "keys", base / "dump", tmp_path / "out")
+    older = _rezip(run, tmp_path / "older.zip", no_build)
+    with pytest.raises(SystemExit, match="run.json names build None"):
+        score_hickman.score(older, base / "keys", base / "dump", tmp_path / "out")
+    # a zip made before build ids (the v4 runs) has neither, and is scored by its run id alone
+    monkeypatch.setattr(score_hickman, "stamped_build", lambda _conn: None)
+    old = score_hickman.score(older, base / "keys", base / "dump", tmp_path / "old")
+    assert old["r1"] and old["driver_checked"] is False  # and its score says so
+    assert "made before the driver's final check" in (tmp_path / "old" / "score.md").read_text(
+        encoding="utf-8"
+    )
+    monkeypatch.undo()
+    new = score_hickman.score(run / "results.zip", base / "keys", base / "dump", tmp_path / "new")
+    assert new["driver_checked"] is True
+    assert "final check" not in (tmp_path / "new" / "score.md").read_text(encoding="utf-8")
+
+
+def test_a_refused_zip_leaves_an_earlier_score_in_place(scored, tmp_path):
+    # CodeRabbit on #269: the zip is checked and scored on a temporary copy, so a refused one
+    # never replaces scored.db or leaves it beside another run's score files
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "score.json", "score.md")}
+
+    def other_build(r: dict) -> None:
+        r["build_id"] = "another"
+
+    swapped = _rezip(run, tmp_path / "swapped.zip", other_build)
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(swapped, base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+    # a refused --repeat zip leaves nothing behind either: it is read from a private copy
+    with pytest.raises(SystemExit, match="run.json names build another"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out, swapped)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+def test_a_failed_render_leaves_an_earlier_score_in_place(scored, tmp_path, monkeypatch):
+    # Claude review on #269: the score files are written in full before scored.db is put in
+    # place, so a render that fails leaves the earlier scored.db beside its own score files
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "score.json", "score.md")}
+
+    def broken(_result: dict) -> str:
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(score_hickman, "render", broken)
+    with pytest.raises(RuntimeError, match="render failed"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+@pytest.mark.parametrize("fails_on", ["score.md", "scored.db"])
+def test_a_move_that_fails_partway_puts_the_earlier_score_back(
+    scored, tmp_path, monkeypatch, fails_on
+):
+    # CodeRabbit on #269: the three files are moved in one at a time, so a move that fails
+    # after score.json is in place must put every earlier file back, not leave a mix
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    before = {n: f"earlier {n}".encode() for n in ("scored.db", "score.json", "score.md")}
+    for n, b in before.items():
+        (out / n).write_bytes(b)  # marked, so a new file in its place shows
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == fails_on and Path(src).name.endswith(".part"):
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(PermissionError, match="in use"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+def test_an_earlier_scored_db_is_put_back_with_its_journal(scored, tmp_path, monkeypatch):
+    # CodeRabbit on #269: a journal beside the earlier scored.db moves aside and back with it,
+    # so a failed publish leaves the pair SQLite needs to recover, and a good one leaves none
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    journal = out / "scored.db-journal"
+    journal.write_bytes(_hot_journal(tmp_path / "killed"))
+    before = {n: (out / n).read_bytes() for n in ("scored.db", "scored.db-journal")}
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == "scored.db" and Path(src).name.endswith(".part"):
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(PermissionError, match="in use"):
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert not list(out.glob("*.old"))
+
+
+def test_a_put_back_that_fails_says_the_folder_may_be_mixed(scored, tmp_path, monkeypatch):
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    real = os.replace
+
+    def failing(src, dst):  # noqa: ANN001, ANN202
+        if Path(dst).name == "scored.db" or Path(src).name == "score.json.old":
+            raise PermissionError("[WinError 32] in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", failing)
+    with pytest.raises(RuntimeError, match="could not be put back") as e:
+        score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert "score.json" in str(e.value) and "old and new score files" in str(e.value)
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="reads open files from /proc")
+def test_no_connection_is_left_open_on_a_file_the_scorer_moves(scored, tmp_path, monkeypatch):
+    # Windows CI on #269: a file still open cannot be renamed there, so every connection on the
+    # scored copy must be closed before score() puts it in place. Linux allows the rename, so
+    # the open files are read from /proc here instead.
+    import os
+
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    real = os.replace
+
+    def checked(src, dst):  # noqa: ANN001, ANN202
+        target = str(Path(src).resolve())
+        held = [fd.name for fd in Path("/proc/self/fd").iterdir() if os.path.realpath(fd) == target]
+        assert not held, f"{src} is still open"
+        return real(src, dst)
+
+    monkeypatch.setattr(score_hickman.os, "replace", checked)
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+
+
+def test_a_stale_journal_beside_the_published_scored_db_is_removed(scored, tmp_path):
+    # Claude review on #269: a journal left beside an earlier scored.db would be rolled into the
+    # new one the next time it is opened
+    run, _ = scored
+    base, out = run.parent, tmp_path / "out"
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    stale = out / "scored.db-journal"
+    stale.write_bytes(_hot_journal(tmp_path / "killed"))
+    score_hickman.score(run / "results.zip", base / "keys", base / "dump", out)
+    assert not stale.exists()
+    with closing(sqlite3.connect(out / "scored.db")) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
+def test_a_results_zip_with_an_upper_case_extension_is_scored(scored, tmp_path):
+    run, _ = scored
+    base = run.parent
+    upper = tmp_path / "RESULTS.ZIP"
+    shutil.copyfile(run / "results.zip", upper)
+    got = score_hickman.score(upper, base / "keys", base / "dump", tmp_path / "out")
+    assert got["scorer_version"] == score_hickman.SCORER_VERSION
+
+
+@pytest.mark.parametrize(
+    "char",
+    [
+        "#",
+        "%",
+        pytest.param(
+            "?", marks=pytest.mark.skipif(sys.platform == "win32", reason="not in Windows names")
+        ),
+    ],
+)
+def test_the_check_reader_opens_a_path_with_uri_characters(tmp_path, char):
+    # Claude review on #269: a bare path in a SQLite URI cuts at '#' or '?' and opens another
+    # file, so the reader escapes it
+    from core.db import apply_schema
+    from eval.validation.card import load_checks
+
+    folder = tmp_path / f"run{char}2"
+    folder.mkdir()
+    db = folder / "scored.db"
+    with closing(sqlite3.connect(db)) as conn:
+        apply_schema(conn)
+    assert load_checks(db, ["C01"]) == []
