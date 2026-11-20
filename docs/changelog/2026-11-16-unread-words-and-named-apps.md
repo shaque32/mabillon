@@ -230,7 +230,16 @@
     After CodeRabbit's review of that round: a phone counts as searched only when every row a
     check reads searches it, "REYES' phone" is read like "REYES's phone", and "each other" is
     plain only beside a count that sets each way (a total between the two may all be one
-    side's).
+    side's). A range may end at the midnight that starts a day only when its words end it at
+    midnight beside that day ("to midnight on March 13", "through Mar. 13 at midnight");
+    "from 11:55 p.m. on March 12 to 2 a.m. on March 13" no longer passes a range that stops
+    at midnight.
+  - After the fourth Claude review on #265 (on 76ef80b): two writers joined as one subject
+    ("PETROV and @northstar wrote", "both", "each"), more than one message ("messages",
+    "some texts", "calls") beside no count, "last" ("PETROV last wrote"), and the party who
+    received ("PETROV received from @northstar", "PETROV was sent a message by ...") beside
+    no row that reads a call's direction are read by the expert-only event. A handle
+    ("@sms") no longer names a phone's own messages for a code-made sender.
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
@@ -240,7 +249,7 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, hardware not recorded, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  with the rule-pack suite 1,802 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
+  with the rule-pack suite 1,817 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-20, final
   head). Class batteries of new wordings with wrong
@@ -251,12 +260,14 @@
   Android 13, iOS 15 and Android 12 (no model call; results in project files only; this
   PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-20; the
   2026-11-20 runs in the container above, earlier hardware not recorded) leaves
-  every check outcome unchanged and adds the expert-only event to 20 claims (4 of them false
+  every check outcome unchanged and adds the expert-only event to 22 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
   Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:
   the call log keeps no kind of call, so it now waits for an expert; iOS 15 C07, "placed a
   second Signal call", after the fixes on the merge with main: "a second" is read as a length
-  no row tests, and the ordinal is one no check reads); one message-only absence that was
+  no row tests, and the ordinal is one no check reads; iOS 15 D06 and D27, "the TARGET PHONE
+  received ...", after the fourth Claude review: no check reads which way a message or call
+  went); one message-only absence that was
   inconclusive is now refused.
   On case01, C11 (gold contradicted, its time check fails) also gains the event. `make check` runs on GitHub CI.
 - Open: the plain-word list is blunt in both directions. A true claim with an unlisted word

@@ -3530,7 +3530,8 @@ def test_a_count_or_length_in_digits_is_read_like_one_in_words(conn, tail, tests
     # "2" passed where "two" was read: digits were never tokens (CodeRabbit on #265).
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
     text = f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more".'
-    assert filler.unread_words(text) == ["2"]
+    # "messages" is a count's word too (Claude review on 76ef80b)
+    assert filler.unread_words(text)[0] == "2"
     assert filler.unread_words(text, (), tests) == []
     # the bare first hour of a range is a time, not a count
     ranged = text.replace("On March 12, 2026", "Between 10 and 11 a.m. on March 12, 2026")
@@ -5169,3 +5170,60 @@ def test_coderabbit_on_e5104e2_a_phone_is_searched_only_when_every_checked_row_s
     rows = {a.template_id: a.params.device_ids for a in made}
     assert rows.get("sender") == ("dev:item2",) and rows.get("record_time") == ("dev:item1",), rows
     assert "event" in rows, filler.drops
+
+
+# --------------------------------------------------------------- Claude review on 76ef80b
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # two writers: one sender row reads one
+        'On March 12, 2026, PETROV and @northstar wrote: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar both wrote: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar each wrote: "need 2 more by friday".',
+        # more than one message: a sender row reads one record
+        'On March 12, 2026, PETROV sent @northstar messages: "need 2 more by friday".',
+        'On March 12, 2026, PETROV sent @northstar some messages, one of them: "need 2 more by'
+        ' friday".',
+        # "last": no later message exists, which no check reads
+        'On March 12, 2026, PETROV last wrote to @northstar: "need 2 more by friday".',
+        # the party written first is the one the message went to
+        'On March 12, 2026, PETROV received from @northstar: "need 2 more by friday".',
+        'On March 12, 2026, PETROV was sent a message by @northstar: "need 2 more by friday".',
+        'On March 12, 2026, PETROV was texted by @northstar: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_76ef80b_what_no_row_reads_gets_an_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, (text, filler.drops)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        C05_TEXT,
+        'On March 12, 2026, the message "need 2 more by friday" was sent by PETROV to @northstar.',
+        'On March 12, 2026, a message was sent to @northstar by PETROV: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_76ef80b_a_plain_claim_still_gets_no_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"], (text, filler.drops)
+
+
+def test_claude_review_on_76ef80b_plural_and_received_words_are_read_by_their_rows(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a count reads more than one message; a caller row reads who received a call
+    assert not filler.unread_words("PETROV sent @northstar 3 messages", tests={"count"})
+    assert filler.unread_words("PETROV sent @northstar messages")
+    assert not filler.unread_words("REYES received a call from PETROV", tests={"call", "direction"})
+    assert filler.unread_words("REYES received a call from PETROV", tests={"call"})
+    assert not filler.unread_words("REYES was called by PETROV", tests={"call", "direction"})
+
+
+def test_claude_review_on_76ef80b_a_handle_names_no_phone_message_kind(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    for text in ('PETROV wrote to @sms: "ok".', 'PETROV wrote to @texted: "ok".'):
+        assert filler._message_apps(text) == [], text

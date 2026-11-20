@@ -3150,14 +3150,14 @@ _PLAIN_WORDS = frozenset(
     "a an the of to on at in by and or with from for via over using through into onto as "
     "is was were are be been being has had have did do does that which who whom whose this "
     "these those it its it's their his her hers them they he she him its own each other one "
-    "another both either s also then"
+    "another either s also then"
     # writing, sending and calling
-    " wrote write writes writing written sent send sends sending texted text texts texting "
-    "messaged message messages messaging told tell tells telling asked ask asks asking said "
+    " wrote write writes writing written sent send sends sending texted text texting "
+    "messaged message messaging told tell tells telling asked ask asks asking said "
     "say says saying "
-    "stating stated received receive receives receiving placed place places placing made "
-    "make chat chats "
-    "communicated communication communications contact contacted contacting dm dms "
+    "stating stated placed place places placing made "
+    "make chat "
+    "communicated communication communications contact contacted contacting dm "
     "outgoing incoming user users account accounts id identifier handle username "
     "name named names party number numbers telephone phone phones cellular "
     "cell mobile line app application platform service thread messenger"
@@ -3169,11 +3169,11 @@ _PLAIN_WORDS = frozenset(
     "during before after since prior am pm a.m p.m noon midnight morning afternoon evening "
     "night time local eastern central mountain pacific standard daylight zone utc gmt edt est "
     "cdt cst mdt mst pdt pst et ct mt pt day days date dates hour hours hr hrs minute minutes "
-    "min mins second seconds sec secs half quarter early late last "
+    "min mins second seconds sec secs half quarter early late "
     "monday tuesday wednesday thursday friday saturday sunday january february march april "
     "may june july august september october november december jan feb mar apr jun jul aug "
     "sep sept oct nov dec"
-    " at over under some one".split()
+    " at over under one".split()
 )
 # Words plain only when a kept core row reads them (Claude review on #265: "after a Telegram
 # call", "one of two messages that day" or "over two hours" passed on a message's sender and
@@ -3182,14 +3182,26 @@ _PLAIN_WORDS = frozenset(
 # the rows test.
 _GATED_WORDS = {
     "call": frozenset(
-        "called call calls calling phoned phoning dialed dialled rang spoke speak speaks spoken "
+        "called call calling phoned phoning dialed dialled rang spoke speak speaks spoken "
         "talked talk talks".split()
     ),
+    # "sent @northstar messages", "some texts", "calls": more than one record, which a sender,
+    # time or call row (each one record) never reads; plain only beside a count (Claude review
+    # on #265)
     "count": frozenset(
         "least most more fewer less than exactly total dozen dozens hundred zero two three four "
         "five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
-        "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety times".split()
+        "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety times "
+        "messages texts chats dms calls some".split()
     ),
+    # "PETROV and @northstar both wrote": a message from each, read only by a count that sets
+    # each way (Claude review on #265)
+    "both_ways": frozenset({"both"}),
+    # "PETROV received a call from REYES", "REYES was called by PETROV": who was on the other
+    # end, read only by a row that reads a call's direction (`caller`); a sender row binds the
+    # sender alone, so "PETROV received from @northstar" on a sender row for PETROV passed on
+    # PETROV's own message (Claude review on #265)
+    "direction": frozenset("received receive receives receiving".split()),
     # "a call that was answered and lasted ...": a call with a tested length was answered
     "length": frozenset("lasted lasting lasts length duration long answered".split()),
     # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
@@ -3202,7 +3214,11 @@ _GATED_WORDS = {
 }
 _SPOKEN_NUMBERS = "|".join(
     sorted(
-        _GATED_WORDS["count"] - set("least most more fewer less than exactly total times".split()),
+        _GATED_WORDS["count"]
+        - set(
+            "least most more fewer less than exactly total times messages texts chats dms calls "
+            "some".split()
+        ),
         key=len,
         reverse=True,
     )
@@ -3232,7 +3248,8 @@ _UNTESTED_LENGTH_RE = re.compile(
     r"(?:seconds?|minutes?|hours?|secs?|mins?|hrs?)\b",
     re.IGNORECASE,
 )
-# "last" is a length ("the call lasted"), never "the last message": that one is read below.
+# "last" is never plain: "the last message", "PETROV last wrote" state that no later one
+# exists (Claude review on #265); "the call lasted" is a length's word.
 # "a second phone", "another number", "a different account": a party or a phone no check binds.
 # "three minutes after a call", "shortly before": an act timed from another the checks do not
 # read (a kept range's own words, "two days before the RAID", are blanked before this is read).
@@ -3262,7 +3279,22 @@ _UNPLAIN_PHRASES_RE = re.compile(
     # from another act no check reads (Claude review on #265)
     r"(?:after|before|during|following|while)\s+(?:(?:a|an|the|their|his|her|its|that|this|"
     r"another|one)\s+)?(?:\S+\s+){0,2}?(?:calls?|messages?|texts?|chats?|conversations?|"
-    r"meetings?|exchanges?))\b",
+    r"meetings?|exchanges?)|"
+    # "PETROV and @northstar each wrote": one act per party, which one sender row never reads
+    # ("each other" is read apart; Claude review on #265)
+    r"each(?!\s+other\b))\b",
+    re.IGNORECASE,
+)
+# "PETROV was sent a message by @northstar", "REYES was texted by PETROV": the party written
+# first is the one the message went to, which a sender row never reads; "the message was sent
+# by PETROV" and "was sent to" are the message's own words (Claude review on #265)
+_PASSIVE_TO_RE = re.compile(
+    # "sent" with an object after it ("was sent a message"), not a preposition or the end of
+    # the words ("was sent at 9:05 a.m." with its range blanked)
+    r"\b(?:was|were|is|are|be|been|being|get|gets|got|getting)\s+(?:(?:sent|e-?mailed)\s+"
+    r"(?!(?:by|to|from|on|at|via|over|using|through|in|with|during|before|after|around|about|"
+    r"between|within|into|onto|for|as|and|or|but)\b)(?=[^\W\d_])|(?:texted|messaged|told|"
+    r"asked|called|phoned|rung|dialed|dialled|contacted|pinged|dm(?:'|’)?ed)\b)",
     re.IGNORECASE,
 )
 # A message "reading" or "that read" its quoted words: the words the record holds, not an act
@@ -3345,6 +3377,27 @@ _CLAUSE_PRONOUN_RE = re.compile(
 )
 
 
+# What may stand between a verb's subject and the verb: "PETROV and REYES both then wrote".
+_BEFORE_VERB_RE = re.compile(
+    r"(?:\s+|\b(?:both|each|all|together|jointly|then|also|later|first|just|again))$",
+    re.IGNORECASE,
+)
+
+
+def _two_subjects(text: str, at: int, parties: list[tuple[int, int]]) -> bool:
+    """True when the verb at `at` has two parties joined as its subject ("PETROV and
+    @northstar wrote", "REYES & PETROV both wrote"), each a span of `parties` in `text`."""
+    ends = {b: a for a, b in parties}
+    head = text[:at]
+    while (m := _BEFORE_VERB_RE.search(head)) is not None and m.group(0):
+        head = head[: m.start()]
+    first = ends.get(len(head))
+    if first is None:
+        return False
+    joint = re.search(r"(?:\band|&|\bor|\bnor)\s*$", text[:first], re.IGNORECASE)
+    return joint is not None and ends.get(len(text[: joint.start()].rstrip())) is not None
+
+
 # A time of day code reads: "9 p.m.", "21:14", "noon", "midnight".
 _CLOCK_WORD_RE = re.compile(r"\b(?:noon|midnight)\b", re.IGNORECASE)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*(?:['’][^\W\d_]+)?", re.UNICODE)
@@ -3386,9 +3439,11 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     tests = frozenset(tests)
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
-    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE]
+    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE, _PASSIVE_TO_RE]
     if "both_ways" in tests:
         never.remove(_EACH_OTHER_RE)
+    if "direction" in tests:
+        never.remove(_PASSIVE_TO_RE)
     rest = words
     for rx in never:
         for m in rx.finditer(words if phrases is None else phrases):
@@ -3685,10 +3740,13 @@ class LocalAssumptionFiller:
             for m in rx.finditer(bare)
         ):
             extra.append("a second date")
+        parties: list[tuple[int, int]] = []  # where the claim writes a person or an account
         try:
-            cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
+            parties += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
             pass  # a name in lower case: its words stay, and read as words no check reads
+        cut += parties
+        parties += [m.span() for m in _HANDLE_RE.finditer(bare)]
         for did, st, en in self._phone_spans(bare):
             if devices is None or did in devices:
                 cut.append((st, en))
@@ -3748,6 +3806,10 @@ class LocalAssumptionFiller:
         acts = set()
         last: dict[int, int] = {}  # a quote's end -> where the last verb leading to it ends
         verbs = sorted([*_ACT_VERB_RE.finditer(acted), *replies], key=lambda m: m.start())
+        if "both_ways" not in tests and any(_two_subjects(bare, m.start(), parties) for m in verbs):
+            # "PETROV and @northstar wrote": an act for each writer, and a sender row reads
+            # one; only a count that sets each way reads both (Claude review on #265)
+            extra.append("a second writer")
         for m in verbs:
             q = _LEADS_TO_QUOTE_RE.match(flat, m.end())
             if not q:
@@ -3773,7 +3835,9 @@ class LocalAssumptionFiller:
                 expected is not None and any(n not in expected for n in stated)
             ):
                 extra.append("a second count")
-        words = re.sub(r"(?i)\b(?:i?messages?|sms|mms|rcs|e-?mails?|e-?mailed)\b", " ", words)
+        # a message's own kind, one record: "messages" stays, plain only beside a count
+        # (Claude review on #265)
+        words = re.sub(r"(?i)\b(?:imessages?|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
         return [
             *out,
@@ -4683,7 +4747,9 @@ class LocalAssumptionFiller:
         if self._phone_named_as_an_app(_nfc(claim_text)):
             return None  # "the SMS" for a phone: its name and the kind read the same
         unphoned = self._without_phone_names(_nfc(claim_text))
-        words = _ADDRESS_RE.sub(" ", _unquoted(unphoned))
+        # a handle is an account, never a kind or an app: "wrote to @sms" names no SMS, as
+        # `claim_apps` reads it (Claude review on #265)
+        words = _HANDLE_RE.sub(" ", _ADDRESS_RE.sub(" ", _unquoted(unphoned)))
         # "wrote on his second line" names no Line: a code-made row is never bound to a plain
         # word, as `_bind_named_app` binds none (CodeRabbit on #265)
         named = self._scope_apps(self._named_apps(unphoned), _HANDLE_RE.sub(" ", words))
@@ -5340,6 +5406,8 @@ class LocalAssumptionFiller:
             tests.add("length")
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
+        if any(p.template_id == "caller" for p in core):
+            tests.add("direction")
         # the phones the kept rows search: a phone the claim names that none searches is a part
         # no check reads (Claude review on #265)
         # A phone counts as searched only when every row a check reads searches it: a sender
