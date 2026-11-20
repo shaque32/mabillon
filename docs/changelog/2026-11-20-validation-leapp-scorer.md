@@ -19,10 +19,12 @@
     give that name), at most 2 seconds apart, one text at most on the Google Messages side, and
     no SMS or MMS standing for two skipped rows. A multi-part MMS is read from all its part
     rows. The rule is restated in the scorer from the importer's stated behaviour, not imported.
-  - A row whose dedupe value is empty is left out of the reader's count, but the importer makes
-    a record of it (one per row, or per Google Messages group with the empty value read as one
-    value), so the scorer adds those records to the reader's side, and a key on such a row maps
-    as the importer grouped it.
+  - Rows whose dedupe value is empty (NULL, "" or white space): the reader leaves NULL out and
+    counts each distinct raw value, while the importer makes a record of each such row (one per
+    row, or per Google Messages group with the value read stripped and NULL as empty). The scorer
+    counts those rows again by the importer's rule and adds the difference to the reader's side,
+    and a key on such a row maps as the importer grouped it. A pair's times are compared in whole
+    seconds, as the importer does, with every part of an MMS inside the limit.
   - Each phone zip is copied once, and that copy is hashed and read. Its manifest and database
     are found as LAVA names them (either manifest name, the database the manifest names beside
     it), size-checked like the importer's, and the database is streamed out, not held in memory.
@@ -36,13 +38,15 @@
     Snapchat and five app call tables); a test pins that it names exactly the importer's
     tables. The UFDR path and every measure are unchanged; `score.json` gains `source`.
 - Where: branch `claude/project-thread-ds0ify`, its own PR on main after #265 and #269 merged.
-- Verified: `tests/test_score_leapp.py` (63 tests, cloud container, 2026-11-20): row-to-record
+- Verified: `tests/test_score_leapp.py` (76 tests, cloud container, 2026-11-20): row-to-record
   mapping on both phones of one case (multi-row MMS, RCS and iOS attachment rows, a skipped
   copy, a table name in other case), every refusal reason, bar 8 passing and failing (a missing
   record, a record from an uncounted table, a wrong or shared pair, a skipped row not in the
   table, another party's SMS), each pair field (party, attachment count, white space, several
-  texts, a multi-part MMS), rows with an empty dedupe value, the zip's manifest and database as
-  LAVA names them, the size limit, the phone hash and set checks, and the whole scorer on a
+  texts, a multi-part MMS, whole seconds, the direction column), repeated empty dedupe values
+  and a record lost among them, a skipped entry whose rows are not row ids, a key on a table the
+  importer does not read, the zip's manifest and database as LAVA names them, the size limit, a
+  path that is not a zip file, the phone hash and set checks, and the whole scorer on a
   driver run. Each guard was mutated and a test failed, except the explicit "every skipped copy
   confirmed" term of bar 8, which a table count already fails on. On the G2 development pair
   (Android 13 and iOS 15 LEAPP output, driver run60 on main 975e37e, Linux cloud container,
@@ -56,8 +60,8 @@
   stated rule, so a defect shared by both would not show here; the counts are independent. The
   scorer's party match is a little looser than the importer's (a number matches the same
   number after up to three more leading digits, marked as a country code or not), so it guards
-  against another party but not against a country-code mix-up. A dedupe value of white space
-  only, or an empty string beside NULL in one table, can still make a correct table FAIL (it
-  never makes one PASS); none occurs on the development pair.
+  against another party but not against a country-code mix-up. A dedupe value with padding
+  around it (" 5" beside "5") is two values to the reader and one to the importer, so it can
+  make a correct table FAIL (never PASS); none occurs on the development pair.
 - Affects: the validation scorer (`eval/`) only. No capability, privacy, model or customer claim.
 - Status doc: no change

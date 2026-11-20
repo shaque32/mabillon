@@ -6,14 +6,17 @@ from __future__ import annotations
 import json
 import sqlite3
 import zipfile
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from core.db import apply_schema
 from core.ingest import leapp
 from core.ingest.leapp import LeappImporter
+from eval.synthetic.leapp import Lava
 from eval.validation import dump_lava, hickman_run, score_hickman, score_leapp
 from eval.validation.score_leapp import LavaPhone
 from tests.test_leapp import _android, _ios
@@ -47,7 +50,7 @@ def _skipped(conn: sqlite3.Connection, phones: dict[str, LavaPhone]) -> dict:
     return {sid: score_leapp.confirm_skipped(conn, p) for sid, p in phones.items()}
 
 
-def _map(conn, phones, key: str) -> tuple[list[str], str]:  # noqa: ANN001
+def _map(conn: sqlite3.Connection, phones: dict[str, LavaPhone], key: str) -> tuple[list[str], str]:
     conns = {sid: p.connect() for sid, p in phones.items()}
     try:
         tables = {sid: score_leapp._tables(c) for sid, c in conns.items()}
@@ -123,7 +126,7 @@ def test_bar_8_compares_every_table_of_both_phones_and_passes(case):
     a = got["phones"]["and"]["tables"]
     assert a["get_googlemessages"] == {
         "kind": "message", "mabillon": 1, "skipped_confirmed": 1, "reader": 2,
-        "null_dedupe_rows": 0, "null_key_records": 0, "pass": True,
+        "null_dedupe_rows": 0, "empty_key_adjustment": 0, "pass": True,
     }  # fmt: skip
     assert (a["get_sms_mms"]["mabillon"], a["get_sms_mms"]["reader"]) == (3, 3)
     assert (a["get_sms_mms_mms"]["mabillon"], a["get_sms_mms_mms"]["reader"]) == (1, 1)
@@ -156,7 +159,9 @@ def test_bar_8_fails_on_a_record_from_a_table_the_reader_does_not_count(case):
     assert not got["pass"]
 
 
-def _set_skipped(conn: sqlite3.Connection, sid: str, edit) -> None:  # noqa: ANN001
+def _set_skipped(
+    conn: sqlite3.Connection, sid: str, edit: Callable[[list[dict[str, Any]]], object]
+) -> None:
     (raw,) = conn.execute(
         "SELECT payload_json FROM source_coverage WHERE source_id = ?", (sid,)
     ).fetchone()
@@ -206,18 +211,20 @@ ALICE = "+19195550111"
 BOB = "+19195550122"
 
 
-def _gm(**over) -> dict:  # noqa: ANN003
+def _gm(**over: object) -> dict[str, object]:
     return {"direction": "Incoming", "message": "hi", "message_type": "text/plain",
             "message_timestamp": 100, "message_sender": ALICE,
             "other_participantconversation_name": "Alice Ames", **over}  # fmt: skip
 
 
-def _sms(**over) -> tuple[str, list[dict]]:  # noqa: ANN003
+def _sms(**over: object) -> tuple[str, list[dict[str, object]]]:
     return "get_sms_mms", [{"type": "Received", "body": "hi", "date": 101, "address": ALICE,
                             **over}]  # fmt: skip
 
 
-def _mms(*parts: tuple[str | None, str | None], **over) -> tuple[str, list[dict]]:  # noqa: ANN003
+def _mms(
+    *parts: tuple[str | None, str | None], **over: object
+) -> tuple[str, list[dict[str, object]]]:
     """An MMS as ALEAPP writes it: one row per part (body, media)."""
     row = {"direction": "Received", "date": 100, "from_address": ALICE, "to_address": "+1919555",
            **over}  # fmt: skip
@@ -268,13 +275,26 @@ PATH = "/data/user_de/0/com.android.providers.telephony/app_parts/PART_1_a.jpg"
         ([_gm(direction="Outgoing")], _sms(type="Sent", address=BOB), "its other party is not"),
         ([_gm(direction="Outgoing", other_participantconversation_name=ALICE)],
          _mms(("hi", None), direction="Sent", to_address=f"{ALICE},{BOB}"), "cannot be compared"),
+        # times in whole seconds, as the importer compares them
+        ([_gm(message_timestamp=100.1)], _sms(date=102.9), None),
+        ([_gm(message_timestamp=100.9)], _sms(date=103.0), "more than 2 seconds"),
+        # every part of an MMS within the limit
+        ([_gm()], ("get_sms_mms_mms", [{**_mms(("hi", None))[1][0]},
+                                       {**_mms((None, None))[1][0], "date": 110}]),
+         "more than 2 seconds"),
+        # an MMS's direction is its Direction column, never another column named type
+        ([_gm()], _mms(("hi", None), type="Sent"), None),
+        ([_gm()], _sms(type=None, direction="Received"), "its direction is not"),
+        # a part type outside text/ (the importer's test is case-sensitive) is an attachment
+        ([_gm(message_type="Text/Plain")], _sms(), "has 1 attachment(s), the SMS or MMS 0"),
         ([_gm()], None, "is not in the LAVA tables"),
         ([_gm()], ("get_sms_mms", []), "is not in the LAVA tables"),
         ([_gm()], ("get_sms_mms", [_sms()[1][0], _sms()[1][0]]), "is not in the LAVA tables"),
     ],
 )  # fmt: skip
 def test_a_pair_is_confirmed_only_when_every_field_agrees(parts, native, why):
-    got = score_leapp._pair_problem(parts, native, {"Alice Ames": [score_leapp._handle(ALICE)]})
+    contacts = {"Alice Ames": [score_leapp._handle(ALICE) or ""]}
+    got = score_leapp._pair_problem(parts, native, contacts)
     assert got is None if why is None else why in (got or "")
 
 
@@ -432,7 +452,7 @@ def test_a_leapp_run_is_scored_with_its_phones_and_bar_8_by_table(leapp_run):
     md = (out / "score.md").read_text("utf-8")
     assert md.startswith("# Validation score (LEAPP phones: and)")
     assert "### and: PASS" in md
-    assert "| get_googlemessages | message | 1 | 1 | 2 | 0 | yes |" in md
+    assert "| get_googlemessages | message | 1 | 1 | 2 | +0 | yes |" in md
 
 
 def test_a_leapp_run_is_never_scored_with_a_ufdr_dump_or_without_its_phones(leapp_run):
@@ -451,7 +471,7 @@ def test_a_leapp_run_is_never_scored_with_a_ufdr_dump_or_without_its_phones(leap
 # ---------------------------------------------------------------- review findings on #271
 
 
-def _one_phone(tmp_path: Path, lv) -> tuple[sqlite3.Connection, dict[str, LavaPhone]]:  # noqa: ANN001
+def _one_phone(tmp_path: Path, lv: Lava) -> tuple[sqlite3.Connection, dict[str, LavaPhone]]:
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys = ON")
     apply_schema(conn)
@@ -524,8 +544,11 @@ def test_rows_with_an_empty_dedupe_value_count_as_the_importer_reads_them(tmp_pa
     conn, phones = _one_phone(tmp_path, lv)
     got = score_leapp.import_counts(conn, phones, _skipped(conn, phones))
     t = got["phones"]["and"]["tables"]
-    assert (t["get_sms_mms"]["null_dedupe_rows"], t["get_sms_mms"]["null_key_records"]) == (1, 1)
-    assert t["get_googlemessages"]["null_key_records"] == 1
+    assert (t["get_sms_mms"]["null_dedupe_rows"], t["get_sms_mms"]["empty_key_adjustment"]) == (
+        1,
+        1,
+    )
+    assert t["get_googlemessages"]["empty_key_adjustment"] == 1
     assert got["pass"], t
     # a key on the second part names the message the first part named
     ids, why = _map(conn, phones, "lava:and:get_googlemessages:5")
@@ -538,3 +561,51 @@ def test_a_real_column_named_rowid_is_never_a_row_id_locator():
     rows = [{score_leapp.ROWID: 3, "rowid": "7", "OID": "8", "msg_id": "5"}]
     got = score_leapp._candidates("t", rows)
     assert got == {"t/rowid=3", "t/msg_id=5"}
+
+
+def test_repeated_empty_dedupe_values_are_each_a_record_and_a_lost_one_fails(tmp_path):
+    # three SMS rows with msg_id "", " " and NULL: the importer makes three records, the reader
+    # counts "" and " " as two values and leaves NULL out
+    lv = _android()
+    for i, mid in enumerate(("", " ", None)):
+        lv.add("get_sms_mms", **{"Date": f"2024-03-04T12:0{i}:00Z", "Type": "Received",
+                                 "Address": "+19195550111", "Body": f"empty {i}",
+                                 "MSG ID": mid, "Thread ID": "2"})  # fmt: skip
+    conn, phones = _one_phone(tmp_path, lv)
+    got = score_leapp.import_counts(conn, phones, _skipped(conn, phones))
+    t = got["phones"]["and"]["tables"]["get_sms_mms"]
+    assert (t["mabillon"], t["reader"], t["empty_key_adjustment"]) == (6, 5, 1)
+    assert got["pass"]
+    conn.execute("DELETE FROM messages WHERE source_id = 'and' AND locator = 'get_sms_mms/rowid=5'")
+    assert not score_leapp.import_counts(conn, phones, _skipped(conn, phones))["pass"]
+
+
+@pytest.mark.parametrize("rows", [[1, "2"], [1, None], [True], "1"])
+def test_a_skipped_entry_whose_rows_are_not_row_ids_is_not_confirmed(case, rows):
+    conn, phones = case
+    _set_skipped(conn, "and", lambda s: s[0].update(rows=rows))
+    assert _skipped(conn, phones)["and"]["not_confirmed"][0]["why"] == (
+        "its rows are not all row ids"
+    )
+
+
+def test_a_key_on_a_table_the_importer_does_not_read_says_so(case):
+    conn, phones = case
+    ids, why = _map(conn, phones, "lava:ios:wifinetworks:1")
+    assert ids == [] and "a table the importer does not read" in why
+
+
+def test_a_phone_path_that_is_not_a_zip_file_is_refused_cleanly(tmp_path):
+    record, zips = _record(tmp_path)
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"not a zip")
+    record["phones"][0]["sha256"] = hickman_run.sha256_file(bad)
+    with pytest.raises(SystemExit, match="is not a zip file"):
+        score_leapp.open_phones(
+            record, {**zips, "and": bad}, score_leapp.KINDS_FILE, tmp_path / "w"
+        )
+    with pytest.raises(SystemExit, match="--phone and: .* is not a file"):
+        score_leapp.open_phones(
+            record, {**zips, "and": tmp_path / "missing.zip"}, score_leapp.KINDS_FILE,
+            tmp_path / "w2",
+        )  # fmt: skip

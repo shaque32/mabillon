@@ -1248,8 +1248,8 @@ def _leapp_count_lines(counts: dict[str, Any]) -> list[str]:
     lines = [
         "Each table the kinds file reads: Mabillon's records from it (distinct locators), the"
         " Google Messages copies the importer skipped whose pair the scorer confirmed, the"
-        " reader's count (dump_lava), and the records the importer makes from rows the reader"
-        " leaves out (an empty dedupe value: one record per row, or per Google Messages group).",
+        " reader's count (dump_lava), and what rows with an empty dedupe value add to it (the"
+        " importer makes one record per such row, or per Google Messages group).",
         "",
     ]
     for sid, p in counts["phones"].items():
@@ -1263,7 +1263,7 @@ def _leapp_count_lines(counts: dict[str, Any]) -> list[str]:
             same = "yes" if r["pass"] else "NO"
             lines.append(
                 f"| {t} | {r['kind']} | {r['mabillon']} | {r['skipped_confirmed']}"
-                f" | {r['reader']} | {r.get('null_key_records', 0)} | {same} |"
+                f" | {r['reader']} | {r.get('empty_key_adjustment', 0):+d} | {same} |"
             )
         lines.append("")
         if p["skipped_not_confirmed"]:

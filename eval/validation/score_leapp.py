@@ -130,7 +130,11 @@ def _extract(zip_path: Path, folder: Path) -> None:
     """The phone zip's one manifest and the database it names beside it, copied into folder as
     MANIFEST and DATABASE: the files a LAVA reader takes, found as LAVA names them (either
     manifest name, the manifest's lava_db_name in the manifest's own folder)."""
-    with zipfile.ZipFile(zip_path) as z:
+    try:
+        z = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile as err:
+        raise SystemExit(f"score: {zip_path} is not a zip file") from err
+    with z:
         names = z.namelist()
         found = [
             n
@@ -172,6 +176,8 @@ def open_phones(
     kinds, _ = load_kinds(kinds_path)
     out: dict[str, LavaPhone] = {}
     for sid, path in sorted(given.items()):
+        if not path.is_file():
+            raise SystemExit(f"score: --phone {sid}: {path} is not a file")
         folder = work / f"lava-{len(out)}"
         folder.mkdir(parents=True)
         # one copy is hashed and read, so the bytes read are the bytes the hash checked
@@ -406,7 +412,8 @@ def _pair_problem(
         return "the SMS or MMS it names is not in the LAVA tables"
     table, rows = native
     g_dir = {fold(_value(p.get("direction")) or "") for p in parts}
-    n_dir = {fold(_value(r.get("type") or r.get("direction")) or "") for r in rows}
+    col = "type" if table == "get_sms_mms" else "direction"  # as the importer reads each
+    n_dir = {fold(_value(r.get(col)) or "") for r in rows}
     if len(g_dir) != 1 or len(n_dir) != 1 or _DIRECTION.get(next(iter(g_dir))) != next(iter(n_dir)):
         return "its direction is not the SMS or MMS's"
     texts = [s for p in parts if (s := _value(p.get("message")))]
@@ -417,7 +424,7 @@ def _pair_problem(
         1
         for p in parts
         if _value(p.get("attachment_location"))
-        or not fold(_value(p.get("message_type")) or "text/plain").startswith("text/")
+        or not (_value(p.get("message_type")) or "text/plain").startswith("text/")
     )
     n_texts: list[str] = []
     n_media = 0
@@ -440,11 +447,13 @@ def _pair_problem(
         return "its other party cannot be compared with the SMS or MMS's"
     if not _same_handle(g_party, n_party):
         return "its other party is not the SMS or MMS's"
+    # whole seconds, as the importer compares them; every part of an MMS within the limit
     g_t = {_epoch(p.get("message_timestamp")) for p in parts}
-    n_t = _epoch(rows[0].get("date"))
-    if None in g_t or n_t is None or len(g_t) != 1:
+    n_t = [_epoch(r.get("date")) for r in rows]
+    if None in g_t or None in n_t or len(g_t) != 1:
         return "a time is missing or the rows disagree on it"
-    if abs(next(iter(g_t)) - n_t) > SAME_MESSAGE_SECONDS:  # type: ignore[operator]
+    g = int(next(iter(g_t)))  # type: ignore[arg-type]
+    if any(abs(g - int(n)) > SAME_MESSAGE_SECONDS for n in n_t):  # type: ignore[arg-type]
         return f"it is more than {SAME_MESSAGE_SECONDS} seconds from the SMS or MMS"
     return None
 
@@ -461,14 +470,18 @@ def confirm_skipped(case: sqlite3.Connection, phone: LavaPhone) -> dict[str, Any
         contacts = contact_handles(conn, tables)
         claimed = Counter(s.get("same_as") for s in skipped)
         for s in skipped:
-            rows = [int(r) for r in s.get("rows") or [] if isinstance(r, int)]
+            listed = s.get("rows")
+            ids_ok = isinstance(listed, list) and all(type(r) is int for r in listed)
+            rows: list[int] = list(listed) if ids_ok else []  # type: ignore[arg-type]
             parts: list[dict[str, Any]] = []
             if gm is not None:
                 alias = _rowid_alias(conn, gm)
                 sql = f"SELECT {alias} AS {ROWID}, * FROM {quote(gm)} WHERE {alias} = ?"  # noqa: S608
                 parts = [dict(r) for i in rows for r in conn.execute(sql, (i,))]
-            if len(parts) != len(rows) or not rows:
-                why: str | None = "its rows are not in the table"
+            if not ids_ok:
+                why: str | None = "its rows are not all row ids"
+            elif len(parts) != len(rows) or not rows:
+                why = "its rows are not in the table"
             elif claimed[s.get("same_as")] > 1:
                 why = "the SMS or MMS it names stands for another skipped row too"
             else:
@@ -532,7 +545,12 @@ def _map_one(
     table = tables[sid].get(fold(m.group("table")))
     if table is None:
         return [], f"phone {sid} has no table {m.group('table')!r}"
-    spec = phones[sid].kinds.get(fold(table), {})
+    spec = phones[sid].kinds.get(fold(table))
+    if spec is None or spec.get("kind") == dump_lava.SKIP:
+        return [], (
+            f"{table} is a table the importer does not read; cite the row in a table it reads"
+            " (get_sms_mms_combined repeats get_sms_mms and get_sms_mms_mms)"
+        )
     rows = _rows(conns[sid], table, rowid, spec.get("dedupe"))
     if not rows:
         return [], f"{table} has no row {rowid}"
@@ -556,11 +574,16 @@ def _locator_table(locator: str) -> str:
     return fold(locator.split("/", 1)[0])
 
 
-def null_key_records(conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None) -> int:
-    """The records the importer makes from rows the reader leaves out of its count (a dedupe
-    column NULL): one per row for a table grouped by one column (the importer names it by its
-    row id), and for a table grouped by several (Google Messages) one per distinct group, an
-    empty value read as one value, that no row the reader counts already stands for."""
+def empty_key_adjustment(
+    conn: sqlite3.Connection, table: str, dedupe: str | list[str] | None
+) -> int:
+    """What to add to the reader's count so it counts rows with an empty dedupe value (NULL,
+    empty or white space) as the importer makes records of them. The reader leaves NULL rows
+    out and counts each distinct raw value, so "" and " " are one or two values to it. The
+    importer makes one record per such row for a table grouped by one column (it names it by
+    its row id), and for a table grouped by several (Google Messages) one per distinct group,
+    each value read stripped and NULL as empty. Only rows with an empty value are counted
+    again here; every other row is left as the reader counted it."""
     cols = [dedupe] if isinstance(dedupe, str) else list(dedupe or [])
     if not cols:
         return 0
@@ -570,14 +593,19 @@ def null_key_records(conn: sqlite3.Connection, table: str, dedupe: str | list[st
         return 0  # the reader refuses a table without its dedupe columns
     names = ", ".join(quote(k) for k in keys)
     sql = f"SELECT {names} FROM {quote(table)}"  # noqa: S608
-    counted: set[tuple[str, ...]] = set()
-    left_out: list[tuple[str, ...]] = []
+    importer_rows = 0
+    importer_groups: set[tuple[str, ...]] = set()
+    reader_groups: set[tuple[object, ...]] = set()
     for row in conn.execute(sql):
         norm = tuple(_value(v) or "" for v in row)
-        (left_out.append if any(v is None for v in row) else counted.add)(norm)
-    if len(keys) == 1:
-        return len(left_out)
-    return len(set(left_out) - counted)
+        if "" not in norm:
+            continue  # no empty value: the reader and the importer group it alike
+        importer_rows += 1
+        importer_groups.add(norm)
+        if all(v is not None for v in row):
+            reader_groups.add(tuple(row))  # the reader counted it as one distinct value
+    importer = importer_rows if len(keys) == 1 else len(importer_groups)
+    return importer - len(reader_groups)
 
 
 def import_counts(
@@ -607,16 +635,16 @@ def import_counts(
                 # importer lists each skipped message's rows: a skipped message counts once
                 added = _confirmed_messages(conf) if fold(table) == GOOGLE_MESSAGES else 0
                 nulls = 0
-                if t.get("null_dedupe_rows") and fold(table) in in_db:
+                if fold(table) in in_db:
                     spec = phone.kinds.get(fold(table), {})
-                    nulls = null_key_records(lava, in_db[fold(table)], spec.get("dedupe"))
+                    nulls = empty_key_adjustment(lava, in_db[fold(table)], spec.get("dedupe"))
                 rows[table] = {
                     "kind": t["kind"],
                     "mabillon": mine,
                     "skipped_confirmed": added,
                     "reader": t["count"],
                     "null_dedupe_rows": t.get("null_dedupe_rows", 0),
-                    "null_key_records": nulls,
+                    "empty_key_adjustment": nulls,
                     "pass": mine + added == t["count"] + nulls,
                 }
         extra = dict(sorted(ours.items()))  # records from a table the reader does not count
