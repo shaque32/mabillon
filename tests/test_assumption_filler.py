@@ -5250,3 +5250,21 @@ def test_coderabbit_on_5b569da_an_account_named_like_a_plural_hides_no_plural(tm
     text = 'On March 12, 2026, PETROV sent TEXTS to @northstar: "need 2 more by friday".'
     assert "texts" in filler.unread_words(text)
     assert not filler.unread_words(text.replace("TEXTS", "3 TEXTS"), tests={"count"})
+
+
+def test_coderabbit_on_5cd6759_a_person_aliased_like_a_plural_hides_no_plural(conn):
+    from core.review import actions
+
+    actions.set_aliases(conn, REYES, ["TEXTS"], "expert:test")
+    try:
+        filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+        text = 'On March 12, 2026, PETROV sent TEXTS on Telegram: "need 2 more by friday".'
+        assert "texts" in filler.unread_words(text)
+        assert not filler.unread_words(text.replace("TEXTS", "3 TEXTS"), tests={"count"})
+        # written as a person, the word is still read as a plural: an expert-only event, the
+        # safe side
+        assert filler.unread_words(
+            'On March 12, 2026, PETROV texted TEXTS on Telegram: "need 2 more by friday".'
+        ) == ["texts"]
+    finally:
+        actions.set_aliases(conn, REYES, [], "expert:test")

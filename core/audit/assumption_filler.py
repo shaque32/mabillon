@@ -3740,12 +3740,16 @@ class LocalAssumptionFiller:
             for m in rx.finditer(bare)
         ):
             extra.append("a second date")
+        # "sent texts": more than one message, plain only beside a count, so a plural is never
+        # blanked as an app's alias, an account's name ("Texts") or a person's alias ("TEXTS")
+        # (CodeRabbit on #265)
+        plural = set() if "count" in tests else {"texts", "text messages", "imessages", "messages"}
         parties: list[tuple[int, int]] = []  # where the claim writes a person or an account
         try:
             parties += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
             pass  # a name in lower case: its words stay, and read as words no check reads
-        cut += parties
+        cut += [sp for sp in parties if " ".join(bare[slice(*sp)].casefold().split()) not in plural]
         parties += [m.span() for m in _HANDLE_RE.finditer(bare)]
         for did, st, en in self._phone_spans(bare):
             if devices is None or did in devices:
@@ -3787,9 +3791,6 @@ class LocalAssumptionFiller:
         # An account's or person's name in the case is read only where the claim writes it as
         # a name, not as a plain lower-case word: an account shown as "Photo" never hides
         # "sent a photo" (Claude review on #265).
-        # "sent texts": more than one message, plain only beside a count, so a plural is never
-        # blanked as an app's alias or an account's name ("Texts"; CodeRabbit on #265)
-        plural = set() if "count" in tests else {"texts", "text messages", "imessages", "messages"}
         for n in sorted({n for n in self._names(bare) if len(n) > 2}, key=len, reverse=True):
             if " ".join(n.casefold().split()) in plural:
                 continue
