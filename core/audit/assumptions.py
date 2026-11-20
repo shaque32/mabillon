@@ -483,6 +483,18 @@ def template_of(assumption: Assumption) -> Template | None:
 CODE_MADE_NOTE = " Filled from the claim's wording."
 
 
+# The words code puts before CODE_MADE_NOTE on the event it adds for a claim's words no check
+# reads (filler 12, `LocalAssumptionFiller._add_unread_event`), so the expert sees why it is
+# there and the testability sheet check tells it from a model's event whose range code repaired
+# (CodeRabbit on #265).
+UNREAD_EVENT_NOTE = " Added because the claim states more than its checks read."
+
+
+def is_unread_event(template_id: str, text: str) -> bool:
+    """True when an assumption is the event code adds for words no check reads."""
+    return template_id == "event" and text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+
+
 def is_code_made(text: str) -> bool:
     """True when an assumption's text says code filled it from the claim's wording."""
     return text.endswith(CODE_MADE_NOTE)
@@ -491,12 +503,14 @@ def is_code_made(text: str) -> bool:
 @dataclass(frozen=True)
 class Proposal:
     """One filled template, as proposed by the local model or typed by the expert.
-    `code_made`: code filled it, or some of its parameters, from the claim's own words."""
+    `code_made`: code filled it, or some of its parameters, from the claim's own words.
+    `unread`: code added it, whole, for words no check reads (an event; implies code_made)."""
 
     template_id: str
     params: Mapping[str, Any] | AssumptionParams
     is_core: bool = True
     code_made: bool = False
+    unread: bool = False
 
 
 def from_proposal(claim_id: str, proposal: Proposal) -> Assumption:
@@ -504,7 +518,9 @@ def from_proposal(claim_id: str, proposal: Proposal) -> Assumption:
     it: every path that builds one from a proposal (the builder, the testability step's repair)
     keeps the note. Raises as `instantiate` does."""
     a = instantiate(claim_id, proposal.template_id, proposal.params, proposal.is_core)
-    if proposal.code_made:
+    if proposal.unread:
+        a = a.model_copy(update={"text": a.text + UNREAD_EVENT_NOTE + CODE_MADE_NOTE})
+    elif proposal.code_made:
         a = a.model_copy(update={"text": a.text + CODE_MADE_NOTE})
     return a
 

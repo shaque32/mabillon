@@ -332,8 +332,11 @@ def test_a_repair_naming_a_person_only_its_paragraph_names_is_outside_the_claim(
     outcome, reasons, _, kept = testability.check_answer(
         filler, claim("C09"), [CALL_C09], None, testability.CLAIM_CHECK
     )
+    # the call's row, and the event code adds for "the number saved as ..." (a contact entry
+    # no kept row reads, filler 12)
     assert (outcome, reasons) == ("proposed", []) and [a.template_id for a in kept] == [
-        "record_time"
+        "record_time",
+        "event",
     ]
 
 
@@ -1121,19 +1124,25 @@ def test_a_party_the_claim_names_is_no_wrong_person_under_the_parties_check(conn
     """Arsh, 2026-11-08 (decision card): the go/no-go scores both passes, and a party the claim
     names is not a wrong person. Under SHEET_CHECK_PARTIES, REYES as a party to the message's
     time (the claim names him) matches a sheet whose rows name PETROV only; under the old
-    SHEET_CHECK, which earlier logs replay with, it is a mismatch as before."""
+    SHEET_CHECK, which earlier logs replay with, it is a mismatch as before, and so is the app
+    "texted" binds (`claim_apps`), which only SHEET_CHECK_PARTIES excuses (Claude review on
+    #265)."""
     filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
     sheet = testability.sheet_named(SHEET)["C12"]
     assert sheet.people == {PETROV}
     old = testability.check_answer(
         filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK
     )
-    assert old[0] == "mismatch" and old[2].parties == frozenset()
-    assert old[1] == [f"names the person {REYES!r}, which the signed sheet does not name"]
+    assert old[0] == "mismatch" and old[2].parties == old[2].claim_apps == frozenset()
+    assert old[1] == [
+        f"names the person {REYES!r}, which the signed sheet does not name",
+        "names the app 'sms', which the signed sheet does not name",
+    ]
     outcome, reasons, got, kept = testability.check_answer(
         filler, claim("C12"), C12_WITH_REYES, sheet, testability.SHEET_CHECK_PARTIES
     )
     assert (outcome, reasons) == ("proposed", []) and got.parties == {REYES}
+    assert got.claim_apps == {"sms"}
     assert {a.template_id for a in kept} == {"sender", "record_time"}
     assert got.payload() == old[2].payload()  # the log entry shows what it named, as before
 
@@ -1287,7 +1296,7 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
     db.execute("CREATE TABLE persons (id TEXT, name TEXT)")
     db.execute("CREATE TABLE stipulations (person_id TEXT, kind TEXT)")
     db.execute("CREATE TABLE assumptions (id INTEGER PRIMARY KEY, claim_id TEXT,"
-               " template_id TEXT, params_json TEXT, is_core INTEGER)")  # fmt: skip
+               " template_id TEXT, params_json TEXT, text TEXT, is_core INTEGER)")  # fmt: skip
     kept = {
         "C12": [  # every sheet row: counts
             ("sender", {"person_ids": [PETROV], "quoted_text": QUOTE_C12}),
@@ -1303,9 +1312,9 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
         db.execute("INSERT INTO claims VALUES (?, ?)", (cid, GOLD[cid]["text"]))
         for template_id, params in rows:
             db.execute(
-                "INSERT INTO assumptions (claim_id, template_id, params_json, is_core)"
-                " VALUES (?, ?, ?, 1)",
-                (cid, template_id, json.dumps(params)),
+                "INSERT INTO assumptions (claim_id, template_id, params_json, text, is_core)"
+                " VALUES (?, ?, ?, ?, 1)",
+                (cid, template_id, json.dumps(params), f"{template_id} row."),
             )
     step = SimpleNamespace(
         sheet=testability.sheet_named(SHEET),
@@ -1323,3 +1332,38 @@ def test_both_passes_counts_only_claims_that_leave_no_sheet_row_out(conn):
         "first_pass_matching_the_sheet": 1,
         "first_pass_naming_another_person_phone_or_window": 0,
     }
+
+
+def test_code_s_event_for_unread_words_is_no_mismatch_under_the_parties_check(conn):
+    """Claude review on #265: the event filler 12 adds for words no check reads names nothing
+    the claim's other rows do not, and only an expert carries it, so SHEET_CHECK_PARTIES does
+    not count its template against a sheet that has none. The strict SHEET_CHECK still does,
+    and a model's own event still counts."""
+    filler = LocalAssumptionFiller(FakeModel({}), conn, template=FILLER_DRAFT)
+    sheet = testability.sheet_named(SHEET)["C12"]
+    c12 = claim("C12")
+    c = c12.model_copy(update={"text": c12.text[:-1] + ", and REYES never replied."})
+    outcome, reasons, got, kept = testability.check_answer(
+        filler, c, C12_WITH_REYES, sheet, testability.SHEET_CHECK_PARTIES
+    )
+    assert (outcome, reasons) == ("proposed", []), reasons
+    assert got.code_templates == {"event"} and "event" in {a.template_id for a in kept}
+    old = testability.check_answer(filler, c, C12_WITH_REYES, sheet, testability.SHEET_CHECK)
+    assert old[0] == "mismatch"
+    assert "names the template 'event', which the signed sheet does not name" in old[1]
+    from core.audit.assumptions import CODE_MADE_NOTE, UNREAD_EVENT_NOTE
+
+    assert testability.code_events([("event", "x." + UNREAD_EVENT_NOTE + CODE_MADE_NOTE)]) == {
+        "event"
+    }
+    # a model's event code only repaired (CodeRabbit on 22b0736) and a plain one still count
+    assert testability.code_events([("event", "x." + CODE_MADE_NOTE)]) == frozenset()
+    assert testability.code_events([("event", "x happened.")]) == frozenset()
+    assert testability.code_events([("sender", "y.")]) == frozenset()
+    # with the time row first, the event copies REYES too; it still sets no party's role
+    # (CodeRabbit on 22b0736)
+    outcome, reasons, got, kept = testability.check_answer(
+        filler, c, C12_WITH_REYES[::-1], sheet, testability.SHEET_CHECK_PARTIES
+    )
+    assert (outcome, reasons) == ("proposed", []), reasons
+    assert "event" in {a.template_id for a in kept}

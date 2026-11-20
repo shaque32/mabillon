@@ -531,7 +531,9 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     # the time check rests on words found only inside a longer sentence (1.2.0, 1.1.0).
     assert CHECKS["sender"].version == "1.2.0"
     assert CHECKS["time"].version == "1.1.1"  # and a call is on the app named beside "call"
-    assert CHECKS["count"].version == "1.2.1"  # and counts calls (validation fill f)
+    # and counts calls (validation fill f), holds "at most" and "exactly" open on rows that
+    # name no side (1.2.1), and never passes or fails on look-alike rows (1.3.0, 1.3.1)
+    assert CHECKS["count"].version == "1.3.1"
 
 
 def _typed(conn: sqlite3.Connection, body: str) -> sqlite3.Connection:
@@ -700,6 +702,144 @@ def test_exchanged_messages_pass_only_with_one_each_way_and_never_fail_on_silenc
     assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
     assert "does not mean one was never sent" in r.detail
     assert not FORBIDDEN_WORDS.search(r.detail), r.detail
+
+
+def test_a_message_each_way_resting_on_look_alike_rows_is_held_open() -> None:
+    # Bee's only message repeats Ay's "ok" a second earlier: the two rows may be one message
+    # from Ay with Bee's label, so "exchanged at least 2" waits for an expert even though 2 or
+    # 3 messages give the same count (CodeRabbit on #265).
+    conn = build()
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    _march_message(conn, "msg:p1:7", "a:p1:own", "a:p1:b")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, each_way=True)
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "an expert must decide" in r.detail
+    # Bee's message in its own words: a message each way stands
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_a_count_of_one_sides_messages_reads_look_alikes_on_the_other_side() -> None:
+    # Ay's "ok" and Bee's "ok" a second apart may be Bee's one message with Ay's label, so
+    # "Ay sent at least 1" waits for an expert; it held when the rows were filtered to Ay's
+    # before look-alikes were read (CodeRabbit on #265).
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, sent_by=[A])
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "or the other side's message" in r.detail
+    assert {"msg:p1:2", "msg:p1:3"} <= set(r.record_ids)  # both "ok" rows are cited
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_a_count_of_one_sides_messages_reads_look_alikes_on_rows_with_no_receiver() -> None:
+    # Ay sent "ok" and "hi"; Bee's "ok" a second after Ay's names no receiver. "Ay sent exactly
+    # 1" failed on Ay's two rows, though Ay's "ok" may be a copy of Bee's message (CodeRabbit on
+    # #265). With other words in Bee's row, the two rows of Ay's still fail it.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:2'"
+    )
+    conn.execute("DELETE FROM message_recipients WHERE message_id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:7", "a:p1:own", "a:p1:b")
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, sent_by=[A])
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    conn.execute("UPDATE messages SET body = 'fine' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL, r.detail
+
+
+def test_a_message_each_way_reads_look_alikes_on_rows_with_no_receiver() -> None:
+    # Ay's "ok" to Bee, Bee's "ok" a second later to no one named, and Bee's "sure": "they
+    # exchanged at least 2" passed, though both "ok" rows may be Bee's message and Ay sent
+    # none (CodeRabbit on #265). Bee's row is never counted; it is read for look-alikes and
+    # cited. With other words in it, a message each way stands.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute("UPDATE messages SET body = 'sure' WHERE id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:8", "a:p1:b")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:29Z' WHERE id = 'msg:p1:8'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH, each_way=True)
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "an expert must decide" in r.detail
+    assert "msg:p1:8" in r.record_ids
+    conn.execute("UPDATE messages SET body = 'fine' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    # a fail on the counted rows cites them alone (CodeRabbit on #265)
+    conn.execute("UPDATE messages SET body = 'ok' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.FAIL, r.detail
+    assert "msg:p1:8" not in r.record_ids
+    assert "each way rests" not in r.detail  # no expert needed for that fail
+    # Bee's "sure" with its own copy to no one named still holds Bee's message, so only the
+    # "ok" copy is cited (CodeRabbit on #265)
+    (sure_at,) = conn.execute("SELECT ts_utc FROM messages WHERE id = 'msg:p1:2'").fetchone()
+    _march_message(conn, "msg:p1:9", "a:p1:b")
+    # one second after the original, in the same look-alike group
+    assert sure_at[17:19] == "00", sure_at
+    later = f"{sure_at[:17]}01{sure_at[19:]}"
+    conn.execute("UPDATE messages SET body = 'sure', ts_utc = ? WHERE id = 'msg:p1:9'", (later,))
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:8" in r.record_ids
+    assert "msg:p1:9" not in r.record_ids
+    conn.execute("DELETE FROM messages WHERE id = 'msg:p1:9'")
+    # Ay's own copy with no receiver keeps Ay's message Ay's (CodeRabbit on #265)
+    conn.execute("UPDATE messages SET sender_account_id = 'a:p1:own' WHERE id = 'msg:p1:8'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+def test_a_row_with_no_receiver_can_join_two_counted_rows_into_one_message() -> None:
+    # Ay's "ok" at 28 and 32 seconds are two messages, but Ay's "ok" at 30 seconds to no one
+    # named may join them into one, so "at least 3" over them and Bee's "sure" is held open,
+    # with the joining row cited (CodeRabbit on #265). Without that row it passes.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:28Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute("UPDATE messages SET body = 'sure' WHERE id = 'msg:p1:2'")
+    _march_message(conn, "msg:p1:10", "a:p1:own", "a:p1:b")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:32Z' WHERE id = 'msg:p1:10'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=3, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    _march_message(conn, "msg:p1:11", "a:p1:own")
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-10T15:00:30Z' WHERE id = 'msg:p1:11'"
+    )
+    r = check(conn, "message_count", expected_count=3, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:11" in r.record_ids
+    # a copy beside one counted row alone takes no message away
+    conn.execute("DELETE FROM message_recipients WHERE message_id = 'msg:p1:10'")
+    conn.execute("DELETE FROM messages WHERE id = 'msg:p1:10'")
+    r = check(conn, "message_count", expected_count=2, count_op="ge", **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail
 
 
 @pytest.mark.parametrize(
@@ -898,3 +1038,27 @@ def test_a_count_that_fails_cites_only_the_rows_it_counted() -> None:
     common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
     r = check(conn, "message_count", expected_count=1, count_op="le", **common)
     assert r.outcome is CheckOutcome.FAIL and "msg:p1:c9" not in r.record_ids
+
+
+def test_a_count_reads_look_alikes_just_outside_the_window() -> None:
+    # Ay's "ok" as March opens and Bee's "ok" a second before it may be Bee's one message with
+    # Ay's label, so "Ay sent at least 1" waits for an expert; it passed while rows outside the
+    # window were left out of the look-alike groups (CodeRabbit on #265). Bee's row is never
+    # counted.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-01T05:00:00Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-01T04:59:59Z' WHERE id = 'msg:p1:2'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=1, count_op="ge", sent_by=[A], **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:2" in r.record_ids
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert r.detail.startswith("Counted 1")  # the row outside the window is not counted
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="ge", sent_by=[A], **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail

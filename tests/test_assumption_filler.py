@@ -22,6 +22,7 @@ from core.audit.assumption_filler import (
     _Account,
     _in_quotes,
     _ProposalOut,
+    _states_seconds,
     check_window,
     count_op,
     coverage_gap,
@@ -29,7 +30,7 @@ from core.audit.assumption_filler import (
     only_addressed,
     stated_part_day,
 )
-from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder
+from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, is_code_made
 from core.audit.checks import CHECKS
 from core.contracts import CheckOutcome, Claim, ClaimStatus, ClaimType, ModelCallOutcome
 from eval.synthetic.generate import generate
@@ -236,7 +237,17 @@ def build(conn, cid: str, answers: dict[str, list[dict]] | None = None):
 # message ("PETROV texted REYES 'its done'", "PETROV sent the Telegram message 'move it
 # tonight'"), so each gets PETROV's sender assumption too, which passes: PETROV sent it, at
 # another time than the claim says.
-CODE_ADDS = {"C10": [("sender", CheckOutcome.PASS)], "C11": [("sender", CheckOutcome.PASS)]}
+CODE_ADDS: dict[str, list[tuple[str, CheckOutcome | None]]] = {
+    "C10": [("sender", CheckOutcome.PASS)],
+    # "warning him about police activity" is the call's content, which no check reads
+    "C11": [("sender", CheckOutcome.PASS), ("event", None)],
+    # "two days after the seizure" is a part no check reads, so code adds an event only an
+    # expert can carry (filler 12, `unread_words`); it has no check, so no outcome.
+    "C04": [("event", None)],
+    # "the number saved as \"Marc Garage\"" is a contact entry this answer keeps no row for
+    # (Claude review on #265: "saved" is plain only beside a kept contact_entry row)
+    "C09": [("event", None)],
+}
 
 
 @pytest.mark.parametrize("cid", sorted(GOOD))
@@ -252,7 +263,8 @@ def test_good_answers_become_checkable_assumptions(conn, cid):
         assert a.is_core
         for name in TEMPLATES[a.template_id].checks:  # event, meaning, role: stance only
             outcomes.append(CHECKS[name].run(a, conn).outcome)
-    assert sorted(outcomes) == sorted(EXPECTED[cid] + [o for _, o in CODE_ADDS.get(cid, [])])
+    added = [o for _, o in CODE_ADDS.get(cid, []) if o is not None]
+    assert sorted(outcomes) == sorted(EXPECTED[cid] + added)
 
 
 def test_a_contact_entry_keeps_the_one_account_it_names(conn):
@@ -302,7 +314,7 @@ def test_parameters_match_the_check_tests(conn):
     assert c03.params.window.raw == "From March 10 through March 31, 2026"
     c02 = {a.template_id: a for a in build(conn, "C02")[0]}
     assert c02["same_account"].params.handles == ("@alex92", "@northstar")
-    (c09,) = build(conn, "C09")[0]
+    c09 = next(a for a in build(conn, "C09")[0] if a.template_id == "record_time")
     assert c09.params.account_ids == tuple(MARC_0122)
     assert c09.params.person_ids == (PETROV,)  # named in the paragraph, not the claim
     assert c09.params.duration_s == (90, 150)
@@ -1539,11 +1551,13 @@ def test_a_code_made_sender_stays_on_the_phones_messages_when_the_claim_names_th
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
     phone = ["Phone", "SMS"]  # case01's apps that hold a phone's messages
     assert filler._message_apps('PETROV texted REYES: "ok".') == phone
-    assert filler._message_apps('PETROV told REYES by iMessage: "ok".') == phone
+    # "by iMessage" names a kind case01 holds no app for: an iMessage is never read on the
+    # SMS app (CodeRabbit on #265), so code makes no sender
+    assert filler._message_apps('PETROV told REYES by iMessage: "ok".') is None
     assert filler._message_apps('PETROV texted REYES on Telegram: "ok".') == ["Telegram"]
     assert filler._message_apps('PETROV wrote to REYES: "ok".') == []
     # An app named inside the message is no app it went by.
-    assert filler._message_apps('PETROV told REYES by iMessage: "use Telegram".') == phone
+    assert filler._message_apps('PETROV told REYES by SMS: "use Telegram".') == ["SMS"]
     assert filler._message_apps('PETROV texted REYES: "use Telegram".') == phone
 
 
@@ -1975,14 +1989,19 @@ def test_code_made_assumptions_say_so_and_model_ones_do_not(conn):
     # C05's and C16's time ranges name the writer alone; code adds the one each went to
     # (@northstar, REYES), so the time check tests both sides (_add_recipient), and the row
     # says code filled it.
-    recipient = {"C05": "record_time", "C16": "record_time"}
+    # C10's and C11's time ranges and C16's sender are searched on no app, for claims that
+    # say "texted", "the Telegram message" and "on Instagram"; code binds each to the app the
+    # claim names, for "texted" the case's one app of a phone's own messages (filler 12,
+    # `_bind_named_app`).
+    recipient = {"C05": {"record_time"}, "C16": {"record_time", "sender"}}
+    recipient |= {"C10": {"record_time"}, "C11": {"record_time"}}
     for cid in sorted(GOOD):
         model_made, *_ = build(conn, cid)
         whole = [
             a
             for a in model_made
             if a.template_id not in {t for t, _ in CODE_ADDS.get(cid, [])}
-            and a.template_id != recipient.get(cid)
+            and a.template_id not in recipient.get(cid, set())
         ]
         assert not any(is_code_made(a.text) for a in whole if a.template_id != "meaning"), cid
     (timed,) = [a for a in build(conn, "C05")[0] if a.template_id == "record_time"]
@@ -3300,3 +3319,1952 @@ def test_relative_words_inside_the_quote_date_nothing():
     )
     sender = Proposal("sender", {"quoted_text": "two days before the drop, call me"})
     assert coverage_gap(c, [sender]) is None
+
+
+# ---------------------------------------------------------------- filler 12 (v5 failure hunt)
+
+C05_ANSWER = [
+    P("sender", people=["PETROV"], quoted_text="need 2 more by friday"),
+    P(
+        "record_time",
+        people=["PETROV"],
+        quoted_text="need 2 more by friday",
+        window=W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00"),
+    ),
+]
+C05_TEXT = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+
+
+def test_a_plain_claim_gets_no_event(conn):
+    made, _ = build_text(conn, C05_TEXT, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        ", and @northstar never replied",
+        ", the first message of the day",
+        ", and @northstar read it within a minute",
+        ", a minute after a Telegram call between them",
+        ", while driving",
+        " from a second phone",
+        ", and sent it twice",
+        # Claude review on #265: an act timed from a call with no length, a person reading,
+        # and a count or a length no row of this answer reads
+        ", after a Telegram call between them",
+        ", during a call",
+        ", and @northstar was reading it",
+        ", one of two messages that day",
+        " over two hours",
+    ],
+)
+def test_words_no_check_reads_add_an_event_only_an_expert_carries(conn, tail):
+    # Each was a SUPPORTED on its checks alone on Android 13 (v5 failure hunt, 2026-11-16).
+    text = C05_TEXT[:-1] + tail + "."
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert event.is_core and is_code_made(event.text)
+    assert {"sender", "record_time"} <= {a.template_id for a in made}
+
+
+def test_a_message_reading_its_words_is_no_act(conn):
+    text = 'On March 12, 2026, PETROV sent @northstar a message reading: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+def test_a_spoken_length_is_plain_only_beside_a_row_that_tests_it(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV placed a call of about two minutes to REYES."
+    assert filler.unread_words(text, (), {"call", "length"}) == []
+    assert filler.unread_words(text, (), {"call"}) == ["two"]
+    assert "call" in filler.unread_words(text, (), ())
+    both = (
+        "At 2:08 p.m. on December 2, 2022, PETROV called REYES, and the two spoke for two minutes."
+    )
+    assert filler.unread_words(both, (), {"call", "length"}) == []
+    assert filler.unread_words(both.replace("the two spoke", "the two calls"), (), {"call"})
+
+
+def test_a_name_that_folds_longer_does_not_move_later_spans(conn):
+    # "ß" casefolds to "ss": spans found in folded text landed one letter late (Claude review
+    # on #265), leaving a stray letter of "Telegram" as a word no check reads.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = 'Near the Große Brücke, PETROV wrote to @northstar on Telegram: "need 2 more by friday".'
+    assert filler.unread_words(text) == ["near", "grosse", "brücke"]
+
+
+def _case_with(tmp_path, *sql: str) -> sqlite3.Connection:
+    db = tmp_path / "case01.db"
+    generate(tmp_path, db)
+    c = sqlite3.connect(db)
+    stipulate(c, PETROV, "Daniel Petrov", "dev:item1")
+    c.execute("PRAGMA foreign_keys = OFF")
+    for q in sql:
+        c.execute(q)
+    return c
+
+
+def test_a_text_on_a_case_with_two_phone_message_apps_searches_both(tmp_path):
+    # "texted" may be SMS or iMessage, as for a code-made sender (Codex on #164): message rows
+    # search both, and a count or an absence, which reads one app, is refused (Claude review
+    # on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    phone = filler._phone_message_apps()
+    assert len(phone) == 2
+    text = 'On March 12, 2026, PETROV texted @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {tuple(phone)}
+    assert filler.claim_apps(text) == frozenset(a.casefold() for a in phone)
+    absence = "PETROV and REYES never texted each other between March 20 and March 23, 2026."
+    made, filler = build_text(c, absence, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+
+
+def test_a_count_of_text_messages_on_one_app_the_model_chose_is_refused(tmp_path, conn):
+    # The model scoped the count to SMS: on a case with SMS and iMessage, "2 text messages"
+    # counted on SMS alone is refused like an unscoped count (CodeRabbit on #265). A count the
+    # model put on Telegram was refused already, as the claim does not name it.
+    text = "On March 21, 2026, on dev:item1, PETROV sent REYES exactly 2 text messages."
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    phone = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)._phone_message_apps()
+    assert len(phone) == 2
+    made, filler = _count(c, text, 2, channels=["SMS"], phones=["dev:item1"])
+    assert made == []
+    assert any("apps of a phone's own messages" in d.reason for d in filler.drops)
+    made, filler = _count(conn, text, 2, phones=["dev:item1"])
+    assert made == []
+
+
+def test_an_absence_on_one_of_the_apps_the_claim_names_is_refused(tmp_path):
+    # On a case holding Telegram and Viber, "no contact on Telegram or Viber" read on Telegram
+    # alone was kept: Viber went unsearched. It is refused; on both apps it is kept
+    # (CodeRabbit on #265). A count so worded is refused already by its own wording checks.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    text = (
+        "PETROV and REYES had no contact on Telegram or Viber between March 20 and March 23, 2026."
+    )
+    (prop,) = GOOD["C14"]
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [{**prop, "channels": ["Telegram"]}])
+    assert made == []
+    assert any("'Viber', which the count or absence" in d.reason for d in filler.drops)
+    both = {**prop, "channels": ["Telegram", "Viber"]}
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [both])
+    assert [a.params.channels for a in made] == [("Telegram", "Viber")], filler.drops
+
+
+def test_a_phone_named_after_an_app_names_no_app(tmp_path):
+    # "the WHATSAPP PHONE" is a phone: a Telegram absence on it is kept on Telegram, not
+    # refused for leaving out WhatsApp, and WhatsApp is none of the claim's apps (CodeRabbit on
+    # #265; `_absence_parties` reads it so).
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["WHATSAPP PHONE"], "expert:Test Expert", lambda: at)
+    text = (
+        "On the WHATSAPP PHONE, PETROV and REYES had no contact on Telegram between March 20"
+        " and March 23, 2026."
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler.claim_apps(text) == frozenset({"telegram"})
+    (prop,) = GOOD["C14"]
+    row = {**prop, "channels": ["Telegram"], "phones": ["the WHATSAPP PHONE"]}
+    made, filler = build_text(c, text, ClaimType.ABSENCE, [row])
+    assert [a.params.channels for a in made] == [("Telegram",)], filler.drops
+
+
+def test_by_phone_is_one_kind_of_contact_on_a_case_with_a_phone_named_phone(tmp_path):
+    # A phone labelled "Phone" blanked "phone" in "no contact by phone", so the absence, read
+    # on messages and calls alike, was kept (CodeRabbit on #265).
+    c = _case_with(tmp_path, "UPDATE devices SET label = 'Phone' WHERE id = 'dev:item1'")
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    text = "PETROV and REYES had no contact by phone between March 20 and March 23, 2026."
+    made, filler = build_text(c, text, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+    assert any("one kind of contact" in d.reason for d in filler.drops), filler.drops
+
+
+def test_a_video_is_a_word_no_check_reads(conn):
+    # "video" was blanked as a calling app's name, so "sent a video" passed on the sender and
+    # time checks alone (CodeRabbit on #265).
+    text = 'On March 12, 2026, PETROV sent @northstar a video on Telegram: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["event", "record_time", "sender"]
+
+
+def test_a_handle_named_like_an_app_picks_no_app(tmp_path):
+    # On a case holding Telegram and Viber, "to @viber on Telegram" names Telegram only: the
+    # handle never adds Viber to the rows or to the claim's apps (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV wrote to @viber on Telegram: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert "Viber" in filler.channels()
+    assert filler._named_apps(text) == ["Telegram"]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {("Telegram",)}
+
+
+@pytest.mark.parametrize(
+    ("tail", "tests"),
+    [(", one of 2 messages that day", {"count"}), (", over 2 hours", {"length"})],
+)
+def test_a_count_or_length_in_digits_is_read_like_one_in_words(conn, tail, tests):
+    # "2" passed where "two" was read: digits were never tokens (CodeRabbit on #265).
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more".'
+    # "messages" is a count's word too (Claude review on 76ef80b)
+    assert filler.unread_words(text)[0] == "2"
+    assert filler.unread_words(text, (), tests) == []
+    # the bare first hour of a range is a time, not a count
+    ranged = text.replace("On March 12, 2026", "Between 10 and 11 a.m. on March 12, 2026")
+    assert filler.unread_words(ranged, (), tests) == []
+
+
+def test_an_account_named_like_a_plain_word_hides_no_word(tmp_path):
+    # An account shown as "Photo" no longer blanks "sent a photo" (Claude review on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO accounts (id, source_id, locator, device_id, app, identifier, display_name)"
+        " VALUES ('acct:item1:Telegram:photo', 'item1', 'x', NULL, 'Telegram', '555', 'Photo')",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, PETROV sent @northstar a photo on Telegram: "need 2 more by friday".'
+    assert filler.unread_words(text) == ["photo"]
+    assert filler.unread_words(text.replace("a photo", "Photo's message")) == []
+
+
+def test_a_message_on_no_app_is_bound_to_the_app_the_claim_names(conn):
+    text = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    rows = {a.template_id: a for a in made}
+    assert rows["sender"].params.channels == ("Telegram",)
+    assert rows["record_time"].params.channels == ("Telegram",)
+
+
+@pytest.mark.parametrize("app", ["on Signal", "by email"])
+def test_a_message_on_an_app_the_case_does_not_hold_stays_unproven(conn, app):
+    # Searched on every app, the words were found on another one: a false SUPPORTED.
+    text = f'On March 12, 2026, PETROV wrote to @northstar {app}: "need 2 more by friday".'
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    assert any("names an app no assumption" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    ("words", "seconds"),
+    [
+        ("at 9:31:04 p.m.", True),
+        ("at 21:14:05Z", True),  # Claude review on #265: a word boundary missed these two
+        ("at 2026-03-12T21:14:05", True),
+        ("in a call that lasted 0:12:45", False),  # a length, not a time of day
+        ("in a call lasting about 0:02:03", False),
+        ("at 9:31 p.m.", False),
+    ],
+)
+def test_a_time_of_day_to_the_second_is_told_from_a_length(words, seconds):
+    assert _states_seconds(words) is seconds
+
+
+def test_a_time_to_the_second_is_not_tested_by_a_range_in_minutes(conn):
+    text = 'At 9:14:05 p.m. on March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W("At 9:14:05 p.m. on March 12, 2026", "2026-03-12T21:14", "2026-03-12T21:15"),
+        ),
+    ]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "record_time" not in {a.template_id for a in made}
+    assert any("to the second" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "had no contact on Signal",
+        "never emailed each other",
+        "never messaged each other",
+        "had no contact by telephone",
+        # an app outside the calling apps the case does not hold (Claude review on #265)
+        "had no contact on TikTok",
+        "had no contact on GroupMe",
+    ],
+)
+def test_an_absence_of_one_kind_of_contact_is_never_read_on_every_app(conn, words):
+    # The absence check on no app reads every app, messages and calls alike: a Telegram
+    # message then "contradicted" a true "no contact on Signal" (v5 failure hunt, 2026-11-16).
+    text = f"PETROV and REYES {words} between March 20 and March 23, 2026."
+    made, filler = build_text(conn, text, ClaimType.ABSENCE, GOOD["C14"])
+    assert made == []
+    assert any("could not read the claim's own words" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    ("words", "kept"),
+    [("had no contact on his second line", False), ("had no contact on Line", True)],
+)
+def test_an_app_named_by_a_plain_word_gets_no_absence_unless_capitalized(
+    conn, monkeypatch, words, kept
+):
+    # "his second line" may name no app at all: code reads no absence on Line for it, while
+    # "on Line" names the app (v5 failure hunt, 2026-11-16). The case has no Line, so the
+    # app list is patched.
+    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["Line"])
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line"])
+    monkeypatch.setattr(
+        LocalAssumptionFiller,
+        "_channels",
+        lambda self, text, names, template_id="": list(names),
+    )
+    text = f"PETROV and REYES {words} between March 20 and March 23, 2026."
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=text,
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [Proposal("no_contact", {"person_ids": [PETROV, REYES]}, is_core=True)]
+    if kept:
+        (row,) = filler._bind_named_app(c, out)
+        assert row.params["channels"] == ["Line"]
+    else:
+        with pytest.raises(Reject, match="plain word"):
+            filler._bind_named_app(c, out)
+
+
+@pytest.mark.parametrize(
+    ("words", "kept"), [("had no contact on Recents", True), ("had no contact on recents", False)]
+)
+def test_a_plain_word_app_written_with_a_capital_is_named_however_the_export_spells_it(
+    conn, monkeypatch, words, kept
+):
+    # An export may store "recents"; "on Recents" still names it (CodeRabbit on #265). Only
+    # the case's apps are patched, so the claim's app is read as it would be.
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "recents"])
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text=f"PETROV and REYES {words} between March 20 and March 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [Proposal("no_contact", {"person_ids": [PETROV, REYES]}, is_core=True)]
+    if kept:
+        (row,) = filler._bind_named_app(c, out)
+        assert row.params["channels"] == ["recents"]
+    else:
+        with pytest.raises(Reject, match="plain word"):
+            filler._bind_named_app(c, out)
+
+
+def test_a_plain_word_app_inside_a_longer_app_name_is_not_written_as_a_name(conn, monkeypatch):
+    # "Line" inside "Line Business" is the longer app's name, not a capital on Line, so a row
+    # the model put on Line gets no absence (CodeRabbit on #265).
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(
+        LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line", "Line Business"]
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV and REYES had no contact on Line Business between March 20 and 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    assert filler._written_as_name(c.text, "Line Business")
+    assert not filler._written_as_name(c.text, "Line")
+    out = [
+        Proposal("no_contact", {"person_ids": [PETROV, REYES], "channels": ["Line"]}, is_core=True)
+    ]
+    with pytest.raises(Reject, match="plain word"):
+        filler._bind_named_app(c, out)
+
+
+def test_a_hyphen_joins_the_words_of_a_longer_app_name(conn, monkeypatch):
+    # "Line-Business" writes Line Business, not Line; "Line or Line Business" names both
+    # (CodeRabbit on #265).
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(
+        LocalAssumptionFiller, "channels", lambda self: [*held(self), "Line", "Line Business"]
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    hyphen = "PETROV wrote on Line-Business on March 20, 2026."
+    assert filler._app_mentions(hyphen, "Line Business")
+    assert filler._written_as_name(hyphen, "Line Business")
+    assert not filler._written_as_name(hyphen, "Line")
+    assert filler.claim_apps(hyphen) == {"line business"}
+    both = "PETROV wrote on Line or Line Business on March 20, 2026."
+    assert filler._written_as_name(both, "Line")
+    assert filler.claim_apps(both) == {"line", "line business"}
+
+
+def test_a_quoted_date_or_year_is_never_the_claims(conn):
+    # A date or year inside the quoted message is the message's: a range on the quoted day,
+    # or a year taken only from the quote, would test the claim on the wrong day (CodeRabbit
+    # on #265).
+    import core.audit.assumption_filler as af
+
+    text = 'On March 12, 2026, PETROV wrote to REYES: "see you March 11, 2026".'
+    check_window(D(2026, 3, 12), D(2026, 3, 13), "March 12, 2026", text, "")
+    with pytest.raises(Reject, match="not a date the claim states"):
+        check_window(D(2026, 3, 11), D(2026, 3, 13), "March 12, 2026", text, "")
+    # words copied across a quote's edge are part the message's (CodeRabbit on #265)
+    from core.audit.assumption_filler import cut_from_longer
+
+    assert cut_from_longer('March 11, 2026".', text)
+    assert not cut_from_longer("On March 12, 2026", text)
+    # a quoted weekday is the message's, never read with the claim's year; an unquoted wrong
+    # weekday is still refused (CodeRabbit on #265)
+    monday = 'On March 12, 2026, PETROV wrote "See you Monday, March 11; back in 2024".'
+    check_window(D(2026, 3, 12), D(2026, 3, 13), "March 12, 2026", monday, "")
+    with pytest.raises(Reject, match="weekday"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), "Monday, March 12, 2026", f"On Monday, {monday[3:]}", ""
+        )
+    # a run of months with a quote inside it is still the claim's run: "May" alone is cut
+    # from it (CodeRabbit on #265)
+    run = 'In April and May "the busy month" 2026, PETROV wrote: "ok".'
+    check_window(D(2026, 4, 1), D(2026, 6, 1), 'April and May "the busy month" 2026', run, "")
+    with pytest.raises(Reject, match="cut from a longer run"):
+        check_window(D(2026, 5, 1), D(2026, 6, 1), 'May "the busy month" 2026', run, "")
+    no_year = 'On March 12, PETROV wrote to REYES: "back in 2025".'
+    assert af.stated_windows(no_year, "") is None
+    assert af.stated_windows("On March 12", no_year) is None
+    (w,) = af.stated_windows("On March 12", f"{no_year} On March 12, 2026, it was.")
+    assert w.start == D(2026, 3, 12)
+    assert (
+        stated_part_day('On March 12, no contact after 9 a.m., per the note "filed 2025".') is None
+    )
+    # an open range takes the paragraph's year, never a quoted one beside it
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="There was no contact between dev:item1 and (212) 555-0144 before March 12, the"
+        ' "2025 plan" aside.',
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    w = filler._open_range(c, ["dev:item1"], "The phones were seized in 2026.")
+    assert w.raw.startswith("before March 12: from")
+    assert w.end_utc.astimezone(ZoneInfo("America/New_York")).date().isoformat() == "2026-03-11"
+
+
+def test_words_inside_a_kept_range_are_still_read(conn):
+    # The model may keep "On March 12, 2026, while driving" as the day's range; "while
+    # driving" is still a word no check reads (Greptile on #265).
+    raw = "On March 12, 2026, while driving"
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W(raw, "2026-03-12T00:00", "2026-03-13T00:00"),
+        ),
+    ]
+    text = f'{raw}, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "event" in {a.template_id for a in made}
+
+
+@pytest.mark.parametrize("channels", [None, ["Telegram"]])
+def test_an_absence_of_one_kind_of_contact_on_a_named_app_is_never_read(conn, channels):
+    # The absence check reads messages and calls alike on the app it searches, so a Telegram
+    # call would contradict "never messaged each other on Telegram" (Greptile on #265).
+    props = [{**p, "channels": channels or []} for p in GOOD["C14"]]
+    text = (
+        "PETROV and REYES never messaged each other on Telegram between March 20 and"
+        " March 23, 2026."
+    )
+    made, _ = build_text(conn, text, ClaimType.ABSENCE, props)
+    assert made == []
+
+
+def test_a_model_chosen_plain_word_app_gets_no_absence(conn, monkeypatch):
+    # A model answer that names Line for "his second line" passes `_channels` (the word is in
+    # the claim), and is refused like the one code would bind (Greptile on #265).
+    monkeypatch.setattr(LocalAssumptionFiller, "_named_apps", lambda self, text: ["Line"])
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV and REYES had no contact on his second line between March 20 and 23, 2026.",
+        claim_type=ClaimType.ABSENCE,
+        status=ClaimStatus.ACCEPTED,
+    )
+    out = [
+        Proposal("no_contact", {"person_ids": [PETROV, REYES], "channels": ["Line"]}, is_core=True)
+    ]
+    with pytest.raises(Reject, match="plain word"):
+        filler._bind_named_app(c, out)
+
+
+def test_a_person_reading_a_message_is_a_word_no_check_reads(conn):
+    # "PETROV read: ..." is an act; only "a message that read: ..." names the words
+    # (CodeRabbit on #265).
+    text = 'On March 12, 2026, PETROV read: "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
+def test_an_app_the_case_lacks_beside_one_it_holds_stays_unproven(conn):
+    # "on Telegram and Signal" on a case with no Signal: binding Telegram alone would test
+    # less than the claim says (CodeRabbit on #265).
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Signal: "need 2 more by'
+        ' friday".'
+    )
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    assert any("also names an app" in d.reason for d in filler.drops)
+
+
+def test_a_short_name_of_an_app_the_case_holds_is_that_app(tmp_path):
+    # "on Wickr" on a case whose app is "Wickr Pro": rows left on no app get Wickr Pro, and
+    # "Wickr" is not read as an app the case lacks (CodeRabbit on #265).
+    db = tmp_path / "case01.db"
+    generate(tmp_path, db)
+    c = sqlite3.connect(db)
+    stipulate(c, PETROV, "Daniel Petrov", "dev:item1")
+    c.execute("PRAGMA foreign_keys = OFF")
+    c.execute(
+        "INSERT INTO threads VALUES ('thr:wickr', 'item1', 'x', 'dev:item1', 'Wickr Pro', NULL)"
+    )
+    text = 'On March 12, 2026, PETROV wrote to @northstar on Wickr: "need 2 more by friday".'
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted((a.template_id, a.params.channels) for a in made) == [
+        ("record_time", ("Wickr Pro",)),
+        ("sender", ("Wickr Pro",)),
+    ], filler.drops
+
+
+def test_a_handle_named_like_an_app_is_no_app(conn):
+    # "@viber" is the Telegram account written to, not Viber, which the case lacks (CodeRabbit
+    # on #265).
+    text = 'On March 12, 2026, PETROV wrote to @viber on Telegram: "need 2 more by friday".'
+    scoped = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    _, filler = build_text(conn, text, ClaimType.COMMUNICATION, scoped)
+    assert not any("names an app no" in d.reason for d in filler.drops), filler.drops
+
+
+def test_an_app_the_case_lacks_stays_unproven_on_rows_the_model_scoped(conn):
+    # The model already put both rows on Telegram: Signal, which the case lacks, is still read
+    # (CodeRabbit on #265). A claim naming Signal alone already drops the model's Telegram, as
+    # the claim does not name it.
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram and Signal: "need 2 more by'
+        ' friday".'
+    )
+    scoped = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, scoped)
+    assert made == []
+    assert any("also names an app" in d.reason for d in filler.drops)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        ", over one hour",
+        ", for half an hour",
+        ", an hour after the call",
+        ", for a quarter hour",  # CodeRabbit on #265
+        ", for a quarter of an hour",
+    ],
+)
+def test_a_spoken_length_no_row_tests_is_read(conn, tail):
+    # "over one hour" passed with no row testing a length: "over", "one" and "hour" are each
+    # plain alone (CodeRabbit on #265).
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = (
+        f'On March 12, 2026, PETROV wrote to @northstar on Telegram{tail}: "need 2 more by friday".'
+    )
+    assert filler.unread_words(text)
+    if "after" not in tail and "quarter" not in tail:
+        # "after the call" is read by a row that tests a call; a quarter hour is no length a
+        # row tests (`duration_range` reads none), so it stays unread beside one
+        assert filler.unread_words(text, (), {"length"}) == []
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
+def test_a_message_on_two_apps_named_together_waits_for_an_expert(tmp_path):
+    # "on Telegram and Viber" was searched on either app, so a Telegram message alone passed
+    # the sender and time checks (CodeRabbit on #265). "Telegram or Viber" still reads either.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram and Viber: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler._apps_named_together(text) == ["Telegram and Viber"]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+    either = text.replace("Telegram and Viber", "Telegram or Viber")
+    assert filler._apps_named_together(either) == []
+    made, _ = build_text(c, either, ClaimType.COMMUNICATION, C05_ANSWER)
+    # both rows are kept and each searches either app; no event (CodeRabbit on #265)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "Viber"})}
+    assert filler._apps_named_together(text.replace(" and Viber", "")) == []
+
+
+def test_a_hyphenated_app_name_reads_its_join_like_binding(tmp_path):
+    # "Telegram or Line-Business" binds both apps; the join scan read only "Line Business", so
+    # the app counted as unwritten and the claim got an event (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:lb', 'item1', 'x', 'dev:item1', 'Line Business', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV wrote on Telegram or Line-Business: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert filler._apps_named_together(text) == []
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Line Business"})
+    }
+    wrapped = text.replace("Line-Business", "Line\nBusiness")
+    assert filler._apps_named_together(wrapped) == []
+    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Line Business"})
+    }
+    joined = text.replace(" or ", " and ")
+    assert filler._apps_named_together(joined) == ["Telegram and Line-Business"]
+    made, _ = build_text(c, joined, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+
+
+@pytest.mark.parametrize(
+    ("apps", "together"),
+    [
+        ("Telegram and on either Viber or WhatsApp", True),  # one "and" beside an "or"
+        ("Telegram, Viber or WhatsApp", True),  # a list joined by a comma is read as joined
+        ("either Telegram or Viber or WhatsApp", False),
+        ("Telegram/Viber", False),
+    ],
+)
+def test_each_join_between_named_apps_is_read(tmp_path, apps, together):
+    # "on Telegram and on either Viber or WhatsApp" was read as either app because an "or"
+    # stood between the first and last app, so a WhatsApp message alone passed (CodeRabbit on
+    # #265). Every join between two apps named next to each other is read now.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+        "INSERT INTO threads VALUES ('thr:wa', 'item1', 'x', 'dev:item1', 'WhatsApp', NULL)",
+    )
+    text = f'On March 12, 2026, PETROV wrote on {apps}: "need 2 more by friday".'
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert len(filler._named_apps(text)) >= 2
+    assert bool(filler._apps_named_together(text)) is together
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert ("event" in {a.template_id for a in made}) is together
+
+
+def test_a_phone_app_or_a_short_name_is_read_in_the_joins(tmp_path):
+    # "on Telegram and SMS": SMS is a phone's own messages app, which `_named_apps` leaves out,
+    # so a Telegram message alone passed; "on Telegram or Wickr" on a case holding Wickr Pro
+    # was read as joined because "Wickr Pro" is not written whole (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:wickr', 'item1', 'x', 'dev:item1', 'Wickr Pro', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'On March 12, 2026, PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram and SMS"))
+    assert filler._apps_named_together(claim.format("Telegram or SMS")) == []
+    assert filler._apps_named_together(claim.format("Telegram or Wickr")) == []
+    assert filler._apps_named_together(claim.format("Telegram and Wickr"))
+    # "texted" names no app of its own
+    texted = 'On March 12, 2026, PETROV texted @northstar on Telegram: "need 2 more by friday".'
+    assert filler._apps_named_together(texted) == []
+
+
+@pytest.mark.parametrize("said", ["sent @northstar an SMS", "sent @northstar an iMessage"])
+def test_one_phone_app_on_an_app_holding_both_waits_for_an_expert(tmp_path, said):
+    # "Native Messages" holds iMessage and SMS together, as LEAPP and a UFDR store them: a row
+    # searched there finds an iMessage for "sent an SMS", and no check reads which of the two a
+    # row was (CodeRabbit on #265). The claim's word is shown to the expert as an event.
+    c = _case_with(
+        tmp_path,
+        "UPDATE threads SET app = 'Native Messages' WHERE app = 'Telegram'",
+    )
+    answer = [{**p, "channels": ["Native Messages"]} for p in C05_ANSWER]
+    text = f'On March 12, 2026, PETROV {said}: "need 2 more by friday".'
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, answer)
+    assert {a.template_id for a in made} == {"record_time", "sender", "event"}
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert event.is_core and is_code_made(event.text)
+    plain = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, plain, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+    # the app named whole names no one kind of message (CodeRabbit on #265)
+    named = (
+        'On March 12, 2026, PETROV wrote to @northstar on Native Messages: "need 2 more by friday".'
+    )
+    made, _ = build_text(c, named, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+_Q = '"need 2 more by friday"'
+
+
+@pytest.mark.parametrize(
+    ("text", "event"),
+    [
+        # a second message after the one quoted: no row tests it (CodeRabbit on #265)
+        (f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, and @northstar replied.", True),
+        (f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, and @northstar wrote back.", True),
+        (f"On March 12, 2026, PETROV replied to @northstar, and then wrote: {_Q}.", True),
+        # the reply is the quoted message the rows test
+        (f"On March 12, 2026, PETROV replied to @northstar: {_Q}.", False),
+        (f"On March 12, 2026, PETROV wrote back to @northstar: {_Q}.", False),
+    ],
+)
+def test_a_reply_is_read_only_when_it_is_the_quoted_message(conn, text, event):
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert ("event" in {a.template_id for a in made}) is event
+    assert {"sender", "record_time"} <= {a.template_id for a in made}
+
+
+def test_a_slash_in_a_date_does_not_make_two_apps_alternatives(tmp_path):
+    # "on Telegram (03/12/2026), on Viber": the comma joins the apps; the date's slashes are
+    # no "/" between them, which alone keeps "Telegram/Viber" alternatives (CodeRabbit on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:viber', 'item1', 'x', 'dev:item1', 'Viber', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram (03/12/2026), on Viber"))
+    assert filler._apps_named_together(claim.format("Telegram/Viber")) == []
+    assert filler._apps_named_together(claim.format("Telegram / Viber")) == []
+
+
+def test_a_name_inside_a_longer_app_name_is_not_a_second_app(tmp_path):
+    # "Facebook Messenger" also holds "Facebook": the two matches sat next to each other with
+    # no gap and read as joined, so "Telegram or Facebook Messenger" got an event. The longest
+    # name at a mention is the app; "Facebook and Facebook Messenger" keeps both (CodeRabbit
+    # on #265).
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:fb', 'item1', 'x', 'dev:item1', 'Facebook', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'y', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote to @northstar on {}: "need 2 more by friday".'
+    assert filler._apps_named_together(claim.format("Telegram or Facebook Messenger")) == []
+    assert filler._apps_named_together(claim.format("Telegram and Facebook Messenger"))
+    assert filler._apps_named_together(claim.format("Facebook or Facebook Messenger")) == []
+    assert filler._apps_named_together(claim.format("Facebook and Facebook Messenger"))
+
+
+def test_an_answered_call_is_plain_only_beside_a_tested_length(conn):
+    # "answered" is no reply to a quoted message: beside a row that tests the call's length it
+    # is read (a call that lasted was answered), and elsewhere it is a word no check reads.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV placed a call to REYES that was answered."
+    assert filler.unread_words(text, (), {"call", "length"}) == []
+    assert filler.unread_words(text, (), {"call"}) == ["answered"]
+
+
+def test_a_tested_length_does_not_hide_a_second_untested_one(conn):
+    # "one minute and a quarter hour": the row tests "one minute"; "a quarter hour" is left,
+    # and each of its words is plain alone (CodeRabbit on #265). "One minute" alone is read.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    text = "At 7:58 p.m. on March 9, 2026, PETROV called REYES for one minute{}."
+    assert filler.unread_words(text.format(""), (), {"call", "length"}) == []
+    assert filler.unread_words(text.format(" and a quarter hour"), (), {"call", "length"}) == [
+        "and a quarter hour"
+    ]
+
+
+def test_a_name_inside_a_longer_app_name_binds_no_second_app(tmp_path):
+    # "Telegram or Facebook Messenger" bound Facebook too, so a Facebook message could pass
+    # it (CodeRabbit on #265). A Facebook written apart is kept.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:fb', 'item1', 'x', 'dev:item1', 'Facebook', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'y', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    claim = 'PETROV wrote on {}: "need 2 more by friday".'
+    assert sorted(filler._named_apps(claim.format("Telegram or Facebook Messenger"))) == [
+        "Facebook Messenger",
+        "Telegram",
+    ]
+    assert sorted(filler._named_apps(claim.format("Facebook or Facebook Messenger"))) == [
+        "Facebook",
+        "Facebook Messenger",
+    ]
+    text = f"On March 12, 2026, {claim.format('Telegram or Facebook Messenger')}"
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {
+        frozenset({"Telegram", "Facebook Messenger"})
+    }
+
+
+def test_a_phone_app_named_beside_another_app_is_searched_too(tmp_path):
+    # "on Telegram or SMS" bound Telegram alone, as `_named_apps` leaves SMS out, so a count
+    # read Telegram only (CodeRabbit on #265). Message rows search SMS too; a count or an
+    # absence of the mix is refused; a case with no SMS refuses the claim.
+    c = _case_with(tmp_path)
+    text = 'On March 12, 2026, PETROV wrote on Telegram or SMS: "need 2 more by friday".'
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
+    stipulate(c, REYES, "Marcus Reyes", "dev:item2")
+    absence = (
+        "PETROV and REYES had no contact on Telegram or SMS between March 20 and March 23, 2026."
+    )
+    (prop,) = GOOD["C14"]
+    made, filler = build_text(c, absence, ClaimType.ABSENCE, [prop])
+    assert made == []
+    assert any("phone's own messages app beside" in d.reason for d in filler.drops)
+    c.execute("UPDATE threads SET app = 'Signal' WHERE app = 'SMS'")
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+
+
+def test_more_findings_on_5da573d(tmp_path, conn):
+    # CodeRabbit on #265, on 5da573d.
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a reply in a sentence of its own is no reply quoted later
+    text = f"On March 12, 2026, PETROV wrote to REYES. REYES replied. PETROV wrote: {_Q}."
+    assert "replied" in filler.unread_words(text)
+    # a count in digits that no phone number holds
+    text = f"On March 12, 2026, PETROV wrote to @northstar: {_Q}, one of 10000 that day."
+    assert "10000" in filler.unread_words(text)
+    # MMS is no SMS: a case with SMS alone holds no MMS app
+    c = _case_with(tmp_path)
+    claim = 'On March 12, 2026, PETROV wrote on Telegram or {}: "need 2 more by friday".'
+    made, _ = build_text(c, claim.format("MMS"), ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == []
+    made, _ = build_text(c, claim.format("SMS"), ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
+    # the sheet check reads the phone app the claim names beside another
+    sms = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert sms.claim_apps(claim.format("SMS")) == {"telegram", "sms"}
+
+
+def test_more_findings_on_37917c7(tmp_path):
+    # CodeRabbit on #265, on 37917c7.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    c = _case_with(tmp_path / "a")
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # a handle names an account, not a phone's own messages app
+    text = 'On March 12, 2026, PETROV wrote to @sms on Telegram: "need 2 more by friday".'
+    assert filler.claim_apps(text) == {"telegram"}
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram"})}
+    # a message row the model put on Telegram alone for "Telegram or SMS" searches SMS too:
+    # a Telegram copy outside the range would fail a true claim sent by SMS
+    text = 'On March 12, 2026, PETROV wrote on Telegram or SMS: "need 2 more by friday".'
+    on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, on_telegram)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "SMS"})}
+    # ...but a party the model gave as a Telegram account reaches no SMS, so the claim stays
+    # unproven rather than read on Telegram alone
+    northstar = {"as_written": "5551234", "app": "Telegram"}
+    as_account = [on_telegram[0], {**on_telegram[1], "accounts": [northstar]}]
+    to_id = text.replace("wrote on", "wrote to Telegram user 5551234 on")
+    made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, as_account)
+    assert made == [], [a.params for a in made]
+    assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
+    on_both = [{**p, "channels": ["Telegram", "SMS"]} for p in as_account]
+    made, acct = build_text(c, to_id, ClaimType.COMMUNICATION, on_both)
+    assert made == [], [a.params for a in made]
+    assert any("given as accounts" in d.reason for d in acct.drops), acct.drops
+    # SMS and MMS are two kinds, joined by "and" and alternatives by "or"
+    text = 'On March 12, 2026, PETROV wrote to @northstar on SMS {} MMS: "need 2 more by friday".'
+    assert filler._apps_named_together(text.format("and"))
+    assert filler._apps_named_together(text.format("or")) == []
+    # an iMessage is never read on the SMS app, whether code or the model scoped the row
+    both = _case_with(
+        tmp_path / "b",
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    text = 'On March 12, 2026, PETROV sent @northstar an iMessage: "need 2 more by friday".'
+    made, _ = build_text(both, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.params.channels for a in made} == {("iMessage",)}
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    texted = text.replace("sent @northstar an iMessage", "texted @northstar an iMessage")
+    made, sms = build_text(both, texted, ClaimType.COMMUNICATION, on_sms)
+    assert made == []
+    assert any("kind of text message" in d.reason for d in sms.drops)
+    assert LocalAssumptionFiller(FakeModel("{}"), both, template=DRAFT).claim_apps(text) == {
+        "imessage"
+    }
+    # a time to the second inside a quote a line break wraps is the quote's, not the claim's
+    text = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday", adding'
+        ' "back at\n9:31:04".'
+    )
+    made, wrapped = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not any("to the second" in d.reason for d in wrapped.drops)
+
+
+def test_more_findings_on_e3062bf(tmp_path):
+    # CodeRabbit on #265, on e3062bf.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    c = _case_with(tmp_path / "a")  # SMS, no MMS
+    # "on SMS or MMS" on a case with no MMS app: SMS alone is not every alternative, whether
+    # code or the model scoped the row
+    text = 'On March 12, 2026, PETROV wrote on SMS or MMS: "need 2 more by friday".'
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == [], [a.params for a in made]
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, filler = build_text(c, text, ClaimType.COMMUNICATION, on_sms)
+    assert made == [], [a.params for a in made]
+    assert any("(mms)" in d.reason for d in filler.drops), filler.drops
+    # ...and both kinds held keep the alternative searchable
+    both = _case_with(
+        tmp_path / "b",
+        "INSERT INTO threads VALUES ('thr:mms', 'item1', 'x', 'dev:item1', 'MMS', NULL)",
+    )
+    made, _ = build_text(both, text, ClaimType.COMMUNICATION, on_sms)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"SMS", "MMS"})}
+    # a handle on several apps the claim names resolves to one account, so reaches one app
+    to_handle = text.replace("wrote on SMS or MMS", "wrote to @northstar on Telegram or SMS")
+    made, handle = build_text(c, to_handle, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert made == [], [a.params for a in made]
+    assert any("or a handle" in d.reason for d in handle.drops), handle.drops
+    # an app the claim names in lower case widens the row the model scoped
+    lower = 'On March 12, 2026, PETROV wrote on Telegram or whatsapp: "need 2 more by friday".'
+    on_telegram = [{**p, "channels": ["Telegram"]} for p in C05_ANSWER]
+    made, _ = build_text(c, lower, ClaimType.COMMUNICATION, on_telegram)
+    assert {frozenset(a.params.channels) for a in made} == {frozenset({"Telegram", "WhatsApp"})}
+    # an app's name inside a quote a line break wraps is the quote's, not the claim's
+    wrapped = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday",'
+        ' adding "try\nSignal tomorrow".'
+    )
+    tg = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    assert tg.claim_apps(wrapped) == {"telegram"}
+    # in one quote, a wrapped app name is the message's, and the claim is read on Telegram
+    one = wrapped.replace('friday",\n adding "try', "friday, try").replace(
+        'friday", adding "try', "friday, try"
+    )
+    assert one.count('"') == 2, one
+    made, _ = build_text(c, one, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time"}
+    # its second quote, which no row tests, needs an expert (CodeRabbit on #265)
+    made, _ = build_text(c, wrapped, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time", "event"}
+
+
+def test_a_plain_word_app_written_lowercase_binds_no_row(tmp_path):
+    # "his second line" names no Line (CodeRabbit on #265): a row on no app, the model's or
+    # code's own, is never bound to Line, where a true message on another app would go
+    # unfound, and the sheet check does not excuse a Line the model chose, since `claim_apps`
+    # reads the same.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:ln', 'item1', 'x', 'dev:item1', 'Line', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    phone = tuple(filler._phone_message_apps())
+
+    def rows(text: str, answer: list[dict]) -> dict[str, tuple[str, ...]]:
+        made, _ = build_text(c, text, ClaimType.COMMUNICATION, answer)
+        got = {a.template_id: tuple(a.params.channels) for a in made}
+        assert {"sender", "record_time"} <= set(got), got
+        return got
+
+    texted = 'On March 12, 2026, PETROV texted REYES on his second line: "need 2 more by friday".'
+    wrote = 'On March 12, 2026, PETROV wrote to REYES on his second line: "need 2 more by friday".'
+    named = 'On March 12, 2026, PETROV wrote to REYES on Line: "need 2 more by friday".'
+    beside = (
+        'On March 12, 2026, PETROV wrote to REYES on Telegram or his second line: "need 2 more'
+        ' by friday".'
+    )
+    # the model's rows on no app
+    got = rows(texted, C05_ANSWER)
+    assert got["sender"] == got["record_time"] == phone
+    got = rows(wrote, C05_ANSWER)
+    assert got["sender"] == got["record_time"] == ()
+    got = rows(named, C05_ANSWER)
+    assert got["sender"] == got["record_time"] == ("Line",)
+    # beside an app written as a name, a lowercase plain word is left out
+    got = rows(beside, C05_ANSWER)
+    assert got["sender"] == got["record_time"] == ("Telegram",)
+    # code's own sender searches the same apps
+    assert set(phone) <= set(filler._message_apps(texted) or ()) and "Line" not in (
+        filler._message_apps(texted) or ()
+    )
+    assert filler._message_apps(wrote) == []
+    assert filler._message_apps(named) == ["Line"]
+    assert filler._message_apps(beside) == ["Telegram"]
+    # and the sheet check excuses only those
+    assert filler.claim_apps(texted) == frozenset(a.casefold() for a in phone)
+    assert filler.claim_apps(wrote) == frozenset()
+    assert filler.claim_apps(named) == frozenset({"line"})
+    assert filler.claim_apps(beside) == frozenset({"telegram"})
+
+
+def test_coderabbit_round_on_4a9bc77(tmp_path):
+    # Five findings from CodeRabbit's review of 4a9bc77 on #265.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+        "INSERT INTO threads VALUES ('thr:sig', 'item1', 'y', 'dev:item1', 'Signal', NULL)",
+        "INSERT INTO threads VALUES ('thr:fbm', 'item1', 'z', 'dev:item1', 'Facebook Messenger',"
+        " NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # 1. "sent an SMS": code's own sender searches the SMS app, never the iMessage store
+    # beside it, which the binding would refuse, leaving the claim unread
+    sms = 'On March 12, 2026, PETROV sent an SMS to @northstar: "need 2 more by friday".'
+    assert filler._message_apps(sms) == ["SMS"]
+    made, _ = build_text(c, sms, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    got = {a.template_id: tuple(a.params.channels) for a in made}
+    assert got.get("sender") == ("SMS",), got
+    # 2. an app named only inside the quote is no app the model may put a row on
+    quoted = (
+        'On March 12, 2026, PETROV wrote to @northstar on Telegram: "need 2 more by friday on'
+        ' Signal".'
+    )
+    said = "need 2 more by friday on Signal"
+    on_signal = [{**p, "channels": ["Signal"], "quoted_text": said} for p in C05_ANSWER]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, on_signal)
+    assert [d.reason for d in f.drops] == ["the claim does not name the channel 'Signal'"] * 2
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+    }
+    # the model's own rows on the app the claim names are kept, on that app
+    on_telegram = [{**p, "channels": ["Telegram"], "quoted_text": said} for p in C05_ANSWER]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, on_telegram)
+    assert not f.drops, f.drops
+    assert {(a.template_id, a.params.channels, a.params.quoted_text) for a in made} == {
+        ("sender", ("Telegram",), said),
+        ("record_time", ("Telegram",), said),
+    }
+    # 3. "Facebook" alone beside a held "Facebook Messenger" is an app the case lacks
+    assert filler._names_an_app_the_case_lacks("on Facebook and Facebook Messenger")
+    assert not filler._names_an_app_the_case_lacks("on Facebook Messenger")
+
+    # 4. read on the kept rows (`coverage_gap`)
+    def gap(text: str, *rows: Proposal) -> str | None:
+        cl = Claim(
+            id="X1",
+            paragraph_id="p",
+            text=text,
+            claim_type=ClaimType.COMMUNICATION,
+            status=ClaimStatus.ACCEPTED,
+        )
+        return coverage_gap(cl, list(rows))
+
+    class _W:
+        raw = "On March 12, 2026, at 9:31"
+
+    def row(tid: str, quote: str) -> Proposal:
+        return Proposal(tid, {"quoted_text": quote, "window": _W()})
+
+    # a time to the second is tested by no check, whatever path its range took
+    secs = 'On March 12, 2026, at 9:31:04, PETROV wrote to @northstar: "ok".'
+    assert "to the second" in (gap(secs, row("sender", "ok"), row("record_time", "ok")) or "")
+    assert (
+        gap(secs.replace("9:31:04", "9:31"), row("sender", "ok"), row("record_time", "ok")) is None
+    )
+    # 5. each quoted message needs a row that tests it, or an expert
+    two = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then "on my'
+        ' way".'
+    )
+    made, _ = build_text(c, two, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}
+    one = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    made, _ = build_text(c, one, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+    # a quote that only names a party is no message, read without spaces or punctuation
+    named = one.replace("@northstar:", '@northstar ("Daniel  Petrov,"):')
+    made, _ = build_text(c, named, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} == {"sender", "record_time"}
+
+
+def test_coderabbit_round_on_4ecf6d3(tmp_path):
+    # Findings from CodeRabbit's review of 4ecf6d3 on #265.
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+        "INSERT INTO threads VALUES ('thr:line', 'item1', 'w', 'dev:item1', 'Line', NULL)",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    # 1. "an SMS on his second line", on a case with Line: code's own sender searches SMS,
+    # never every phone app with the iMessage store
+    line = (
+        'On March 12, 2026, PETROV sent an SMS on his second line to @northstar: "need 2 more'
+        ' by friday".'
+    )
+    assert filler._message_apps(line) == ["SMS"]
+    # 2. a handle ("@sms") names an account, never the SMS app
+    handle = 'On March 12, 2026, PETROV wrote to @sms on Telegram: "need 2 more by friday".'
+    on_sms = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, f = build_text(c, handle, ClaimType.COMMUNICATION, on_sms)
+    assert [d.reason for d in f.drops] == ["the claim does not name the channel 'SMS'"] * 2
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+    }
+    # 3. a zoned clock time to the second is a time of day, whatever word stands before it
+    assert _states_seconds("logged for 09:31:04 UTC")
+    assert _states_seconds("for 9:31:04 p.m.")
+    assert _states_seconds("for 09:31:04-04:00")
+    assert _states_seconds("for 09:31:04 (UTC)")
+    assert _states_seconds("for 09:31:04 Eastern Time")
+    assert not _states_seconds("lasted 0:12:45")
+    assert not _states_seconds("for 0:12:45 at most")
+    # 4. two quoted messages always need an expert: a check finds a quote's words inside a
+    # longer message, so one record may pass the rows for both, whatever the rows quote
+    two = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then'
+        ' "I\'m on my way now".'
+    )
+
+    def rows(sent: str, timed: str) -> list[dict]:
+        return [{**C05_ANSWER[0], "quoted_text": sent}, {**C05_ANSWER[1], "quoted_text": timed}]
+
+    def kinds(text: str, answer: list[dict]) -> set[str]:
+        made, _ = build_text(c, text, ClaimType.COMMUNICATION, answer)
+        return {a.template_id for a in made}
+
+    full = "need 2 more by friday"
+    assert "event" in kinds(two, rows(full, "I'm on my way now"))
+    assert "event" in kinds(two, rows(full, "on my way"))  # a part of the second quote
+    assert "event" in kinds(two, rows(full, full))  # one quote's rows never stand for both
+    twice = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok".'
+    assert "event" in kinds(twice, rows("ok", "ok"))
+    thanks = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "ok, thanks".'
+    assert "event" in kinds(thanks, rows("ok", "ok, thanks"))
+    # distinct quotes too: one record "ok, thanks" passes a row for "ok" and one for "thanks"
+    apart = 'On March 12, 2026, PETROV wrote to @northstar: "ok" and then "thanks".'
+    assert "event" in kinds(apart, rows("ok", "thanks"))
+    # one quoted message stays code's to test
+    assert kinds('On March 12, 2026, PETROV wrote to @northstar: "ok".', rows("ok", "ok")) == {
+        "sender",
+        "record_time",
+    }
+    # a name after a semicolon is a message, not a party
+    semi = 'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday"; "Petrov".'
+    assert "event" in kinds(semi, C05_ANSWER)
+    # 5. a quote is a party's name only where the claim writes it as a party
+    said = (
+        'On March 12, 2026, PETROV wrote to @northstar: "Petrov" and then "need 2 more by friday".'
+    )
+    assert "event" in kinds(said, C05_ANSWER)
+    bracketed = 'On March 12, 2026, PETROV wrote to @northstar ("Petrov"): "need 2 more by friday".'
+    assert kinds(bracketed, C05_ANSWER) == {"sender", "record_time"}
+    # a name after a comma is a party only as the clause's subject, with its verb after it
+    comma = (
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday" and then, "Petrov".'
+    )
+    assert "event" in kinds(comma, C05_ANSWER)
+    # nor is a trailing phrase a subject's verb: "Petrov" on Telegram is a message
+    trailing = comma.replace('"Petrov".', '"Petrov" on Telegram.')
+    assert "event" in kinds(trailing, C05_ANSWER)
+    from core.audit.assumption_filler import _quote_is_a_party
+
+    subject = 'On November 6, 2022, "ThisIs DfirTwo" asked SUBJECT-1, "Can you delete it?"'
+    at = subject.index('"ThisIs')
+    assert _quote_is_a_party(subject, at, subject.index(" asked"))
+    then = 'On November 6, 2022, "ThisIs DfirTwo" then asked SUBJECT-1, "Can you delete it?"'
+    assert _quote_is_a_party(then, then.index('"ThisIs'), then.index(" then"))
+    end = comma.rindex('"') + 1
+    assert not _quote_is_a_party(comma, comma.rindex('"', 0, end - 1), end)
+    # a comma before the verb makes it an attribution: the quote is the message PETROV wrote
+    attributed = comma.replace('"Petrov".', '"Petrov", wrote PETROV.')
+    end = attributed.index('", wrote') + 1
+    assert not _quote_is_a_party(attributed, attributed.rindex('"', 0, end - 1), end)
+    assert "event" in kinds(attributed, C05_ANSWER)
+
+
+def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):
+    # "on the WHATSAPP PHONE" names a phone, not WhatsApp: code's own sender searches the
+    # app the claim names, and the model's WhatsApp channel is left out of its rows, which are
+    # then scoped to the app the claim names (CodeRabbit on #265).
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["WHATSAPP PHONE"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, on the WHATSAPP PHONE, PETROV wrote to @northstar on Telegram: "need'
+        ' 2 more by friday".'
+    )
+    assert filler._message_apps(text) == ["Telegram"]
+    on_whatsapp = [{**p, "channels": ["WhatsApp"]} for p in C05_ANSWER]
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, on_whatsapp)
+    assert not f.drops, f.drops
+    # the rows search no phone, so the phone the claim names goes to the expert-only event
+    # (Claude review on #265)
+    assert {a.template_id: a.params.channels for a in made} == {
+        "sender": ("Telegram",),
+        "record_time": ("Telegram",),
+        "event": ("Telegram",),
+    }
+
+
+def test_a_phone_named_after_a_message_kind_gives_code_s_sender_no_kind(tmp_path):
+    # "On the SMS PHONE" names a phone, not SMS: on a case with SMS and iMessage stores, code's
+    # own sender searches every app, as for any claim that names none, and is kept by the
+    # binding (CodeRabbit on #265).
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["SMS PHONE"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, on the SMS PHONE, PETROV wrote to @northstar: "need 2 more by friday".'
+    )
+    assert filler._message_apps(text) == []
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    # the time row searches no phone, so the phone the claim names goes to the expert-only
+    # event (CodeRabbit on #265)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}, f.drops
+    (sender,) = [a for a in made if a.template_id == "sender"]
+    assert sender.params.channels == ()
+    # an iMessage written apart from the phone's name is that kind alone
+    imsg = text.replace("PETROV wrote to", "PETROV wrote an iMessage to")
+    assert filler._message_apps(imsg) == ["iMessage"]
+    made, f = build_text(c, imsg, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id: a.params.channels for a in made}.get("sender") == ("iMessage",), f.drops
+
+
+def test_a_phone_named_after_an_app_off_the_case_keeps_code_s_sender(tmp_path):
+    # "the SMS TELEGRAM PHONE" names a phone, not Telegram: on a case with no Telegram, the
+    # check for an app the case lacks reads the claim without the phone's name, so code's own
+    # sender stands (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["SMS SIGNAL PHONE"], "expert:Test Expert", lambda: at)
+    text = (
+        'On March 12, 2026, on the SMS SIGNAL PHONE, PETROV wrote to @northstar: "need 2 more'
+        ' by friday".'
+    )
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    # the time row searches no phone, so the phone the claim names goes to the expert-only
+    # event (CodeRabbit on #265)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}, f.drops
+    # Signal written apart from the phone's name still stops code's sender
+    signal = text.replace("PETROV wrote to", "PETROV wrote on Signal to")
+    made, f = build_text(c, signal, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}
+
+
+def test_a_phone_named_only_by_a_message_kind_gives_code_no_sender(tmp_path):
+    # a phone the expert named "the SMS": "sent an SMS on the SMS" cannot tell the phone from
+    # the kind, so code's own sender searches no app and the claim stays the expert's
+    # (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO threads VALUES ('thr:imsg', 'item1', 'x', 'dev:item1', 'iMessage', NULL)",
+    )
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["the SMS"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = (
+        'On March 12, 2026, PETROV sent an SMS on the SMS to @northstar: "need 2 more by friday".'
+    )
+    assert filler._message_apps(text) is None
+    made, _ = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}
+    # nor does a model's row stand: no message row can tell the phone from the kind
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not {a.template_id for a in made} & {"sender", "record_time"}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+    # an absence too: "no contact on the SMS" may be the phone or the kind
+    absent = "PETROV had no contact with @northstar on the SMS between March 20 and March 23, 2026."
+    none = P(
+        "no_contact",
+        people=["PETROV"],
+        handles=["@northstar"],
+        window=W("between March 20 and March 23, 2026", "2026-03-20T00:00", "2026-03-24T00:00"),
+    )
+    made, f = build_text(c, absent, ClaimType.ABSENCE, [none])
+    assert "no_contact" not in {a.template_id for a in made}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+    # a handle ("to @SMS") is an account, never the phone
+    handle = 'On March 12, 2026, PETROV wrote to @SMS on Telegram: "need 2 more by friday".'
+    assert filler._message_apps(handle) == ["Telegram"]
+    # nor does it hold code's sender to that phone: the message may be on another one
+    assert filler._written_phones(handle) == set()
+    made, f = build_text(c, handle, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    (sender,) = [a for a in made if a.template_id == "sender"]
+    assert sender.params.channels == ("Telegram",), sender.params
+    assert not sender.params.device_ids, sender.params
+    # nor a web address, whatever its suffix, while a phone named by a whole address is read
+    pixel = 'On March 12, 2026, PETROV wrote to @northstar from https://SMS.dev/notes: "ok".'
+    assert filler._written_phones(pixel) == set()
+    # a scheme-less address runs from its host through a path to a common suffix
+    path = 'On March 12, 2026, PETROV wrote to @northstar from SMS.dev/docs/example.com: "ok".'
+    assert filler._written_phones(path) == set()
+    # and a host with any suffix followed by a path is an address too
+    dev_path = 'On March 12, 2026, PETROV wrote to @northstar from example.dev/notes/SMS: "ok".'
+    assert filler._written_phones(dev_path) == set()
+    port = dev_path.replace("example.dev/", "example.dev:8443/")
+    assert filler._written_phones(port) == set()
+    # an address ends at an angle bracket: the phone written after it is still the claim's
+    bracketed = "PETROV wrote on <https://example.dev/notes>,SMS,"
+    assert filler._phone_spans(bracketed) == [("dev:item1", 44, 47)]
+    # nor does a host start before the mark that ends a phone's name
+    before = 'On March 12, 2026, on SMS,https://example.com PETROV wrote to @northstar: "ok".'
+    assert filler._written_phones(before) == {"dev:item1"}
+    # a path stops at a colon, so a phone written before a scheme's address is the claim's
+    slash = 'On March 12, 2026, on SMS/https://example.com PETROV wrote to @northstar: "ok".'
+    assert filler._written_phones(slash) == {"dev:item1"}
+    # and the phone named as a kind there still stops code's sender
+    assert filler._message_apps(before) is None
+    made, _ = build_text(c, before, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert "sender" not in {a.template_id for a in made}
+    actions.name_device(c, "dev:item1", ["the SMS", "SMS.COM"], "expert:Test Expert", lambda: at)
+    assert filler._phone_spans("PETROV wrote on SMS.COM") == [("dev:item1", 16, 23)]
+    # the phone's name inside a quote is the message's words, not the phone
+    quoted = 'On March 12, 2026, PETROV wrote to @northstar on Telegram: "see you on the SMS".'
+    assert filler._message_apps(quoted) == ["Telegram"]
+    made, f = build_text(c, quoted, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
+    assert {a.template_id for a in made} >= {"sender", "record_time"}, f.drops
+
+
+def test_a_phone_named_only_by_an_app_the_case_lacks_gives_code_no_sender(tmp_path):
+    # "the SIGNAL" for a phone on a case with no Signal: "on the SIGNAL" may be the phone or
+    # the app, so no message row is kept (CodeRabbit on #265)
+    from core.review import actions
+
+    c = _case_with(tmp_path)
+    at = D(2026, 10, 26, 12, tzinfo=UTC)
+    actions.name_device(c, "dev:item1", ["the SIGNAL"], "expert:Test Expert", lambda: at)
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, on the SIGNAL, PETROV wrote to @northstar: "need 2 more by friday".'
+    assert filler._message_apps(text) is None
+    made, f = build_text(c, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert not {a.template_id for a in made} & {"sender", "record_time"}
+    assert any("only an app's or a kind's" in d.reason for d in f.drops), f.drops
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 1. a clause or content only of words that used to be plain
+        f"{C05_TEXT[:-1]} when he arrived.",
+        f"{C05_TEXT[:-1]} and told him what he had.",
+        f"{C05_TEXT[:-1]} from there.",
+        f"{C05_TEXT[:-1]} and his phone number.",
+        # 2. a second act in plain words
+        'On March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday", and @northstar'
+        " wrote to PETROV.",
+        # 3. an exchange, which one sender row never reads
+        'On March 12, 2026, PETROV and @northstar had a conversation and PETROV wrote: "need 2'
+        ' more by friday".',
+        'On March 12, 2026, PETROV and @northstar exchanged messages, and PETROV wrote: "need 2'
+        ' more by friday".',
+    ],
+)
+def test_claude_review_on_9f84acb_more_than_the_checks_read(conn, text):
+    # The Claude review of 9f84acb on #265: each of these kept only the sender and time rows
+    # and could be SUPPORTED on them alone.
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert {a.template_id for a in made} >= {"sender", "record_time", "event"}
+
+
+def test_claude_review_on_9f84acb_acts_and_counts(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # one message, written with two verbs that lead to its quote, is one act
+    asked = 'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(asked)
+    assert "a second act" in filler.unread_words(
+        "On March 12, 2026, PETROV called @northstar before @northstar called him.", (), {"call"}
+    )
+    # "texted" names the phone's own messages apps and is still an act
+    assert "a second act" in filler.unread_words(
+        "On March 12, 2026, PETROV texted @northstar and @northstar texted PETROV."
+    )
+    # a second time, outside the kept range
+    day = "On March 12, 2026, PETROV texted @northstar at 9 p.m."
+    assert "a second time" not in filler.unread_words(day, [day])
+    assert "a second time" in filler.unread_words(f"{day} and at 10 p.m.", [day])
+    # 4. a number no counting row tests
+    two = "From March 10 through March 31, 2026, PETROV sent @northstar 3 messages and 5 calls."
+    assert "a second count" in filler.unread_words(two, (), {"count"}, counts=1)
+    assert "a second count" not in filler.unread_words(two, (), {"count"}, counts=2)
+    for one in (
+        "From March 10 through March 31, 2026, PETROV sent @northstar at least one message.",
+        "From March 10 through March 31, 2026, PETROV sent @northstar twenty-one messages.",
+        "From March 10 through March 31, 2026, PETROV called @northstar 3 times for 2 minutes.",
+    ):
+        assert "a second count" not in filler.unread_words(one, (), {"count", "length"}), one
+    # "exchanged" is read by a count of both sides (case01 C03), never by a one-way count
+    assert "exchanged" not in filler.unread_words(
+        "PETROV and @northstar exchanged 13 messages.", (), {"count", "each_way"}
+    )
+    assert "exchanged" in filler.unread_words(
+        "PETROV and @northstar exchanged 13 messages.", (), {"count"}
+    )
+
+
+def test_coderabbit_on_822d9d7_subjects_and_count_copies(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # two verbs leading to one quote are one act only with one subject
+    for one in (
+        'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @northstar and then asked: "need 2 more by friday".',
+    ):
+        assert "a second act" not in filler.unread_words(one), one
+    for two in (
+        'On March 12, 2026, PETROV wrote to @northstar and @northstar wrote to PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @northstar, who replied: "ok".',
+        'On March 12, 2026, PETROV texted @northstar and he asked: "ok".',
+    ):
+        assert "a second act" in filler.unread_words(two), two
+    # a number no counting row counts, however many rows there are
+    two = "From March 10 through March 31, 2026, PETROV sent @northstar 3 messages and 5 calls."
+    assert "a second count" in filler.unread_words(two, (), {"count"}, counts=2, expected={3})
+    assert "a second count" not in filler.unread_words(
+        two, (), {"count"}, counts=2, expected={3, 5}
+    )
+    dozen = "From March 10 through March 31, 2026, PETROV sent @northstar a dozen messages."
+    assert "a second count" not in filler.unread_words(dozen, (), {"count"}, expected={12})
+
+
+def test_coderabbit_on_822d9d7_two_copies_of_one_count_cover_one_number(conn):
+    def kept(text: str) -> list[str]:
+        copy = P("message_count", count={"value": 3}, people=["PETROV", "REYES"], window=MAR21,
+                 channels=["call"], phones=["dev:item1"])  # fmt: skip
+        assumptions, filler = build_text(conn, text, ClaimType.COUNT, [copy, copy])
+        return [a.template_id for a in assumptions]
+
+    # two copies of the row for 3 calls never cover the 5 calls the claim also states
+    two = "On March 21, 2026, on dev:item1, PETROV and REYES had 3 Telegram calls and 5 more calls."
+    assert kept(two) == ["message_count", "event"]
+    one = "On March 21, 2026, on dev:item1, PETROV and REYES had 3 Telegram calls."
+    assert kept(one) == ["message_count"]
+
+
+def test_coderabbit_on_6080aa5_then_and_handles(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a subject before "then" is a subject of its own
+    then = 'On March 12, 2026, PETROV texted @northstar and @northstar then asked: "ok".'
+    assert "a second act" in filler.unread_words(then)
+    same = 'On March 12, 2026, PETROV texted @northstar and then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(same)
+    # with no "and", a bare "then" joins the two verbs (CodeRabbit on 6b6b213)
+    bare_then = 'On March 12, 2026, PETROV texted @northstar then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(bare_then)
+    # a handle that reads like a pronoun is an account (CodeRabbit on 31b0e11)
+    at_who = 'On March 12, 2026, PETROV texted @who then asked: "need 2 more by friday".'
+    assert "a second act" not in filler.unread_words(at_who)
+    other = 'On March 12, 2026, PETROV texted @northstar then @northstar asked: "ok".'
+    assert "a second act" in filler.unread_words(other)
+    # a relative clause before "then" has a subject of its own (CodeRabbit on e7ea4cf)
+    for two in (
+        'On March 12, 2026, PETROV texted @northstar who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @northstar, who then asked PETROV: "ok".',
+    ):
+        assert "a second act" in filler.unread_words(two), two
+    # a handle or an address that holds a reply verb is an account, not an act
+    for one in (
+        'On March 12, 2026, PETROV wrote to @replied: "need 2 more by friday".',
+        'On March 12, 2026, PETROV wrote to replied@example.com: "need 2 more by friday".',
+        'On March 12, 2026, PETROV wrote at example.com/replied: "need 2 more by friday".',
+    ):
+        assert "a second act" not in filler.unread_words(one), one
+    assert "a second act" not in filler.unread_words(
+        'On March 12, 2026, REYES replied: "need 2 more by friday".'
+    )
+
+
+def test_coderabbit_on_087536e_pronoun_after_an_address(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a pronoun after an address's closing bracket or dash starts a clause of its own
+    for two in (
+        'On March 12, 2026, PETROV texted @ns (https://example.com)—who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @northstar (example.com/x) who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted who@example.com, she then asked PETROV: "ok".',
+        # an ASCII hyphen after a bracket or a space is a dash (CodeRabbit on 1e863fe)
+        'On March 12, 2026, PETROV texted @ns (https://example.com)-who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @ns (example.com/x) -who then asked PETROV: "ok".',
+        'On March 12, 2026, PETROV texted @ns (example.com/x) - who then asked PETROV: "ok".',
+    ):
+        assert "a second act" in filler.unread_words(two), two
+    # a word joined to a handle or an address is part of that account
+    for one in (
+        'On March 12, 2026, PETROV texted @who then asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted who@example.com then asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted example.com/who then asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted www.who.int then asked: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @north-who then asked: "need 2 more by friday".',
+    ):
+        assert "a second act" not in filler.unread_words(one), one
+
+
+# ---------------------------------------------------------------- Claude review on e60eb11
+
+
+@pytest.mark.parametrize("unit", ["each day", "a day", "per day", "in one day", "every hour"])
+def test_claude_review_on_e60eb11_a_rate_or_one_day_is_no_total(conn, unit):
+    # 13 messages spread over March 10-31 are no "13 each day" nor 13 "in one day"
+    text = GOLD["C03"]["text"][:-1] + f" {unit}."
+    made, _ = build_text(conn, text, ClaimType.COUNT, GOOD["C03"])
+    assert "event" in {a.template_id for a in made}, text
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "PETROV sent @northstar a phone number:",
+        "PETROV sent @northstar the account number:",
+        "PETROV sent @northstar a username:",
+        "PETROV sent @northstar a date and a time:",
+        "PETROV wrote to @northstar from her phone:",
+        "PETROV wrote to @northstar on their account:",
+    ],
+)
+def test_claude_review_on_e60eb11_what_the_message_held_is_read(conn, words):
+    text = f'On March 12, 2026, {words} "need 2 more by friday".'
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, text
+
+
+def test_claude_review_on_e60eb11_her_phone_on_a_count(conn):
+    text = GOLD["C03"]["text"][:-1] + " on her phone."
+    made, _ = build_text(conn, text, ClaimType.COUNT, GOOD["C03"])
+    assert "event" in {a.template_id for a in made}
+
+
+def test_claude_review_on_e60eb11_a_message_still_reads_plain(conn):
+    for text in (
+        C05_TEXT,
+        'On March 12, 2026, PETROV sent @northstar a message reading: "need 2 more by friday".',
+    ):
+        made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+        assert sorted(a.template_id for a in made) == ["record_time", "sender"], text
+
+
+def test_claude_review_on_e60eb11_a_call_keeps_its_own_reading(conn):
+    # a call's time row on no app, in a claim that also names SMS, is never moved onto SMS
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    call = Proposal("record_time", {"person_ids": [PETROV]}, is_core=True)
+    for text in (
+        "On March 9, 2026, PETROV called REYES and then texted him.",
+        "On March 9, 2026, PETROV called REYES after an SMS.",
+    ):
+        c = Claim(
+            id="X1",
+            paragraph_id=claim("C05").paragraph_id,
+            text=text,
+            claim_type=ClaimType.COMMUNICATION,
+            status=ClaimStatus.ACCEPTED,
+        )
+        (row,) = filler._bind_named_app(c, [call])
+        assert not row.params.get("channels"), (text, row.params)
+
+
+def test_claude_review_on_e60eb11_an_event_claim_keeps_its_rows_with_seconds(conn):
+    text = "Officers seized the phone from PETROV at 09:31:04 a.m. on March 12, 2026."
+    props = [
+        P(
+            "event",
+            people=["PETROV"],
+            window=W("at 09:31:04 a.m. on March 12, 2026", "2026-03-12T09:31", "2026-03-12T09:32"),
+        )
+    ]
+    made, filler = build_text(conn, text, ClaimType.EVENT, props)
+    assert [a.template_id for a in made] == ["event"], filler.drops
+    # a communication claim stated to the second is still refused
+    text = (
+        'At 09:31:04 a.m. on March 12, 2026, PETROV wrote to @northstar: "need 2 more by friday".'
+    )
+    answer = [
+        C05_ANSWER[0],
+        P(
+            "record_time",
+            people=["PETROV"],
+            quoted_text="need 2 more by friday",
+            window=W("At 09:31:04 a.m. on March 12, 2026", "2026-03-12T09:31", "2026-03-12T09:32"),
+        ),
+    ]
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "record_time" not in {a.template_id for a in made}
+
+
+def test_claude_review_on_e60eb11_plain_words_name_no_app(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    assert not filler._names_an_app_the_case_lacks("PETROV texted REYES about the outlook")
+    assert not filler._names_an_app_the_case_lacks("a steam cleaner and a door hinge, imo")
+    assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on Slack")
+    assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on OUTLOOK")
+
+
+# ------------------------------------------------------------- CodeRabbit review on 22b0736
+
+
+def test_coderabbit_on_22b0736_a_held_app_named_by_a_plain_word_is_no_app(conn, monkeypatch):
+    # The case holds Outlook: "about the outlook" names no app, so the sheet check excuses
+    # none and no row is bound to it; "on Outlook" still names it.
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Outlook"])
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    assert "outlook" not in filler.claim_apps("PETROV texted REYES about the outlook.")
+    assert "outlook" in filler.claim_apps("PETROV wrote to REYES on Outlook.")
+
+
+def test_coderabbit_on_22b0736_texted_on_an_app_keeps_no_phone_message_app(conn):
+    # "texted ... on Telegram" names Telegram alone: a model's SMS on the rows is dropped, so
+    # an SMS record can never satisfy them.
+    text = 'On March 12, 2026, PETROV texted @northstar on Telegram: "need 2 more by friday".'
+    answer = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    rows = [a for a in made if a.template_id in ("sender", "record_time")]
+    assert rows, filler.drops
+    for a in rows:
+        assert [c.casefold() for c in a.params.channels] == ["telegram"], a.params.channels
+
+
+def test_coderabbit_on_22b0736_a_count_on_an_app_the_claim_does_not_name_is_refused(conn):
+    # a count the model put on SMS, in a claim that names Telegram alone, is never moved to
+    # Telegram nor kept on SMS (refused before this fix too; kept as a guard)
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV texted REYES 13 times on Telegram between March 10 and March 31, 2026.",
+        claim_type=ClaimType.COUNT,
+        status=ClaimStatus.ACCEPTED,
+    )
+    row = Proposal(
+        "message_count", {"person_ids": [PETROV, REYES], "channels": ["SMS"]}, is_core=True
+    )
+    with pytest.raises(Reject, match="does not (read|name)"):
+        filler._bind_named_app(c, [row])
+
+
+def test_coderabbit_on_22b0736_a_second_date_no_range_covers_is_read(conn):
+    # the range covers March 12 alone, so March 13 goes to an expert-only event; a range over
+    # both dates reads them both
+    text = (
+        "On March 12, 2026 and on March 13, 2026, PETROV wrote to @northstar: "
+        '"need 2 more by friday".'
+    )
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+    # a range that keeps both dates' words but bounds March 12 alone (CodeRabbit on cd16272)
+    both = "On March 12, 2026 and on March 13, 2026"
+    for start, end, event in (
+        ("2026-03-12T00:00", "2026-03-13T00:00", True),
+        ("2026-03-12T00:00", "2026-03-14T00:00", False),
+    ):
+        answer = [C05_ANSWER[0], {**C05_ANSWER[1], "window": W(both, start, end)}]
+        made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+        rows = {a.template_id for a in made}
+        assert ("event" in rows) is event, (start, end, rows, filler.drops)
+        if not event:
+            assert "record_time" in rows, filler.drops
+    made, _ = build_text(conn, C05_TEXT, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+def test_coderabbit_on_22b0736_only_the_unread_words_event_is_marked(conn):
+    from core.audit.assumptions import is_unread_event
+
+    text = C05_TEXT[:-1] + " from her phone."
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert is_unread_event("event", event.text), event.text
+    # an event code only repaired (a window it filled) is the model's, not an unread-words one
+    assert not is_unread_event("event", "PETROV met REYES. Filled from the claim's wording.")
+
+
+def test_coderabbit_on_cd16272_a_models_plain_word_app_is_dropped(conn, monkeypatch):
+    # the case holds Outlook: a model's Outlook on "about the outlook" is dropped from the
+    # message rows, so no Outlook record passes for them; "on Outlook" keeps it
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Outlook"])
+    for words, kept in (("about the outlook", False), ("on Outlook", True)):
+        text = f'On March 12, 2026, PETROV wrote to @northstar {words}: "need 2 more by friday".'
+        answer = [{**p, "channels": ["Outlook"]} for p in C05_ANSWER]
+        made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+        rows = [a for a in made if a.template_id in ("sender", "record_time")]
+        assert rows, (text, filler.drops)
+        for a in rows:
+            assert ("Outlook" in a.params.channels) is kept, (text, a.params.channels)
+
+
+# --------------------------------------------------------------- Claude review on e5423ad
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'On March 12, 2026, on Item 2, PETROV wrote to @northstar: "need 2 more by friday".',
+        'On March 12, 2026, Item 1 holds a message PETROV wrote to @northstar: "need 2 more by'
+        ' friday".',
+        "On March 12, 2026, PETROV wrote to @northstar on Telegram from @alex92's account: \"need"
+        ' 2 more by friday".',
+        "On March 12, 2026, PETROV wrote to @northstar from @northstar's phone: \"need 2 more by"
+        ' friday".',
+        'On March 12, 2026, PETROV and @northstar messaged one another: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar wrote to each other: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_e5423ad_what_no_row_reads_gets_an_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, (text, filler.drops)
+
+
+def test_claude_review_on_e5423ad_a_phone_a_row_searches_is_read(conn):
+    text = 'On March 12, 2026, on Item 1, PETROV wrote to @northstar: "need 2 more by friday".'
+    answer = [{**p, "phones": ["Item 1"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"], filler.drops
+    # "each other" is read only by a count that sets each_way, never by a total between the
+    # two, which may all be one side's (CodeRabbit on e5104e2)
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    words = "PETROV and REYES messaged each other"
+    assert not filler.unread_words(words, tests={"count", "each_way", "both_ways"})
+    assert filler.unread_words(words, tests={"count", "each_way"})
+
+
+def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
+    from core.audit.assumption_filler import check_window
+
+    claim = (
+        "From 10 p.m. on March 12, 2026 to midnight on March 13, 2026, PETROV wrote to"
+        ' @northstar: "need 2 more by friday".'
+    )
+    words = "From 10 p.m. on March 12, 2026 to midnight on March 13, 2026"
+    check_window(D(2026, 3, 12, 22), D(2026, 3, 13), words, claim, "", "record_time")
+    # whole days still need every day they name inside the range
+    two = "On March 12, 2026 and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), two, two + ", PETROV wrote.", "", "record_time"
+        )
+    # a time that is not midnight does not make the second day an endpoint (CodeRabbit on
+    # 2238b1d)
+    mixed = "On March 12, 2026 at 11:50 p.m. and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12, 23, 50),
+            D(2026, 3, 13),
+            mixed,
+            mixed + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
+    # a range ending at 2 a.m. on the next day does not end at its midnight (CodeRabbit on
+    # 2238b1d)
+    late = "From 11:55 p.m. on March 12, 2026 to 2 a.m. on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12, 23, 55),
+            D(2026, 3, 13),
+            late,
+            late + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
+    # nor does a midnight that is not the range's end beside that day
+    other = "On March 12, 2026 near midnight and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), other, other + ", PETROV wrote.", "", "record_time"
+        )
+    through = "From 10 p.m. on March 12, 2026 through March 13, 2026 at midnight"
+    check_window(
+        D(2026, 3, 12, 22), D(2026, 3, 13), through, through + ", PETROV wrote.", "", "record_time"
+    )
+    # an abbreviated month beside "at midnight" is the same day (CodeRabbit on 3778664)
+    for short in (
+        "From 10 p.m. on March 12, 2026 through Mar. 13, 2026 at midnight",
+        "From 10 p.m. on March 12, 2026 to midnight on Mar. 13, 2026",
+    ):
+        check_window(
+            D(2026, 3, 12, 22),
+            D(2026, 3, 13),
+            short,
+            short + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
+    # midnight written as a clock time is still midnight
+    clock = "From 10 p.m. on March 12, 2026 to 12 a.m. on March 13, 2026"
+    check_window(
+        D(2026, 3, 12, 22), D(2026, 3, 13), clock, clock + ", PETROV wrote.", "", "record_time"
+    )
+
+
+# ------------------------------------------------------------- CodeRabbit review on e5104e2
+
+
+def test_coderabbit_on_e5104e2_a_possessive_ending_in_an_apostrophe_is_read(conn):
+    text = 'On March 12, 2026, REYES wrote to @northstar on Telegram from REYES\' phone: "ok".'
+    answer = [
+        P("sender", people=["REYES"], quoted_text="ok"),
+        P(
+            "record_time",
+            people=["REYES"],
+            quoted_text="ok",
+            window=W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00"),
+        ),
+    ]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "event" in {a.template_id for a in made}, filler.drops
+
+
+def test_coderabbit_on_e5104e2_a_phone_is_searched_only_when_every_checked_row_searches_it(conn):
+    # the claim names both phones; the sender row searches Item 2 and the time row Item 1, so
+    # neither phone is one every checked row searches
+    text = (
+        'On March 12, 2026, on Item 2 and on Item 1, PETROV wrote to @northstar: "need 2 more by'
+        ' friday".'
+    )
+    split = [{**C05_ANSWER[0], "phones": ["Item 2"]}, {**C05_ANSWER[1], "phones": ["Item 1"]}]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, split)
+    rows = {a.template_id: a.params.device_ids for a in made}
+    assert rows.get("sender") == ("dev:item2",) and rows.get("record_time") == ("dev:item1",), rows
+    assert "event" in rows, filler.drops
+
+
+# --------------------------------------------------------------- Claude review on 76ef80b
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # two writers: one sender row reads one
+        'On March 12, 2026, PETROV and @northstar wrote: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar both wrote: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar each wrote: "need 2 more by friday".',
+        # more than one message: a sender row reads one record
+        'On March 12, 2026, PETROV sent @northstar messages: "need 2 more by friday".',
+        'On March 12, 2026, PETROV sent @northstar some messages, one of them: "need 2 more by'
+        ' friday".',
+        'On March 12, 2026, PETROV sent texts to @northstar: "need 2 more by friday".',
+        # "last": no later message exists, which no check reads
+        'On March 12, 2026, PETROV last wrote to @northstar: "need 2 more by friday".',
+        # the party written first is the one the message went to
+        'On March 12, 2026, PETROV received from @northstar: "need 2 more by friday".',
+        'On March 12, 2026, PETROV was sent a message by @northstar: "need 2 more by friday".',
+        'On March 12, 2026, PETROV was texted by @northstar: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_76ef80b_what_no_row_reads_gets_an_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, (text, filler.drops)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        C05_TEXT,
+        'On March 12, 2026, the message "need 2 more by friday" was sent by PETROV to @northstar.',
+        'On March 12, 2026, a message was sent to @northstar by PETROV: "need 2 more by friday".',
+        'On March 12, 2026, PETROV texted @northstar and asked: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_76ef80b_a_plain_claim_still_gets_no_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"], (text, filler.drops)
+
+
+def test_claude_review_on_76ef80b_plural_and_received_words_are_read_by_their_rows(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    # a count reads more than one message; a caller row reads who received a call
+    assert not filler.unread_words("PETROV sent @northstar 3 messages", tests={"count"})
+    assert filler.unread_words("PETROV sent @northstar messages")
+    assert not filler.unread_words("REYES received a call from PETROV", tests={"call", "direction"})
+    assert filler.unread_words("REYES received a call from PETROV", tests={"call"})
+    assert not filler.unread_words("REYES was called by PETROV", tests={"call", "direction"})
+
+
+def test_claude_review_on_76ef80b_a_handle_names_no_phone_message_kind(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    for text in ('PETROV wrote to @sms: "ok".', 'PETROV wrote to @texted: "ok".'):
+        assert filler._message_apps(text) == [], text
+
+
+def test_coderabbit_on_8c1c5aa_a_number_is_a_second_writer(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    two = 'PETROV and +1 (212) 555-0122 wrote on Telegram: "need 2 more by friday".'
+    assert "a second writer" in filler.unread_words(two)
+    one = 'PETROV wrote to +1 (212) 555-0122 on Telegram: "need 2 more by friday".'
+    assert "a second writer" not in filler.unread_words(one)
+    # a plural beside a count is the count's word
+    assert not filler.unread_words("PETROV sent @northstar 3 texts", tests={"count"})
+
+
+def test_coderabbit_on_5b569da_an_account_named_like_a_plural_hides_no_plural(tmp_path):
+    c = _case_with(
+        tmp_path,
+        "INSERT INTO accounts (id, source_id, locator, device_id, app, identifier, display_name)"
+        " VALUES ('acct:item1:Telegram:texts', 'item1', 'x', NULL, 'Telegram', '556', 'Texts')",
+    )
+    filler = LocalAssumptionFiller(FakeModel("{}"), c, template=DRAFT)
+    text = 'On March 12, 2026, PETROV sent TEXTS to @northstar: "need 2 more by friday".'
+    assert "texts" in filler.unread_words(text)
+    assert not filler.unread_words(text.replace("TEXTS", "3 TEXTS"), tests={"count"})
+
+
+def test_coderabbit_on_5cd6759_a_person_aliased_like_a_plural_hides_no_plural(conn):
+    from core.review import actions
+
+    actions.set_aliases(conn, REYES, ["TEXTS"], "expert:test")
+    try:
+        filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+        text = 'On March 12, 2026, PETROV sent TEXTS on Telegram: "need 2 more by friday".'
+        assert "texts" in filler.unread_words(text)
+        assert not filler.unread_words(text.replace("TEXTS", "3 TEXTS"), tests={"count"})
+        # written as a person, the word is still read as a plural: an expert-only event, the
+        # safe side
+        assert filler.unread_words(
+            'On March 12, 2026, PETROV texted TEXTS on Telegram: "need 2 more by friday".'
+        ) == ["texts"]
+    finally:
+        actions.set_aliases(conn, REYES, [], "expert:test")

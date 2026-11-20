@@ -27,6 +27,148 @@ from core.contracts import AssumptionParams, CheckOutcome, CheckResult, Fidelity
 _OPS = {"eq": "exactly", "ge": "at least", "le": "at most"}
 
 
+# seconds within which a row with the same words as the row before it may be the same message;
+# the rows chain, so three copies a second and a half apart are one group (`look_alike_groups`)
+TWIN_S = 2
+
+
+def look_alikes_matter(n: int, twins: int, want: int, op: str) -> bool:
+    """True when the claim's answer differs somewhere between n - twins and n counted
+    messages, so look-alike rows must hold the count open: "exactly 12" over 17 rows with 5
+    look-alikes, but not "at least 5" over 10 rows with 2, nor "at most 20" over 17."""
+    lo = n - twins
+    if not twins:
+        return False
+    if op == "ge":
+        return lo < want <= n
+    if op == "le":
+        return lo <= want < n
+    return lo <= want <= n  # eq: below lo or above n the answer is the same at every number
+
+
+def look_alike_groups(rows: list[Row]) -> list[list[Row]]:
+    """The rows that repeat one another's words (folded case and spaces, never empty), each
+    within TWIN_S seconds of the one before, in groups of two or more in time order: rows a
+    count may hold as one message. The rows chain on purpose: a group only holds a count open,
+    never passes or fails it, so a longer group errs toward the expert (CodeRabbit on #265).
+    The app, sender and direction are left out on purpose: one message's copies in two stores
+    can carry different labels ("Native Messages" in one, a number written "9198887386" or no
+    sender at all in the other, as on the Android 13 development phone), so a group may be one
+    message of any sender in it."""
+    last: dict[str, list[Row]] = {}
+    groups: list[list[Row]] = []
+    for r in sorted((r for r in rows if r.ts_utc is not None), key=lambda r: r.ts_utc):
+        words = " ".join((r.text or "").casefold().split())
+        if not words:
+            continue
+        group = last.get(words)
+        if group is not None and (r.ts_utc - group[-1].ts_utc).total_seconds() <= TWIN_S:
+            group.append(r)  # rows are in time order, so the latest copy is the nearest
+        else:
+            group = [r]
+            groups.append(group)
+        last[words] = group
+    return [g for g in groups if len(g) > 1]
+
+
+def look_alike(rows: list[Row]) -> int:
+    """How many of the rows repeat an earlier row's words within TWIN_S seconds
+    (`look_alike_groups`): rows a count may hold twice. A look-alike only holds a count open,
+    never passes or fails it: the count passes or fails only when every number from n -
+    look-alikes to n gives that answer (CodeRabbit and the Claude review on #265)."""
+    return sum(len(g) - 1 for g in look_alike_groups(rows))
+
+
+def fewest_messages(
+    chosen: list[Row],
+    rows: list[Row],
+    groups: list[list[Row]] | None = None,
+    senders: set[str] | None = None,
+    any_chosen: bool = False,
+    beyond: set[str] | None = None,
+) -> int:
+    """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
+    side's) may hold: one for each row in no look-alike group of `rows`, and one for each
+    group whose every row is chosen. A group that holds a row not chosen may be that row's
+    one message, so it may add none: "A to B 'ok'" and "B to A 'ok'" a second apart may be
+    B's message alone (CodeRabbit on #265). The groups are read over every row first, before
+    a side is chosen; `groups` passes them in when already read. With `senders` (the chosen
+    side's accounts), a group holding a chosen row whose every row names that side as sender
+    is that side's message too: a copy with no receiver never takes the direction away
+    (CodeRabbit on #265). With `any_chosen` (a count of both sides' messages), a group holding
+    any chosen row is one message between them, whatever its other rows: a row that names no
+    sender or no receiver can only join chosen rows into one message (CodeRabbit on #265).
+    `beyond` are rows outside the window counted: a group holding one may be that row's
+    message, at its time, so neither of those two readings adds a message (CodeRabbit on
+    #265)."""
+    if groups is None:
+        groups = look_alike_groups(rows)
+    ids = {r.id for r in chosen}
+    out = beyond or set()
+    grouped = {r.id for g in groups for r in g}
+    return sum(1 for r in chosen if r.id not in grouped) + sum(
+        1
+        for g in groups
+        if all(r.id in ids for r in g)
+        or (
+            not any(r.id in out for r in g)
+            and (
+                (any_chosen and any(r.id in ids for r in g))
+                or (
+                    senders is not None
+                    and any(r.id in ids for r in g)
+                    and all(r.sender in senders for r in g)
+                )
+            )
+        )
+    )
+
+
+def each_way_rests_on_look_alikes(
+    rows: list[Row],
+    a_ids: set[str],
+    b_ids: set[str],
+    beside: list[Row] | None = None,
+    groups: list[list[Row]] | None = None,
+) -> bool:
+    """True when a message each way may rest on look-alike rows: a side whose rows may hold
+    no message (`fewest_messages`), as each of its rows is in a group with the other side's
+    row, which may be the one message (CodeRabbit on #265: "A to B 'ok'" and "B to A 'ok'" a
+    second apart). Two copies of one side's message still hold a message from that side.
+    `beside` are rows never counted (timed rows that name no sender or no receiver) read
+    for look-alikes too: "B to no one 'ok'" a second after "A to B 'ok'" may be B's message
+    (CodeRabbit on #265). `groups` passes the groups of `rows` + `beside` when already read."""
+    return bool(each_way_open_sides(rows, a_ids, b_ids, beside, groups))
+
+
+def each_way_open_sides(
+    rows: list[Row],
+    a_ids: set[str],
+    b_ids: set[str],
+    beside: list[Row] | None = None,
+    groups: list[list[Row]] | None = None,
+    beyond: set[str] | None = None,
+) -> list[set[str]]:
+    """The sides (`a_ids`, `b_ids`) whose rows may hold no message of their own
+    (`each_way_rests_on_look_alikes`). `beyond` are the rows of `beside` outside the window
+    (`fewest_messages`)."""
+    pool = rows + (beside or [])
+    if groups is None:
+        groups = look_alike_groups(pool)
+    return [
+        ids
+        for ids in (a_ids, b_ids)
+        if fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids, beyond=beyond)
+        == 0
+    ]
+
+
+_EACH_WAY_OPEN = (
+    "A message each way rests on rows that repeat another's words and time, which may be one "
+    "message; an expert must decide which rows are the same message"
+)
+
+
 class CountCheck(TemplateCheck):
     """Parties are matched by account identifier, so a renamed handle is still one party.
 
@@ -51,7 +193,11 @@ class CountCheck(TemplateCheck):
     name = "count"
     # 1.2.1: a message or call that names no sender or no receiver, with a party on it or in a
     # chat with one, keeps "at most" and "exactly" from passing (Greptile on #264).
-    version = "1.2.1"
+    # 1.3.0: look-alike rows hold a count open when merging them could change the answer.
+    # 1.3.1: both guards together (#264 and #265 merged), and look-alikes read over both
+    # sides before a side is chosen and beside timed rows just outside the window, which are
+    # never counted (CodeRabbit on #265).
+    version = "1.3.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None or p.expected_count is None or p.count_op is None:
@@ -107,6 +253,28 @@ class CountCheck(TemplateCheck):
             and (r.ts_utc is None or in_window(r.ts_utc, p.window))
         ]
         counted = [r for r in rows if r.ts_utc is not None and in_window(r.ts_utc, p.window)]
+        # Look-alikes are read over both sides, before a side is chosen, and beside the timed
+        # rows that name no sender or no receiver: a row of the side counted may be a copy of
+        # one of those, and one may join two counted rows into one message, "ok" at 0, 2 and 4
+        # seconds (CodeRabbit on #265). Those rows are never counted.
+        timed_unplaced = [r for r in unplaced if r.ts_utc is not None]
+        # Timed rows outside the window are read for look-alikes too, never counted: "B to A
+        # 'ok'" a second before the window opens may be the one message that "A to B 'ok'" at
+        # its start copies (CodeRabbit on #265). Only rows that chain to a counted row join its
+        # group, so the rest change nothing.
+        placed = {r.id for r in counted + timed_unplaced}
+        outside = [
+            r
+            for r in {
+                r.id: r
+                for r in rows
+                + [r for r in pool + beside if incomplete(r) and may_be_between(r, a_ids, b_ids)]
+            }.values()
+            if r.ts_utc is not None and r.id not in placed and not in_window(r.ts_utc, p.window)
+        ]
+        beyond = {r.id for r in outside}
+        between = counted + timed_unplaced + outside
+        groups = look_alike_groups(between)
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
             # A message from an account both sides hold is no side's alone (Codex on #172).
@@ -125,6 +293,9 @@ class CountCheck(TemplateCheck):
         lines: list[str] = []
         unknown_sender: list[Row] = []
         one_side_silent = False
+        each_way_open = False
+        each_way_peers: list[Row] = []
+        side_ids: set[str] | None = None
         if p.sent_by:
             side = _sending_side(p, a, b)
             if side is None:
@@ -137,6 +308,7 @@ class CountCheck(TemplateCheck):
                     sources,
                 )
             mine, theirs = (a_ids, b_ids) if side is a else (b_ids, a_ids)
+            side_ids = mine
             unknown_sender = [
                 r
                 for r in pool
@@ -166,6 +338,29 @@ class CountCheck(TemplateCheck):
             one_side_silent = not (by_a and by_b)
             if one_side_silent:
                 lines.append("Not finding a message each way does not mean one was never sent")
+            ew_groups = groups  # read over the counted rows and those beside them
+            open_sides = (
+                []
+                if one_side_silent
+                else each_way_open_sides(
+                    counted, a_ids, b_ids, timed_unplaced + outside, ew_groups, beyond
+                )
+            )
+            if open_sides:
+                each_way_open = True
+                # the rows never counted that the open side's rows may be copies of, cited;
+                # not those beside a side that still holds a message of its own (CodeRabbit on
+                # #265)
+                ids_counted = {r.id for r in counted}
+                open_ids = {r.id for r in counted if any(r.sender in ids for ids in open_sides)}
+                each_way_peers = [
+                    r
+                    for g in ew_groups
+                    if any(x.id in open_ids for x in g)
+                    for r in g
+                    if r.id not in ids_counted
+                ]
+                lines.append(_EACH_WAY_OPEN)
         n, want, op = len(counted), p.expected_count, p.count_op
         lines.insert(0, f"Counted {n}; the claim says {_OPS[op]} {want}")
         deleted = sum(1 for r in counted if r.deleted)
@@ -197,12 +392,50 @@ class CountCheck(TemplateCheck):
                 "possibly several messages joined, so the count may hold one message twice or "
                 "several as one; an expert must decide which rows are which messages"
             )
+        # A row of the side counted may be a copy of the other side's message (CodeRabbit on
+        # #265), so the fewest is read over both sides' rows; with no side chosen it is the
+        # rows less their look-alikes (`look_alike`).
+        twins = n - fewest_messages(counted, between, groups, side_ids, not p.sent_by, beyond)
+        # the other side's rows that make one side's rows look-alikes, cited when they hold the
+        # count open (CodeRabbit on #265)
+        mine_ids = {r.id for r in counted}
+        peers = [
+            r for g in groups if any(x.id in mine_ids for x in g) for r in g if r.id not in mine_ids
+        ]
+        # 1.3.0 (v5 failure hunt, 2026-11-16): a UFDR can hold one message twice with no copy
+        # number, a live row and a recovered one or the SMS store and Google Messages (Android
+        # 13: 12 TikTok messages stored as 17 rows), so "exactly 12" would fail. The messages
+        # number between n - twins and n; the count is held open only when that range spans
+        # the claim (Claude review on #265: "at least 5" over 10 rows, 2 of them look-alikes,
+        # still holds).
+        lo = n - twins
+        twins_open = look_alikes_matter(n, twins, want, op)
+        if twins:
+            lines.append(
+                f"{twins} of the counted messages repeat another one's words and time "
+                f"(within {TWIN_S} seconds), so the count may hold one message twice"
+                + (
+                    " or the other side's message"
+                    if p.sent_by and twins > look_alike(counted)
+                    else ""
+                )
+                + (
+                    "; an expert must decide which rows are the same message"
+                    if twins_open
+                    else f", and {lo} to {n} messages all give the same count answer"
+                )
+            )
 
-        if copies:
+        if copies or twins_open:
             outcome = CheckOutcome.INCONCLUSIVE
-        elif op in ("eq", "le") and n > want:
+        elif op in ("eq", "le") and lo > want:
             outcome = CheckOutcome.FAIL
-        elif no_time or one_side_silent or ((unknown_sender or unplaced or unread) and op != "ge"):
+        elif (
+            no_time
+            or one_side_silent
+            or each_way_open
+            or ((unknown_sender or unplaced or unread) and op != "ge")
+        ):
             outcome = CheckOutcome.INCONCLUSIVE
         elif op == "eq":
             outcome = CheckOutcome.PASS if n == want else CheckOutcome.INCONCLUSIVE
@@ -210,6 +443,10 @@ class CountCheck(TemplateCheck):
             outcome = CheckOutcome.PASS if n >= want else CheckOutcome.INCONCLUSIVE
         else:
             outcome = CheckOutcome.PASS if full else CheckOutcome.INCONCLUSIVE
+        if each_way_open and outcome is not CheckOutcome.INCONCLUSIVE:
+            # a fail on too many counted rows needs no expert to read the direction (CodeRabbit
+            # on #265)
+            lines.remove(_EACH_WAY_OPEN)
         if outcome is CheckOutcome.INCONCLUSIVE and n < want:
             lines.append("Finding fewer than claimed does not mean the others never existed")
         # The outcome rests on the rows that may be among them too (CodeRabbit on #264).
@@ -217,6 +454,11 @@ class CountCheck(TemplateCheck):
         held_open = outcome is CheckOutcome.INCONCLUSIVE and (unplaced or unknown_sender)
         held_open = held_open and op != "ge"
         ids = [r.id for r in counted + no_time + ((unknown_sender + unplaced) if held_open else [])]
+        if twins_open:
+            ids += [r.id for r in peers]
+        if outcome is CheckOutcome.INCONCLUSIVE:
+            # cited only when they hold the count open, never beside a fail on the counted rows
+            ids += [r.id for r in each_way_peers]
         return self.done(
             assumption_id,
             outcome,

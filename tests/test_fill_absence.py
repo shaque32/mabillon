@@ -223,6 +223,11 @@ def test_an_address_on_the_app_the_claim_names(conn):
     assert run(conn, a).outcome is CheckOutcome.INCONCLUSIVE  # 9:30 a.m. is outside the range
     conn.execute("UPDATE messages SET ts_utc = '2026-03-22T14:30:00Z' WHERE id = 'msg:w1'")
     assert run(conn, a).outcome is CheckOutcome.FAIL
+    # Left on no app, the row gets the app the claim names: "Wickr" is the case's "Wickr Pro",
+    # not an app the case lacks (CodeRabbit on #265).
+    (b,), filler = build(conn, claim, {**prop, "channels": []})
+    assert b.params.channels == ("Wickr Pro",), filler.drops
+    assert run(conn, b).outcome is CheckOutcome.FAIL
     # An address with no app named never picks the app it is an account on.
     made, filler = build(
         conn,
