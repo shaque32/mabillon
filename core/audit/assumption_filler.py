@@ -3192,7 +3192,7 @@ _GATED_WORDS = {
         "least most more fewer less than exactly total dozen dozens hundred zero two three four "
         "five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
         "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety times "
-        "messages texts chats dms calls some".split()
+        "messages texts imessages chats dms calls some".split()
     ),
     # "PETROV and @northstar both wrote": a message from each, read only by a count that sets
     # each way (Claude review on #265)
@@ -3216,8 +3216,8 @@ _SPOKEN_NUMBERS = "|".join(
     sorted(
         _GATED_WORDS["count"]
         - set(
-            "least most more fewer less than exactly total times messages texts chats dms calls "
-            "some".split()
+            "least most more fewer less than exactly total times messages texts imessages chats "
+            "dms calls some".split()
         ),
         key=len,
         reverse=True,
@@ -3752,15 +3752,22 @@ class LocalAssumptionFiller:
                 cut.append((st, en))
             elif "a phone no row searches" not in extra:
                 extra.append("a phone no row searches")
-        cut += [(st, en) for _, st, en in self._numbers_named(bare)]
+        named_numbers = [(st, en) for _, st, en in self._numbers_named(bare)]
+        cut += named_numbers
         for rx in (_ADDRESS_RE, _HANDLE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE, _TIME24_RE,
                    _YEAR_RE):  # fmt: skip
             cut += [m.span() for m in rx.finditer(bare)]
         # only a phone number: "one of 10000 messages" is a count (CodeRabbit on #265)
-        cut += [
+        phone_numbers = [
             m.span()
             for m in _PHONE_RE.finditer(bare)
             if phone_digits(m.group(0).strip(" .,-")) is not None
+        ]
+        cut += phone_numbers
+        # a number is an account too: "PETROV and +1 (212) 555-0122 wrote" names two writers
+        # (CodeRabbit on #265); a number's span may end on the space after it
+        parties += [
+            (a, a + len(bare[a:b].rstrip(" .,-"))) for a, b in named_numbers + phone_numbers
         ]
         for m in _TIME_RE.finditer(bare):
             # "between 10 and 11 a.m.": the bare first hour is a time code reads
@@ -3792,9 +3799,16 @@ class LocalAssumptionFiller:
         apps = {c.casefold() for c in self.channels()} - {CALL_CHANNEL}
         apps |= {a.casefold() for words in APP_ALIASES.values() for a in words}
         apps |= set(APP_ALIASES)
-        for n in sorted(apps, key=len, reverse=True):
+        # "sent texts": more than one message, plain only beside a count, so a plural is never
+        # blanked as an app's alias (CodeRabbit on #265)
+        plural = set() if "count" in tests else {"texts", "text messages", "imessages", "messages"}
+        for n in sorted(apps - plural, key=len, reverse=True):
             # the same matcher as binding: "Line-Business" is Line Business (CodeRabbit on #265)
-            cut += self._app_mentions(bare, n)
+            cut += [
+                sp
+                for sp in self._app_mentions(bare, n)
+                if " ".join(bare[sp[0] : sp[1]].casefold().split()) not in plural
+            ]
         words = _blank(bare, cut)
         # "sent a video": a kind of message no check reads, not an app (CodeRabbit on #265)
         words = _OTHER_CALL_APPS_RE.sub(
@@ -3837,7 +3851,7 @@ class LocalAssumptionFiller:
                 extra.append("a second count")
         # a message's own kind, one record: "messages" stays, plain only beside a count
         # (Claude review on #265)
-        words = re.sub(r"(?i)\b(?:imessages?|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
+        words = re.sub(r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
         return [
             *out,

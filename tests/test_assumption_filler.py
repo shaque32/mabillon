@@ -5186,6 +5186,7 @@ def test_coderabbit_on_e5104e2_a_phone_is_searched_only_when_every_checked_row_s
         'On March 12, 2026, PETROV sent @northstar messages: "need 2 more by friday".',
         'On March 12, 2026, PETROV sent @northstar some messages, one of them: "need 2 more by'
         ' friday".',
+        'On March 12, 2026, PETROV sent texts to @northstar: "need 2 more by friday".',
         # "last": no later message exists, which no check reads
         'On March 12, 2026, PETROV last wrote to @northstar: "need 2 more by friday".',
         # the party written first is the one the message went to
@@ -5227,3 +5228,13 @@ def test_claude_review_on_76ef80b_a_handle_names_no_phone_message_kind(conn):
     filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
     for text in ('PETROV wrote to @sms: "ok".', 'PETROV wrote to @texted: "ok".'):
         assert filler._message_apps(text) == [], text
+
+
+def test_coderabbit_on_8c1c5aa_a_number_is_a_second_writer(conn):
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    two = 'PETROV and +1 (212) 555-0122 wrote on Telegram: "need 2 more by friday".'
+    assert "a second writer" in filler.unread_words(two)
+    one = 'PETROV wrote to +1 (212) 555-0122 on Telegram: "need 2 more by friday".'
+    assert "a second writer" not in filler.unread_words(one)
+    # a plural beside a count is the count's word
+    assert not filler.unread_words("PETROV sent @northstar 3 texts", tests={"count"})
