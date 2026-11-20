@@ -1,6 +1,11 @@
 """Score the validation-v1 run (eval/validation/PREREGISTERED.md), once, with the code at main.
 
     python -m eval.validation.score_hickman --results results.zip --keys DIR --dump DIR --out DIR
+    python -m eval.validation.score_hickman --results results.zip --keys DIR --out DIR
+        --phone a14=A14.zip --phone ios17=IOS.zip
+
+A run read from LEAPP output (validation v5) is scored with --phone for each phone it read,
+the zip it read, instead of --dump: its keys and bar 8 come from eval/validation/score_leapp.py.
 
 --keys holds the signed answer keys (gold.jsonl, plus gold_b2.jsonl and gold_b3.jsonl for v1)
 and --dump the independent ElementTree dump of the phone's report.xml
@@ -53,6 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from core.contracts import GoldClaim, Stance, Verdict
+from eval.validation import score_leapp
 from eval.validation.card import build_card, load_checks, rate, render_markdown
 from eval.validation.hickman_run import SQLITE_SIDECARS, TYPE_ALIASES, stamped_build
 
@@ -68,7 +74,10 @@ KEY_FILES = ("gold.jsonl", "gold_b2.jsonl", "gold_b3.jsonl")
 # card, 2026-11-16).
 # 1.5.1: no measure changed; only the results.zip a run published is scored, and only when its
 # case's last completed audit is the one its run.json names, in the same build (#269).
-SCORER_VERSION = "1.5.1"
+# 1.6.0: the LEAPP path (validation v5, eval/validation/score_leapp.py): keys by LAVA row, and
+# bar 8 table by table against dump_lava with each skipped Google Messages pair confirmed; the
+# UFDR path and every measure are unchanged.
+SCORER_VERSION = "1.6.0"
 
 # Run 2's low-coverage rule 3: below this many tested claims, no accuracy claim.
 MINIMUM_TESTED = 30
@@ -811,6 +820,18 @@ def repeat(first: dict[str, dict[str, Any]], second: dict[str, str]) -> dict[str
     }
 
 
+def _bar_8(counts: dict[str, Any]) -> dict[str, Any]:
+    if "phones" in counts:  # the LEAPP path (score_leapp.import_counts)
+        return {
+            "pass": counts["pass"],
+            "line": "every table's count equals the reader's, every skipped copy's pair confirmed",
+        }
+    return {
+        "pass": all(v["mabillon"] == v["dump"] for v in counts.values()),
+        "line": "every count equals the dump's",
+    }
+
+
 def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
     """The bars a score decides (PREREGISTERED_v4.md section 5), each with its numbers."""
     r1c, r2c = result["r1_card"]["card"], result["r2"]["card"]
@@ -844,10 +865,7 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
             "pass": code_checked >= MINIMUM_CODE_CHECKED,
             "line": f"at least {MINIMUM_CODE_CHECKED} code-checked, else no number",
         },
-        "8_import_counts": {
-            "pass": all(v["mabillon"] == v["dump"] for v in result["import_counts"].values()),
-            "line": "every count equals the dump's",
-        },
+        "8_import_counts": _bar_8(result["import_counts"]),
     }
     if "repeat" in result:
         rp = result["repeat"]
@@ -867,7 +885,13 @@ def v4_bars(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def score(
-    results: Path, keys: Path, dump: Path, out: Path, repeat_of: Path | None = None
+    results: Path,
+    keys: Path,
+    dump: Path | None,
+    out: Path,
+    repeat_of: Path | None = None,
+    phones: dict[str, Path] | None = None,
+    kinds: Path = score_leapp.KINDS_FILE,
 ) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     # scored under a temporary name, put in place with the score files only once scoring
@@ -876,7 +900,7 @@ def score(
     names = ("score.json", "score.md")
     parts = {n: out / f"{n}.part" for n in names}
     try:
-        result = _score(results, keys, dump, out, db, repeat_of)
+        result = _score(results, keys, dump, out, db, repeat_of, phones or {}, kinds)
         # both score files are rendered and written in full before any file is put in place,
         # so a failed render or write leaves the earlier scored.db and score files together
         # (Claude review on #269)
@@ -935,28 +959,53 @@ def _publish(staged: dict[Path, Path]) -> None:
 
 
 def _score(
-    results: Path, keys: Path, dump: Path, out: Path, db: Path, repeat_of: Path | None
+    results: Path,
+    keys: Path,
+    dump: Path | None,
+    out: Path,
+    db: Path,
+    repeat_of: Path | None,
+    phones: dict[str, Path],
+    kinds: Path,
 ) -> dict[str, Any]:
     from core.db import connect
 
     run_record = _copy_db(results, db)  # the run's own run.json: versions, machine, times
+    leapp = score_leapp.is_leapp_run(run_record)
+    if leapp and (dump is not None or not phones):
+        raise SystemExit("score: a LEAPP run is scored with --phone for each phone, not --dump")
+    if not leapp and (dump is None or phones):
+        raise SystemExit("score: a UFDR run is scored with --dump, not --phone")
     gold, key_hashes = load_keys(keys)
-    by_index, chats, dump_counts = load_dump(dump)
+    source: dict[str, Any] = {"kind": "leapp" if leapp else "ufdr"}
 
-    # closed on every path, so score() can remove the temporary copy (on Windows too)
-    with closing(connect(db)) as conn:
+    # closed on every path, so score() can remove the temporary copy (on Windows too); the
+    # phones' LAVA copies are removed with their folder
+    with tempfile.TemporaryDirectory() as work, closing(connect(db)) as conn:
         run = _published_run(conn, results, run_record)
         check_key_covers(conn, gold)
-        mapped, mapping = map_keys(conn, gold, by_index, chats)
+        if leapp:
+            lava = score_leapp.open_phones(run_record, phones, kinds, Path(work))
+            skipped = {sid: score_leapp.confirm_skipped(conn, p) for sid, p in lava.items()}
+            mapped, mapping = score_leapp.map_lava_keys(conn, gold, lava, skipped)
+            counts = score_leapp.import_counts(conn, lava, skipped)
+            source |= {
+                "kinds_sha256": score_leapp.load_kinds(kinds)[1],
+                "phones_sha256": {sid: p.sha256 for sid, p in lava.items()},
+            }
+        else:
+            by_index, chats, dump_counts = load_dump(dump)  # type: ignore[arg-type]  # checked above
+            mapped, mapping = map_keys(conn, gold, by_index, chats)
+            counts = import_counts(conn, dump_counts)
         r1 = r1_measures(conn, run, mapped)
         ready = key_recall(conn, run, mapping["groups"])
         labels = label_counts(conn, run, mapped)
-        counts = import_counts(conn, dump_counts)
         covered = coverage(run, mapped, r1)
         first_card = r1_card(conn, run, mapped, covered["tested_claims"])
 
     result = {
         "scorer_version": SCORER_VERSION,
+        "source": source,
         # a zip with no build id predates the driver's final check (the v4 runs): it is scored,
         # but its score says the driver never re-checked its owners and call logs before
         # publishing it (Claude review on #269)
@@ -1066,8 +1115,14 @@ def _v4_lines(s: dict[str, Any]) -> list[str]:
     lines = [
         "## Validation v4 bars (eval/validation/PREREGISTERED_v4.md)",
         "",
-        "Bars 7 (verify-bundle) and 8 (ufdr-check) are their own commands; 8's import counts"
-        " are below. Bar 6 is here only when pass 2 was given with --repeat.",
+        (
+            "Bar 7 (verify-bundle) is its own command; bar 8 on LEAPP is the import counts"
+            " below, table by table."
+            if (s.get("source") or {}).get("kind") == "leapp"
+            else "Bars 7 (verify-bundle) and 8 (ufdr-check) are their own commands; 8's import"
+            " counts are below."
+        )
+        + " Bar 6 is here only when pass 2 was given with --repeat.",
         "",
         "| Bar | Result | Pass line | Pass |",
         "| --- | --- | --- | --- |",
@@ -1135,7 +1190,7 @@ def render(s: dict[str, Any]) -> str:
     m = s["key_mapping"]
     ke = s["key_evidence"]
     lines = [
-        "# Validation v1 score (iOS 15 public phone)",
+        _title(s),
         "",
         f"Audit run `{s['audit_run']}`, rules {s['rule_version']}, results.zip SHA-256"
         f" `{s['results_sha256']}`, scorer {s.get('scorer_version', 'before 1.2.0')}.",
@@ -1170,25 +1225,89 @@ def render(s: dict[str, Any]) -> str:
         "",
         "## Import counts",
         "",
-        "| Kind | Mabillon | Dump |",
-        "| --- | --- | --- |",
     ]
-    for k, v in s["import_counts"].items():
-        lines.append(f"| {k} | {v['mabillon']} | {v['dump']} |")
+    counts = s["import_counts"]
+    if "phones" in counts:
+        lines += _leapp_count_lines(counts)
+    else:
+        lines += ["| Kind | Mabillon | Dump |", "| --- | --- | --- |"]
+        for k, v in counts.items():
+            lines.append(f"| {k} | {v['mabillon']} | {v['dump']} |")
     return "\n".join(lines) + "\n"
+
+
+def _title(s: dict[str, Any]) -> str:
+    if (s.get("source") or {}).get("kind") == "leapp":
+        phones = ", ".join(sorted(s["source"]["phones_sha256"]))
+        return f"# Validation score (LEAPP phones: {phones})"
+    return "# Validation v1 score (iOS 15 public phone)"
+
+
+def _leapp_count_lines(counts: dict[str, Any]) -> list[str]:
+    """Bar 8 on LEAPP, phone by phone and table by table (score_leapp.import_counts)."""
+    lines = [
+        "Each table the kinds file reads: Mabillon's records from it (distinct locators), the"
+        " Google Messages copies the importer skipped whose pair the scorer confirmed, and the"
+        " reader's count (dump_lava).",
+        "",
+    ]
+    for sid, p in counts["phones"].items():
+        lines += [
+            f"### {sid}: {'PASS' if p['pass'] else 'FAIL'}",
+            "",
+            "| Table | Kind | Mabillon | Skipped, confirmed | Reader | Same |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for t, r in p["tables"].items():
+            same = "yes" if r["pass"] else "NO"
+            lines.append(
+                f"| {t} | {r['kind']} | {r['mabillon']} | {r['skipped_confirmed']}"
+                f" | {r['reader']} | {same} |"
+            )
+        lines.append("")
+        if p["skipped_not_confirmed"]:
+            lines.append(f"Skipped copies not confirmed: {len(p['skipped_not_confirmed'])}:")
+            lines += [
+                f"- {x['locator']} as {x['same_as']}: {x['why']}"
+                for x in p["skipped_not_confirmed"]
+            ]
+            lines.append("")
+        if p["records_from_tables_not_counted"]:
+            extra = ", ".join(f"{t} {n}" for t, n in p["records_from_tables_not_counted"].items())
+            lines += [f"Records from tables the reader does not count: {extra}.", ""]
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--results", type=Path, required=True, help="the results.zip the run published")
     ap.add_argument("--keys", type=Path, required=True, help="the folder holding the keys")
-    ap.add_argument("--dump", type=Path, required=True, help="the independent dump's folder")
+    ap.add_argument("--dump", type=Path, help="a UFDR run's independent dump folder")
+    ap.add_argument(
+        "--phone",
+        action="append",
+        default=[],
+        metavar="SOURCE_ID=ZIP",
+        help="a LEAPP run's phone zip, as the run read it (once per phone)",
+    )
+    ap.add_argument(
+        "--kinds",
+        type=Path,
+        default=score_leapp.KINDS_FILE,
+        help="the LAVA tables bar 8 reads, by kind (default eval/validation/lava_kinds.json)",
+    )
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument(
         "--repeat", type=Path, help="pass 2's results.zip, compared with --results (bar 6)"
     )
     a = ap.parse_args(argv)
-    s = score(a.results, a.keys, a.dump, a.out, a.repeat)
+    phones: dict[str, Path] = {}
+    for item in a.phone:
+        sid, sep, path = item.partition("=")
+        if not sep or not sid or not path or sid in phones:
+            ap.error(f"--phone {item!r}: give each phone once, as SOURCE_ID=ZIP")
+        phones[sid] = Path(path)
+    s = score(a.results, a.keys, a.dump, a.out, a.repeat, phones, a.kinds)
     print(f"scored {s['audit_run']}: see {a.out / 'score.md'}")
     return 0
 
