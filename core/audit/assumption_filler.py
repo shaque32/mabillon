@@ -1385,6 +1385,16 @@ def check_window(
             continue
         y = int(m.group(3) or m.group(6) or 0) or None
         after.append(_DateMention(_MONTHS[m.group(1).lower()], int(m.group(2)), y))
+    if _tested(template_id) and not (after or open_start or open_end):
+        # "On March 12, 2026 and on March 13, 2026" kept as the words of a range over March 12
+        # alone: a date the range's words state that its bounds leave out is a day no check
+        # tests (CodeRabbit on #265)
+        days = [
+            start.date() + timedelta(days=i) for i in range((last.date() - start.date()).days + 1)
+        ]
+        for m in date_mentions(as_written):
+            if not any(_date_stated(d, [m], years) for d in days):
+                raise Reject("the range's words state a date its bounds leave out")
     if after and not times:
         if start.time() != time(0, 0) or not _date_stated(
             start.date() - timedelta(days=1), after, years

@@ -4986,6 +4986,18 @@ def test_coderabbit_on_22b0736_a_second_date_no_range_covers_is_read(conn):
     )
     made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
     assert "event" in {a.template_id for a in made}
+    # a range that keeps both dates' words but bounds March 12 alone (CodeRabbit on cd16272)
+    both = "On March 12, 2026 and on March 13, 2026"
+    for start, end, event in (
+        ("2026-03-12T00:00", "2026-03-13T00:00", True),
+        ("2026-03-12T00:00", "2026-03-14T00:00", False),
+    ):
+        answer = [C05_ANSWER[0], {**C05_ANSWER[1], "window": W(both, start, end)}]
+        made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+        rows = {a.template_id for a in made}
+        assert ("event" in rows) is event, (start, end, rows, filler.drops)
+        if not event:
+            assert "record_time" in rows, filler.drops
     made, _ = build_text(conn, C05_TEXT, ClaimType.COMMUNICATION, C05_ANSWER)
     assert sorted(a.template_id for a in made) == ["record_time", "sender"]
 

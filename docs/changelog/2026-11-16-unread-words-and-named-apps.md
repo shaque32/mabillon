@@ -216,7 +216,8 @@
     ("texted @northstar on Telegram") keeps only that app on a row the model put on more, so
     an SMS record never passes for it; a count or absence on another app is refused. A
     second date that no range covers ("On March 12 and on March 13") is read by the
-    expert-only event. That event is now marked apart from a model event whose range code
+    expert-only event, and a range whose words state a date its bounds leave out is refused
+    on rows a check reads. That event is now marked apart from a model event whose range code
     repaired, so only it is excused under the parties check, and it no longer sets any
     party's role there. A count reads timed rows just outside its window for look-alikes,
     never counting them: "B to A 'ok'" a second before the window may be the one message "A
