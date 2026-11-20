@@ -240,7 +240,7 @@
     received ("PETROV received from @northstar", "PETROV was sent a message by ...") beside
     no row that reads a call's direction are read by the expert-only event. A handle
     ("@sms") no longer names a phone's own messages for a code-made sender. After CodeRabbit's
-    review of that round: "sent texts" is read like "sent messages" (also where an account is
+    review of that round: "sent texts" is read like "sent messages" (also where an account or a person's alias is
     shown as "Texts"), and a phone number joined
     to a name ("PETROV and +1 (212) 555-0122 wrote") is a second writer.
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267, #268 and #270)
