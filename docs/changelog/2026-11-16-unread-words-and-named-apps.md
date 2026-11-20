@@ -222,6 +222,10 @@
     party's role there. A count reads timed rows just outside its window for look-alikes,
     never counting them: "B to A 'ok'" a second before the window may be the one message "A
     to B 'ok'" at its start copies, so "A sent at least 1" goes inconclusive.
+  - After the third Claude review on #265 (on e5423ad): a phone the claim names that no kept
+    row searches ("on Item 2, PETROV wrote ...", "Item 1 holds a message ..."), an account or
+    phone written as a handle's or name's possessive ("from @alex92's account"), and "each
+    other" or "one another" beside no count of both sides are read by the expert-only event.
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
@@ -229,17 +233,19 @@
   `tests/test_count_look_alike.py`; each test for a review finding fails on the code before
   its fix. The filler, fill, replay, override, check and LEAPP suites pass locally after merging
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
-  this PR's Linux cloud session, before the last rounds of fixes; the filler, check, count,
+  this PR's Linux cloud session, hardware not recorded, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  with the rule-pack suite 1,785 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
+  with the rule-pack suite 1,799 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-20, final
   head). Class batteries of new wordings with wrong
   answers on the Android 13 phone (messages, calls, counts and timing; this PR's cloud
-  session, 2026-11-16 to 2026-11-18): no false SUPPORTED;
+  session, 2026-11-16 to 2026-11-20, rerun after each review round; the 2026-11-20 runs in the
+  container above, earlier hardware not recorded): no false SUPPORTED;
   only the three true base claims are SUPPORTED. A replay of stored v4 model answers on
   Android 13, iOS 15 and Android 12 (no model call; results in project files only; this
-  PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-20) leaves
+  PR's cloud session, run 2026-11-16 and again after each review round through 2026-11-20; the
+  2026-11-20 runs in the container above, earlier hardware not recorded) leaves
   every check outcome unchanged and adds the expert-only event to 20 claims (4 of them false
   claims in the v4 answer key; iOS 15 B32, "had four calls" with no count row, after the
   Claude review; Android 13 D069, "received a video call", true in the key, after CodeRabbit:

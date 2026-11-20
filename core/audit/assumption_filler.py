@@ -3328,6 +3328,19 @@ def _blank(text: str, spans: Iterable[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+# "from @alex92's account", "on @northstar's phone": an account or phone written as a
+# possessive of a handle or a name, which is blanked first, so only "'s account" is left; no
+# check binds it (Claude review on #265)
+_OWNED_RE = re.compile(
+    r"['’]s\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone|work|personal|other)\s+)?"
+    r"(?:numbers?|phones?|cells?|mobiles?|lines?|accounts?|handles?|usernames?|ids?|devices?)\b",
+    re.IGNORECASE,
+)
+# "messaged one another", "wrote to each other": messages both ways, read only by a count of
+# both sides, as "exchanged" is (`_GATED_WORDS`; Claude review on #265)
+_EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
+
+
 def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:
     """The words of `words` that `_PLAIN_WORDS` does not hold, casefolded, in order, once each,
     and the words of `_GATED_WORDS` under any key not in `tests`. A possessive "'s" is read off
@@ -3337,11 +3350,16 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     tests = frozenset(tests)
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
-    for m in _UNPLAIN_PHRASES_RE.finditer(words if phrases is None else phrases):
-        w = " ".join(m.group(0).casefold().split())
-        if w not in out:
-            out.append(w)
-    rest = _UNPLAIN_PHRASES_RE.sub(" ", words)
+    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE]
+    if "each_way" in tests:
+        never.remove(_EACH_OTHER_RE)
+    rest = words
+    for rx in never:
+        for m in rx.finditer(words if phrases is None else phrases):
+            w = " ".join(m.group(0).casefold().split())
+            if w not in out:
+                out.append(w)
+        rest = rx.sub(" ", rest)
     for m in _NUMERAL_RE.finditer(rest):
         gate = "length" if _UNIT_AFTER_RE.match(rest, m.end()) else "count"
         if gate not in tests and m.group(0) not in out:
@@ -3567,6 +3585,7 @@ class LocalAssumptionFiller:
         tests: Iterable[str] = (),
         counts: int = 1,
         expected: Collection[int] | None = None,
+        devices: Collection[str] | None = None,
     ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
@@ -3576,6 +3595,9 @@ class LocalAssumptionFiller:
         distinct kept rows count, and `expected` (when given) the numbers they count. A second
         act ("and @northstar wrote to PETROV"), a time of day outside every kept range, more
         numbers than counting rows, or a number no counting row counts, is a part no row tests.
+        With `devices` (the phones the kept rows search), a phone the claim writes that no row
+        searches is a part no row tests: "on Item 2, PETROV wrote ..." passed on a message on
+        Item 1 (Claude review on #265).
         Empty when the claim states only what its checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
@@ -3606,7 +3628,9 @@ class LocalAssumptionFiller:
             # A kept range's words are blanked only when they hold nothing past the dates and
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
-            if not self.unread_words(raw, tests=tests, counts=counts, expected=expected):
+            if not self.unread_words(
+                raw, tests=tests, counts=counts, expected=expected, devices=devices
+            ):
                 cut += found
         extra: list[str] = []
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
@@ -3629,7 +3653,11 @@ class LocalAssumptionFiller:
             cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
             pass  # a name in lower case: its words stay, and read as words no check reads
-        cut += [(st, en) for _, st, en in self._phone_spans(bare)]
+        for did, st, en in self._phone_spans(bare):
+            if devices is None or did in devices:
+                cut.append((st, en))
+            elif "a phone no row searches" not in extra:
+                extra.append("a phone no row searches")
         cut += [(st, en) for _, st, en in self._numbers_named(bare)]
         for rx in (_ADDRESS_RE, _HANDLE_RE, _DATE_RE, _NUM_DATE_RE, _TIME_RE, _TIME24_RE,
                    _YEAR_RE):  # fmt: skip
@@ -5272,7 +5300,12 @@ class LocalAssumptionFiller:
             tests.add("length")
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
-        words = self.unread_words(claim.text, raws, tests, counts=len(distinct), expected=expected)
+        # the phones the kept rows search: a phone the claim names that none searches is a part
+        # no check reads (Claude review on #265)
+        devices = {str(d) for p in core for d in p.params.get("device_ids") or ()}
+        words = self.unread_words(
+            claim.text, raws, tests, counts=len(distinct), expected=expected, devices=devices
+        )
         if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
             # either, and no check reads that it was on each (CodeRabbit on #265)

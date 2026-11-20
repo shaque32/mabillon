@@ -4531,9 +4531,12 @@ def test_a_phone_named_after_an_app_puts_no_message_row_on_that_app(tmp_path):
     on_whatsapp = [{**p, "channels": ["WhatsApp"]} for p in C05_ANSWER]
     made, f = build_text(c, text, ClaimType.COMMUNICATION, on_whatsapp)
     assert not f.drops, f.drops
+    # the rows search no phone, so the phone the claim names goes to the expert-only event
+    # (Claude review on #265)
     assert {a.template_id: a.params.channels for a in made} == {
         "sender": ("Telegram",),
         "record_time": ("Telegram",),
+        "event": ("Telegram",),
     }
 
 
@@ -5026,3 +5029,36 @@ def test_coderabbit_on_cd16272_a_models_plain_word_app_is_dropped(conn, monkeypa
         assert rows, (text, filler.drops)
         for a in rows:
             assert ("Outlook" in a.params.channels) is kept, (text, a.params.channels)
+
+
+# --------------------------------------------------------------- Claude review on e5423ad
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'On March 12, 2026, on Item 2, PETROV wrote to @northstar: "need 2 more by friday".',
+        'On March 12, 2026, Item 1 holds a message PETROV wrote to @northstar: "need 2 more by'
+        ' friday".',
+        "On March 12, 2026, PETROV wrote to @northstar on Telegram from @alex92's account: \"need"
+        ' 2 more by friday".',
+        "On March 12, 2026, PETROV wrote to @northstar from @northstar's phone: \"need 2 more by"
+        ' friday".',
+        'On March 12, 2026, PETROV and @northstar messaged one another: "need 2 more by friday".',
+        'On March 12, 2026, PETROV and @northstar wrote to each other: "need 2 more by friday".',
+    ],
+)
+def test_claude_review_on_e5423ad_what_no_row_reads_gets_an_event(conn, text):
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}, (text, filler.drops)
+
+
+def test_claude_review_on_e5423ad_a_phone_a_row_searches_is_read(conn):
+    text = 'On March 12, 2026, on Item 1, PETROV wrote to @northstar: "need 2 more by friday".'
+    answer = [{**p, "phones": ["Item 1"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"], filler.drops
+    # "each other" beside a count of both sides is what the count reads
+    assert not LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT).unread_words(
+        "PETROV and REYES messaged each other", tests={"count", "each_way"}
+    )
