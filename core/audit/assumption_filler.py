@@ -1392,11 +1392,11 @@ def check_window(
         days = [
             start.date() + timedelta(days=i) for i in range((last.date() - start.date()).days + 1)
         ]
-        if end.time() == time(0, 0) and (times or re.search(r"\bmidnight\b", low)):
-            # "from 10 p.m. on March 12 to midnight on March 13": a range cut at a time of day
-            # may end at the midnight that starts the day it names (CodeRabbit on #265); a
-            # range of whole days ends at midnight after its last day, so "On March 12 and on
-            # March 13" still needs March 13 inside it
+        if end.time() == time(0, 0) and (time(0, 0) in times or re.search(r"\bmidnight\b", low)):
+            # "from 10 p.m. on March 12 to midnight on March 13": a range whose words state
+            # midnight may end at the midnight that starts the day it names (CodeRabbit on
+            # #265). Any other time does not: "at 11:50 p.m. on March 12 and on March 13" and
+            # a range of whole days ("On March 12 and on March 13") still need March 13 inside
             days.append(end.date())
         for m in date_mentions(as_written):
             if not any(_date_stated(d, [m], years) for d in days):

@@ -5085,6 +5085,23 @@ def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
         check_window(
             D(2026, 3, 12), D(2026, 3, 13), two, two + ", PETROV wrote.", "", "record_time"
         )
+    # a time that is not midnight does not make the second day an endpoint (CodeRabbit on
+    # 2238b1d)
+    mixed = "On March 12, 2026 at 11:50 p.m. and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12, 23, 50),
+            D(2026, 3, 13),
+            mixed,
+            mixed + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
+    # midnight written as a clock time is still midnight
+    clock = "From 10 p.m. on March 12, 2026 to 12 a.m. on March 13, 2026"
+    check_window(
+        D(2026, 3, 12, 22), D(2026, 3, 13), clock, clock + ", PETROV wrote.", "", "record_time"
+    )
 
 
 # ------------------------------------------------------------- CodeRabbit review on e5104e2
