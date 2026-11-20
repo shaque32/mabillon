@@ -3,6 +3,7 @@ output imported by the real LEAPP importer: keys by LAVA row, and bar 8 table by
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import zipfile
@@ -687,3 +688,20 @@ def test_the_kinds_hash_is_the_one_the_phones_were_read_with(leapp_run):
     s = json.loads((out / "score.json").read_text("utf-8"))
     assert s["source"]["kinds_sha256"] == score_leapp.load_kinds(score_leapp.KINDS_FILE)[1]
     assert not [p for p in out.iterdir() if p.is_dir()]  # the phones' copies are gone
+
+
+def test_the_kinds_hash_is_of_the_bytes_parsed(tmp_path, monkeypatch):
+    # the file is replaced as soon as it is parsed: the hash still names what was parsed
+    path = tmp_path / "kinds.json"
+    first = score_leapp.KINDS_FILE.read_bytes()
+    path.write_bytes(first)
+    real = json.loads
+
+    def parse_then_replace(*args: Any, **kwargs: Any) -> Any:
+        got = real(*args, **kwargs)
+        path.write_text("{}", "utf-8")
+        return got
+
+    monkeypatch.setattr(score_leapp.json, "loads", parse_then_replace)
+    kinds, digest = score_leapp.load_kinds(path)
+    assert kinds and digest == hashlib.sha256(first).hexdigest()

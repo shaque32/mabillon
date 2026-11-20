@@ -106,11 +106,13 @@ def _sha256(path: Path) -> str:
 
 
 def load_kinds(path: Path) -> tuple[dict[str, dict], str]:
-    kinds = json.loads(path.read_text("utf-8"), object_pairs_hook=dump_lava.no_duplicate_keys)
+    """The kinds file and the SHA-256 of the very bytes parsed (one read, never two)."""
+    raw = path.read_bytes()
+    kinds = json.loads(raw.decode("utf-8"), object_pairs_hook=dump_lava.no_duplicate_keys)
     folded = {fold(t): spec for t, spec in kinds.items()}
     if len(folded) != len(kinds):
         raise SystemExit(f"score: {path} names one table twice")
-    return kinds, _sha256(path)
+    return kinds, hashlib.sha256(raw).hexdigest()
 
 
 def is_leapp_run(record: dict[str, Any]) -> bool:

@@ -39,10 +39,10 @@
     default), extended with the seven tables added since #264 (ALEAPP Telegram, iLEAPP
     Snapchat and five app call tables); a test pins that it names exactly the importer's
     tables. The UFDR path and every measure are unchanged; `score.json` gains `source`, whose
-    `kinds_sha256` is the hash of the kinds file as the phones were read with it. The phones'
+    `kinds_sha256` is the hash of the very bytes of the kinds file the phones were read with. The phones'
     LAVA copies are made in a folder beside the score, not in the system's temporary folder.
 - Where: branch `claude/project-thread-ds0ify`, its own PR on main after #265 and #269 merged.
-- Verified: `tests/test_score_leapp.py` (86 tests, cloud container, 2026-11-20): row-to-record
+- Verified: `tests/test_score_leapp.py` (87 tests, cloud container, 2026-11-20): row-to-record
   mapping on both phones of one case (multi-row MMS, RCS and iOS attachment rows, a skipped
   copy, a table name in other case), every refusal reason, bar 8 passing and failing (a missing
   record, a record from an uncounted table, a wrong or shared pair, a skipped row not in the
