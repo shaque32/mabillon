@@ -9,7 +9,7 @@ core/audit/rules.py, signed by Arsh. The closed set of things a pack may say:
 - templates: which existing assumption templates its claims use (core/audit/assumptions.py);
   their checks are the human-written ones in core/audit/checks/;
 - guards: record types on which no check may pass or fail (the result turns inconclusive),
-  each naming the traps it blocks.
+  each naming the traps it blocks once it is past draft.
 """
 
 from __future__ import annotations
@@ -79,6 +79,8 @@ class Layout(_Strict):
         missing = [c for c in cols if c not in self.headers]
         if missing:
             raise ValueError(f"layout {self.id}: columns not in headers: {missing}")
+        if len(set(self.headers)) != len(self.headers):
+            raise ValueError(f"layout {self.id}: a header label repeats, so a column is ambiguous")
         # the zone word must stand alone and end the label: "Time (UTC-05:00)", "Time (UTC
         # -05:00)" and "Central Standard Time" state an offset or a fixed standard time, not
         # the zone (CodeRabbit and code review on #260)
@@ -109,7 +111,10 @@ class Guard(_Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
     text: str = Field(min_length=10)  # the plain-English rule card an examiner signs
     record_types: tuple[RecordType, ...] = Field(min_length=1)
-    blocks: tuple[str, ...] = Field(min_length=1)  # trap ids this guard must block
+    # trap ids this guard must block. A drafter never sees the traps, so a draft's guards may
+    # leave this empty and the harness finds what each one blocks (rule-kill); every guard of a
+    # reference or signed pack names its traps, so the signed card says what it is for.
+    blocks: tuple[str, ...] = ()
 
 
 class Signature(_Strict):
@@ -141,6 +146,8 @@ class RulePack(_Strict):
         ids = [g.id for g in self.guards] + [x.id for x in self.layouts]
         if len(ids) != len(set(ids)):
             raise ValueError("guard and layout ids must be unique")
+        if self.status != "draft" and any(not g.blocks for g in self.guards):
+            raise ValueError("every guard of a reference or signed pack names the traps it blocks")
         if self.status == "signed":
             roles = {s.role for s in self.signatures}
             if roles != {"examiner", "owner"}:
@@ -154,8 +161,13 @@ class RulePack(_Strict):
         return f"{self.id}@{self.version}"
 
     def sha256(self) -> str:
-        """Hash of the pack's content, signatures and status left out, so signing does not
-        change what is signed.
+        """Hash of the pack's content, so signing does not change what is signed. Left out:
+        signatures and status only. Each guard's `blocks` are hashed: the gate tests every
+        trap a guard names, so a signature covers them. A draft from the drafter names no traps;
+        before signing, the traps the harness found are written into the still-draft pack and
+        the harness is run on that version with the examiner-reviewed claim sets, and that is
+        the hash the signers sign. The hash does not cover claim labels: if one changes after
+        that run, the gate is run again before signing (DRAFTING.md; code review on #270).
 
         The canonical bytes are exactly this json.dumps call (keys sorted by code point, no
         spaces, UTF-8, non-ASCII kept), not RFC 8785: JCS sorts keys by UTF-16 code unit, which
