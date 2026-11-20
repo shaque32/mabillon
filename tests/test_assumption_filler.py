@@ -5119,6 +5119,19 @@ def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
     check_window(
         D(2026, 3, 12, 22), D(2026, 3, 13), through, through + ", PETROV wrote.", "", "record_time"
     )
+    # an abbreviated month beside "at midnight" is the same day (CodeRabbit on 3778664)
+    for short in (
+        "From 10 p.m. on March 12, 2026 through Mar. 13, 2026 at midnight",
+        "From 10 p.m. on March 12, 2026 to midnight on Mar. 13, 2026",
+    ):
+        check_window(
+            D(2026, 3, 12, 22),
+            D(2026, 3, 13),
+            short,
+            short + ", PETROV wrote.",
+            "",
+            "record_time",
+        )
     # midnight written as a clock time is still midnight
     clock = "From 10 p.m. on March 12, 2026 to 12 a.m. on March 13, 2026"
     check_window(

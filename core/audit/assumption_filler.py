@@ -1136,7 +1136,10 @@ def _date_stated(d: date, mentions: list[_DateMention], years: set[int]) -> bool
 # words end the range at the midnight that starts a day
 _TO_MIDNIGHT_RE = re.compile(
     r"(?:\b(?:to|until|till|through|thru)\s+|[-\u2013\u2014]\s*)"
-    r"(?:(?P<before>[^.;:]{0,30}?)\s+at\s+)?"
+    # the day before "at midnight" is one date in the date grammar ("Mar. 13, 2026",
+    # "Friday, March 13", "3/13/2026"), never free words
+    rf"(?:(?P<before>(?:(?:{_WD_RE}),?\s+)?(?:(?:{_MONTH_RE})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?"
+    r"(?:,?\s+\d{4})?|\d{1,2}/\d{1,2}/\d{4})),?\s+at\s+)?"
     r"(?:midnight\b|12(?::00)?\s*a\.?m\.?(?![a-z])|00:00\b)"
     r"(?P<after>[^;:]{0,30})",
     re.IGNORECASE,
