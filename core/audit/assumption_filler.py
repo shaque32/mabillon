@@ -3334,16 +3334,17 @@ def _blank(text: str, spans: Iterable[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
-# "from @alex92's account", "on @northstar's phone": an account or phone written as a
-# possessive of a handle or a name, which is blanked first, so only "'s account" is left; no
-# check binds it (Claude review on #265)
+# "from @alex92's account", "on @northstar's phone", "REYES' phone": an account or phone
+# written as a possessive of a handle or a name, which is blanked first, so only "'s account"
+# is left; no check binds it (Claude review on #265)
 _OWNED_RE = re.compile(
-    r"['’]s\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone|work|personal|other)\s+)?"
+    r"['’]s?\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone|work|personal|other)\s+)?"
     r"(?:numbers?|phones?|cells?|mobiles?|lines?|accounts?|handles?|usernames?|ids?|devices?)\b",
     re.IGNORECASE,
 )
 # "messaged one another", "wrote to each other": messages both ways, read only by a count of
-# both sides, as "exchanged" is (`_GATED_WORDS`; Claude review on #265)
+# both sides, and only by one that sets each_way ("both_ways"): a total between the two may
+# all be one side's (Claude review and CodeRabbit on #265)
 _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
 
 
@@ -3357,7 +3358,7 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
     never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE]
-    if "each_way" in tests:
+    if "both_ways" in tests:
         never.remove(_EACH_OTHER_RE)
     rest = words
     for rx in never:
@@ -5302,13 +5303,25 @@ class LocalAssumptionFiller:
             # between the two (case01 C03, signed gold), read by a count of both sides; a
             # one-way count or a sender row never reads an exchange
             tests.add("each_way")
+        if any(p.params.get("each_way") for p in counting):
+            # "messaged each other": a message from each side, read only by a count that sets
+            # each_way; a total between the two may all be one side's (CodeRabbit on #265)
+            tests.add("both_ways")
         if any(p.params.get("duration_s") for p in core):
             tests.add("length")
         if any(p.template_id == "contact_entry" for p in core):
             tests.add("contact")
         # the phones the kept rows search: a phone the claim names that none searches is a part
         # no check reads (Claude review on #265)
-        devices = {str(d) for p in core for d in p.params.get("device_ids") or ()}
+        # A phone counts as searched only when every row a check reads searches it: a sender
+        # row on Item 2 beside a time row on Item 1 passes each on its own record, so a claim
+        # naming Item 2 is no claim its checks tied to Item 2 (CodeRabbit on #265).
+        checked = [p for p in core if p.template_id != "event" and _tested(p.template_id)]
+        devices = (
+            set.intersection(*({str(d) for d in p.params.get("device_ids") or ()} for p in checked))
+            if checked
+            else set()
+        )
         words = self.unread_words(
             claim.text, raws, tests, counts=len(distinct), expected=expected, devices=devices
         )

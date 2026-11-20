@@ -4558,7 +4558,9 @@ def test_a_phone_named_after_a_message_kind_gives_code_s_sender_no_kind(tmp_path
     )
     assert filler._message_apps(text) == []
     made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
-    assert {a.template_id for a in made} == {"sender", "record_time"}, f.drops
+    # the time row searches no phone, so the phone the claim names goes to the expert-only
+    # event (CodeRabbit on #265)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}, f.drops
     (sender,) = [a for a in made if a.template_id == "sender"]
     assert sender.params.channels == ()
     # an iMessage written apart from the phone's name is that kind alone
@@ -4585,7 +4587,9 @@ def test_a_phone_named_after_an_app_off_the_case_keeps_code_s_sender(tmp_path):
         ' by friday".'
     )
     made, f = build_text(c, text, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
-    assert {a.template_id for a in made} == {"sender", "record_time"}, f.drops
+    # the time row searches no phone, so the phone the claim names goes to the expert-only
+    # event (CodeRabbit on #265)
+    assert {a.template_id for a in made} == {"sender", "record_time", "event"}, f.drops
     # Signal written apart from the phone's name still stops code's sender
     signal = text.replace("PETROV wrote to", "PETROV wrote on Signal to")
     made, f = build_text(c, signal, ClaimType.COMMUNICATION, [C05_ANSWER[1]])
@@ -5058,10 +5062,12 @@ def test_claude_review_on_e5423ad_a_phone_a_row_searches_is_read(conn):
     answer = [{**p, "phones": ["Item 1"]} for p in C05_ANSWER]
     made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
     assert sorted(a.template_id for a in made) == ["record_time", "sender"], filler.drops
-    # "each other" beside a count of both sides is what the count reads
-    assert not LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT).unread_words(
-        "PETROV and REYES messaged each other", tests={"count", "each_way"}
-    )
+    # "each other" is read only by a count that sets each_way, never by a total between the
+    # two, which may all be one side's (CodeRabbit on e5104e2)
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    words = "PETROV and REYES messaged each other"
+    assert not filler.unread_words(words, tests={"count", "each_way", "both_ways"})
+    assert filler.unread_words(words, tests={"count", "each_way"})
 
 
 def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
@@ -5079,3 +5085,35 @@ def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
         check_window(
             D(2026, 3, 12), D(2026, 3, 13), two, two + ", PETROV wrote.", "", "record_time"
         )
+
+
+# ------------------------------------------------------------- CodeRabbit review on e5104e2
+
+
+def test_coderabbit_on_e5104e2_a_possessive_ending_in_an_apostrophe_is_read(conn):
+    text = 'On March 12, 2026, REYES wrote to @northstar on Telegram from REYES\' phone: "ok".'
+    answer = [
+        P("sender", people=["REYES"], quoted_text="ok"),
+        P(
+            "record_time",
+            people=["REYES"],
+            quoted_text="ok",
+            window=W("On March 12, 2026", "2026-03-12T00:00", "2026-03-13T00:00"),
+        ),
+    ]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    assert "event" in {a.template_id for a in made}, filler.drops
+
+
+def test_coderabbit_on_e5104e2_a_phone_is_searched_only_when_every_checked_row_searches_it(conn):
+    # the claim names both phones; the sender row searches Item 2 and the time row Item 1, so
+    # neither phone is one every checked row searches
+    text = (
+        'On March 12, 2026, on Item 2 and on Item 1, PETROV wrote to @northstar: "need 2 more by'
+        ' friday".'
+    )
+    split = [{**C05_ANSWER[0], "phones": ["Item 2"]}, {**C05_ANSWER[1], "phones": ["Item 1"]}]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, split)
+    rows = {a.template_id: a.params.device_ids for a in made}
+    assert rows.get("sender") == ("dev:item2",) and rows.get("record_time") == ("dev:item1",), rows
+    assert "event" in rows, filler.drops

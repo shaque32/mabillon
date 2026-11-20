@@ -227,6 +227,10 @@
     row searches ("on Item 2, PETROV wrote ...", "Item 1 holds a message ..."), an account or
     phone written as a handle's or name's possessive ("from @alex92's account"), and "each
     other" or "one another" beside no count of both sides are read by the expert-only event.
+    After CodeRabbit's review of that round: a phone counts as searched only when every row a
+    check reads searches it, "REYES' phone" is read like "REYES's phone", and "each other" is
+    plain only beside a count that sets each way (a total between the two may all be one
+    side's).
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
@@ -236,7 +240,7 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, hardware not recorded, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  with the rule-pack suite 1,800 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
+  with the rule-pack suite 1,802 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-20, final
   head). Class batteries of new wordings with wrong
