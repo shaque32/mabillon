@@ -210,6 +210,16 @@
     expert, as before this PR, so such a claim no longer loses every row. App names that are also plain
     words ("outlook", "steam", "slack", "hinge", "imo") name an app only when capitalised or
     in capitals, so "the outlook for Friday" no longer drops a claim.
+  - After CodeRabbit's review of 22b0736: the same plain-word rule holds for a case's own
+    app ("about the outlook" binds no row to the case's Outlook). A claim that names its app
+    ("texted @northstar on Telegram") keeps only that app on a row the model put on more, so
+    an SMS record never passes for it; a count or absence on another app is refused. A
+    second date that no range covers ("On March 12 and on March 13") is read by the
+    expert-only event. That event is now marked apart from a model event whose range code
+    repaired, so only it is excused under the parties check, and it no longer sets any
+    party's role there. A count reads timed rows just outside its window for look-alikes,
+    never counting them: "B to A 'ok'" a second before the window may be the one message "A
+    to B 'ok'" at its start copies, so "A sent at least 1" goes inconclusive.
 - Where: PR #265 (after #263 and #264, both merged; main merged in, with #267 and #268)
 - Verified: new tests in `tests/test_assumption_filler.py` (plain claims get no event, twelve
   unread tails, a named app bound, an app or email the case lacks, seconds and lengths, six
@@ -254,4 +264,5 @@
   a row a check reads gets no minute range for a time stated to the second". Section on the count check: add "since
   1.3.0, rows repeating another row's words within 2 seconds, on any app and from any sender,
   make the count inconclusive when merging them could change the answer; since 1.3.1 they are
-  read over both sides before a count of one side's messages".
+  read over both sides before a count of one side's messages, and beside timed rows just
+  outside the window, which are never counted".

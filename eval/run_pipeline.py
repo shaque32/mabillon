@@ -98,7 +98,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from core import pipeline
-from core.audit.assumptions import is_code_made
+from core.audit.assumptions import is_code_made, is_unread_event
 from core.contracts import ClaimType, DocKind, GoldClaim, GovDocParagraph, Prediction
 from core.db import apply_schema, connect
 from core.ingest.cellebrite_excel import CellebriteExcelImporter
@@ -760,7 +760,17 @@ def both_passes(
             continue
         got = dataclasses.replace(
             testability.named(rows),
-            parties=testability.claim_parties(step.filler, texts.get(cid, ""), rows),
+            # the unread event copies another row's parties: no role of its own (CodeRabbit on
+            # #265)
+            parties=testability.claim_parties(
+                step.filler,
+                texts.get(cid, ""),
+                [
+                    r
+                    for r, (t, text) in zip(rows, core_texts[cid], strict=True)
+                    if not is_unread_event(t, text)
+                ],
+            ),
             claim_apps=step.filler.claim_apps(texts.get(cid, "")),
             code_templates=testability.code_events(core_texts.get(cid, ())),
         )

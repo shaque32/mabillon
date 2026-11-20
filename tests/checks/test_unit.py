@@ -1038,3 +1038,27 @@ def test_a_count_that_fails_cites_only_the_rows_it_counted() -> None:
     common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
     r = check(conn, "message_count", expected_count=1, count_op="le", **common)
     assert r.outcome is CheckOutcome.FAIL and "msg:p1:c9" not in r.record_ids
+
+
+def test_a_count_reads_look_alikes_just_outside_the_window() -> None:
+    # Ay's "ok" as March opens and Bee's "ok" a second before it may be Bee's one message with
+    # Ay's label, so "Ay sent at least 1" waits for an expert; it passed while rows outside the
+    # window were left out of the look-alike groups (CodeRabbit on #265). Bee's row is never
+    # counted.
+    conn = without_undated_row(build())
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-01T05:00:00Z' WHERE id = 'msg:p1:3'"
+    )
+    conn.execute(
+        "UPDATE messages SET body = 'ok', ts_utc = '2026-03-01T04:59:59Z' WHERE id = 'msg:p1:2'"
+    )
+    common = dict(person_ids=[A, B], device_ids=["dev:p1"], window=MARCH)
+    r = check(conn, "message_count", expected_count=1, count_op="ge", sent_by=[A], **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "msg:p1:2" in r.record_ids
+    r = check(conn, "message_count", expected_count=1, count_op="eq", **common)
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert r.detail.startswith("Counted 1")  # the row outside the window is not counted
+    conn.execute("UPDATE messages SET body = 'see you' WHERE id = 'msg:p1:2'")
+    r = check(conn, "message_count", expected_count=1, count_op="ge", sent_by=[A], **common)
+    assert r.outcome is CheckOutcome.PASS, r.detail

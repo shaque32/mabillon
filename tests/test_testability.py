@@ -1351,8 +1351,19 @@ def test_code_s_event_for_unread_words_is_no_mismatch_under_the_parties_check(co
     old = testability.check_answer(filler, c, C12_WITH_REYES, sheet, testability.SHEET_CHECK)
     assert old[0] == "mismatch"
     assert "names the template 'event', which the signed sheet does not name" in old[1]
-    assert testability.code_events(
-        [("event", "x happened." + " Filled from the claim's wording.")]
-    ) == {"event"}
+    from core.audit.assumptions import CODE_MADE_NOTE, UNREAD_EVENT_NOTE
+
+    assert testability.code_events([("event", "x." + UNREAD_EVENT_NOTE + CODE_MADE_NOTE)]) == {
+        "event"
+    }
+    # a model's event code only repaired (CodeRabbit on 22b0736) and a plain one still count
+    assert testability.code_events([("event", "x." + CODE_MADE_NOTE)]) == frozenset()
     assert testability.code_events([("event", "x happened.")]) == frozenset()
     assert testability.code_events([("sender", "y.")]) == frozenset()
+    # with the time row first, the event copies REYES too; it still sets no party's role
+    # (CodeRabbit on 22b0736)
+    outcome, reasons, got, kept = testability.check_answer(
+        filler, c, C12_WITH_REYES[::-1], sheet, testability.SHEET_CHECK_PARTIES
+    )
+    assert (outcome, reasons) == ("proposed", []), reasons
+    assert "event" in {a.template_id for a in kept}

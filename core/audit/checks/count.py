@@ -85,6 +85,7 @@ def fewest_messages(
     groups: list[list[Row]] | None = None,
     senders: set[str] | None = None,
     any_chosen: bool = False,
+    beyond: set[str] | None = None,
 ) -> int:
     """The fewest messages the `chosen` rows (those of `rows` a count keeps, such as one
     side's) may hold: one for each row in no look-alike group of `rows`, and one for each
@@ -96,20 +97,29 @@ def fewest_messages(
     is that side's message too: a copy with no receiver never takes the direction away
     (CodeRabbit on #265). With `any_chosen` (a count of both sides' messages), a group holding
     any chosen row is one message between them, whatever its other rows: a row that names no
-    sender or no receiver can only join chosen rows into one message (CodeRabbit on #265)."""
+    sender or no receiver can only join chosen rows into one message (CodeRabbit on #265).
+    `beyond` are rows outside the window counted: a group holding one may be that row's
+    message, at its time, so neither of those two readings adds a message (CodeRabbit on
+    #265)."""
     if groups is None:
         groups = look_alike_groups(rows)
     ids = {r.id for r in chosen}
+    out = beyond or set()
     grouped = {r.id for g in groups for r in g}
     return sum(1 for r in chosen if r.id not in grouped) + sum(
         1
         for g in groups
         if all(r.id in ids for r in g)
-        or (any_chosen and any(r.id in ids for r in g))
         or (
-            senders is not None
-            and any(r.id in ids for r in g)
-            and all(r.sender in senders for r in g)
+            not any(r.id in out for r in g)
+            and (
+                (any_chosen and any(r.id in ids for r in g))
+                or (
+                    senders is not None
+                    and any(r.id in ids for r in g)
+                    and all(r.sender in senders for r in g)
+                )
+            )
         )
     )
 
@@ -137,16 +147,19 @@ def each_way_open_sides(
     b_ids: set[str],
     beside: list[Row] | None = None,
     groups: list[list[Row]] | None = None,
+    beyond: set[str] | None = None,
 ) -> list[set[str]]:
     """The sides (`a_ids`, `b_ids`) whose rows may hold no message of their own
-    (`each_way_rests_on_look_alikes`)."""
+    (`each_way_rests_on_look_alikes`). `beyond` are the rows of `beside` outside the window
+    (`fewest_messages`)."""
     pool = rows + (beside or [])
     if groups is None:
         groups = look_alike_groups(pool)
     return [
         ids
         for ids in (a_ids, b_ids)
-        if fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids) == 0
+        if fewest_messages([r for r in rows if r.sender in ids], pool, groups, ids, beyond=beyond)
+        == 0
     ]
 
 
@@ -182,7 +195,8 @@ class CountCheck(TemplateCheck):
     # chat with one, keeps "at most" and "exactly" from passing (Greptile on #264).
     # 1.3.0: look-alike rows hold a count open when merging them could change the answer.
     # 1.3.1: both guards together (#264 and #265 merged), and look-alikes read over both
-    # sides before a side is chosen (CodeRabbit on #265).
+    # sides before a side is chosen and beside timed rows just outside the window, which are
+    # never counted (CodeRabbit on #265).
     version = "1.3.1"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
@@ -244,7 +258,22 @@ class CountCheck(TemplateCheck):
         # one of those, and one may join two counted rows into one message, "ok" at 0, 2 and 4
         # seconds (CodeRabbit on #265). Those rows are never counted.
         timed_unplaced = [r for r in unplaced if r.ts_utc is not None]
-        between = counted + timed_unplaced
+        # Timed rows outside the window are read for look-alikes too, never counted: "B to A
+        # 'ok'" a second before the window opens may be the one message that "A to B 'ok'" at
+        # its start copies (CodeRabbit on #265). Only rows that chain to a counted row join its
+        # group, so the rest change nothing.
+        placed = {r.id for r in counted + timed_unplaced}
+        outside = [
+            r
+            for r in {
+                r.id: r
+                for r in rows
+                + [r for r in pool + beside if incomplete(r) and may_be_between(r, a_ids, b_ids)]
+            }.values()
+            if r.ts_utc is not None and r.id not in placed and not in_window(r.ts_utc, p.window)
+        ]
+        beyond = {r.id for r in outside}
+        between = counted + timed_unplaced + outside
         groups = look_alike_groups(between)
         no_time = [r for r in rows if r.ts_utc is None]
         if (p.sent_by or p.each_way) and a_ids & b_ids:
@@ -313,7 +342,9 @@ class CountCheck(TemplateCheck):
             open_sides = (
                 []
                 if one_side_silent
-                else each_way_open_sides(counted, a_ids, b_ids, timed_unplaced, ew_groups)
+                else each_way_open_sides(
+                    counted, a_ids, b_ids, timed_unplaced + outside, ew_groups, beyond
+                )
             )
             if open_sides:
                 each_way_open = True
@@ -364,7 +395,7 @@ class CountCheck(TemplateCheck):
         # A row of the side counted may be a copy of the other side's message (CodeRabbit on
         # #265), so the fewest is read over both sides' rows; with no side chosen it is the
         # rows less their look-alikes (`look_alike`).
-        twins = n - fewest_messages(counted, between, groups, side_ids, not p.sent_by)
+        twins = n - fewest_messages(counted, between, groups, side_ids, not p.sent_by, beyond)
         # the other side's rows that make one side's rows look-alikes, cited when they hold the
         # count open (CodeRabbit on #265)
         mine_ids = {r.id for r in counted}

@@ -330,10 +330,15 @@ _EMAIL_RE = re.compile(r"\be-?mail(?:s|ed|ing)?\b", re.IGNORECASE)
 # Apps whose names are also plain words ("a second line", "a weak signal"). Written without a
 # capital, the word may name no app, so code reads no count or absence on it. A search for one
 # message may still include it, since searching one more app finds no message the words lack.
-# "Accounts" and "Recents" are names exports give a phone's own stores ("his accounts").
+# "Accounts" and "Recents" are names exports give a phone's own stores ("his accounts"). The
+# message and calling apps read only with a capital elsewhere (_OTHER_CALL_APPS_CAP_RE,
+# _OTHER_MESSAGE_APPS_CAP_RE) are here too, so a case's own Outlook is no app in "the
+# outlook for Friday" (CodeRabbit on #265).
 _PLAIN_WORD_APPS = frozenset(
-    {"line", "signal", "session", "wire", "element", "accounts", "recents"}
-)
+    {"line", "signal", "session", "wire", "element", "accounts", "recents", "teams", "meet",
+     "duo", "messenger", "slack", "outlook", "yahoo", "hinge", "bumble", "imo", "briar",
+     "twitch", "steam"}
+)  # fmt: skip
 # Templates whose check reads exactly two sides.
 TWO_SIDED_TEMPLATES = frozenset({"message_count", "no_contact"})
 # The templates whose time range a check tests.
@@ -3602,6 +3607,14 @@ class LocalAssumptionFiller:
             for m in rx.finditer(bare)
         ):
             extra.append("a second time")
+        # "On March 12, 2026 and on March 13, 2026": a date no kept range's words reach is a
+        # day no row tests (CodeRabbit on #265)
+        if ranges and any(
+            not any(a < m.end() and m.start() < b for a, b in ranges)
+            for rx in (_DATE_RE, _NUM_DATE_RE)
+            for m in rx.finditer(bare)
+        ):
+            extra.append("a second date")
         try:
             cut += [sp for spans in self._person_spans(bare).values() for sp in spans]
         except Reject:
@@ -5111,6 +5124,11 @@ class LocalAssumptionFiller:
         # accounts", "a regular line") unless written as a name, and a call keeps
         # `_call_app`'s reading.
         wide = self._scope_apps(found, bare)
+        # The claim names its apps itself ("texted REYES on Telegram"): a row the model put on
+        # more apps keeps only those, so an SMS record never passes for a claim on Telegram
+        # alone. With no app named, "texted" keeps the model's apps beside the phone's own
+        # (CodeRabbit on #265).
+        explicit = {a.casefold() for a in wide} if self._scope_apps(apps, bare) else set()
 
         def short(i: int) -> bool:
             p = out[i]
@@ -5122,6 +5140,8 @@ class LocalAssumptionFiller:
             ):
                 return False
             if not given:
+                return True
+            if explicit and given - explicit:
                 return True
             return p.template_id not in WHOLE_APP_TEMPLATES and any(
                 a.casefold() not in given for a in wide
@@ -5141,6 +5161,14 @@ class LocalAssumptionFiller:
                     " absence is read on it"
                 )
             given = [str(c) for c in p.params.get("channels") or ()]
+            if explicit and {g.strip().casefold() for g in given} - explicit:
+                if p.template_id in WHOLE_APP_TEMPLATES:
+                    # "3 messages on Telegram" counted on Telegram and SMS would count SMS
+                    raise Reject(
+                        "a count or absence searches an app the claim does not name, so it is"
+                        " not read"
+                    )
+                given = [g for g in given if g.strip().casefold() in explicit]
             scope = list(dict.fromkeys([*wide, *given])) if given else list(found)
             made[i] = Proposal(
                 p.template_id, {**p.params, "channels": scope}, is_core=True, code_made=True
@@ -5278,7 +5306,7 @@ class LocalAssumptionFiller:
             for k, v in base.params.items()
             if k in allowed and k in (*PARTY_FIELDS, "device_ids", "window", "channels")
         }
-        return [*out, Proposal("event", event, is_core=True, code_made=True)]
+        return [*out, Proposal("event", event, is_core=True, code_made=True, unread=True)]
 
     def _add_meaning(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None

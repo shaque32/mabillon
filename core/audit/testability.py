@@ -102,7 +102,7 @@ from core.audit.assumptions import (
     CODE_ONLY_TEMPLATES,
     Proposal,
     from_proposal,
-    is_code_made,
+    is_unread_event,
     templates_for,
 )
 from core.audit.checks._common import key
@@ -436,11 +436,14 @@ def mismatch(repair: Named, sheet: Named) -> list[str]:
 
 def code_events(rows: Iterable[tuple[str, str]]) -> frozenset[str]:
     """{"event"} when a set of (template id, assumption text) holds an event and every event
-    in it is code-made (its text ends with CODE_MADE_NOTE): the event filler 12 adds for words
-    no check reads, which copies its parties, phones, range and apps from the claim's other
-    rows. Empty otherwise, so a model's own event still counts against the sheet."""
-    events = [text for template_id, text in rows if template_id == "event"]
-    return frozenset({"event"}) if events and all(map(is_code_made, events)) else frozenset()
+    in it is the one filler 12 adds for words no check reads (`is_unread_event`), which copies
+    its parties, phones, range and apps from the claim's other rows. Empty otherwise, so a
+    model's own event still counts against the sheet, also one whose range code repaired
+    (CodeRabbit on #265)."""
+    events = [(t, text) for t, text in rows if t == "event"]
+    if events and all(is_unread_event(t, text) for t, text in events):
+        return frozenset({"event"})
+    return frozenset()
 
 
 def claim_parties(
@@ -635,7 +638,17 @@ def check_answer(
         # review on #265)
         got = dataclasses.replace(
             got,
-            parties=claim_parties(filler, claim.text, rows),
+            # the unread event copies the parties of the row it was made from, so it names no
+            # one in a role of its own (CodeRabbit on #265)
+            parties=claim_parties(
+                filler,
+                claim.text,
+                [
+                    (a.template_id, a.params.model_dump())
+                    for a in assumptions
+                    if a.is_core and not is_unread_event(a.template_id, a.text)
+                ],
+            ),
             claim_apps=filler.claim_apps(claim.text),
             code_templates=code_events((a.template_id, a.text) for a in assumptions if a.is_core),
         )

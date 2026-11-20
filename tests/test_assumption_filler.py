@@ -4932,3 +4932,70 @@ def test_claude_review_on_e60eb11_plain_words_name_no_app(conn):
     assert not filler._names_an_app_the_case_lacks("a steam cleaner and a door hinge, imo")
     assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on Slack")
     assert filler._names_an_app_the_case_lacks("PETROV wrote to REYES on OUTLOOK")
+
+
+# ------------------------------------------------------------- CodeRabbit review on 22b0736
+
+
+def test_coderabbit_on_22b0736_a_held_app_named_by_a_plain_word_is_no_app(conn, monkeypatch):
+    # The case holds Outlook: "about the outlook" names no app, so the sheet check excuses
+    # none and no row is bound to it; "on Outlook" still names it.
+    held = LocalAssumptionFiller.channels
+    monkeypatch.setattr(LocalAssumptionFiller, "channels", lambda self: [*held(self), "Outlook"])
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    assert "outlook" not in filler.claim_apps("PETROV texted REYES about the outlook.")
+    assert "outlook" in filler.claim_apps("PETROV wrote to REYES on Outlook.")
+
+
+def test_coderabbit_on_22b0736_texted_on_an_app_keeps_no_phone_message_app(conn):
+    # "texted ... on Telegram" names Telegram alone: a model's SMS on the rows is dropped, so
+    # an SMS record can never satisfy them.
+    text = 'On March 12, 2026, PETROV texted @northstar on Telegram: "need 2 more by friday".'
+    answer = [{**p, "channels": ["SMS"]} for p in C05_ANSWER]
+    made, filler = build_text(conn, text, ClaimType.COMMUNICATION, answer)
+    rows = [a for a in made if a.template_id in ("sender", "record_time")]
+    assert rows, filler.drops
+    for a in rows:
+        assert [c.casefold() for c in a.params.channels] == ["telegram"], a.params.channels
+
+
+def test_coderabbit_on_22b0736_a_count_on_an_app_the_claim_does_not_name_is_refused(conn):
+    # a count the model put on SMS, in a claim that names Telegram alone, is never moved to
+    # Telegram nor kept on SMS (refused before this fix too; kept as a guard)
+    filler = LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT)
+    c = Claim(
+        id="X1",
+        paragraph_id=claim("C05").paragraph_id,
+        text="PETROV texted REYES 13 times on Telegram between March 10 and March 31, 2026.",
+        claim_type=ClaimType.COUNT,
+        status=ClaimStatus.ACCEPTED,
+    )
+    row = Proposal(
+        "message_count", {"person_ids": [PETROV, REYES], "channels": ["SMS"]}, is_core=True
+    )
+    with pytest.raises(Reject, match="does not (read|name)"):
+        filler._bind_named_app(c, [row])
+
+
+def test_coderabbit_on_22b0736_a_second_date_no_range_covers_is_read(conn):
+    # the range covers March 12 alone, so March 13 goes to an expert-only event; a range over
+    # both dates reads them both
+    text = (
+        "On March 12, 2026 and on March 13, 2026, PETROV wrote to @northstar: "
+        '"need 2 more by friday".'
+    )
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert "event" in {a.template_id for a in made}
+    made, _ = build_text(conn, C05_TEXT, ClaimType.COMMUNICATION, C05_ANSWER)
+    assert sorted(a.template_id for a in made) == ["record_time", "sender"]
+
+
+def test_coderabbit_on_22b0736_only_the_unread_words_event_is_marked(conn):
+    from core.audit.assumptions import is_unread_event
+
+    text = C05_TEXT[:-1] + " from her phone."
+    made, _ = build_text(conn, text, ClaimType.COMMUNICATION, C05_ANSWER)
+    (event,) = [a for a in made if a.template_id == "event"]
+    assert is_unread_event("event", event.text), event.text
+    # an event code only repaired (a window it filled) is the model's, not an unread-words one
+    assert not is_unread_event("event", "PETROV met REYES. Filled from the claim's wording.")
