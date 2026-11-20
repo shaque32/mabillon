@@ -217,7 +217,8 @@
     an SMS record never passes for it; a count or absence on another app is refused. A
     second date that no range covers ("On March 12 and on March 13") is read by the
     expert-only event, and a range whose words state a date its bounds leave out is refused
-    on rows a check reads. That event is now marked apart from a model event whose range code
+    on rows a check reads (a range cut at a time of day may still end at the midnight that
+    starts the day it names). That event is now marked apart from a model event whose range code
     repaired, so only it is excused under the parties check, and it no longer sets any
     party's role there. A count reads timed rows just outside its window for look-alikes,
     never counting them: "B to A 'ok'" a second before the window may be the one message "A
@@ -235,7 +236,7 @@
   main, the full local test run passes (4,702 passed, 9 skipped, on 21ddd54, 2026-11-18, in
   this PR's Linux cloud session, hardware not recorded, before the last rounds of fixes; the filler, check, count,
   fill, LEAPP, replay, override, testability, timeline, report, window and coverage suites,
-  with the rule-pack suite 1,799 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
+  with the rule-pack suite 1,800 tests, pass on the final head on 2026-11-20 in a Linux cloud container with 4 vCPUs,
   Intel Xeon 2.10 GHz), CI runs the full suite on Ubuntu and Windows, and `make eval-model-free` on
   case01 is unchanged (accuracy 1.00, false supported 0; same container, 2026-11-20, final
   head). Class batteries of new wordings with wrong

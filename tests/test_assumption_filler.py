@@ -5062,3 +5062,20 @@ def test_claude_review_on_e5423ad_a_phone_a_row_searches_is_read(conn):
     assert not LocalAssumptionFiller(FakeModel("{}"), conn, template=DRAFT).unread_words(
         "PETROV and REYES messaged each other", tests={"count", "each_way"}
     )
+
+
+def test_coderabbit_on_e5423ad_a_range_may_end_at_the_midnight_it_names():
+    from core.audit.assumption_filler import check_window
+
+    claim = (
+        "From 10 p.m. on March 12, 2026 to midnight on March 13, 2026, PETROV wrote to"
+        ' @northstar: "need 2 more by friday".'
+    )
+    words = "From 10 p.m. on March 12, 2026 to midnight on March 13, 2026"
+    check_window(D(2026, 3, 12, 22), D(2026, 3, 13), words, claim, "", "record_time")
+    # whole days still need every day they name inside the range
+    two = "On March 12, 2026 and on March 13, 2026"
+    with pytest.raises(Reject, match="bounds leave out"):
+        check_window(
+            D(2026, 3, 12), D(2026, 3, 13), two, two + ", PETROV wrote.", "", "record_time"
+        )
