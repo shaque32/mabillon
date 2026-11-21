@@ -341,3 +341,34 @@ def test_a_probe_leaves_no_report_from_an_earlier_run(ufdr, tmp_path):
     (out / "report.html").write_text("C01 SUPPORTED", encoding="utf-8")
     assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
     assert sorted(p.name for p in out.iterdir()) == ["probe.json", "progress.log", "run.json"]
+
+
+def test_a_resume_near_its_cap_sends_nothing(ufdr, tmp_path, monkeypatch):
+    """A resume whose recorded spend leaves less than one request's most under the cap pauses
+    before it sends anything (CodeRabbit on #272)."""
+    from core.llm import cloud
+
+    sent: list[dict] = []
+
+    class _Counts(_NoAnswer):
+        class messages:  # noqa: N801 - the SDK's attribute name
+            @staticmethod
+            def create(**kw):  # noqa: ANN003, ANN205
+                sent.append(kw)
+                raise RuntimeError("Error code: 400 - credit balance is too low")
+
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _Counts())
+    args = [a for a in _args(ufdr, tmp_path, "probe", "--coverage-probe") if a != "--fake"]
+    cap = [*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]
+    assert hickman_run.main(cap) == 3  # paused on the first answer
+    run_path = tmp_path / "probe" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["cloud"]["spent_usd"] = 4.996  # would read as $5.00 rounded, and as $4.99 rounded down
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    before = len(sent)
+    assert before >= 1  # the first attempt did send
+    assert hickman_run.main(cap) == 3
+    assert len(sent) == before  # refused before sending: $4.996 + its most could pass $5
+    log = (tmp_path / "probe" / "progress.log").read_text(encoding="utf-8")
+    assert "could pass" in log
