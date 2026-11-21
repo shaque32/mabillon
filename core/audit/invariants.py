@@ -294,6 +294,43 @@ def _check_checked(
             raise InvariantViolation(f"{who}: checked SUPPORTED but {a.id} lacks passing checks")
 
 
+def _check_open_labels_on_checked(
+    claim: Claim,
+    assumptions: list[Assumption],
+    evidence: list[EvidenceItem],
+    checks: list[CheckResult],
+) -> None:
+    """A checked SUPPORTED leaves open only what rule 3d' (rules 0.6.0) lets through: no
+    undismissed "contradicts", and each undismissed "complicates" open (no reviewer accepted
+    it), on a core time assumption whose checks all passed and named records, in a claim with
+    a core identity assumption."""
+    who = claim.id
+    by_id = {a.id: a for a in assumptions}
+    core = [a for a in assumptions if a.is_core]
+    has_identity = any(a.kind == AssumptionKind.IDENTITY for a in core)
+    for e in evidence:
+        if e.status == EvidenceStatus.DISMISSED:
+            continue
+        if e.stance == Stance.CONTRADICTS:
+            raise InvariantViolation(f"{who}: checked SUPPORTED with {e.id} contradicting, open")
+        if e.stance != Stance.COMPLICATES:
+            continue
+        a = by_id.get(e.assumption_id)
+        mine = [c for c in checks if a is not None and c.assumption_id == a.id]
+        settled = bool(mine) and all(c.outcome == CheckOutcome.PASS and c.record_ids for c in mine)
+        if not (
+            e.status == EvidenceStatus.OPEN
+            and a is not None
+            and a.is_core
+            and a.kind == AssumptionKind.TIME
+            and settled
+            and has_identity
+        ):
+            raise InvariantViolation(
+                f"{who}: checked SUPPORTED with {e.id} complicating, open outside rule 3d'"
+            )
+
+
 def check_decision(
     conn: sqlite3.Connection,
     claim: Claim,
@@ -335,6 +372,7 @@ def check_decision(
     ]
     if decision.supported_basis == SupportedBasis.CHECKED:  # rules 0.5.0, rule 3c'
         _check_checked(claim, decision, assumptions, checks)
+        _check_open_labels_on_checked(claim, assumptions, evidence, checks)
         return
     if not cited_support:
         raise InvariantViolation(f"{claim.id}: SUPPORTED cites no supporting item")

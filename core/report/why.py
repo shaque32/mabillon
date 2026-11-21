@@ -33,7 +33,7 @@ from core.report.names import Names
 from core.review import device_names
 
 _RULE = re.compile(r"^Rule (\w+'?): ")
-_RECORD = re.compile(r"^Rule \w+: (\S+) (contradicts|complicates) ")
+_RECORD = re.compile(r"^Rule \w+'?: (\S+) (contradicts|complicates) ")
 _COUNTED = re.compile(r"Counted (\d+) (\w+); the claim says ([^.]+)")
 _WAITING = re.compile(r"; (\d+) AI-accepted item\(s\) await (?:an expert|review)")
 _COVERED_AT = re.compile(r"covered at tier (\w+) by ")
@@ -497,6 +497,17 @@ class _Writer:
         rule, verb, aid, how, pending, side = key
         a = next(x for x in self.assumptions if x.id == aid)
         many = len(rids) > 1
+        if rule == "3d'":  # rules 0.6.0: listed, not blocking
+            links = self.records(rids, most=5, assumption=a.id, stance=Stance(verb))
+            return (
+                f"{e('A model labelled ' + _plural(len(rids), 'record') + ' as leaving this open')}"
+                f": {self.said(a)}. {e('Nobody has reviewed ' + ('them' if many else 'it'))}. "
+                + e(
+                    "Mabillon's time check worked the time out from the phone records, so the "
+                    "label does not block support by code checks. You can review it."
+                )
+                + f" {'Records' if many else 'Record'}: {links}."
+            )
         who = _plural(len(rids), "record") if many else "A record"
         verb_s = verb if not many else verb[:-1]  # contradicts -> contradict
         where = "a side point of the claim" if side == "True" else "this"
