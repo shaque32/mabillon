@@ -41,7 +41,8 @@ outputs of the claims it finished. A case built by an earlier SETUP is refused, 
 way and runs the same filler and checks, but labels no evidence: a stand-in labeler makes no
 model call, so the run costs only the filler's calls. It writes DIR/probe.json with the coverage
 tiers counted by claim kind and by phone, and nothing else: no claim, verdict or check result is
-printed or kept, and the case is deleted once it is counted. With --cloud it needs --max-usd.
+printed or kept, and the case and its affidavit are deleted once counted. With --cloud it needs
+--max-usd.
 """
 
 from __future__ import annotations
@@ -1514,8 +1515,9 @@ PROBE_FILE = "probe.json"
 
 
 def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN001
-    """Finish a coverage probe: probe.json gets the counts, and the case goes, so nothing in DIR
-    holds a claim's verdict, check result or evidence (PREREGISTERED_v5 gate C4). run.json
+    """Finish a coverage probe: probe.json gets the counts, and the case and its affidavit go, so
+    nothing in DIR holds a claim's text, verdict, check result or evidence (PREREGISTERED_v5 gate
+    C4). run.json
     keeps the versions, times, spend and counts; built.ok goes with the case, so running the
     same command again builds and probes afresh."""
     counts = run["audit"]["probe"]
@@ -1527,6 +1529,8 @@ def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN
         for name in (db, *(f"{db}{s}" for s in SQLITE_SIDECARS)):
             (out / name).unlink(missing_ok=True)
     (out / "built.ok").unlink(missing_ok=True)
+    # the affidavit holds every claim's text; the probe keeps counts only (CodeRabbit on #272)
+    (out / "affidavit.pdf").unlink(missing_ok=True)
     plog.close()
     t = counts["tiers"]
     print(

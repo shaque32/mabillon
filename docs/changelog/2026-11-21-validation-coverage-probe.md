@@ -9,7 +9,7 @@
   (about 150 of v4's 2,203). It writes `DIR/probe.json` with the tiers counted in total, by claim
   kind and, for code-checked claims, by each phone a deciding check searched. No claim id,
   verdict or check result is printed, logged or kept, and the case (case.db, the audited copy,
-  built.ok) is deleted once counted, so whoever runs the probe on held-out phones sees counts
+  built.ok, and the affidavit, which holds the claims' text) is deleted once counted, so whoever runs the probe on held-out phones sees counts
   only. A probe's case never resumes as a run, nor a run's as a probe; with `--cloud` it needs
   `--max-usd`. The stand-in labeler's module is in `eval/`, so the run is marked fake and no
   scorer or report takes it.

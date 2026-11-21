@@ -44,10 +44,8 @@ def _args(ufdr: Path, tmp_path: Path, out: str, *extra: str) -> list[str]:
 def test_the_probe_keeps_counts_only_and_deletes_the_case(ufdr, tmp_path, capsys):
     assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
     out = tmp_path / "probe"
-    # no case, copy, report or results: only the counts, the run record, the log and the
-    # affidavit the claims file made
+    # no case, copy, affidavit, report or results: only the counts, the run record and the log
     assert sorted(p.name for p in out.iterdir()) == [
-        "affidavit.pdf",
         "probe.json",
         "progress.log",
         "run.json",

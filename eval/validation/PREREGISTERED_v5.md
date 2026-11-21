@@ -18,8 +18,10 @@ Signing has two steps, as in v4:
 
 **Clarifications after signing (2026-11-21, from code review; no number or bar changed):**
 the probe's cap sits outside the $112 ceiling (section 7); a C4 top-up replaces claims so the
-set stays at 150 (section 7a); the claims and key are frozen before C4, and the freeze addendum
-is approved after C4 with its final hashes and counts (section 12).
+set stays at 150 and keeps at least 100 not supported (section 7a); a restart's spend counts
+against its pass's cap (section 7); the claims and key are frozen before C4, the blind 30 is
+drawn from the final set after C4, and the freeze addendum is approved after C4 with its final
+hashes and counts (section 12).
 
 ## 1. What this test is, and what it may let us say
 - One scored run of Mabillon on a two-phone case it has never imported, on the pilot setup:
@@ -153,7 +155,9 @@ after the tag reaches the run.
   pauses and resumes in the same folder with stored answers reused; a resume is not a new pass,
   and a pass that hits its cap is not resumed without a new OK.
 - One scored run. A crash that leaves no usable case restarts from scratch at the same tag and is
-  reported.
+  reported. What the abandoned attempt spent counts against its pass's $55 cap (the restart runs
+  with `--max-usd` set to what is left of it), so a restart never raises the ceiling; a restart
+  that needs more needs a new OK.
 
 ## 7a. Coverage gate: no pass is paid for until coverage is shown
 Bar 5 needs at least 30 code-checked claims (a deterministic check on a core assumption passed or
@@ -192,7 +196,8 @@ unchanged brief. Under C4, the writer may top up the short kinds once, told only
 of which kinds to add, never which claims fell short or why. The set stays at 150: each new
 claim replaces one of the writer's own choosing from a kind code cannot check (identity,
 meaning, event or role), picked from the writer's private form by kind alone, and the
-replaced claims become development data. The new claims are labeled and frozen like the rest,
+replaced claims become development data. The replacements keep the signed key at 100 or more
+not-supported claims: a not-supported claim is replaced only by a not-supported one. The new claims are labeled and frozen like the rest,
 and the probe runs once more. Short again means no run: the set becomes
 development data. No Mabillon code changes in response to C4, since that would tune it to the
 held-out claims. The probe's aggregate counts and any top-up are disclosed with every number.
@@ -289,10 +294,11 @@ v4's bar 8 failure would have been repaired; its bar 4 failure would not.)
 | Readers 1 and 2 label | isolated sessions | none |
 | Reader 3 labels (other family) | isolated session | about $2, needs Arsh's OK |
 | Coverage gate C2 (data) and C3 (claim mix) | this thread, by script, aggregate counts only | none |
-| Adjudication and blind 30 | Arsh; Mir or Yazen | none |
+| Adjudication | Arsh | none |
 | Claims, key and definitions frozen (hashes recorded) | this thread | none |
 | Coverage probe driver mode (#272), tried on the development pair | this thread, Arsh merges | none |
 | Coverage gate C4 (probe on the frozen claims; after a top-up, refrozen and probed once more) | this thread | about $2 to $4, cap $5 per attempt; first attempt OK'd by Arsh 2026-11-21, a second needs a new OK |
+| Blind 30, drawn at random from the final frozen set after C4 | Mir or Yazen | none |
 | Freeze addendum, with the final hashes and the C4 counts, approved | Arsh | none |
 | Pass 1 and pass 2 | this thread | $65 to $105 est., needs Arsh's OK |
 | Fidelity audit, scoring, write-up (project files only) | this thread | none |
