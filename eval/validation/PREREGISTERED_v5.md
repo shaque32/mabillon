@@ -16,6 +16,11 @@ Signing has two steps, as in v4:
 2. **Freeze addendum (before the run):** the hashes in section 11 are filled in and Arsh approves
    them. The run starts only after that, and only with his spend OK (section 12).
 
+**Clarifications after signing (2026-11-21, from code review; no number or bar changed):**
+the probe's cap sits outside the $112 ceiling (section 7); a C4 top-up replaces claims so the
+set stays at 150 (section 7a); the claims and key are frozen before C4, and the freeze addendum
+is approved after C4 with its final hashes and counts (section 12).
+
 ## 1. What this test is, and what it may let us say
 - One scored run of Mabillon on a two-phone case it has never imported, on the pilot setup:
   hosted Opus for every model job, rules 0.5.0, given claims, no assumption sheet, phones read
@@ -141,7 +146,9 @@ after the tag reaches the run.
 - Key: BAKER_BENCH_API_KEY. Public data only; no real case data ever runs on this key.
 - **Spend, Arsh sets.** Estimate $65 to $105 for both passes (v4's $0.26 per claim per pass, up to
   30% more for two phones' context: a guess, not measured), plus about $2 for reader 3. Proposed
-  `--max-usd 55` per pass, ceiling $112 in all, inside the free Ultra credit, with the balance
+  `--max-usd 55` per pass, ceiling $112 for the passes and reader 3 (the C4 probe's own $5 cap
+  per attempt is outside it and OK'd separately, so the most v5 can spend is $117, or $122
+  with a second probe), inside the free Ultra credit, with the balance
   checked in the console just before the OK. A pass that hits its cap or a sticky API failure
   pauses and resumes in the same folder with stored answers reused; a resume is not a new pass,
   and a pass that hits its cap is not resumed without a new OK.
@@ -182,8 +189,11 @@ measure less.
 **If C2, C3 or C4 falls short:** nothing is paid for. Under C2, the writer is told the data
 counts and shapes the mix to what the phones hold. Under C3, the writer revises the mix from the
 unchanged brief. Under C4, the writer may top up the short kinds once, told only how many claims
-of which kinds to add, never which claims fell short or why; the new claims are labeled and
-frozen like the rest, and the probe runs once more. Short again means no run: the set becomes
+of which kinds to add, never which claims fell short or why. The set stays at 150: each new
+claim replaces one of the writer's own choosing from a kind code cannot check (identity,
+meaning, event or role), picked from the writer's private form by kind alone, and the
+replaced claims become development data. The new claims are labeled and frozen like the rest,
+and the probe runs once more. Short again means no run: the set becomes
 development data. No Mabillon code changes in response to C4, since that would tune it to the
 held-out claims. The probe's aggregate counts and any top-up are disclosed with every number.
 
@@ -278,10 +288,11 @@ v4's bar 8 failure would have been repaired; its bar 4 failure would not.)
 | Writer session makes the dumps' claims and definitions | isolated session | none |
 | Readers 1 and 2 label | isolated sessions | none |
 | Reader 3 labels (other family) | isolated session | about $2, needs Arsh's OK |
-| Adjudication and blind 30 | Arsh; Mir or Yazen | none |
-| Freeze addendum approved | Arsh | none |
 | Coverage gate C2 (data) and C3 (claim mix) | this thread, by script, aggregate counts only | none |
+| Adjudication and blind 30 | Arsh; Mir or Yazen | none |
+| Claims, key and definitions frozen (hashes recorded) | this thread | none |
 | Coverage probe driver mode (#272), tried on the development pair | this thread, Arsh merges | none |
-| Coverage gate C4 (probe on the frozen claims) | this thread | about $2 to $4, cap $5, OK'd by Arsh 2026-11-21 |
+| Coverage gate C4 (probe on the frozen claims; after a top-up, refrozen and probed once more) | this thread | about $2 to $4, cap $5 per attempt; first attempt OK'd by Arsh 2026-11-21, a second needs a new OK |
+| Freeze addendum, with the final hashes and the C4 counts, approved | Arsh | none |
 | Pass 1 and pass 2 | this thread | $65 to $105 est., needs Arsh's OK |
 | Fidelity audit, scoring, write-up (project files only) | this thread | none |
