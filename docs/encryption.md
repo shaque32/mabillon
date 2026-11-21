@@ -16,8 +16,8 @@ the case's recovery key.
 
 Not covered: a report or request letter the expert downloads (saved wherever they choose, as a
 plain file), the expert's original evidence files (Mabillon never changes them), anything on
-screen while a case is unlocked, and, while a LEAPP output whose database is over 2 GB is being
-imported, a plain temporary copy of that database in the system's temporary folder, removed, best
+screen while a case is unlocked, and, while a LEAPP output is imported whose database is over 2 GB
+(or smaller but too large for the computer's free memory), a plain temporary copy of that database in the system's temporary folder, removed, best
 effort, when the import ends (or by a later large import, if Mabillon was stopped mid-import); its freed disk
 blocks are not wiped (`docs/ingest/leapp.md`).
 
