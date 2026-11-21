@@ -1875,7 +1875,8 @@ _ONE_CALL_RE = re.compile(
 # <B>", which names no caller. "<A> placed a call from <PHONE> to <B>" names the phone A used,
 # read only when A is that phone's exact owner (`call_form`). Nothing else may sit in the
 # clause: a word the forms do not hold ("returned", "attempted", "answered", "connected",
-# "back") leaves the caller unread.
+# "back") leaves the caller unread, though "answered" and "connected" are read in a stated
+# length after it ("that was answered and lasted ...", `_CALL_LENGTH_TAIL_RE`).
 _TOKEN = "\x01\x03*\x02"
 _CALL_FORM_RE = re.compile(
     rf"^(?P<lead>[^\x01]*?)(?:the\s+)?(?P<a>{_TOKEN})\s+(?:"
@@ -3459,7 +3460,8 @@ _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE
 # a call, which no row reads; only the call's own "connected" ("that connected and lasted",
 # "connected for two minutes") is plain beside a tested length (Claude review on #273).
 _CONNECTED_OBJECT_RE = re.compile(
-    r"\bconnected\b(?!\s*(?:[,.;:)]|$|and\b|for\b|lasting\b))", re.IGNORECASE
+    r"\bconnected\b(?!\s*(?:[.;:)]|$|and\b|for\b|lasting\b|,\s*(?:lasting|that\s+lasted|for)\b))",
+    re.IGNORECASE,
 )
 
 
@@ -4339,11 +4341,14 @@ class LocalAssumptionFiller:
             tpl.id == "person_identity"
             and not account_ids
             and not handles
+            and not params.get("window")
+            and not params.get("quoted_text")
             and claim.claim_type in _CHECKED_TYPES
         ):
             # only beside the rows that decide a communication, timing or count claim: for an
-            # identity claim the row is the claim itself, and it goes to the expert (Claude
-            # review on #273)
+            # identity claim the row is the claim itself, and it goes to the expert; and never
+            # a row with a time or a message, which says who held the phone then, not who owns
+            # it (Claude review on #273)
             self._owner_identity_names_nothing(
                 list(params.get("person_ids", [])),
                 list(params.get("device_ids", device_ids)),
@@ -4982,7 +4987,11 @@ class LocalAssumptionFiller:
                     params = {**params, "person_ids": kept}
                     p = Proposal(p.template_id, params, is_core=p.is_core, code_made=True)
             fixed.append(p)
-        if held and not any(p.template_id == "event" and p.is_core for p in fixed):
+        if len(held) != 1:
+            # one call's time range only: an event row holds one call's window (Claude review
+            # on #273)
+            return out
+        if not any(p.template_id == "event" and p.is_core for p in fixed):
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in held[0].items() if k in allowed}
             fixed.append(Proposal("event", event, is_core=True, code_made=True))

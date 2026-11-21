@@ -4,7 +4,8 @@
   - Assumption filler 12 to 13 (`core/audit/assumption_filler.py`). It refuses a model's
     person_identity that names no account and no handle, only people who are each the one
     confirmed owner of a phone whose accounts are exactly theirs ("The account belongs to
-    SUBJECT-1"), on a communication, timing or count claim. No check or reviewer could test
+    SUBJECT-1"), on a communication, timing or count claim, and only a row with no time
+    and no quoted message (one with a time says who held the phone then). No check or reviewer could test
     it, and as a core assumption it kept true call claims unproven (v4 Android 13 D077). The
     row is kept when it could say more: a person who is no phone's one owner (or owns two
     phones, or has a link to an account elsewhere), a phone those people do not own, or an
@@ -23,7 +24,8 @@
     888-7386" or "called SUBJECT-2 at (919) 888-7386" made the person and the number two
     parties, so the time check found no call. The person comes off the call's time range only
     when the claim writes them right before the number in one of those forms and a core
-    person_identity row ties that person to those accounts; whose number it is stays that
+    person_identity row ties that person to those accounts, on one call's time range only;
+    whose number it is stays that
     row's to test. These wordings give no caller row, so a core event row (no check covers
     it) keeps who placed the call for the expert: the call found with the number never
     carries the claim on its own.
@@ -35,7 +37,7 @@
     way. The time check never fails on a call, so this only lets calls be found. The owner rule
     moved to `core/audit/checks/_common.py` (`phone_side`), shared with the caller check.
 - Where: PR #273
-- Verified: `tests/test_fill_calls.py` (20 new test functions: the owner row refused and the claim then
+- Verified: `tests/test_fill_calls.py` (22 new test functions: the owner row refused and the claim then
   SUPPORTED on its checks, and kept where it says more; caller read after "answered/connected
   and lasted", also after the call's app; reversed caller CONTRADICTED; "connected" without a
   length unread; a call from the owner's phone gets its caller and the check passes, but not
@@ -46,7 +48,7 @@
   identity row or when written as a second party; an identity claim keeps its owner row; a
   row read through the owner's stipulation says so, and an owner with no accounts gets none;
   only the call's own "connected" is plain). Filler, check, testability, replay and
-  timeline test files: 1,545 passed. `make eval` unchanged: case01 model-free 1.00
+  timeline test files: 1,549 passed. `make eval` unchanged: case01 model-free 1.00
   (unreviewed 0.70), 0 false supported, hostile PASS (0 of 7 structural claims supported),
   case02 aggregate 0.90, 0 false supported (run on this head). Cloud container, Linux x86_64, 4 CPUs,
   2026-11-21. Free replay of stored answers (development data, no spend), Android 13 v4 pass 1
@@ -63,7 +65,8 @@
   row.
 - Affects: capabilities (which call claims code can test)
 - Status doc: pending: section 2 table, step 5 (Assumptions): add "Filler 13 refuses a
-  person_identity naming no account or handle, on a communication, timing or count claim,
+  person_identity naming no account, handle, time or quoted message, on a communication,
+  timing or count claim,
   only when every person it names is the one confirmed owner of a phone whose accounts are
   exactly theirs, and every phone and app it names is one of their phones or an
   app their phones' accounts hold (a shared owner, another phone or another app keeps the
