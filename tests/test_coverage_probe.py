@@ -402,3 +402,28 @@ def test_a_run_that_finishes_before_the_probe_takes_the_lock_is_kept(ufdr, tmp_p
         hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe"))
     assert landed and (out / "results.zip").exists() and (out / "run.json").exists()
     assert not (out / hickman_run.LOCK).exists()
+
+
+def test_a_run_json_write_stopped_partway_keeps_the_earlier_record(ufdr, tmp_path, monkeypatch):
+    """run.json is replaced whole or not at all: a stop partway through writing it keeps the
+    earlier spend record, and the same command still runs (CodeRabbit on #272)."""
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    run_path = tmp_path / "probe" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["cloud"] = {"sessions": [{"spent_usd": 3.0}], "spent_usd": 3.0}
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    before = run_path.read_bytes()
+    real_fsync = hickman_run.os.fsync
+
+    def stop_partway(fd: int) -> None:
+        raise KeyboardInterrupt  # stopped with the new run.json part written, not yet in place
+
+    monkeypatch.setattr(hickman_run.os, "fsync", stop_partway)
+    with pytest.raises(KeyboardInterrupt):
+        hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe"))
+    assert run_path.read_bytes() == before  # the earlier case's spend is still on record
+    monkeypatch.setattr(hickman_run.os, "fsync", real_fsync)
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    again = json.loads(run_path.read_text(encoding="utf-8"))
+    assert again["earlier_cases"][-1]["cloud"]["spent_usd"] == 3.0
+    assert not (tmp_path / "probe" / "run.json.tmp").exists()

@@ -36,10 +36,13 @@
     refuses it under DIR's lock, before touching DIR.
   - Every attempt now deletes an earlier attempt's report.html, as it already deleted
     results.zip, so a probe in a used DIR leaves no claims or verdicts.
+  - run.json, built.ok and probe.json are written to a temporary file and moved into place, so
+    a stop partway through a write keeps the earlier run.json and the spend a resume starts
+    from.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 14 tests, and the two cap tests in
+- Verified: `tests/test_coverage_probe.py`, 15 tests, and the two cap tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.

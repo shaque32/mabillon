@@ -1348,6 +1348,17 @@ def _lock_holder(lock: Path) -> str:
     return f"another run (process {pid}) is using {lock.parent}; {advice}"
 
 
+def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
+    """Write JSON to path whole or not at all: a stop mid-write leaves the earlier file, so a
+    run.json never loses the spend a resume starts its cap from (CodeRabbit on #272)."""
+    tmp = path.with_name(f"{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(obj, indent=indent))
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+
+
 def _run_record(out: Path) -> bool:
     """Whether DIR holds a run's record (a run.json not marked as a coverage probe's)."""
     path = out / "run.json"
@@ -1498,7 +1509,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
         run["coverage_probe"] = a.coverage_probe
         # on disk before built.ok can exist: a stop between the two must not leave a built.ok
         # beside a run.json whose top-level spend is the earlier case's (CodeRabbit on #272)
-        run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+        _write_json(run_path, run)
     # marked from the first run.json this attempt writes, so a stopped probe's DIR still reads
     # as a probe's (_run_record) and a stopped run's as a run's
     run["coverage_probe"] = a.coverage_probe
@@ -1526,7 +1537,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             "imported": imported,
             "build_id": build_id,
         }
-        built.write_text(json.dumps(inputs), encoding="utf-8")
+        _write_json(built, inputs, indent=None)
         was = inputs  # the record the audit checks the case.db against
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
     # written still records what the case was built from (CodeRabbit on #267).
@@ -1538,7 +1549,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     run["definitions"] = defs
     if report_sha is not None:
         run["report_xml_sha256"] = report_sha
-    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    _write_json(run_path, run)
     from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing
 
@@ -1564,7 +1575,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                 # full precision: a resume starts its cap from this, and a spend rounded down
                 # would let it pass the cap (CodeRabbit on #272)
                 total["spent_usd"] = cloud_model.spent_usd
-                run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+                _write_json(run_path, run)
                 log(f"cloud spend so far: ${cloud_model.spent_usd:.2f}")
     except CloudPaused as e:
         log(f"paused: {e}")
@@ -1580,7 +1591,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     # read again by path, so they hold the audited build whatever case.db holds by then
     # (CodeRabbit on #269).
     run["report"] = report(a.out, log, AUDITED)
-    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    _write_json(run_path, run)
     plog.close()
     publish_results(a.out)
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
@@ -1597,10 +1608,8 @@ def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN
     keeps the versions, times, spend and counts; built.ok goes with the case, so running the
     same command again builds and probes afresh."""
     counts = run["audit"]["probe"]
-    tmp = out / f"{PROBE_FILE}.tmp"
-    tmp.write_text(json.dumps(counts, indent=2), encoding="utf-8")
-    tmp.replace(out / PROBE_FILE)
-    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    _write_json(out / PROBE_FILE, counts)
+    _write_json(run_path, run)
     # built.ok first: a probe stopped in between leaves no built.ok naming a deleted case, so
     # the same command builds and probes afresh (Claude review on #272)
     (out / "built.ok").unlink(missing_ok=True)
