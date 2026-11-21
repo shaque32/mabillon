@@ -36,6 +36,15 @@ The claims file holds claims only, never their answers: the run machine never se
 Run it again with the same DIR to resume: a built case is kept, and the audit reuses the model
 outputs of the claims it finished. A case built by an earlier SETUP is refused, never resumed.
 --fake swaps in the eval's stand-in components (tests only).
+
+--coverage-probe (validation v5, PREREGISTERED_v5 section 7a, gate C4) builds the case the same
+way and runs the same filler and checks, but labels no evidence: a stand-in labeler makes no
+model call, so the run costs only the filler's calls. It writes DIR/probe.json with the coverage
+tiers counted by claim kind and by phone, and nothing else: no claim, verdict or check result is
+printed or kept, and the case and its affidavit are deleted once counted. With --cloud it needs
+--max-usd. A probe that pauses or stops keeps its case in DIR so that a resume reuses the
+filler's paid answers; until it finishes, nobody opens DIR's files but probe.json and run.json
+(run with the same DIR to finish, or delete DIR to discard it).
 """
 
 from __future__ import annotations
@@ -56,11 +65,21 @@ from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
 
 from core.audit.assumption_filler import NATIVE_CALL_APP
 from core.audit.checks._common import _ts, namespace
 from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
+from eval.validation.coverage_probe import CHECK_UNSETTLED, CODE_CHECKED, EXPERT_ONLY, NOT_TESTED
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from eval.validation.coverage_probe import ProbeLabeler
 
 ACTOR = "expert:validation"
 SOURCE_ID = "ios15"  # the default; --source-id names another phone (validation v4)
@@ -826,18 +845,64 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
-class Budgeted:
-    """A cloud model that counts its spend and stops once it passes a cap. The cap and the
-    out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
-    the answers stored so far are kept, and a resume picks up where it stopped."""
+# Tokens the API may add around a request body (its own framing and the structured-output
+# instructions): a margin, not measured, so the cap holds only if the API adds no more.
+FRAMING_TOKENS = 4096
 
-    def __init__(self, model, max_usd: float | None, spent_usd: float = 0.0) -> None:  # noqa: ANN001
+
+# Failures before a request leaves this machine (httpx's, and the OS errors under them): no
+# request reached the API, so nothing can have been charged.
+NEVER_SENT = frozenset(
+    {"ConnectError", "ConnectTimeout", "PoolTimeout", "ConnectionRefusedError", "gaierror"}
+)
+
+
+def _never_sent(e: BaseException) -> bool:
+    """Whether e, or an error under it, failed before the request was sent."""
+    seen: set[int] = set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if type(cur).__name__ in NEVER_SENT:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+class Budgeted:
+    """A cloud model that counts its spend and sends no request that could take it past its
+    cap: a request is sent only while the spend so far plus the most it can cost stays within
+    the cap (CodeRabbit on #272), a bound that rests on FRAMING_TOKENS. The cap and the
+    out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
+    the answers stored so far are kept, and a resume picks up where it stopped.
+
+    With a ledger (DIR/spend.json), the spend is on disk before each request is sent, counting
+    that request at its most, and again once its answer is counted: a run killed mid-request
+    (SIGKILL) leaves a spend at least what was charged, and the next attempt starts its cap from
+    it (_fold_spend; CodeRabbit on #272). A power cut is covered only as far as _write_json's
+    syncs reach the disk: not where a disk takes neither a full flush nor a folder sync."""
+
+    def __init__(  # noqa: ANN001
+        self,
+        model,
+        max_usd: float | None,
+        spent_usd: float = 0.0,
+        ledger: Path | None = None,
+        build_id: str | None = None,
+    ) -> None:
         self._m = model
+        self._ledger, self._build_id = ledger, build_id
         self.name, self.sha256 = model.name, model.sha256
         self.params, self.where = model.params, getattr(model, "where", "cloud")
         self.max_usd = max_usd
         self.spent_usd = spent_usd
         self.calls = self.input_tokens = self.output_tokens = 0
+        self.uncertain_usd = 0.0  # counted for requests that got no answer and may be charged
+        # the most input tokens the API counted above a request's body bytes: _most's bound
+        # held on every answered request while this stays within FRAMING_TOKENS (CodeRabbit on
+        # #272: the allowance is not measured; each run measures it on its own requests)
+        self.max_tokens_over_body: int | None = None
+        self._body_bytes = 0
         self._price = PRICES_PER_MTOK.get(model.name)
 
     def request(self, prompt: str, schema):  # noqa: ANN001, ANN201
@@ -852,27 +917,66 @@ class Budgeted:
         if out is None:
             return
         inp, outp = int(out.prompt_tokens or 0), int(out.completion_tokens or 0)
+        over = inp - self._body_bytes
+        self.max_tokens_over_body = (
+            over if self.max_tokens_over_body is None else max(self.max_tokens_over_body, over)
+        )
         self.input_tokens += inp
         self.output_tokens += outp
         if self._price is not None:
             self.spent_usd += (inp * self._price[0] + outp * self._price[1]) / 1_000_000
 
+    def _save(self, spent_usd: float) -> None:
+        if self._ledger is not None:
+            _write_json(self._ledger, {"build_id": self._build_id, "spent_usd": spent_usd})
+
+    def _most(self, prompt: str, schema) -> float:  # noqa: ANN001
+        """An estimate of the most one request can cost (CodeRabbit on #272): its prompt at one
+        token per byte of the request body (a token is at least one byte), plus FRAMING_TOKENS
+        for what the API adds around it, and the whole max_tokens of output. FRAMING_TOKENS is
+        not measured, so the cap holds only as far as the API adds no more than that."""
+        build = getattr(self._m, "request", None)
+        body = json.dumps(build(prompt, schema)) if build is not None else prompt
+        self._body_bytes = len(body.encode("utf-8"))
+        if self._price is None:
+            return 0.0
+        inp = self._body_bytes + FRAMING_TOKENS
+        outp = int(getattr(self._m.params, "max_tokens", 0) or 0)
+        return (inp * self._price[0] + outp * self._price[1]) / 1_000_000
+
     def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
         from core.llm.cloud import CloudError
 
-        if self.max_usd is not None and self.spent_usd >= self.max_usd:
+        most = self._most(prompt, schema)
+        if self.max_usd is not None and self.spent_usd + most > self.max_usd:
             raise CloudError(
-                f"the run's spend cap of ${self.max_usd:.2f} is reached"
-                f" (${self.spent_usd:.2f} spent)",
+                f"the run's spend cap of ${self.max_usd:.2f} is reached: the next request could"
+                f" pass it (${self.spent_usd:.2f} spent)",
                 sticky=True,
             )
+        self._save(self.spent_usd + most)  # on disk before the request can be charged
         self.calls += 1
         try:
             out = self._m.generate_json(prompt, schema, params)
         except CloudError as e:
-            self._count(getattr(e, "response", None))
+            answer = getattr(e, "response", None)
+            if answer is not None:
+                self._count(answer)
+            elif (
+                e.retryable
+                and getattr(e.__cause__, "status_code", None) is None
+                and not _never_sent(e)
+            ):
+                # a timeout or a dropped connection: the request may have been served and
+                # charged with no answer back, so its most is counted as spent; nothing reports
+                # what it really cost, so it is never given back (CodeRabbit on #272). A failure
+                # to connect is not counted: no request reached the API (Claude review on #272)
+                self.uncertain_usd += most
+                self.spent_usd += most
+            self._save(self.spent_usd)
             raise
         self._count(out)
+        self._save(self.spent_usd)
         return out
 
     def usage(self) -> dict:
@@ -881,18 +985,26 @@ class Budgeted:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "spent_usd": round(self.spent_usd, 2),
+            "uncertain_usd": round(self.uncertain_usd, 2),
+            # counts only: the estimate held on every answered request if this <= the allowance
+            "max_tokens_over_body": self.max_tokens_over_body,
+            "framing_tokens_allowed": FRAMING_TOKENS,
         }
 
 
-def cloud_components(conn, model):  # noqa: ANN001, ANN201
-    """The product's components with Claude filling assumptions and labeling stance."""
+def cloud_components(
+    conn: sqlite3.Connection, model: Budgeted, labeler: ProbeLabeler | None = None
+) -> Any:
+    """The product's components with Claude filling assumptions and labeling stance (or the
+    labeler given, which the coverage probe passes so no stance labeler is built)."""
     from core import pipeline
     from core.audit import assumption_filler, stance
 
     # The product's cloud path for every job (#254): each request logged before it is sent,
     # and a sticky failure pauses the audit (core/audit/_local_model.py open_cloud_run).
     filler = assumption_filler.create(conn, cloud_model=model)
-    labeler = stance.create(conn, cloud_model=model)
+    if labeler is None:
+        labeler = stance.create(conn, cloud_model=model)
     return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
 
 
@@ -950,7 +1062,9 @@ def case_stop(conn, built: dict) -> str | None:  # noqa: ANN001
     return None
 
 
-def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
+def audit(  # noqa: ANN001
+    out: Path, fake: bool, log, cloud_model=None, *, built: dict, probe: bool = False
+) -> dict:
     """Audit the case in out/case.db. `built` is the build record main() checked or wrote, not
     read again from disk, so a built.ok swapped together with its case.db is refused too. On
     success out/audited.db is a copy of the audited case, taken on the connection that ran the
@@ -980,12 +1094,26 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             # with no claim the pipeline never calls the final check below, so a run with no
             # claims would be stored as completed unchecked (CodeRabbit on #269)
             raise SystemExit(f"{out}/case.db holds no claim to audit; check the claims file")
+        # The probe's labeler stands in from the start, so no stance labeler (its model or
+        # signed prompt) is built for a run that labels nothing (Claude review on #272): the
+        # same filler and checks run, and no stance call is made.
+        from eval.validation.coverage_probe import ProbeLabeler
+
+        probe_labeler = ProbeLabeler() if probe else None
         if fake:
             from eval.pipeline_fakes import fake_components
 
             comps = fake_components()
+            if probe_labeler is not None:
+                comps.labeler = probe_labeler
+                comps.model_runs = (
+                    *(m for m in comps.model_runs if m.purpose != "stance"),
+                    *probe_labeler.model_runs,
+                )
         elif cloud_model is not None:
-            comps = cloud_components(conn, cloud_model)
+            comps = cloud_components(conn, cloud_model, labeler=probe_labeler)
+        elif probe_labeler is not None:
+            comps = pipeline.real_components(conn, replace={"labeler": probe_labeler})
         else:
             comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
         # The run 3 plan keeps the challenge step off (on by default since #162), so run 3
@@ -998,7 +1126,11 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
         def progress(done: int, total: int, d) -> None:  # noqa: ANN001
             spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
-            log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
+            # the probe keeps no claim's outcome, not even in its log
+            if probe:
+                log(f"[{done}/{total}]{spent}")
+            else:
+                log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
             if done == total:
                 final_check()
                 checked.append(done)
@@ -1084,14 +1216,24 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             except sqlite3.Error as e:  # the reason, not a traceback (Claude review on #269)
                 raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
             raise SystemExit(why)
-        try:
-            with closing(sqlite3.connect(out / AUDITED)) as copy:
-                conn.backup(copy)
-        finally:
-            conn.commit()
-        tally: dict[str, int] = {}
-        for d in result.decisions:
-            tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+        if probe:
+            # counted in the read transaction the check above passed in; no copy is kept
+            from eval.validation import coverage_probe
+
+            try:
+                outcome = {"probe": coverage_probe.counts(conn, result.manifest, result.not_tested)}
+            finally:
+                conn.commit()
+        else:
+            try:
+                with closing(sqlite3.connect(out / AUDITED)) as copy:
+                    conn.backup(copy)
+            finally:
+                conn.commit()
+            tally: dict[str, int] = {}
+            for d in result.decisions:
+                tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+            outcome = {"verdicts": tally}
         calls = {
             purpose: {"calls": n, "first_utc": first, "last_utc": last}
             for purpose, n, first, last in conn.execute(
@@ -1105,12 +1247,14 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         "run_id": result.run_id,
         "fake": result.fake,
         "challenge": comps.challenge,
-        "verdicts": tally,
+        **outcome,
         "audit_seconds": round(time.monotonic() - t),
         "model_calls": calls,
         "model_outputs_reused": result.model_outputs_reused,
-        "dropped_labels": result.dropped_labels,
-        "unlabeled": result.unlabeled,
+        # the probe's stand-in labels are not a model's, so their drops are not reported
+        "dropped_labels": None if probe else result.dropped_labels,
+        # the probe keeps no claim id, so only how many
+        "unlabeled": len(result.unlabeled) if probe else result.unlabeled,
     }
 
 
@@ -1185,6 +1329,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
     )
+    ap.add_argument(
+        "--coverage-probe",
+        action="store_true",
+        help="fill and check every claim but label no evidence; write DIR/probe.json with the"
+        " coverage tiers (counts only) and delete the case (PREREGISTERED_v5 gate C4)",
+    )
     ap.add_argument("--source-id", default=SOURCE_ID, help="with --ufdr: the phone's source id")
     ap.add_argument(
         "--definitions",
@@ -1204,12 +1354,18 @@ def main(argv: list[str] | None = None) -> int:
     if a.cloud and a.max_usd is not None and a.cloud not in PRICES_PER_MTOK:
         # Without a price the spend counter never moves, so the cap would never stop a call.
         raise SystemExit(f"--max-usd: no price for {a.cloud}; add it to PRICES_PER_MTOK")
+    if a.coverage_probe and a.cloud and a.max_usd is None:
+        raise SystemExit("--coverage-probe with --cloud needs --max-usd")
     # What the case is built from, compared on a resume (the zone is given only at build).
     setup = {
         "source_id": a.source_id if a.ufdr is not None else None,
         "definitions": defs,
         "phones": [ph.record() for ph in phones],
     }
+    if a.coverage_probe:
+        # a probe's case holds no stance labels, so it never resumes as a run, nor a run's as
+        # a probe; only a probe's built.ok records the key, and a resume checks it both ways
+        setup["coverage_probe"] = True
     a.out.mkdir(parents=True, exist_ok=True)
     # One invocation owns DIR at a time, from its first write through publication, so a
     # results.zip never mixes two attempts' files (CodeRabbit on #269).
@@ -1224,6 +1380,15 @@ def main(argv: list[str] | None = None) -> int:
             os.write(fd, f"{os.getpid()}\n".encode())
         finally:
             os.close(fd)
+        # A probe never starts in a run's DIR: the run's run.json, progress.log and report hold
+        # claim ids and verdicts that a probe must not leave, and its results are not a probe's
+        # to delete (CodeRabbit on #272). Checked under the lock, so no run can finish in DIR
+        # between the check and the attempt, and before the attempt touches any file.
+        if a.coverage_probe and _run_record(a.out):
+            raise SystemExit(
+                f"{a.out} was built for a run, not a coverage probe: its run.json and"
+                " progress.log hold claims and verdicts; use a new --out"
+            )
         return _attempt(a, phones, defs, defined, setup)
     finally:
         lock.unlink(missing_ok=True)
@@ -1253,10 +1418,89 @@ def _lock_holder(lock: Path) -> str:
     return f"another run (process {pid}) is using {lock.parent}; {advice}"
 
 
+def _sync(fd: int) -> None:
+    """Flush fd to permanent storage. macOS's fsync can leave writes in the drive's volatile
+    cache, so there F_FULLFSYNC is used (CodeRabbit on #272). Where the disk refuses it (some
+    external and network volumes), fsync is the fallback, and a write there can be lost to a
+    power cut; the internal disk of a Mac takes F_FULLFSYNC."""
+    full = getattr(fcntl, "F_FULLFSYNC", None) if fcntl is not None else None
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError:
+            pass
+    os.fsync(fd)
+
+
+def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
+    """Write JSON to path whole or not at all: a stop mid-write leaves the earlier file. The
+    file and then its folder are synced, so on a local disk that takes both (Linux, or a Mac's
+    internal disk with F_FULLFSYNC) a run.json or spend.json keeps the spend a resume starts
+    its cap from through a power cut (CodeRabbit on #272). Both syncs are as good as the disk:
+    Windows and some network or FUSE filesystems cannot sync a folder, and a disk that refuses
+    F_FULLFSYNC gets fsync (_sync), so there a power cut can lose the last write."""
+    tmp = path.with_name(f"{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(obj, indent=indent))
+        f.flush()
+        _sync(f.fileno())
+    tmp.replace(path)
+    if os.name != "nt":  # the rename itself survives a power loss once its folder is synced
+        # best effort: some filesystems (FUSE, SMB, NFS, WSL drives) refuse to sync a folder,
+        # and the file itself is already synced (Claude review on #272)
+        with suppress(OSError):
+            fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                _sync(fd)
+            finally:
+                os.close(fd)
+
+
+SPEND_FILE = "spend.json"
+
+
+def _fold_spend(out: Path, run: dict) -> None:
+    """Fold DIR/spend.json, the spend Budgeted saves around every request, into run.json's
+    record of the same case, so a run killed between run.json's writes resumes from at least
+    what was charged, never from the last spend run.json saved (CodeRabbit on #272). A
+    spend.json from another case (a build since replaced) is not this case's spend."""
+    path = out / SPEND_FILE
+    if not path.exists() or "build_id" not in run:
+        return
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        build_id, spent = saved["build_id"], float(saved["spent_usd"])
+    except (OSError, ValueError, TypeError, KeyError) as err:
+        raise SystemExit(f"{path} is unreadable, so this run's spend is unknown: {err}") from err
+    if build_id != run["build_id"]:
+        return
+    cloud = run.setdefault("cloud", {"sessions": []})
+    before = float(cloud.get("spent_usd", 0.0))
+    if spent > before:
+        cloud["spent_usd"] = spent
+        cloud["recovered_usd"] = float(cloud.get("recovered_usd", 0.0)) + spent - before
+
+
+def _run_record(out: Path) -> bool:
+    """Whether DIR holds a run's record (a run.json not marked as a coverage probe's)."""
+    path = out / "run.json"
+    if not path.exists():
+        return False
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True  # unreadable: never assume it is a probe's
+    return not (isinstance(run, dict) and run.get("coverage_probe") is True)
+
+
 def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     """One attempt on DIR, run while main() holds its lock."""
     # an earlier attempt's results never stand for this one, even if this one is refused
     (a.out / "results.zip").unlink(missing_ok=True)
+    # nor its report, which holds the claims and verdicts a probe never leaves (CodeRabbit on #272)
+    (a.out / "report.html").unlink(missing_ok=True)
+    (a.out / PROBE_FILE).unlink(missing_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 
     def log(msg: str) -> None:
@@ -1270,6 +1514,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
 
     run_path = a.out / "run.json"
     run = json.loads(run_path.read_text(encoding="utf-8")) if run_path.exists() else {}
+    _fold_spend(a.out, run)
     claims_sha = sha256_file(a.claims)
     if a.claims_sha256 and claims_sha != a.claims_sha256:
         raise SystemExit(f"{a.claims}: SHA-256 {claims_sha}, expected {a.claims_sha256}")
@@ -1289,6 +1534,11 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             raise SystemExit(
                 f"{a.out} was built from claims {was['claims_sha256']}; use a new --out"
             )
+        if bool(was.get("coverage_probe")) != a.coverage_probe:
+            kinds = (
+                ("a run", "a coverage probe") if a.coverage_probe else ("a coverage probe", "a run")
+            )
+            raise SystemExit(f"{a.out} was built for {kinds[0]}, not {kinds[1]}; use a new --out")
         if a.report_sha256 and was.get("report_xml_sha256") != a.report_sha256:
             raise SystemExit(
                 f"{a.out} was built from report.xml {was.get('report_xml_sha256')}; use a new --out"
@@ -1370,6 +1620,23 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                 raise SystemExit(f"{sid}: {stop}")
             if note:
                 log(f"{sid}: {note}")  # as a fresh build logs it (CodeRabbit on #269)
+    if not resuming and (run.get("coverage_probe") or a.coverage_probe) and "build_id" in run:
+        # A fresh case after a probe's (which deleted its case; a probe never starts in a run's
+        # DIR, main() refuses it): the
+        # new case's spend cap starts at zero, and the earlier case's record, spend included,
+        # moves to earlier_cases, never dropped (CodeRabbit and Claude review on #272). A run
+        # rebuilt after a run keeps counting its spend, so a restart never raises its cap.
+        keys = ("build_id", "cloud", "audit", "started_utc", "finished_utc", "report",
+                "report_xml_sha256", "model", "coverage_probe")  # fmt: skip
+        earlier = {k: run.pop(k) for k in keys if k in run}
+        run.setdefault("earlier_cases", []).append(earlier)
+        run["coverage_probe"] = a.coverage_probe
+        # on disk before built.ok can exist: a stop between the two must not leave a built.ok
+        # beside a run.json whose top-level spend is the earlier case's (CodeRabbit on #272)
+        _write_json(run_path, run)
+    # marked from the first run.json this attempt writes, so a stopped probe's DIR still reads
+    # as a probe's (_run_record) and a stopped run's as a run's
+    run["coverage_probe"] = a.coverage_probe
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -1394,7 +1661,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             "imported": imported,
             "build_id": build_id,
         }
-        built.write_text(json.dumps(inputs), encoding="utf-8")
+        _write_json(built, inputs, indent=None)
         was = inputs  # the record the audit checks the case.db against
     # From the build, or from built.ok on a resume: a run that stopped before run.json was
     # written still records what the case was built from (CodeRabbit on #267).
@@ -1406,7 +1673,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     run["definitions"] = defs
     if report_sha is not None:
         run["report_xml_sha256"] = report_sha
-    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    _write_json(run_path, run)
     from core.audit._llm_json import CloudPaused
     from core.pipeline import ComponentsMissing
 
@@ -1419,17 +1686,26 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             api_key=cfg.api_key, model=a.cloud, effort=a.effort or cloud.DEFAULT_EFFORT
         )
         spent_before = float(run.get("cloud", {}).get("spent_usd", 0.0))
-        cloud_model = Budgeted(cloud.ClaudeModel(cfg), a.max_usd, spent_before)
-        run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": ["assumptions", "stance"]}
+        cloud_model = Budgeted(
+            cloud.ClaudeModel(cfg),
+            a.max_usd,
+            spent_before,
+            ledger=a.out / SPEND_FILE,
+            build_id=run["build_id"],
+        )
+        jobs = ["assumptions"] if a.coverage_probe else ["assumptions", "stance"]
+        run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": jobs}
     try:
         try:
-            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was)
+            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was, probe=a.coverage_probe)
         finally:
             if cloud_model is not None:
                 total = run.setdefault("cloud", {"sessions": []})
                 total["sessions"].append(cloud_model.usage())
-                total["spent_usd"] = round(cloud_model.spent_usd, 2)
-                run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+                # full precision: a resume starts its cap from this, and a spend rounded down
+                # would let it pass the cap (CodeRabbit on #272)
+                total["spent_usd"] = cloud_model.spent_usd
+                _write_json(run_path, run)
                 log(f"cloud spend so far: ${cloud_model.spent_usd:.2f}")
     except CloudPaused as e:
         log(f"paused: {e}")
@@ -1439,14 +1715,47 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"
+    if a.coverage_probe:
+        return _probe_done(a.out, run, run_path, plog)
     # The report and results.zip are made from the copy of the audited case, never case.db
     # read again by path, so they hold the audited build whatever case.db holds by then
     # (CodeRabbit on #269).
     run["report"] = report(a.out, log, AUDITED)
-    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    _write_json(run_path, run)
     plog.close()
     publish_results(a.out)
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
+    return 0
+
+
+PROBE_FILE = "probe.json"
+
+
+def _probe_done(out: Path, run: dict, run_path: Path, plog: TextIO) -> int:
+    """Finish a coverage probe: probe.json gets the counts, and the case and its affidavit go, so
+    nothing in DIR holds a claim's text, verdict, check result or evidence (PREREGISTERED_v5 gate
+    C4). run.json
+    keeps the versions, times, spend and counts; built.ok goes with the case, so running the
+    same command again builds and probes afresh."""
+    counts = run["audit"]["probe"]
+    _write_json(out / PROBE_FILE, counts)
+    _write_json(run_path, run)
+    # built.ok first: a probe stopped in between leaves no built.ok naming a deleted case, so
+    # the same command builds and probes afresh (Claude review on #272)
+    (out / "built.ok").unlink(missing_ok=True)
+    for db in ("case.db", AUDITED):
+        for name in (db, *(f"{db}{s}" for s in SQLITE_SIDECARS)):
+            (out / name).unlink(missing_ok=True)
+    # the affidavit holds every claim's text; the probe keeps counts only (CodeRabbit on #272)
+    (out / "affidavit.pdf").unlink(missing_ok=True)
+    plog.close()
+    t = counts["tiers"]
+    print(
+        f"coverage probe: {counts['claims']} claims, {t[CODE_CHECKED]} code-checked,"
+        f" {t[CHECK_UNSETTLED]} check unsettled, {t[EXPERT_ONLY]} expert only,"
+        f" {t[NOT_TESTED]} not tested; by phone {counts['code_checked_by_phone']};"
+        f" counts in {out / PROBE_FILE}"
+    )
     return 0
 
 

@@ -266,23 +266,35 @@ class _Out:
 
 
 class _Stub:
-    name, sha256, params, where = "claude-opus-5-5", "api:claude-opus-5-5", None, "cloud"
+    """A model whose every call uses its whole allowance: a 1,000,000-byte prompt read as
+    1,000,000 tokens and 100,000 output tokens, $4 in + $2 out at the Opus price."""
+
+    name, sha256, where = "claude-opus-5-5", "api:claude-opus-5-5", "cloud"
+
+    class params:  # noqa: N801 - CloudParams' attribute
+        max_tokens = 100_000
+
+    def request(self, prompt, schema):  # noqa: ANN001, ANN201
+        return {"messages": [{"role": "user", "content": prompt}]}
 
     def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
-        return _Out(1_000_000, 100_000)  # $4 in + $2 out at the Opus price
+        return _Out(1_000_000, 100_000)
 
 
-def test_the_spend_cap_stops_further_calls_as_a_sticky_failure():
+def test_the_spend_cap_sends_no_request_that_could_pass_it():
     from core.llm.cloud import CloudError
 
-    m = hickman_run.Budgeted(_Stub(), max_usd=10.0, spent_usd=3.0)
-    m.generate_json("p", {})
+    prompt = "x" * 1_000_000  # with the framing margin, the most a call can cost is about $6.02
+    m = hickman_run.Budgeted(_Stub(), max_usd=15.0, spent_usd=3.0)
+    m.generate_json(prompt, {})
     assert round(m.spent_usd, 2) == 9.0
-    m.generate_json("p", {})  # under the cap when sent; it may end past it
-    assert round(m.spent_usd, 2) == 15.0
-    with pytest.raises(CloudError) as e:
-        m.generate_json("p", {})
-    assert e.value.sticky
+    with pytest.raises(CloudError) as e:  # $9 + $6.02 could pass $15, so it is not sent
+        m.generate_json(prompt, {})
+    assert e.value.sticky and "could pass" in str(e.value)
+    assert m.usage()["calls"] == 1 and m.spent_usd <= m.max_usd
+    m = hickman_run.Budgeted(_Stub(), max_usd=15.0, spent_usd=3.0)
+    m.generate_json("p", {})  # a short prompt's most is about $2.02: a second call still fits
+    m.generate_json("p", {})
     assert m.usage()["calls"] == 2
 
 
@@ -2113,3 +2125,164 @@ def test_results_zip_holds_its_case_and_run_json_and_no_refused_report(tmp_path)
     (tmp_path / "run.json").write_text("{}", encoding="utf-8")
     with zipfile.ZipFile(hickman_run.publish_results(tmp_path)) as z:
         assert sorted(z.namelist()) == ["case.db", "run.json"]
+
+
+class _TimesOut(_Stub):
+    def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+        from core.llm.cloud import CloudError
+
+        try:
+            raise TimeoutError("read timed out")
+        except TimeoutError as e:
+            raise CloudError(f"{e}", sticky=True, retryable=True) from e
+
+
+def test_a_request_that_times_out_counts_its_most_against_the_cap():
+    """A timed-out request may have been served and charged, so its most is counted as spent
+    and a retry cannot take the run past its cap (CodeRabbit on #272)."""
+    from core.llm.cloud import CloudError
+
+    m = hickman_run.Budgeted(_TimesOut(), max_usd=5.0)
+    with pytest.raises(CloudError):
+        m.generate_json("p", {})  # most about $2.02: counted, though nothing came back
+    assert 2.0 < m.spent_usd == m.uncertain_usd < 2.1
+    with pytest.raises(CloudError):
+        m.generate_json("p", {})
+    with pytest.raises(CloudError, match="could pass"):  # $4.04 + $2.02 could pass $5
+        m.generate_json("p", {})
+    assert m.usage()["calls"] == 2 and m.spent_usd <= m.max_usd
+
+
+def test_the_spend_is_on_disk_before_each_request_is_sent(tmp_path):
+    """With a ledger, the spend counting a request at its most is saved before the request is
+    sent, and its counted cost once it answers, so a kill mid-request leaves no charge unsaved
+    (CodeRabbit on #272)."""
+    ledger = tmp_path / "spend.json"
+    seen: list[float] = []
+
+    class _Saw(_Stub):
+        def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+            seen.append(json.loads(ledger.read_text(encoding="utf-8"))["spent_usd"])
+            return _Out(10, 10)
+
+    m = hickman_run.Budgeted(_Saw(), max_usd=15.0, spent_usd=3.0, ledger=ledger, build_id="b1")
+    m.generate_json("x" * 1_000_000, {})
+    assert 9.0 < seen[0] < 9.1  # $3 + the request's most, about $6.02, before it was sent
+    saved = json.loads(ledger.read_text(encoding="utf-8"))
+    assert saved == {"build_id": "b1", "spent_usd": m.spent_usd} and m.spent_usd < 3.01
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot sync a folder")
+def test_a_json_write_syncs_the_file_then_the_rename(tmp_path, monkeypatch):
+    """The file is synced before it replaces the old one, and its folder after, so the new
+    spend survives a power loss before the next request is sent (CodeRabbit on #272)."""
+    import stat
+
+    steps: list[str] = []
+    real_sync, real_replace = hickman_run._sync, Path.replace
+
+    def sync(fd: int) -> None:
+        steps.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_sync(fd)
+
+    def replace(self, target):  # noqa: ANN001, ANN202
+        steps.append("replace")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(hickman_run, "_sync", sync)
+    monkeypatch.setattr(Path, "replace", replace)
+    hickman_run._write_json(tmp_path / "spend.json", {"spent_usd": 1.0})
+    assert steps == ["file", "replace", "dir"]
+    assert json.loads((tmp_path / "spend.json").read_text(encoding="utf-8")) == {"spent_usd": 1.0}
+
+
+def test_a_sync_uses_a_full_flush_where_the_system_has_one(monkeypatch):
+    """On macOS, F_FULLFSYNC flushes the drive's cache, which fsync may not; where the disk
+    refuses it, fsync is used (CodeRabbit on #272)."""
+    calls: list[str] = []
+
+    class _Darwin:
+        F_FULLFSYNC = 51
+
+        def __init__(self, refuse: bool) -> None:
+            self.refuse = refuse
+
+        def fcntl(self, fd: int, op: int) -> int:
+            calls.append(f"fullfsync {op}")
+            if self.refuse:
+                raise OSError("not supported")
+            return 0
+
+    monkeypatch.setattr(hickman_run.os, "fsync", lambda fd: calls.append("fsync"))
+    monkeypatch.setattr(hickman_run, "fcntl", _Darwin(refuse=False))
+    hickman_run._sync(3)
+    assert calls == ["fullfsync 51"]
+    calls.clear()
+    monkeypatch.setattr(hickman_run, "fcntl", _Darwin(refuse=True))
+    hickman_run._sync(3)
+    assert calls == ["fullfsync 51", "fsync"]
+    calls.clear()
+    monkeypatch.setattr(hickman_run, "fcntl", None)  # Windows
+    hickman_run._sync(3)
+    assert calls == ["fsync"]
+
+
+class _NoConnect(_Stub):
+    def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+        from core.llm.cloud import CloudError
+
+        class ConnectError(Exception):  # httpx's name for a refused or failed connect
+            pass
+
+        class APIConnectionError(Exception):
+            pass
+
+        try:
+            try:
+                raise ConnectError("connection refused")
+            except ConnectError as low:
+                raise APIConnectionError("Connection error.") from low
+        except APIConnectionError as e:
+            raise CloudError(f"{e}", sticky=True, retryable=True) from e
+
+
+def test_a_failure_to_connect_is_not_counted_as_spent():
+    """A request that never left the machine cannot have been charged, so an outage does not
+    use up the cap (Claude review on #272)."""
+    from core.llm.cloud import CloudError
+
+    m = hickman_run.Budgeted(_NoConnect(), max_usd=5.0)
+    for _ in range(5):
+        with pytest.raises(CloudError):
+            m.generate_json("p", {})
+    assert m.spent_usd == m.uncertain_usd == 0.0 and m.calls == 5
+
+
+def test_a_folder_that_cannot_be_synced_still_takes_the_write(tmp_path, monkeypatch):
+    """Some filesystems refuse to sync a folder; the file itself is synced, and the write
+    goes through (Claude review on #272)."""
+    import stat
+
+    real = hickman_run._sync
+
+    def sync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(22, "Invalid argument")
+        real(fd)
+
+    monkeypatch.setattr(hickman_run, "_sync", sync)
+    hickman_run._write_json(tmp_path / "run.json", {"a": 1})
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_each_run_records_how_far_the_api_counted_past_the_body():
+    """usage() records the most input tokens the API counted above a request's body bytes, so
+    a run shows whether the cap's framing allowance held on its own requests (CodeRabbit on
+    #272)."""
+    m = hickman_run.Budgeted(_Stub(), max_usd=100.0)
+    m.generate_json("x" * 1_000_000, {})  # the stub counts 1,000,000 input tokens
+    u = m.usage()
+    body = len(json.dumps(_Stub().request("x" * 1_000_000, {})).encode("utf-8"))
+    assert u["max_tokens_over_body"] == 1_000_000 - body < 0  # within the allowance
+    assert u["framing_tokens_allowed"] == hickman_run.FRAMING_TOKENS
+    assert hickman_run.Budgeted(_Stub(), max_usd=1.0).usage()["max_tokens_over_body"] is None
