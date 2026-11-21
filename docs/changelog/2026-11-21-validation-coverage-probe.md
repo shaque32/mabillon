@@ -47,7 +47,8 @@
   - The driver saves its spend to DIR/spend.json before each cloud request is sent (counting
     that request at its most) and again once its answer is counted. The next attempt starts its
     cap from the larger of that and run.json's spend for the same build, so a run killed
-    mid-request (SIGKILL, power loss) never resumes from a spend below what was charged.
+    mid-request (SIGKILL) never resumes from a spend below what was charged, nor does one cut
+    by a power loss on a disk that takes the syncs below.
     Recovered spend is recorded as `recovered_usd`. Each such write syncs the file, renames it
     into place and then syncs its folder (not on Windows, which cannot sync a folder); on macOS
     each sync is F_FULLFSYNC, which flushes the drive's cache, as fsync may not. A disk that

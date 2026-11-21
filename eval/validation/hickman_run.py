@@ -878,8 +878,9 @@ class Budgeted:
 
     With a ledger (DIR/spend.json), the spend is on disk before each request is sent, counting
     that request at its most, and again once its answer is counted: a run killed mid-request
-    (SIGKILL, power loss) leaves a spend at least what was charged, and the next attempt starts
-    its cap from it (_fold_spend; CodeRabbit on #272)."""
+    (SIGKILL) leaves a spend at least what was charged, and the next attempt starts its cap from
+    it (_fold_spend; CodeRabbit on #272). A power cut is covered only as far as _write_json's
+    syncs reach the disk: not where a disk takes neither a full flush nor a folder sync."""
 
     def __init__(  # noqa: ANN001
         self,
@@ -1433,11 +1434,12 @@ def _sync(fd: int) -> None:
 
 
 def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
-    """Write JSON to path whole or not at all, and durably: a stop mid-write leaves the earlier
-    file, and the file and then its folder are synced, so a run.json or spend.json never loses
-    the spend a resume starts its cap from, even to a power loss (CodeRabbit on #272). The
-    folder sync is best effort: Windows and some network or FUSE filesystems cannot sync a
-    folder, and there the rename is as durable as that filesystem makes it."""
+    """Write JSON to path whole or not at all: a stop mid-write leaves the earlier file. The
+    file and then its folder are synced, so on a local disk that takes both (Linux, or a Mac's
+    internal disk with F_FULLFSYNC) a run.json or spend.json keeps the spend a resume starts
+    its cap from through a power cut (CodeRabbit on #272). Both syncs are as good as the disk:
+    Windows and some network or FUSE filesystems cannot sync a folder, and a disk that refuses
+    F_FULLFSYNC gets fsync (_sync), so there a power cut can lose the last write."""
     tmp = path.with_name(f"{path.name}.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         f.write(json.dumps(obj, indent=indent))
