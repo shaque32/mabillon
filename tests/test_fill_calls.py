@@ -821,3 +821,93 @@ def test_a_name_and_its_number_held_under_two_keys_get_a_caller(conn: sqlite3.Co
     assert sorted(a.params.account_ids) == sorted(DUNN_WA), [d.reason for d in f.drops]
     (r,) = run_checks(a, conn)
     assert r.outcome is CheckOutcome.PASS
+
+
+# ---------------------------------------------------------------- coverage recount (2026-11-21)
+
+LENGTH = "about one minute and 40 seconds"
+
+
+@pytest.mark.parametrize("joined", ["that was answered and lasted", "that connected and lasted"])
+def test_answered_or_connected_before_a_tested_length_still_names_the_caller(conn, joined):
+    # validation dev iOS 15 C06: "... placed a Signal call to the TARGET PHONE that was
+    # answered and lasted about one and a half minutes" got no caller row, so rule 3e kept it
+    # unproven. A tested length is never below one second, so the call it finds connected.
+    text = f"{AT} Item 1 placed a call to (212) 555-0199 {joined} {LENGTH}."
+    made, f = fill(conn, text, duration={"as_written": LENGTH})
+    assert list(made["caller"].params.sent_by) == [PETROV], f.drops
+    assert made["caller"].params.duration_s == made["record_time"].params.duration_s
+    assert "event" not in made, made["event"].text  # "answered"/"connected" are read
+    v = verdict(conn, text, 1, duration={"as_written": LENGTH})
+    assert v.verdict is Verdict.SUPPORTED, v.reasons
+    # the same words with the other side calling: the log says the phone placed it
+    reversed_ = text.replace(
+        "Item 1 placed a call to (212) 555-0199", "(212) 555-0199 placed a call to Item 1"
+    )
+    assert (
+        verdict(conn, reversed_, 1, duration={"as_written": LENGTH}).verdict is Verdict.CONTRADICTED
+    )
+
+
+def test_connected_with_no_tested_length_is_left_for_the_expert(conn):
+    # "connected" is read only beside a length a row tests; alone, no check reads it.
+    made, _ = fill(conn, f"{AT} Item 1 placed a call to (212) 555-0199 that connected.")
+    assert "caller" not in made
+    made, _ = fill(conn, f"{AT} Item 1 placed a connected call to (212) 555-0199.")
+    assert "caller" not in made
+
+
+def test_a_connected_call_of_another_length_is_not_supported(conn):
+    text = (
+        f"{AT} Item 1 placed a call to (212) 555-0199 that connected and lasted about ten minutes."
+    )
+    v = verdict(conn, text, 1, duration={"as_written": "about ten minutes"})
+    assert v.verdict is not Verdict.SUPPORTED, v.reasons
+
+
+OWNER_ONLY = {"template_id": "person_identity", "people": ["PETROV"]}
+
+
+def test_an_owner_identity_naming_no_account_is_refused(conn):
+    # validation v4 D077: the model added "The account belongs to SUBJECT-1" (no account, no
+    # handle) beside a passing time and caller row. Nothing can test it, and it kept a true
+    # claim unproven. PETROV owns Item 1 by confirmed stipulation, which already says the
+    # phone's own accounts are his.
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV."
+    rt = {
+        **proposal(
+            people=[],
+            quoted_text="",
+            channels=["call", "WhatsApp"],
+            window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+        ).model_dump()
+    }
+    made, f = fill(conn, text, items=[rt, OWNER_ONLY])
+    assert "person_identity" not in made
+    assert any("person_identity names no account or handle" in d.reason for d in f.drops)
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assumptions = list(made.values())
+    checks = [r for a in assumptions for r in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.SUPPORTED, v.reasons
+    # before: the owner row stood beside them, untestable, and the claim stayed unproven
+    kept = [*assumptions, instantiate("X", "person_identity", {"person_ids": [PETROV]})]
+    v = decide_verdict(claim(text), kept, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN
+
+
+def test_an_identity_naming_an_account_or_a_person_who_owns_no_phone_is_kept(conn):
+    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.")
+    f._owner_identity_names_nothing(["person:volkov"])  # owns no phone: who he is stays open
+    f._owner_identity_names_nothing([])
+    f._owner_identity_names_nothing([PETROV, "person:volkov"])
+    with pytest.raises(Exception, match="names no account or handle"):
+        f._owner_identity_names_nothing([PETROV, REYES])
+    # a row naming an account is never refused this way
+    rt = {**proposal(people=[], quoted_text="", channels=["call"],
+                     window=W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09"))
+          .model_dump()}  # fmt: skip
+    with_account = {"template_id": "person_identity", "people": ["PETROV"],
+                    "accounts": [{"as_written": "(212) 555-0199", "app": "unknown"}]}  # fmt: skip
+    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.", items=[rt, with_account])
+    assert not any("names no account or handle" in d.reason for d in f.drops)

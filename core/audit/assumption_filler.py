@@ -199,7 +199,12 @@ MAX_PROPOSALS = 8
 #  11: a call's other side may be described by its app ("called the Instagram user ...") and
 #      given with its id beside its name (', user ID ...'), when both are one account; a
 #      comma inside a quoted name's closing mark is the claim's.
-FILLER_VERSION = "12"
+#  12: words no check reads add a core event only an expert carries (#265).
+#  13: a person_identity naming no account or handle, only a phone's owner by confirmed
+#      stipulation, is refused; "connected" beside a tested call length is read, and a call
+#      "that was answered (or connected) and lasted ..." gets its caller row (coverage
+#      recount, 2026-11-21).
+FILLER_VERSION = "13"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1907,8 +1912,12 @@ _CALL_APP_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
+# "that was answered and lasted ...", "that connected and lasted ...": a call with a stated
+# length, which the time row tests, was answered (`_GATED_WORDS`, "length").
 _CALL_LENGTH_TAIL_RE = re.compile(
-    r"^\s*,?\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+    r"^\s*,?\s*(?:that\s+(?:(?:was\s+)?(?:answered|connected)\s+and\s+)?lasted|lasting|for)"
+    r"\s+(?P<len>.+?)\s*\.?\s*$",
+    re.I,
 )
 
 
@@ -3202,8 +3211,10 @@ _GATED_WORDS = {
     # sender alone, so "PETROV received from @northstar" on a sender row for PETROV passed on
     # PETROV's own message (Claude review on #265)
     "direction": frozenset("received receive receives receiving".split()),
-    # "a call that was answered and lasted ...": a call with a tested length was answered
-    "length": frozenset("lasted lasting lasts length duration long answered".split()),
+    # "a call that was answered and lasted ...": a call with a tested length was answered.
+    # "connected" says the same: a tested length is never below one second (duration_range),
+    # so a call the row finds with it connected (coverage recount 2026-11-21).
+    "length": frozenset("lasted lasting lasts length duration long answered connected".split()),
     # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
     "contact": frozenset("saved stored listed".split()),
     # "exchanged messages", "had a conversation": messages between both sides, which only a
@@ -4302,7 +4313,29 @@ class LocalAssumptionFiller:
             params["window"] = self._stated(claim, para, device_ids, tpl.id, None)
             code_made = True
 
+        if tpl.id == "person_identity" and not account_ids and not handles:
+            self._owner_identity_names_nothing(params.get("person_ids", []))
+
         return Proposal(p.template_id, params, is_core=True, code_made=code_made)
+
+    def _owner_identity_names_nothing(self, person_ids: list[str]) -> None:
+        """A person_identity naming no account and no handle, only people who each own a phone
+        by confirmed stipulation ("The account belongs to SUBJECT-1"), says nothing the
+        stipulation does not: the expert already confirmed that the phone's own accounts are
+        that person's, and the checks read them so. No check or reviewer could test it, yet
+        as a core assumption it keeps the claim unproven whatever its checks find (validation
+        v4 D077, coverage recount 2026-11-21). It is refused, so the claim is decided by the
+        rows that name accounts; rule 3e still needs one of them to be an identity row. A
+        person who owns no phone by confirmed stipulation keeps the row: who that person is
+        stays the expert's call."""
+        owners = {
+            person for _, _device, person, status in self.data.stipulations if status == "confirmed"
+        }
+        if person_ids and set(person_ids) <= owners:
+            raise Reject(
+                "person_identity names no account or handle, only a phone's owner by confirmed"
+                " stipulation, which already ties the phone's own accounts to them"
+            )
 
     def _side_names(self, params: dict[str, Any]) -> list[str]:
         """The names a count's accounts side is written by: its handles, and its accounts'
