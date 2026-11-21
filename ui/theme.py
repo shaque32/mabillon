@@ -313,8 +313,10 @@ button.primary:hover, button[value=accepted]:hover, a.button.primary:hover {
   background: var(--ink); border-color: var(--ink); }
 button:disabled, button.primary:disabled { color: var(--muted); background: var(--paper);
   border-color: var(--line); cursor: not-allowed; }
-button[aria-pressed=true] { background: var(--accent-wash); border-color: var(--accent);
-  color: var(--accent); }
+/* the choice already made: it keeps this look under the pointer too, whatever its rank */
+button[aria-pressed=true], button[aria-pressed=true]:hover,
+button.primary[aria-pressed=true]:hover { background: var(--accent-wash);
+  border-color: var(--accent); color: var(--accent); }
 button + button, form.inline + form.inline button, button + a.button { margin-left: var(--s2); }
 @media (prefers-reduced-motion: reduce) {
   button, a.button, a.dl, .flash.toast { transition: none; animation: none; }

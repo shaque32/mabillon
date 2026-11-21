@@ -47,6 +47,12 @@ SUPPORT_HOOKS = re.compile(
 # Marks that must never take it: support resting on the AI reviewer, support that still waits on
 # the expert, unproven, not tested, and a model's own stance label or AI-reviewed tier.
 NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|b-ai|b-open|ai_reviewed")
+# The Supported count and heading stand for a whole group, which can hold a claim whose support
+# rests on the AI reviewer. Their green rules must carry one of these guards, so one such claim
+# turns the group's marks back to ink: on Claims the page holds no v-supai row; on the case page
+# ui/pages.py did not mark the list ai-support.
+AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
+AI_GUARDS = (":not(:has(.verdict.v-supai))", ":not(.ai-support)")
 SPACING = {f"--s{i + 1}": f"{px}px" for i, px in enumerate((4, 8, 12, 16, 24, 32, 48, 64))}
 TYPE = {
     "--t1": "12px",
@@ -213,8 +219,13 @@ def test_support_green_reaches_only_what_earned_it() -> None:
         if not any("--support" in value for _, value in block):
             continue
         for one in selector.split(","):
+            guarded = any(guard in one for guard in AI_GUARDS)
+            for guard in AI_GUARDS:
+                one = one.replace(guard, "")
             if not SUPPORT_HOOKS.search(one) or NEVER_SUPPORT.search(one):
                 bad.append(one.strip())
+            elif AGGREGATE.search(one) and not guarded:
+                bad.append(f"unguarded aggregate: {one.strip()}")
     assert bad == []
     # an assumption covered only by the AI reviewer is turned back to muted, after the green rule
     rules = _rules(_app_css())
@@ -222,6 +233,8 @@ def test_support_green_reaches_only_what_earned_it() -> None:
     ai = next(i for i, (s, _) in enumerate(rules) if "li.ok[data-tier=ai_reviewed] .said" in s)
     assert ai > green and dict(rules[ai][1])["color"] == "var(--muted)"
     # the AI-reviewed Supported mark keeps the base ring: no rule gives v-supai a color at all
+    for guard in AI_GUARDS:
+        rules = [(s.replace(guard, ""), block) for s, block in rules]
     assert not any("v-supai" in s for s, _ in rules)
 
 

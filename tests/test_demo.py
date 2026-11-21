@@ -602,6 +602,10 @@ def test_a_claim_supported_on_ai_review_or_with_ai_dismissed_support_waits_on_th
         row = sup.split(f"id={cid}'", 1)[1].split("</li>", 1)[0]
         assert "<span class='gap you'>Needs you</span>" in row, cid
     assert "4 claims need you</h1>" in page  # C16, D03 and these two
+    # the case page's Supported mark is green only when every supported claim earned it: one
+    # AI-reviewed claim marks the list, and the stylesheet keeps the mark ink (ui/css/overview.py)
+    assert "<ul class='findings ai-support'>" in pages._case_status(states)
+    assert "<ul class='findings'>" in pages._case_status(claim_states(conn))
 
 
 def test_gap_lines_follow_the_stored_coverage_until_it_is_stale_and_tiles_have_destinations(root):

@@ -406,10 +406,13 @@ def _case_status(states: list[ClaimState]) -> str:
         for g, name in GROUPS
         if g != "you" and (by[g] or g != "not")
     )
+    # the Supported mark is green only when every supported claim earned it; one that rests on
+    # the AI reviewer keeps the whole count's mark ink (ui/css/overview.py)
+    ai = " ai-support" if any(st.css == "v-supai" for st in states) else ""
     return (
         "<div class='casestatus'>"
         f"<a class='button primary' href='/claims'>{e(action)}</a>"
-        f"<ul class='findings'>{counts}</ul></div>"
+        f"<ul class='findings{ai}'>{counts}</ul></div>"
     )
 
 

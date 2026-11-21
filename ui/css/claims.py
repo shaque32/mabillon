@@ -27,13 +27,19 @@ CSS = """
   border-radius: 50%; border: 2px solid var(--muted); }
 .pg-claims .tile.t-you .name::before { background: var(--accent); border-color: var(--accent);
   border-radius: 0; }
-.pg-claims .tile.t-sup .name::before { background: var(--support);
-  border-color: var(--support); }
+.pg-claims .tile.t-sup .name::before { background: var(--ink); border-color: var(--ink); }
 .pg-claims .tile.t-con .name::before { background: var(--signal); border-color: var(--signal); }
 /* the counts take their finding's color; unproven and not audited stay ink */
 .pg-claims .tile.t-you .n { color: var(--accent); }
-.pg-claims .tile.t-sup .n { color: var(--support); }
 .pg-claims .tile.t-con .n { color: var(--signal); }
+/* The Supported count and its heading stand for every claim under them, so they are green only
+   when every one of those claims earned it. One claim whose support rests on the AI reviewer
+   (its row carries v-supai; every claim is listed under its verdict) turns the count, its mark
+   and the heading's mark back to ink, for a mixed group as for an AI-only one. */
+.pg-claims:not(:has(.verdict.v-supai)) .tile.t-sup .name::before,
+.pg-claims:not(:has(.verdict.v-supai)) section#sup .ghead h2::before {
+  background: var(--support); border-color: var(--support); }
+.pg-claims:not(:has(.verdict.v-supai)) a.tile.t-sup .n { color: var(--support); }
 .pg-claims a.tile:hover .name { color: var(--ink); }
 .pg-claims .tile.empty .n { color: var(--muted); }
 
@@ -55,8 +61,7 @@ CSS = """
   height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
 .pg-claims section#you .ghead h2::before { background: var(--accent);
   border-color: var(--accent); border-radius: 0; }
-.pg-claims section#sup .ghead h2::before { background: var(--support);
-  border-color: var(--support); }
+.pg-claims section#sup .ghead h2::before { background: var(--ink); border-color: var(--ink); }
 .pg-claims section#con .ghead h2::before { background: var(--signal);
   border-color: var(--signal); }
 .pg-claims details.fold > summary { color: var(--muted); }
