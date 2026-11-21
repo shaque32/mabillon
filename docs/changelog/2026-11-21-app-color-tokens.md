@@ -37,8 +37,10 @@
   The Supported count and heading stand for a whole group, so they follow its weakest claim, on
   Claims and on the case page: a solid green mark only when an expert confirmed every supported
   claim; a green ring when every one rests on an expert, counsel or the code checks; an ink
-  ring and an ink count when there is no supported claim, or when one rests on the AI reviewer
-  or is not current. The page states which with a class (`_support_mark` in `ui/pages.py`), so
+  ring when there is no supported claim, or when one rests on the AI reviewer or is not
+  current. On Claims the Supported count takes the same green as its mark and is ink with the
+  ink ring; on the case page every count stays ink, Contradicted included, and only the marks
+  carry color. The page states which with a class (`_support_mark` in `ui/pages.py`), so
   a page that sets none shows no green. Accept is navy, never green, because it accepts what the
   item shows, for or against the claim. A pressed choice button (Confirm or Reject on an
   identity link) keeps its pale navy look under the pointer.
@@ -65,7 +67,7 @@
   before and after. In a headless Chromium on that case, computed styles confirmed the
   Supported count and marks as served are a green count and green rings (the case holds
   code-checked support), solid green with `sup-confirmed`, and an ink count and ink rings with
-  no class, the same on the case page; that a verdict given `v-stale` turns to ink words, an
+  no class; on the case page the mark does the same and the count is ink throughout; that a verdict given `v-stale` turns to ink words, an
   ink mark and the hairline plate; that each group heading's text and its count share a
   baseline; and that a pressed primary button keeps navy text on its pale navy fill under
   hover. The stale look was checked by adding the class in the browser, not by making a

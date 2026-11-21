@@ -33,7 +33,8 @@ CSS = """
 .pg-overview .casestatus .findings .t-sup::before { border-color: var(--ink); }
 /* the Supported mark follows the weakest supported claim, as on Claims (ui/css/claims.py):
    an ink ring unless _case_status marks the list sup-earned (green ring) or sup-confirmed
-   (solid green, an expert confirmed every one) */
+   (solid green, an expert confirmed every one). The counts on this page stay ink for every
+   finding, Contradicted included: only the marks carry color here. */
 .pg-overview .casestatus .findings.sup-earned .t-sup::before { border-color: var(--support); }
 .pg-overview .casestatus .findings.sup-confirmed .t-sup::before {
   background: var(--support); border-color: var(--support); }
