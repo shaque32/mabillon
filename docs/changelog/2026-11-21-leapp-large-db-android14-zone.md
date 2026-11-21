@@ -8,8 +8,8 @@
   iOS 17 phone's 5.58 GB database could not be imported on any machine. A database up to
   2,000,000,000 bytes is still read into memory and never written out; a larger one (or a
   smaller one the computer lacks memory to load) is streamed to a new owner-only temporary
-  folder, opened read-only (`mode=ro&immutable=1`) and removed when the import ends or fails
-  (`Lava.close`); on Linux it then tries to remove the name at once (macOS untested; a failed
+  folder, opened read-only (`mode=ro&immutable=1`) and removed, best effort, when the import ends
+  or fails (`Lava.close`); on Linux it then tries to remove the name at once (macOS untested; a failed
   removal leaves the named copy until the import ends), and the next large import tries, best
   effort, to remove this user's copies older than six hours that a stopped import left.
   `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
@@ -33,13 +33,14 @@
   37 MB peak memory, leaving no temporary file. `ruff` clean; full `make check` runs in CI.
 - Open: the temporary copy is the plain database, also in an encrypted case (the case's own
   copy of the zip stays encrypted; the examiner's original zip is plain on the same machine).
-  Unlinked blocks are not wiped. A copy left by a stopped import stays until the next large
-  import (or forever, if none follows). Not yet tested on macOS or Windows. Not yet
+  Unlinked blocks are not wiped. Every removal is best effort: a copy left by a stopped import stays
+  until a large import more than six hours later removes it, or for good if none can; a copy
+  the system will not let the import remove at its end stays too. Not yet tested on macOS or Windows. Not yet
   run on the held-out iOS 17 or Android 14 packages (the validation thread does that). ALEAPP's
   v9 module notes name a sample row count for the public Pixel 7a phone; only its headers were
   used. Format support stays unverified.
 - Affects: capabilities (LAVA databases over 2 GiB import; Android 14 phones get their zone);
-  privacy (a database over 2 GB is written to a temporary file during import, removed at the end)
+  privacy (a database over 2 GB is written to a temporary file during import, removed at the end, best effort)
 - Status doc: pending: in "Importers (main)", the LEAPP line's version becomes `leapp` 0.3.0 and
   gains "; a LAVA database over 2 GB is read from a temporary copy removed when the import ends;
   the Android zone is read from ALEAPP battery usage v4 and v9". If the #264 or #268 edit is not

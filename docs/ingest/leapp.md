@@ -34,7 +34,7 @@ LAVA database can be larger (a public iOS 17 phone's is 5.6 GB, mostly file syst
 import does not read). A larger one, or a smaller one this computer lacks the memory to load, is
 streamed to a new owner-only temporary folder (the system's, or `TMPDIR`; `TEMP` on Windows),
 opened read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds
-or not. On Linux the import then tries to remove its name at once (macOS should behave the
+or not (best effort: a folder the system will not let it remove stays). On Linux the import then tries to remove its name at once (macOS should behave the
 same; not yet tested there); if that removal fails, the named copy stays until the import ends.
 Its freed disk blocks are not wiped. An import stopped mid-copy (killed, crashed, power lost)
 leaves its folder; the next large import tries to remove this user's folders older than six
