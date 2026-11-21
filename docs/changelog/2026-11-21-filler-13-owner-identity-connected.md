@@ -49,8 +49,8 @@
   caller beside a person's number held by the event row, and the person kept without the
   identity row or when written as a second party; an identity claim keeps its owner row; a
   row read through the owner's stipulation says so, and an owner with no accounts gets none;
-  only the call's own "connected" is plain). Filler, check, testability, replay and
-  timeline test files: 1,555 passed. `make eval` unchanged: case01 model-free 1.00
+  only the call's own "connected" is plain, never "Reyes was connected"). `tests/checks` and
+  the filler, testability, replay and timeline test files: 1,420 passed. `make eval` unchanged: case01 model-free 1.00
   (unreviewed 0.70), 0 false supported, hostile PASS (0 of 7 structural claims supported),
   case02 aggregate 0.90, 0 false supported (run on this head). Cloud container, Linux x86_64, 4 CPUs,
   2026-11-21. Free replay of stored answers (development data, no spend), Android 13 v4 pass 1
@@ -58,9 +58,9 @@
   after. Code-checked 39 to 41 on Android 13 (D022, D023) and 39 to 41 on iOS 15 (B06, B07).
   One claim gains a code verdict before stance labels (A13 D077 SUPPORTED, gold supported);
   with the run's stored labels it stays unproven (a "complicates" label). D103 and C11 gain a
-  caller row that stays inconclusive (calls both ways inside the "about" window). The first
-  version of this PR (head a658f3d) passed `make check` on CI (ubuntu); the full suite on
-  this head: unverified until CI reports.
+  caller row that stays inconclusive (calls both ways inside the "about" window). The full
+  suite (`make check`, ubuntu and windows) is CI's run on the PR's final head, recorded in the
+  PR description; an entry cannot record CI on its own commit.
 - Open: measured on development phones only; the v5 claim set decides v5 coverage. Counts and
   absences a claim scopes to "the call log" stay unread: the absence and count checks read
   every record on an app, not calls alone. The weekday check still asks both sides on a call

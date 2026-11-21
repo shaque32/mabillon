@@ -3457,11 +3457,12 @@ _OWNED_RE = re.compile(
 # all be one side's (Claude review and CodeRabbit on #265)
 _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
 # The call's own "connected", plain beside a tested length: the call (or "that", "which") is
-# its subject, and a length or the clause's end comes right after it: "the call connected and
-# lasted", "that connected, lasting", "which connected for two minutes". Read on the claim's
-# words before any party is blanked (`connected_with_object`).
+# its subject, with or without "was"/"were" ("that was connected"; never "Reyes was
+# connected", Claude review on #273), and a length or the clause's end comes right after
+# it: "the call connected and lasted", "that connected, lasting", "which connected for two
+# minutes". Read on the claim's words before any party is blanked (`connected_with_object`).
 _OWN_CONNECTED_RE = re.compile(
-    r"\b(?:call|calls|that|which|was|were)\s+connected\b"
+    r"\b(?:call|calls|that|which)\s+(?:(?:was|were)\s+)?connected\b"
     r"(?=\s*(?:[.;:)]|$|and\s+lasted\b|,\s*(?:lasting|that\s+lasted)\b|for\b|lasting\b))",
     re.IGNORECASE,
 )
@@ -4375,17 +4376,8 @@ class LocalAssumptionFiller:
         exactly the person's party (as `_exact_owner` reads one phone): none for a person who
         owns two phones or has a confirmed link to an account off the phone, whose row is then
         kept."""
-        owners: dict[str, set[str]] = {}
-        for _, device, pid, status in self.data.stipulations:
-            if status == "confirmed":
-                owners.setdefault(device, set()).add(pid)
-        theirs = person_party(self.data, person).keys
-        return {
-            device
-            for device, pids in owners.items()
-            if pids == {person}
-            and {a.key for a in self.data.accounts.values() if a.device_id == device} == theirs
-        }
+        devices = {did for _, did, _, status in self.data.stipulations if status == "confirmed"}
+        return {d for d in devices if self._exact_owner_of(d) == person}
 
     def _owner_identity_names_nothing(
         self, person_ids: list[str], device_ids: list[str], channels: list[str]
@@ -7547,6 +7539,12 @@ class LocalAssumptionFiller:
         if len(devices) != 1 or None in devices:
             return None
         (device,) = devices
+        return self._exact_owner_of(device)
+
+    def _exact_owner_of(self, device: str) -> str | None:
+        """The one person a confirmed stipulation makes owner of this phone, when that
+        person's accounts are exactly the phone's own; else None. The one owner rule for
+        `_exact_owner` and `_exactly_owned`."""
         owners = {
             pid
             for _, did, pid, status in self.data.stipulations
