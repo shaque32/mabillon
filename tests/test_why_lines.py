@@ -218,3 +218,21 @@ def test_links_name_the_assumption_and_stance_the_line_reads(conn):
 
     why.lines(conn, d.reasons, [a, b], [], items, href=href)
     assert asked == [("msg:item1:Chats!1", a.id, Stance.CONTRADICTS)]
+
+
+def test_rule_3d_prime_reads_as_a_listed_label_that_does_not_block(conn):
+    """Rules 0.6.0: an open "complicates" on a time the check computed is listed, in plain words."""
+    sender, time = asm(1, K.IDENTITY), asm(2, K.TIME)
+    comm = CLAIM.model_copy(update={"claim_type": c.ClaimType.COMMUNICATION})
+    checks = [
+        chk(sender, name="sender").model_copy(update={"record_ids": ("msg:item1:Chats!1",)}),
+        chk(time).model_copy(update={"record_ids": ("msg:item1:Chats!1",)}),
+    ]
+    flag = ev(2, time, Stance.COMPLICATES, S.OPEN)
+    d = decide([sender, time], [flag], checks, claim=comm)
+    assert d.verdict is Verdict.SUPPORTED
+    assert any(r.startswith("Rule 3d':") for r in d.reasons)
+    got = plain(conn, d, [sender, time], [flag], checks)
+    no_rule_text(got)
+    line = next(g for g in got if g.startswith("A model labelled 1 record as leaving this open"))
+    assert "does not block support by code checks" in line and "Record: " in line

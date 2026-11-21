@@ -218,8 +218,8 @@ def agent(assumptions, evidence=(), checks=(), proposed=(), confirmed=(), claim=
     )
 
 
-def test_version_0_5_0():
-    assert rules.RULE_VERSION == "0.5.0"
+def test_version():
+    assert rules.RULE_VERSION == "0.6.0"
 
 
 def test_a_failed_check_on_an_agents_assumption_waits_for_the_expert():
