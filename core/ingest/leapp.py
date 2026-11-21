@@ -488,15 +488,16 @@ def _copy_member(
         )
     since = 0
     try:
-        with z.open(member) as src:
+        try:
+            src = z.open(member)  # reads the member's local header from the input
+        except OSError as err:
+            raise _input_error(member, file_name, err) from err
+        with src:
             while True:
                 try:
                     chunk = src.read(COPY_CHUNK_BYTES)
                 except OSError as err:
-                    raise ValueError(
-                        f"Mabillon could not read {member} from {file_name} ({err}); check the "
-                        "disk that holds the input and import it again"
-                    ) from err
+                    raise _input_error(member, file_name, err) from err
                 if not chunk:
                     break
                 dst.write(chunk)
@@ -508,6 +509,13 @@ def _copy_member(
         if isinstance(err, RecursionError):  # a RuntimeError, but not zipfile's
             raise
         raise _unpack_error(z, member, file_name, err) from err
+
+
+def _input_error(member: str, file_name: str, err: OSError) -> ValueError:
+    return ValueError(
+        f"Mabillon could not read {member} from {file_name} ({err}); check the disk that holds "
+        "the input and import it again"
+    )
 
 
 def _touch(temp_dir: Path) -> None:

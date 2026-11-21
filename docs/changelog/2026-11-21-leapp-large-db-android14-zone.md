@@ -26,7 +26,7 @@
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
 - Where: PR #274
-- Verified: `tests/test_leapp.py` 150 passed (35 new): the import through a temporary copy
+- Verified: `tests/test_leapp.py` 151 passed (36 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
   copy is read-only, gone once open on Linux and gone after close; a database at the limit stays

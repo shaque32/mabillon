@@ -2305,6 +2305,30 @@ def test_a_read_error_on_the_input_names_the_input_not_the_temporary_folder(
     assert list(temp.iterdir()) == []
 
 
+def test_a_read_error_opening_the_member_names_the_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit on #274: ZipFile.open reads the member's header from the input, so an input
+    # error there names the input too, not the temporary folder.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    real = zipfile.ZipFile.open
+
+    def drop_out(self, name, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(getattr(name, "filename", name)).endswith(".db"):
+            raise OSError(5, "Input/output error")
+        return real(self, name, *a, **k)
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(zipfile.ZipFile, "open", drop_out)
+    with z.open("rb") as f, pytest.raises(ValueError, match="could not read") as got:
+        leapp.read_lava(f, z.name)
+    assert "temporary" not in str(got.value)
+    assert list(temp.iterdir()) == []
+
+
 def test_a_manifest_that_cannot_be_unpacked_is_a_clear_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
