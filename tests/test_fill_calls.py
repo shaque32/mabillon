@@ -2,13 +2,14 @@
 check that reads it against the call log's direction. Synthetic case01 with made-up calls added;
 every number, name and wording is invented."""
 
+import copy
 import json
 import sqlite3
 from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, _Account
+from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, Reject, _Account
 from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
 from core.audit.rules import decide_verdict
@@ -914,16 +915,34 @@ def test_an_owner_identity_naming_no_account_is_refused(conn):
 
 def test_an_identity_naming_an_account_or_a_person_who_owns_no_phone_is_kept(conn):
     _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.")
-    f._owner_identity_names_nothing(["person:volkov"])  # owns no phone: who he is stays open
-    f._owner_identity_names_nothing([])
-    f._owner_identity_names_nothing([PETROV, "person:volkov"])
-    with pytest.raises(Exception, match="names no account or handle"):
-        f._owner_identity_names_nothing([PETROV, REYES])
-    # a row naming an account is never refused this way
-    rt = {**proposal(people=[], quoted_text="", channels=["call"],
-                     window=W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09"))
-          .model_dump()}  # fmt: skip
+    f._owner_identity_names_nothing(["person:volkov"], [], [])  # owns no phone: still open
+    f._owner_identity_names_nothing([], [], [])
+    f._owner_identity_names_nothing([PETROV, "person:volkov"], [], [])
+    with pytest.raises(Reject, match="names no account or handle"):
+        f._owner_identity_names_nothing([PETROV, REYES], [], [])
+    with pytest.raises(Reject, match="names no account or handle"):
+        f._owner_identity_names_nothing([PETROV], ["dev:item1"], ["WhatsApp", "call"])
+    # a row naming an account is never refused this way, and is built
     with_account = {"template_id": "person_identity", "people": ["PETROV"],
-                    "accounts": [{"as_written": "(212) 555-0199", "app": "unknown"}]}  # fmt: skip
-    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.", items=[rt, with_account])
-    assert not any("names no account or handle" in d.reason for d in f.drops)
+                    "accounts": [{"as_written": "12125550111@s.whatsapp.net",
+                                  "app": "WhatsApp"}]}  # fmt: skip
+    text = "PETROV uses the WhatsApp account 12125550111@s.whatsapp.net."
+    made, f = fill(conn, text, ClaimType.IDENTITY, items=[with_account])
+    assert "person_identity" in made, f.drops
+    assert list(made["person_identity"].params.account_ids)
+
+
+def test_an_owner_identity_that_could_say_more_than_the_stipulation_is_kept(conn):
+    # Claude review on #273: "Item 2's account belongs to PETROV" when PETROV owns Item 1 says
+    # more than his stipulation, and so does an app none of his phones holds an account on.
+    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.")
+    f._owner_identity_names_nothing([PETROV], ["dev:item2"], [])
+    f._owner_identity_names_nothing([PETROV], [], ["Signal"])
+    # a phone with two confirmed owners: the stipulation does not say which one is meant
+    data = copy.copy(f.data)
+    data.stipulations = [
+        *f.data.stipulations,
+        ("stip:x", "dev:item1", "person:volkov", "confirmed"),
+    ]
+    f._data = data
+    f._owner_identity_names_nothing([PETROV], [], [])

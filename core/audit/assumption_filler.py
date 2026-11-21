@@ -4314,28 +4314,63 @@ class LocalAssumptionFiller:
             code_made = True
 
         if tpl.id == "person_identity" and not account_ids and not handles:
-            self._owner_identity_names_nothing(params.get("person_ids", []))
+            self._owner_identity_names_nothing(
+                list(params.get("person_ids", [])),
+                list(params.get("device_ids", device_ids)),
+                list(params.get("channels", [])),
+            )
 
         return Proposal(p.template_id, params, is_core=True, code_made=code_made)
 
-    def _owner_identity_names_nothing(self, person_ids: list[str]) -> None:
-        """A person_identity naming no account and no handle, only people who each own a phone
-        by confirmed stipulation ("The account belongs to SUBJECT-1"), says nothing the
+    def _exactly_owned(self, person: str) -> set[str]:
+        """The phones this person is the one confirmed owner of, with their own accounts
+        exactly the person's party (as `_exact_owner` reads one phone)."""
+        owners: dict[str, set[str]] = {}
+        for _, device, pid, status in self.data.stipulations:
+            if status == "confirmed":
+                owners.setdefault(device, set()).add(pid)
+        theirs = person_party(self.data, person).keys
+        return {
+            device
+            for device, pids in owners.items()
+            if pids == {person}
+            and {a.key for a in self.data.accounts.values() if a.device_id == device} == theirs
+        }
+
+    def _owner_identity_names_nothing(
+        self, person_ids: list[str], device_ids: list[str], channels: list[str]
+    ) -> None:
+        """A person_identity naming no account and no handle, only people who are each the
+        one confirmed owner of a phone ("The account belongs to SUBJECT-1"), says nothing the
         stipulation does not: the expert already confirmed that the phone's own accounts are
         that person's, and the checks read them so. No check or reviewer could test it, yet
         as a core assumption it keeps the claim unproven whatever its checks find (validation
         v4 D077, coverage recount 2026-11-21). It is refused, so the claim is decided by the
-        rows that name accounts; rule 3e still needs one of them to be an identity row. A
-        person who owns no phone by confirmed stipulation keeps the row: who that person is
-        stays the expert's call."""
-        owners = {
-            person for _, _device, person, status in self.data.stipulations if status == "confirmed"
+        rows that name accounts; rule 3e still needs one of them to be an identity row.
+        The row is kept, for the expert, when it could say more than the stipulation: a
+        person who is no phone's one owner (none, or a phone shared with another owner), a
+        phone it names that those people do not own so, or an app on which none of their own
+        phones holds an account ("Item 2's account belongs to PETROV" when PETROV owns Item 1;
+        Claude review on #273)."""
+        if not person_ids:
+            return
+        owned = {p: self._exactly_owned(p) for p in person_ids}
+        if not all(owned.values()):
+            return
+        phones = set().union(*owned.values())
+        if any(d not in phones for d in device_ids):
+            return
+        apps = {
+            a.app.casefold()
+            for a in self.data.accounts.values()
+            if a.device_id in (set(device_ids) or phones)
         }
-        if person_ids and set(person_ids) <= owners:
-            raise Reject(
-                "person_identity names no account or handle, only a phone's owner by confirmed"
-                " stipulation, which already ties the phone's own accounts to them"
-            )
+        if any(c.casefold() != CALL_CHANNEL and c.casefold() not in apps for c in channels):
+            return
+        raise Reject(
+            "person_identity names no account or handle, only a phone's one owner by confirmed"
+            " stipulation, which already ties the phone's own accounts to them"
+        )
 
     def _side_names(self, params: dict[str, Any]) -> list[str]:
         """The names a count's accounts side is written by: its handles, and its accounts'
