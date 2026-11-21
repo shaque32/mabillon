@@ -32,6 +32,10 @@
     connection may still be charged, so its most is counted as spent (`uncertain_usd`) and
     never given back. A failure to connect at all (refused, DNS, connect timeout) never reached
     the API and is not counted, so an outage does not use up the cap.
+  - Each cloud session in run.json records `max_tokens_over_body`: the most input tokens the
+    API counted above a request's body bytes. While it stays within `framing_tokens_allowed`
+    (4,096), the cap's estimate held on every answered request of that run; the probe is the
+    first run that measures it.
   - A probe never starts in a DIR that holds a run's record: its run.json, progress.log and
     report hold claims and verdicts, and its results are not the probe's to delete. The driver
     refuses it under DIR's lock, before touching DIR.
@@ -46,11 +50,13 @@
     mid-request (SIGKILL, power loss) never resumes from a spend below what was charged.
     Recovered spend is recorded as `recovered_usd`. Each such write syncs the file, renames it
     into place and then syncs its folder (not on Windows, which cannot sync a folder); on macOS
-    each sync is F_FULLFSYNC, which flushes the drive's cache, as fsync may not.
+    each sync is F_FULLFSYNC, which flushes the drive's cache, as fsync may not. A disk that
+    refuses F_FULLFSYNC (some external or network volumes) gets fsync, and there a power cut
+    can still lose the last write; a Mac's internal disk takes it.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 16 tests, and the seven cap and write tests in
+- Verified: `tests/test_coverage_probe.py`, 16 tests, and the eight cap and write tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.

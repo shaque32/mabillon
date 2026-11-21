@@ -897,6 +897,11 @@ class Budgeted:
         self.spent_usd = spent_usd
         self.calls = self.input_tokens = self.output_tokens = 0
         self.uncertain_usd = 0.0  # counted for requests that got no answer and may be charged
+        # the most input tokens the API counted above a request's body bytes: _most's bound
+        # held on every answered request while this stays within FRAMING_TOKENS (CodeRabbit on
+        # #272: the allowance is not measured; each run measures it on its own requests)
+        self.max_tokens_over_body: int | None = None
+        self._body_bytes = 0
         self._price = PRICES_PER_MTOK.get(model.name)
 
     def request(self, prompt: str, schema):  # noqa: ANN001, ANN201
@@ -911,6 +916,10 @@ class Budgeted:
         if out is None:
             return
         inp, outp = int(out.prompt_tokens or 0), int(out.completion_tokens or 0)
+        over = inp - self._body_bytes
+        self.max_tokens_over_body = (
+            over if self.max_tokens_over_body is None else max(self.max_tokens_over_body, over)
+        )
         self.input_tokens += inp
         self.output_tokens += outp
         if self._price is not None:
@@ -925,11 +934,12 @@ class Budgeted:
         token per byte of the request body (a token is at least one byte), plus FRAMING_TOKENS
         for what the API adds around it, and the whole max_tokens of output. FRAMING_TOKENS is
         not measured, so the cap holds only as far as the API adds no more than that."""
-        if self._price is None:
-            return 0.0
         build = getattr(self._m, "request", None)
         body = json.dumps(build(prompt, schema)) if build is not None else prompt
-        inp = len(body.encode("utf-8")) + FRAMING_TOKENS
+        self._body_bytes = len(body.encode("utf-8"))
+        if self._price is None:
+            return 0.0
+        inp = self._body_bytes + FRAMING_TOKENS
         outp = int(getattr(self._m.params, "max_tokens", 0) or 0)
         return (inp * self._price[0] + outp * self._price[1]) / 1_000_000
 
@@ -975,6 +985,9 @@ class Budgeted:
             "output_tokens": self.output_tokens,
             "spent_usd": round(self.spent_usd, 2),
             "uncertain_usd": round(self.uncertain_usd, 2),
+            # counts only: the estimate held on every answered request if this <= the allowance
+            "max_tokens_over_body": self.max_tokens_over_body,
+            "framing_tokens_allowed": FRAMING_TOKENS,
         }
 
 
@@ -1406,8 +1419,9 @@ def _lock_holder(lock: Path) -> str:
 
 def _sync(fd: int) -> None:
     """Flush fd to permanent storage. macOS's fsync can leave writes in the drive's volatile
-    cache, so there F_FULLFSYNC is used, falling back to fsync where the disk refuses it
-    (CodeRabbit on #272)."""
+    cache, so there F_FULLFSYNC is used (CodeRabbit on #272). Where the disk refuses it (some
+    external and network volumes), fsync is the fallback, and a write there can be lost to a
+    power cut; the internal disk of a Mac takes F_FULLFSYNC."""
     full = getattr(fcntl, "F_FULLFSYNC", None) if fcntl is not None else None
     if full is not None:
         try:

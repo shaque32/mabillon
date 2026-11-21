@@ -2273,3 +2273,16 @@ def test_a_folder_that_cannot_be_synced_still_takes_the_write(tmp_path, monkeypa
     monkeypatch.setattr(hickman_run, "_sync", sync)
     hickman_run._write_json(tmp_path / "run.json", {"a": 1})
     assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_each_run_records_how_far_the_api_counted_past_the_body():
+    """usage() records the most input tokens the API counted above a request's body bytes, so
+    a run shows whether the cap's framing allowance held on its own requests (CodeRabbit on
+    #272)."""
+    m = hickman_run.Budgeted(_Stub(), max_usd=100.0)
+    m.generate_json("x" * 1_000_000, {})  # the stub counts 1,000,000 input tokens
+    u = m.usage()
+    body = len(json.dumps(_Stub().request("x" * 1_000_000, {})).encode("utf-8"))
+    assert u["max_tokens_over_body"] == 1_000_000 - body < 0  # within the allowance
+    assert u["framing_tokens_allowed"] == hickman_run.FRAMING_TOKENS
+    assert hickman_run.Budgeted(_Stub(), max_usd=1.0).usage()["max_tokens_over_body"] is None
