@@ -2,18 +2,20 @@
 - Changed: found by a coverage recount that replays stored filler answers with no model calls
   (`baker/validation/coverage-recount/recount.py`, project files).
   - Assumption filler 12 to 13 (`core/audit/assumption_filler.py`). It refuses a model's
-    person_identity that names no account and no handle, only people who are each the one
+    person_identity that names no account and no handle, only one person who is the one
     confirmed owner of a phone whose accounts are exactly theirs ("The account belongs to
     SUBJECT-1"), on a communication, timing or count claim, and only a row with no time
     and no quoted message (one with a time says who held the phone then). No check or reviewer could test
     it, and as a core assumption it kept true call claims unproven (v4 Android 13 D077). The
-    row is kept when it could say more: a person who is no phone's one owner (or owns two
+    row is kept when it could say more: two or more people, a person who is no phone's one
+    owner (or owns two
     phones, or has a link to an account elsewhere), a phone those people do not own, or an
     app none of their phones holds an account on. On an identity or event claim the row is
     always kept: it is the claim itself, for the expert.
   - "connected" is read beside a call length a row tests (a tested length is never below one
-    second), as "answered" already was; "connected" with an object ("SUBJECT-1 connected
-    REYES with ...") stays unread. A call "that was answered (or connected) and lasted
+    second), as "answered" already was, but only the call's own ("the call connected and
+    lasted", "that connected for"), read before any party is blanked; "connected" with an
+    object ("SUBJECT-1 connected REYES with ...") stays unread. A call "that was answered (or connected) and lasted
     ..." gets its code-made caller row.
   - Two more caller wordings: "SUBJECT-1 placed a WhatsApp call from the TARGET PHONE to ...",
     read only when the person is that phone's exact owner by confirmed stipulation and the
@@ -48,7 +50,7 @@
   identity row or when written as a second party; an identity claim keeps its owner row; a
   row read through the owner's stipulation says so, and an owner with no accounts gets none;
   only the call's own "connected" is plain). Filler, check, testability, replay and
-  timeline test files: 1,549 passed. `make eval` unchanged: case01 model-free 1.00
+  timeline test files: 1,555 passed. `make eval` unchanged: case01 model-free 1.00
   (unreviewed 0.70), 0 false supported, hostile PASS (0 of 7 structural claims supported),
   case02 aggregate 0.90, 0 false supported (run on this head). Cloud container, Linux x86_64, 4 CPUs,
   2026-11-21. Free replay of stored answers (development data, no spend), Android 13 v4 pass 1
@@ -67,7 +69,7 @@
 - Status doc: pending: section 2 table, step 5 (Assumptions): add "Filler 13 refuses a
   person_identity naming no account, handle, time or quoted message, on a communication,
   timing or count claim,
-  only when every person it names is the one confirmed owner of a phone whose accounts are
+  only when it names one person, the one confirmed owner of a phone whose accounts are
   exactly theirs, and every phone and app it names is one of their phones or an
   app their phones' accounts hold (a shared owner, another phone or another app keeps the
   row); reads "connected" beside a tested call length; reads a call 'that was answered (or

@@ -14,7 +14,6 @@ from core.audit.assumption_filler import (
     LocalAssumptionFiller,
     Reject,
     _Account,
-    plain_tokens,
 )
 from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
@@ -929,8 +928,10 @@ def test_an_identity_naming_an_account_or_a_person_who_owns_no_phone_is_kept(
     f._owner_identity_names_nothing(["person:volkov"], [], [])  # owns no phone: still open
     f._owner_identity_names_nothing([], [], [])
     f._owner_identity_names_nothing([PETROV, "person:volkov"], [], [])
-    with pytest.raises(Reject, match="names no account or handle"):
-        f._owner_identity_names_nothing([PETROV, REYES], [], [])
+    # two owners: Item 1 is PETROV's, not REYES's, so the row may say more (Claude review on
+    # #273)
+    f._owner_identity_names_nothing([PETROV, REYES], ["dev:item1"], [])
+    f._owner_identity_names_nothing([PETROV, REYES], [], [])
     with pytest.raises(Reject, match="names no account or handle"):
         f._owner_identity_names_nothing([PETROV], ["dev:item1"], ["WhatsApp", "call"])
     # a row naming an account is never refused this way, and is built
@@ -1097,10 +1098,22 @@ def test_an_owner_with_no_accounts_is_never_given_a_row(conn: sqlite3.Connection
             False,
         ),
         ("a call that connected, that lasted two minutes", True),
+        ("which connected for two minutes", True),
+        # Claude review on #273: the object forms read before any party is blanked
+        ("PETROV connected (212) 555-0199 and Marcus Reyes on a call lasting two minutes", False),
+        ("PETROV connected Marcus Reyes and (212) 555-0199 on a call lasting two minutes", False),
+        ("Item 1 connected Marcus Reyes for two minutes", False),
+        ("PETROV connected Marcus Reyes, lasting two minutes", False),
+        ("the call connected Marcus Reyes and PETROV for two minutes", False),
     ],
 )
-def test_only_the_call_s_own_connected_is_plain_beside_a_length(words: str, plain: bool) -> None:
-    assert ("connected" not in plain_tokens(words, tests={"length", "call"})) is plain
+def test_only_the_call_s_own_connected_is_plain_beside_a_length(
+    conn: sqlite3.Connection, words: str, plain: bool
+) -> None:
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    text = f"On June 1, 2026, at about 9:00 p.m. EDT, {words}."
+    assert ("connected" not in f.unread_words(text, tests={"length", "call"})) is plain
 
 
 def test_a_blank_side_is_never_a_party_who_does_not_own_the_phone(conn: sqlite3.Connection) -> None:

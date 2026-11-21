@@ -3456,13 +3456,24 @@ _OWNED_RE = re.compile(
 # both sides, and only by one that sets each_way ("both_ways"): a total between the two may
 # all be one side's (Claude review and CodeRabbit on #265)
 _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
-# "connected" with an object ("SUBJECT-1 connected REYES with SUBJECT-2"): someone put others on
-# a call, which no row reads; only the call's own "connected" ("that connected and lasted",
-# "connected for two minutes") is plain beside a tested length (Claude review on #273).
-_CONNECTED_OBJECT_RE = re.compile(
-    r"\bconnected\b(?!\s*(?:[.;:)]|$|and\b|for\b|lasting\b|,\s*(?:lasting|that\s+lasted|for)\b))",
+# The call's own "connected", plain beside a tested length: the call (or "that", "which") is
+# its subject, and a length or the clause's end comes right after it: "the call connected and
+# lasted", "that connected, lasting", "which connected for two minutes". Read on the claim's
+# words before any party is blanked (`connected_with_object`).
+_OWN_CONNECTED_RE = re.compile(
+    r"\b(?:call|calls|that|which|was|were)\s+connected\b"
+    r"(?=\s*(?:[.;:)]|$|and\s+lasted\b|,\s*(?:lasting|that\s+lasted)\b|for\b|lasting\b))",
     re.IGNORECASE,
 )
+_CONNECTED_RE = re.compile(r"\bconnected\b", re.IGNORECASE)
+
+
+def connected_with_object(bare: str) -> bool:
+    """True when the claim's words (unquoted, nothing blanked) write "connected" other than as
+    the call's own: "PETROV connected REYES with SUBJECT-2", "Item 1 connected Marcus Reyes for
+    two minutes". Someone put others on a call, which no row reads (Claude review on #273)."""
+    own = {m.end() for m in _OWN_CONNECTED_RE.finditer(bare)}
+    return any(m.end() not in own for m in _CONNECTED_RE.finditer(bare))
 
 
 def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:
@@ -3474,7 +3485,7 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     tests = frozenset(tests)
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
-    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE, _PASSIVE_TO_RE, _CONNECTED_OBJECT_RE]
+    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE, _PASSIVE_TO_RE]
     if "both_ways" in tests:
         never.remove(_EACH_OTHER_RE)
     if "direction" in tests:
@@ -3891,6 +3902,8 @@ class LocalAssumptionFiller:
         # (Claude review on #265)
         words = re.sub(r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
+        if "connected" not in out and connected_with_object(bare):
+            out.append("connected")
         return [
             *out,
             *(w for w in lengths if not set(w.split()) & set(out)),
@@ -4377,8 +4390,8 @@ class LocalAssumptionFiller:
     def _owner_identity_names_nothing(
         self, person_ids: list[str], device_ids: list[str], channels: list[str]
     ) -> None:
-        """A person_identity naming no account and no handle, only people who are each the
-        one confirmed owner of a phone ("The account belongs to SUBJECT-1"), says nothing the
+        """A person_identity naming no account and no handle, only one person who is the one
+        confirmed owner of a phone ("The account belongs to SUBJECT-1"), says nothing the
         stipulation does not: the expert already confirmed that the phone's own accounts are
         that person's, and the checks read them so. No check or reviewer could test it, yet
         as a core assumption it keeps the claim unproven whatever its checks find (validation
@@ -4389,12 +4402,13 @@ class LocalAssumptionFiller:
         phone it names that those people do not own so, or an app on which none of their own
         phones holds an account ("Item 2's account belongs to PETROV" when PETROV owns Item 1;
         Claude review on #273)."""
-        if not person_ids:
+        if len(person_ids) != 1:
+            # one person only: with two, a phone or app one of them owns says nothing of the
+            # other (Claude review on #273)
             return
-        owned = {p: self._exactly_owned(p) for p in person_ids}
-        if not all(owned.values()):
+        phones = self._exactly_owned(person_ids[0])
+        if not phones:
             return
-        phones = set().union(*owned.values())
         if any(d not in phones for d in device_ids):
             return
         apps = {
