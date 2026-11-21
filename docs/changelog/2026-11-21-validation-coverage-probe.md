@@ -45,6 +45,7 @@
     prompts' app list differed, and the scratch tool is not in the repo.
 - Open: the filler is not deterministic, so the probe's counts estimate a later pass's tiers
   rather than fix them (v4's two passes gave 42 and 40 code-checked). The held-out probe's cost
-  is unmeasured (estimate $2 to $4, cap $5). Arsh OK'd the first attempt on 2026-11-21.
+  is unmeasured (estimate $2 to $4). Arsh OK'd the first attempt at $5 on 2026-11-21; it runs at
+  `--max-usd 4.60`, since the cap is checked before each request and one call can pass it.
 - Affects: the validation driver (`eval/`) only. No capability, privacy, model or customer claim.
 - Status doc: no change

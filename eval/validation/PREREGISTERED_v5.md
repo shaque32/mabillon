@@ -155,7 +155,11 @@ after the tag reaches the run.
   with a second probe), inside the free Ultra credit, with the balance
   checked in the console just before the OK. A pass that hits its cap or a sticky API failure
   pauses and resumes in the same folder with stored answers reused; a resume is not a new pass,
-  and a pass that hits its cap is not resumed without a new OK.
+  and a pass that hits its cap is not resumed without a new OK. The driver checks a cap before
+  each request and counts the request's cost after it, so a run can end above its cap by one
+  call: at most about $0.40 on Opus (16,000 output tokens at $20 per million, plus the prompt;
+  a bound from the price table, not measured). The C4 probe runs at `--max-usd 4.60` for that
+  reason; the passes' OK covers $55 plus that one call each.
 - One scored run. A crash that leaves no usable case restarts from scratch at the same tag and is
   reported. What the abandoned attempt spent counts against its pass's $55 cap (the restart runs
   with `--max-usd` set to what is left of it), so a restart never raises the ceiling; a restart
@@ -172,7 +176,7 @@ the only paid step before the passes.
 | C1 | Baseline on current code: v4's 150 claims, stored answers replayed on merged main | free, done | at least 30 code-checked |
 | C2 | Data gate on the held-out packages: the driver builds both phones with no model calls, and prints only aggregate counts (readable calls with a side, native texts with a party, per phone; each phone's recorded zone) | free | both phones build; the call-log gate (#269) passes; each phone has one known zone and the two agree (otherwise every windowed claim is refused); at least 20 readable calls and 100 native texts across the pair (Arsh sets) |
 | C3 | Claim-mix gate, by script, on the writer's private form before the freeze (no Mabillon output) | free | at least 90 claims of the kinds code can check (communication, timing, count) about native texts, iMessage or the call log; each phone named in capitals; no chat-app absence claims; iOS native-message counts are not counted toward the 90 (they fail closed) |
-| C4 | Coverage probe on the frozen claims: the run's own filler and checks on all 150 claims, with no stance labeling, capped; it prints only tier counts per kind and per phone, never a claim, a verdict or a check result, and its case is deleted once counted (a paused probe keeps it for its resume, and nobody opens it) | about $2 to $4 (filler is 150 of v4's 2,203 calls and about 4% of its prompt text: an estimate, not measured), `--max-usd 5`, needs Arsh's OK | at least **40** code-checked of 150 and at least 10 on each phone (Arsh sets) |
+| C4 | Coverage probe on the frozen claims: the run's own filler and checks on all 150 claims, with no stance labeling, capped; it prints only tier counts per kind and per phone, never a claim, a verdict or a check result, and its case is deleted once counted (a paused probe keeps it for its resume, and nobody opens it) | about $2 to $4 (filler is 150 of v4's 2,203 calls and about 4% of its prompt text: an estimate, not measured), `--max-usd 4.60` so the spend stays under the $5 Arsh OK'd (section 7: a cap can be passed by one call), needs Arsh's OK | at least **40** code-checked of 150 and at least 10 on each phone (Arsh sets) |
 
 C1's result: v4 pass 1 had 42 code-checked and pass 2 had 40. The replays of v4's stored answers
 since (on #265, then on merged main 975e37e) changed no check outcome, and the tier depends only
