@@ -2083,7 +2083,8 @@ Diff:
 ```
 
 ## 2026-11-21 claude/project-thread-8xaz0s: second amendment to rules 0.6.0, rule 3d' only on the code-checked basis and only with a checked identity
-NOT SIGNED. Needs Arsh's "approved" on this wording before `core/audit/rules.py` changes again.
+SIGNED by Arsh on 2026-11-21 ("Approved", project chat, on this amendment). APPLIED verbatim by
+PR #275, with the three tests named below.
 File: core/audit/rules.py (on PR #275, over the signed 0.6.0 diff and its first amendment)
 Why: the Claude review of #275 found two gaps, both reproduced with the contract test helpers.
 1. A bug. Rule 3d' checks only that code checks cover the claim. If an expert also accepted a

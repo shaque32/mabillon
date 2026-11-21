@@ -1,4 +1,4 @@
-"""Rules 0.6.0 (proposed): rule 3d', a time the check computed is not left open by a model's
+"""Rules 0.6.0 (Arsh, 2026-11-21): rule 3d', a time the check computed is not left open by a model's
 "complicates" label when the claim rests on code checks."""
 
 from __future__ import annotations
@@ -104,3 +104,34 @@ def test_the_time_label_is_listed_when_another_blocker_remains():
     assert d.verdict is Verdict.UNPROVEN
     assert any(r.startswith("Rule 3d':") and on_time.record_id in r for r in d.reasons)
     assert any(r.startswith("Rule 3d:") and on_sender.record_id in r for r in d.reasons)
+
+
+def test_an_expert_accepted_support_keeps_the_label_blocking():
+    """Claude review, #275: with an expert's support the claim would take the confirmed basis,
+    which the invariants refuse while a complicating item is open, so 3d' does not apply."""
+    flag = ev(2, TIME, Stance.COMPLICATES, S.OPEN)
+    support = ev(1, SENDER, status=S.ACCEPTED)
+    d = decide(
+        [SENDER, TIME],
+        [support, flag],
+        [chk(SENDER, name="sender"), chk(TIME)],
+        claim=COMMUNICATION,
+    )
+    assert d.verdict is Verdict.UNPROVEN
+    assert any(r.startswith("Rule 3d:") and flag.record_id in r for r in d.reasons)
+
+
+def test_a_claim_without_a_core_identity_assumption_keeps_the_label_blocking():
+    """Claude review, #275: a timing claim can rest on its time alone, and the time check does
+    not show who wrote the record, so a doubt about the account must still block."""
+    flag = ev(2, TIME, Stance.COMPLICATES, S.OPEN)
+    d = decide([TIME], [flag], [chk(TIME)], claim=TIMING)
+    assert d.verdict is Verdict.UNPROVEN
+    assert any(r.startswith("Rule 3d:") and flag.record_id in r for r in d.reasons)
+
+
+def test_the_label_is_listed_after_the_code_checks_line():
+    flag = ev(2, TIME, Stance.COMPLICATES, S.OPEN)
+    d = decide([SENDER, TIME], [flag], [chk(SENDER, name="sender"), chk(TIME)], claim=COMMUNICATION)
+    order = [r.split(":")[0] for r in d.reasons]
+    assert order.index("Rule 3c'") < order.index("Rule 3d'")
