@@ -876,9 +876,10 @@ class Budgeted:
             self.spent_usd += (inp * self._price[0] + outp * self._price[1]) / 1_000_000
 
     def _most(self, prompt: str, schema) -> float:  # noqa: ANN001
-        """The most one request can cost, so the cap is never passed (CodeRabbit on #272): its
-        prompt at one token per byte of the request body (a token is at least one byte), plus
-        FRAMING_TOKENS for what the API adds around it, and the whole max_tokens of output."""
+        """An estimate of the most one request can cost (CodeRabbit on #272): its prompt at one
+        token per byte of the request body (a token is at least one byte), plus FRAMING_TOKENS
+        for what the API adds around it, and the whole max_tokens of output. FRAMING_TOKENS is
+        not measured, so the cap holds only as far as the API adds no more than that."""
         if self._price is None:
             return 0.0
         build = getattr(self._m, "request", None)
