@@ -11,7 +11,8 @@
     app none of their phones holds an account on. On an identity or event claim the row is
     always kept: it is the claim itself, for the expert.
   - "connected" is read beside a call length a row tests (a tested length is never below one
-    second), as "answered" already was. A call "that was answered (or connected) and lasted
+    second), as "answered" already was; "connected" with an object ("SUBJECT-1 connected
+    REYES with ...") stays unread. A call "that was answered (or connected) and lasted
     ..." gets its code-made caller row.
   - Two more caller wordings: "SUBJECT-1 placed a WhatsApp call from the TARGET PHONE to ...",
     read only when the person is that phone's exact owner by confirmed stipulation and the
@@ -30,10 +31,11 @@
     phone's own side blank (iOS and UFDR call logs name only the other side) is a call
     between the phone's owner and that side, when the phone's one confirmed device_owner
     stipulation makes one of the two parties its owner, as the caller check already read it.
-    The time check never fails on a call, so this only lets calls be found. The owner rule
+    A side with no accounts in the data gets no row, and the detail names each row read this
+    way. The time check never fails on a call, so this only lets calls be found. The owner rule
     moved to `core/audit/checks/_common.py` (`phone_side`), shared with the caller check.
 - Where: PR #273
-- Verified: `tests/test_fill_calls.py` (17 new test functions: the owner row refused and the claim then
+- Verified: `tests/test_fill_calls.py` (20 new test functions: the owner row refused and the claim then
   SUPPORTED on its checks, and kept where it says more; caller read after "answered/connected
   and lasted", also after the call's app; reversed caller CONTRADICTED; "connected" without a
   length unread; a call from the owner's phone gets its caller and the check passes, but not
@@ -41,8 +43,10 @@
   account; a blank phone side is the owner's call, never another person's; a person's number
   timed as the number, the claim still UNPROVEN on the identity and event rows, a reversed
   caller beside a person's number held by the event row, and the person kept without the
-  identity row or when written as a second party; an identity claim keeps its owner row).
-  Filler, check, testability, replay and timeline test files: 1,539 passed. `make eval` unchanged: case01 model-free 1.00
+  identity row or when written as a second party; an identity claim keeps its owner row; a
+  row read through the owner's stipulation says so, and an owner with no accounts gets none;
+  only the call's own "connected" is plain). Filler, check, testability, replay and
+  timeline test files: 1,545 passed. `make eval` unchanged: case01 model-free 1.00
   (unreviewed 0.70), 0 false supported, hostile PASS (0 of 7 structural claims supported),
   case02 aggregate 0.90, 0 false supported (run on this head). Cloud container, Linux x86_64, 4 CPUs,
   2026-11-21. Free replay of stored answers (development data, no spend), Android 13 v4 pass 1

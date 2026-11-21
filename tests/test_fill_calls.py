@@ -9,9 +9,16 @@ from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, Reject, _Account
+from core.audit.assumption_filler import (
+    CallForm,
+    LocalAssumptionFiller,
+    Reject,
+    _Account,
+    plain_tokens,
+)
 from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
+from core.audit.checks._common import calls_for_accounts
 from core.audit.rules import decide_verdict
 from core.contracts import CheckOutcome, ClaimType, Verdict
 from core.pipeline import load_stipulations
@@ -1039,6 +1046,40 @@ def test_a_call_row_with_the_phone_s_side_blank_is_the_owner_s_call(conn):
     assert list(r.record_ids) == ["c:in"]
     r = time_row(conn, 1)  # c:out:a leaves the phone's side blank, c:out:b names it
     assert set(r.record_ids) == {"c:out:a", "c:out:b"}, r.detail
+
+
+def test_a_row_read_through_the_owner_s_stipulation_says_so(conn):
+    r = time_row(conn, 2)
+    note = r.detail.split("name only the other side")[0]
+    assert "c:in" in note.split(", ") and "c:out:b" not in note, r.detail  # c:out:b names both
+    assert "device_owner stipulation" in r.detail
+
+
+def test_an_owner_with_no_accounts_is_never_given_a_row(conn):
+    # Claude review on #273: as the caller check, a side with no accounts in the data reads
+    # no call
+    from core.audit.checks._common import CaseData
+    from core.audit.checks.timing import _owners_calls
+
+    params = {"person_ids": [PETROV], "account_ids": NUM, "window": day(2), "channels": ["call"]}
+    p = instantiate("CT", "record_time", params).params
+    data = CaseData(conn)
+    rows = [r for r in calls_for_accounts(data, set(NUM)) if r.id == "c:in"]
+    assert _owners_calls(data, p, rows, [set(), set(NUM)]) == set()
+    assert _owners_calls(data, p, rows, [{OWN_UNKNOWN}, set(NUM)]) == {"c:in"}
+
+
+@pytest.mark.parametrize(
+    ("words", "plain"),
+    [
+        ("the call connected and lasted two minutes", True),
+        ("a call that connected, lasting two minutes", True),
+        ("the call connected for two minutes", True),
+        ("PETROV connected REYES with the caller on a call lasting two minutes", False),
+    ],
+)
+def test_only_the_call_s_own_connected_is_plain_beside_a_length(words, plain):
+    assert ("connected" not in plain_tokens(words, tests={"length", "call"})) is plain
 
 
 def test_a_blank_side_is_never_a_party_who_does_not_own_the_phone(conn):

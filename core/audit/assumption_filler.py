@@ -200,10 +200,14 @@ MAX_PROPOSALS = 8
 #      given with its id beside its name (', user ID ...'), when both are one account; a
 #      comma inside a quoted name's closing mark is the claim's.
 #  12: words no check reads add a core event only an expert carries (#265).
-#  13: a person_identity naming no account or handle, only a phone's owner by confirmed
-#      stipulation, is refused; "connected" beside a tested call length is read, and a call
-#      "that was answered (or connected) and lasted ..." gets its caller row (coverage
-#      recount, 2026-11-21).
+#  13: on a communication, timing or count claim, a person_identity naming no account or
+#      handle, only a phone's exact owner by confirmed stipulation, is refused; "connected"
+#      beside a tested call length is read (never "connected X with Y"); a call "that was
+#      answered (or connected) and lasted ...", one "placed ... from <PHONE> to ..." by that
+#      phone's exact owner, and one with an unlabelled id beside the other side's name get
+#      their caller row; a person written right before their number ("SUBJECT-2's number,
+#      ...", "SUBJECT-2 at ...") comes off the call's time range when a core identity row ties
+#      them, with a core event row holding the rest (coverage recount, 2026-11-21).
 FILLER_VERSION = "13"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
@@ -3451,6 +3455,12 @@ _OWNED_RE = re.compile(
 # both sides, and only by one that sets each_way ("both_ways"): a total between the two may
 # all be one side's (Claude review and CodeRabbit on #265)
 _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
+# "connected" with an object ("SUBJECT-1 connected REYES with SUBJECT-2"): someone put others on
+# a call, which no row reads; only the call's own "connected" ("that connected and lasted",
+# "connected for two minutes") is plain beside a tested length (Claude review on #273).
+_CONNECTED_OBJECT_RE = re.compile(
+    r"\bconnected\b(?!\s*(?:[,.;:)]|$|and\b|for\b|lasting\b))", re.IGNORECASE
+)
 
 
 def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:
@@ -3462,7 +3472,7 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     tests = frozenset(tests)
     plain = _PLAIN_WORDS.union(*(_GATED_WORDS[t] for t in tests if t in _GATED_WORDS))
     out: list[str] = []
-    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE, _PASSIVE_TO_RE]
+    never = [_EACH_OTHER_RE, _UNPLAIN_PHRASES_RE, _OWNED_RE, _PASSIVE_TO_RE, _CONNECTED_OBJECT_RE]
     if "both_ways" in tests:
         never.remove(_EACH_OTHER_RE)
     if "direction" in tests:

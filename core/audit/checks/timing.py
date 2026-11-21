@@ -95,6 +95,13 @@ class TimeCheck(TemplateCheck):
         owners_calls = (
             set() if by_text or len(party_ids) != 2 else _owners_calls(data, p, rows, party_ids)
         )
+        owner_note = (
+            f"{', '.join(sorted(owners_calls))} name only the other side; each is read as a call "
+            "with the phone's owner by the phone's one confirmed device_owner stipulation, not "
+            "by an account on the row"
+            if owners_calls
+            else ""
+        )
         rows = [
             r for r in rows if not party_ids or involves_all(r, party_ids) or r.id in owners_calls
         ]
@@ -130,6 +137,7 @@ class TimeCheck(TemplateCheck):
             return f"{label}: " + "; ".join(f"{r.id} at {local_str(data, r)}" for r in group)
 
         lines = [
+            owner_note,
             show("Inside the window", inside),
             show("Outside the window", outside),
             show("No usable time", unknown),
@@ -167,7 +175,9 @@ def _owners_calls(
     phone's own side blank: the row is on a phone whose one confirmed device_owner stipulation
     makes one party its owner, and its one named side is an account of the other party only."""
     pids: list[str | None] = [*p.person_ids, *([None] if p.account_ids or p.handles else [])]
-    if len(pids) != 2:
+    if len(pids) != 2 or not all(party_ids):
+        # a side with no accounts in the data is never given a row, as in the caller check
+        # (Claude review on #273)
         return set()
     blank = [r for r in rows if r.kind == "call" and (r.sender is None) != (not r.recipients)]
     devices = call_devices(data, [r.id for r in blank])
