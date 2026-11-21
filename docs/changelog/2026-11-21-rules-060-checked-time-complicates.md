@@ -32,9 +32,9 @@
   verdicts": add a sub-bullet after the first: "A 'complicates' label blocks SUPPORTED except one nobody
   reviewed on a core time assumption whose checks all passed and named records, with every
   non-dismissed 'complicates' on that time unreviewed, on a code-checked claim with a core
-  identity assumption and no accepted support on an observed record; that one is listed for the expert (rule 3d', rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
+  identity assumption and no accepted support on an observed record of a core assumption; that one is listed for the expert (rule 3d', rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
   Outcome table heading: "(rules 0.6.0)", and in the code-checked Supported row add "a model's
   'complicates' nobody reviewed, on a core time assumption whose checks all passed and named
   records, with every non-dismissed 'complicates' on that time unreviewed, in a claim with a
-  core identity assumption and no accepted support on an observed record, is listed and does not block (rule 3d', #275); any other
+  core identity assumption and no accepted support on an observed record of a core assumption, is listed and does not block (rule 3d', #275); any other
   open label blocks". Claims table rows 1 and 8: `RULE_VERSION = "0.6.0"`.
