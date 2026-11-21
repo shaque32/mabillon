@@ -186,3 +186,47 @@ def test_the_probe_labeler_makes_no_label_and_marks_the_run_fake():
     assert comps.fake()
     (run,) = comps.labeler.model_runs
     assert run.purpose == "stance" and run.params["coverage_probe"] is True
+
+
+def test_a_fresh_probe_starts_its_cap_at_zero_and_keeps_the_earlier_spend(
+    ufdr, tmp_path, monkeypatch
+):
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    run_path = tmp_path / "probe" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["cloud"] = {"sessions": [{"spent_usd": 3.0}], "spent_usd": 3.0}  # as a paid probe leaves it
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    seen: list[float] = []
+    real = hickman_run.Budgeted
+
+    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+        seen.append(spent_usd)
+        return real(model, max_usd, spent_usd)
+
+    from core.llm import cloud
+
+    monkeypatch.setattr(hickman_run, "Budgeted", budgeted)
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _NoAnswer())
+    args = [a for a in _args(ufdr, tmp_path, "probe", "--coverage-probe") if a != "--fake"]
+    assert hickman_run.main([*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]) == 3
+    assert seen == [0.0]  # the deleted case's $3 does not count against this case's cap
+    again = json.loads(run_path.read_text(encoding="utf-8"))
+    (earlier,) = again["earlier_cases"]
+    assert earlier["cloud"]["spent_usd"] == 3.0 and "probe" in earlier["audit"]
+    assert again["cloud"]["spent_usd"] == 0
+    # a resume of this case keeps its own spend as the baseline
+    again["cloud"]["spent_usd"] = 1.0
+    run_path.write_text(json.dumps(again), encoding="utf-8")
+    assert hickman_run.main([*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]) == 3
+    assert seen == [0.0, 1.0]
+    assert len(json.loads(run_path.read_text(encoding="utf-8"))["earlier_cases"]) == 1
+
+
+class _NoAnswer:
+    """An Anthropic client whose every call fails as an account out of credit does."""
+
+    class messages:  # noqa: N801 - the SDK's attribute name
+        @staticmethod
+        def create(**kw):  # noqa: ANN003, ANN205
+            raise RuntimeError("Error code: 400 - credit balance is too low")

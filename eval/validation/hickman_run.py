@@ -1430,6 +1430,11 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
         claims={"file": a.claims.name, "sha256": claims_sha, "n": len(claims)},
     )
     if not resuming:
+        # A fresh case (a probe deleted the last one, so built.ok is gone): its spend cap starts
+        # at zero, and what earlier cases spent stays recorded, never dropped (CodeRabbit on #272)
+        if "cloud" in run or "audit" in run:
+            earlier = {k: run.pop(k) for k in ("build_id", "cloud", "audit") if k in run}
+            run.setdefault("earlier_cases", []).append(earlier)
         report_sha = None
         if a.ufdr is not None:
             log("checking the phone package's report.xml")

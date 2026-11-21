@@ -14,12 +14,13 @@
   `--max-usd`. The stand-in labeler's module is in `eval/`, so the run is marked fake and no
   scorer or report takes it.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py` (7 tests, cloud container, 2026-11-21, stand-in
+- Verified: `tests/test_coverage_probe.py` (8 tests, cloud container, 2026-11-21, stand-in
   components on synthetic case01): the probe's counts equal a full run's tiers on the same claims,
   tier for tier, as the scorer reads them; tiers and per-phone counts on crafted check rows; no
   claim id or verdict in the log, run.json, probe.json or output (mutation-checked: a log line
   with the claim id fails it); the resume guard both ways (mutation-checked); a later run in the
-  same DIR leaves no probe.json. `tests/test_validation_run.py` and
+  same DIR leaves no probe.json; a fresh probe after a deleted case starts its spend cap at zero and
+  keeps the earlier spend in run.json (mutation-checked). `tests/test_validation_run.py` and
   `tests/test_validation_score.py` pass unchanged. Not yet run with a real filler: the probe's
   cost and counts on the held-out phones are unmeasured.
 - Open: the filler is not deterministic, so the probe's counts estimate a later pass's tiers
