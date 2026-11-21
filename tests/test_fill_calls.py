@@ -1108,6 +1108,12 @@ def test_an_owner_with_no_accounts_is_never_given_a_row(conn: sqlite3.Connection
         ("Marcus Reyes was connected for about one minute and 40 seconds", False),
         ("the call was connected for two minutes", True),
         ("a call that was connected and lasted two minutes", True),
+        ("the WhatsApp call was connected for a minute and a half by PETROV with REYES", False),
+        ("the call connected for two minutes, placed by PETROV", False),
+        # an account is never the verb (CodeRabbit on #273)
+        ("the call to @connected lasted two minutes", True),
+        ("the call to connected@example.org lasted two minutes", True),
+        ("PETROV connected @connected with REYES on a call lasting two minutes", False),
     ],
 )
 def test_only_the_call_s_own_connected_is_plain_beside_a_length(

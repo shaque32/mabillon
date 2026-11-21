@@ -3469,11 +3469,22 @@ _OWN_CONNECTED_RE = re.compile(
 _CONNECTED_RE = re.compile(r"\bconnected\b", re.IGNORECASE)
 
 
+_BY_RE = re.compile(r"\bby\b", re.IGNORECASE)
+
+
 def connected_with_object(bare: str) -> bool:
-    """True when the claim's words (unquoted, nothing blanked) write "connected" other than as
-    the call's own: "PETROV connected REYES with SUBJECT-2", "Item 1 connected Marcus Reyes for
-    two minutes". Someone put others on a call, which no row reads (Claude review on #273)."""
-    own = {m.end() for m in _OWN_CONNECTED_RE.finditer(bare)}
+    """True when the claim's words (unquoted, no party blanked) write "connected" other than
+    as the call's own: "PETROV connected REYES with SUBJECT-2", "Item 1 connected Marcus Reyes
+    for two minutes". Someone put others on a call, which no row reads (Claude review on
+    #273). The call's own "connected" with "by" anywhere after it names who connected it ("the
+    call was connected for a minute by PETROV"), so it is not plain either (CodeRabbit on
+    #273). A handle or an address is an account, never the verb ("@connected"): it is blanked
+    first (CodeRabbit on #273)."""
+    bare = _blank(
+        bare,
+        [m.span() for rx in (_HANDLE_RE, _ADDRESS_RE, _WEB_ADDRESS_RE) for m in rx.finditer(bare)],
+    )
+    own = {m.end() for m in _OWN_CONNECTED_RE.finditer(bare) if not _BY_RE.search(bare, m.end())}
     return any(m.end() not in own for m in _CONNECTED_RE.finditer(bare))
 
 
