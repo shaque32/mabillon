@@ -1878,8 +1878,9 @@ core/schema.sql
 +                         'cellebrite_html', 'axiom', 'leapp', 'raw_zip', 'govdoc', 'synthetic')),
 
 ## 2026-11-21 claude/project-thread-8xaz0s: rules 0.6.0, rule 3d': a model "complicates" no longer blocks a time the check computed
-NOT SIGNED. Needs Arsh's "approved" on this exact wording and diff before anyone edits
-`core/audit/rules.py`.
+SIGNED by Arsh on 2026-11-21 ("approve" in the coverage thread, on this wording and diff).
+APPLIED verbatim by PR #275 (branch claude/project-thread-8xaz0s), with
+tests/contract/test_rules_060.py, the two version pins and a changelog entry.
 File: core/audit/rules.py
 Why: under 0.5.0 any undismissed "complicates" label blocks SUPPORTED, even when the claim rests
 on code checks alone (rule 3c') and the label sits on the time assumption that the time check

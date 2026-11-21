@@ -77,7 +77,11 @@ Rule 3. SUPPORTED needs all of:
         one on a curated report, which may leave records out; Greptile review, #228). No model
         label and no reviewer is used, and the basis is checked;
     (d) no complicating item that is not dismissed, no counting contradiction and no failed
-        check on any assumption of the claim, core or not;
+        check on any assumption of the claim, core or not. Rule 3d' (0.6.0, Arsh, 2026-11-21):
+        when rule 3c' carries the claim, a complicating item on a core time assumption whose
+        checks all passed and named their records does not block; the time check computed that
+        time from the records. The reasons list the item for the expert. A complicating item on
+        any other assumption, identity included, still blocks;
     (e) the core assumptions include the kind the claim type turns on: identity for a
         communication claim (who sent it: C16's shared account) or an identity claim, a
         meaning assumption for a content-meaning claim, completeness for an absence or count
@@ -119,6 +123,10 @@ acceptance under rules 1b and 3c (option B), and rule 3c' with the checked basis
 A case with no counsel review decides as 0.4.0 did, except that a COMMUNICATION, TIMING or
 COUNT claim whose core assumptions all passed their checks, with nothing blocking, is
 SUPPORTED (checked) under 0.5.0 where 0.4.0 left it UNPROVEN awaiting an expert.
+0.6.0 (Arsh, 2026-11-21) adds rule 3d'. A claim decides as under 0.5.0, except that a
+COMMUNICATION, TIMING or COUNT claim whose only blocker was an undismissed "complicates" label on
+a core time assumption that passed its checks is SUPPORTED (checked) under 0.6.0, where 0.5.0
+left it UNPROVEN until an expert dismissed the label.
 """
 
 from __future__ import annotations
@@ -149,7 +157,7 @@ from core.contracts import (
     verdict_id,
 )
 
-RULE_VERSION = "0.5.0"
+RULE_VERSION = "0.6.0"
 
 _CITABLE_RECORD = frozenset({ProvenanceTier.OBSERVED, ProvenanceTier.DERIVED})
 _REVIEWED = frozenset({EvidenceStatus.AI_ACCEPTED, EvidenceStatus.ACCEPTED})
@@ -182,6 +190,16 @@ _REQUIRED_KIND = {
 }
 # rule 3(f): claim types an AI review may not carry on its own
 _NO_AI_COVERAGE = frozenset({ClaimType.IDENTITY, ClaimType.ROLE, ClaimType.CONTENT_MEANING})
+
+
+def _time_settled_by_check(f: _Finding, checks: list[CheckResult]) -> bool:
+    """Rule 3d' (0.6.0): a core time assumption whose checks all passed and named records."""
+    return (
+        f.assumption.is_core
+        and f.assumption.kind is AssumptionKind.TIME
+        and bool(checks)
+        and all(c.outcome is CheckOutcome.PASS and c.record_ids for c in checks)
+    )
 
 
 @dataclass
@@ -471,6 +489,7 @@ def decide_verdict(
                     "an exact count needs an expert."
                 )
             )
+    notes: list[str] = []
     for f in findings:
         if not f.assumption.is_core:
             blockers += [
@@ -500,6 +519,16 @@ def decide_verdict(
                 f"({_how(e)}) and is not dismissed."
                 for e in f.unconfirmed
             ]
+        if by_code and _time_settled_by_check(f, ck_by[f.assumption.id]):
+            # rule 3d' (0.6.0): a time the check computed is not left open by a model's
+            # "complicates"; the label stays on the claim for the expert
+            notes += [
+                f"Rule 3d': {e.record_id} complicates '{f.assumption.text}' and is not "
+                "dismissed. The time check computed this time from the records, so the label "
+                "does not block support by code checks; an expert can review it."
+                for e in f.complicating
+            ]
+            continue
         blockers += [
             f"Rule 3d: {e.record_id} complicates '{f.assumption.text}' and is not dismissed."
             for e in f.complicating
@@ -507,6 +536,7 @@ def decide_verdict(
     if blockers:
         reasons += blockers
         return decide(Verdict.UNPROVEN)
+    reasons += notes  # rule 3d': listed on every SUPPORTED it did not block
 
     expert_supports = [e for e in supports if e.status is EvidenceStatus.ACCEPTED]
     counsel_supports = [e for e in supports if e.status is EvidenceStatus.COUNSEL_ACCEPTED]
