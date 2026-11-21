@@ -1297,14 +1297,6 @@ def main(argv: list[str] | None = None) -> int:
         # a probe; only a probe's built.ok records the key, and a resume checks it both ways
         setup["coverage_probe"] = True
     a.out.mkdir(parents=True, exist_ok=True)
-    # A probe never starts in a run's DIR: the run's run.json, progress.log and report hold
-    # claim ids and verdicts that a probe must not leave, and its results are not a probe's to
-    # delete (CodeRabbit on #272). Checked before anything in DIR is touched.
-    if a.coverage_probe and _run_record(a.out):
-        raise SystemExit(
-            f"{a.out} was built for a run, not a coverage probe: its run.json and progress.log"
-            " hold claims and verdicts; use a new --out"
-        )
     # One invocation owns DIR at a time, from its first write through publication, so a
     # results.zip never mixes two attempts' files (CodeRabbit on #269).
     lock = a.out / LOCK
@@ -1318,6 +1310,15 @@ def main(argv: list[str] | None = None) -> int:
             os.write(fd, f"{os.getpid()}\n".encode())
         finally:
             os.close(fd)
+        # A probe never starts in a run's DIR: the run's run.json, progress.log and report hold
+        # claim ids and verdicts that a probe must not leave, and its results are not a probe's
+        # to delete (CodeRabbit on #272). Checked under the lock, so no run can finish in DIR
+        # between the check and the attempt, and before the attempt touches any file.
+        if a.coverage_probe and _run_record(a.out):
+            raise SystemExit(
+                f"{a.out} was built for a run, not a coverage probe: its run.json and"
+                " progress.log hold claims and verdicts; use a new --out"
+            )
         return _attempt(a, phones, defs, defined, setup)
     finally:
         lock.unlink(missing_ok=True)

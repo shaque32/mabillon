@@ -33,13 +33,13 @@
     never given back.
   - A probe never starts in a DIR that holds a run's record: its run.json, progress.log and
     report hold claims and verdicts, and its results are not the probe's to delete. The driver
-    refuses it before touching DIR.
+    refuses it under DIR's lock, before touching DIR.
   - Every attempt now deletes an earlier attempt's report.html, as it already deleted
     results.zip, so a probe in a used DIR leaves no claims or verdicts.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 13 tests, and the two cap tests in
+- Verified: `tests/test_coverage_probe.py`, 14 tests, and the two cap tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.

@@ -377,3 +377,28 @@ def test_a_resume_near_its_cap_sends_nothing(ufdr, tmp_path, monkeypatch):
     assert len(sent) == before  # refused before sending: $4.996 + its most could pass $5
     log = (tmp_path / "probe" / "progress.log").read_text(encoding="utf-8")
     assert "could pass" in log
+
+
+def test_a_run_that_finishes_before_the_probe_takes_the_lock_is_kept(ufdr, tmp_path, monkeypatch):
+    """The run-record check is made under DIR's lock: a run that finishes in DIR just before a
+    probe takes the lock is seen, and none of its files are deleted (CodeRabbit on #272)."""
+    assert hickman_run.main(_args(ufdr, tmp_path, "done")) == 0
+    done, out = tmp_path / "done", tmp_path / "probe"
+    out.mkdir()
+    real_write = hickman_run.os.write
+    landed: list[bool] = []
+
+    def write(fd, data):  # noqa: ANN001, ANN202
+        n = real_write(fd, data)
+        if not landed and (out / hickman_run.LOCK).exists():
+            landed.append(True)  # the run lands in DIR as the probe takes the lock
+            for name in ("run.json", "progress.log", "results.zip", "report.html"):
+                if (done / name).exists():
+                    (out / name).write_bytes((done / name).read_bytes())
+        return n
+
+    monkeypatch.setattr(hickman_run.os, "write", write)
+    with pytest.raises(SystemExit, match="built for a run, not a coverage probe"):
+        hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe"))
+    assert landed and (out / "results.zip").exists() and (out / "run.json").exists()
+    assert not (out / hickman_run.LOCK).exists()
