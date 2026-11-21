@@ -846,10 +846,23 @@ class Budgeted:
     cap: a request is sent only while the spend so far plus the most it can cost stays within
     the cap (CodeRabbit on #272), a bound that rests on FRAMING_TOKENS. The cap and the
     out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
-    the answers stored so far are kept, and a resume picks up where it stopped."""
+    the answers stored so far are kept, and a resume picks up where it stopped.
 
-    def __init__(self, model, max_usd: float | None, spent_usd: float = 0.0) -> None:  # noqa: ANN001
+    With a ledger (DIR/spend.json), the spend is on disk before each request is sent, counting
+    that request at its most, and again once its answer is counted: a run killed mid-request
+    (SIGKILL, power loss) leaves a spend at least what was charged, and the next attempt starts
+    its cap from it (_fold_spend; CodeRabbit on #272)."""
+
+    def __init__(  # noqa: ANN001
+        self,
+        model,
+        max_usd: float | None,
+        spent_usd: float = 0.0,
+        ledger: Path | None = None,
+        build_id: str | None = None,
+    ) -> None:
         self._m = model
+        self._ledger, self._build_id = ledger, build_id
         self.name, self.sha256 = model.name, model.sha256
         self.params, self.where = model.params, getattr(model, "where", "cloud")
         self.max_usd = max_usd
@@ -875,6 +888,10 @@ class Budgeted:
         if self._price is not None:
             self.spent_usd += (inp * self._price[0] + outp * self._price[1]) / 1_000_000
 
+    def _save(self, spent_usd: float) -> None:
+        if self._ledger is not None:
+            _write_json(self._ledger, {"build_id": self._build_id, "spent_usd": spent_usd})
+
     def _most(self, prompt: str, schema) -> float:  # noqa: ANN001
         """An estimate of the most one request can cost (CodeRabbit on #272): its prompt at one
         token per byte of the request body (a token is at least one byte), plus FRAMING_TOKENS
@@ -898,6 +915,7 @@ class Budgeted:
                 f" pass it (${self.spent_usd:.2f} spent)",
                 sticky=True,
             )
+        self._save(self.spent_usd + most)  # on disk before the request can be charged
         self.calls += 1
         try:
             out = self._m.generate_json(prompt, schema, params)
@@ -911,8 +929,10 @@ class Budgeted:
                 # what it really cost, so it is never given back (CodeRabbit on #272)
                 self.uncertain_usd += most
                 self.spent_usd += most
+            self._save(self.spent_usd)
             raise
         self._count(out)
+        self._save(self.spent_usd)
         return out
 
     def usage(self) -> dict:
@@ -1360,6 +1380,31 @@ def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
     tmp.replace(path)
 
 
+SPEND_FILE = "spend.json"
+
+
+def _fold_spend(out: Path, run: dict) -> None:
+    """Fold DIR/spend.json, the spend Budgeted saves around every request, into run.json's
+    record of the same case, so a run killed between run.json's writes resumes from at least
+    what was charged, never from the last spend run.json saved (CodeRabbit on #272). A
+    spend.json from another case (a build since replaced) is not this case's spend."""
+    path = out / SPEND_FILE
+    if not path.exists() or "build_id" not in run:
+        return
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        build_id, spent = saved["build_id"], float(saved["spent_usd"])
+    except (OSError, ValueError, TypeError, KeyError) as err:
+        raise SystemExit(f"{path} is unreadable, so this run's spend is unknown: {err}") from err
+    if build_id != run["build_id"]:
+        return
+    cloud = run.setdefault("cloud", {"sessions": []})
+    before = float(cloud.get("spent_usd", 0.0))
+    if spent > before:
+        cloud["spent_usd"] = spent
+        cloud["recovered_usd"] = float(cloud.get("recovered_usd", 0.0)) + spent - before
+
+
 def _run_record(out: Path) -> bool:
     """Whether DIR holds a run's record (a run.json not marked as a coverage probe's)."""
     path = out / "run.json"
@@ -1392,6 +1437,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
 
     run_path = a.out / "run.json"
     run = json.loads(run_path.read_text(encoding="utf-8")) if run_path.exists() else {}
+    _fold_spend(a.out, run)
     claims_sha = sha256_file(a.claims)
     if a.claims_sha256 and claims_sha != a.claims_sha256:
         raise SystemExit(f"{a.claims}: SHA-256 {claims_sha}, expected {a.claims_sha256}")
@@ -1563,7 +1609,13 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             api_key=cfg.api_key, model=a.cloud, effort=a.effort or cloud.DEFAULT_EFFORT
         )
         spent_before = float(run.get("cloud", {}).get("spent_usd", 0.0))
-        cloud_model = Budgeted(cloud.ClaudeModel(cfg), a.max_usd, spent_before)
+        cloud_model = Budgeted(
+            cloud.ClaudeModel(cfg),
+            a.max_usd,
+            spent_before,
+            ledger=a.out / SPEND_FILE,
+            build_id=run["build_id"],
+        )
         jobs = ["assumptions"] if a.coverage_probe else ["assumptions", "stance"]
         run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": jobs}
     try:

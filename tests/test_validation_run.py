@@ -2151,3 +2151,22 @@ def test_a_request_that_times_out_counts_its_most_against_the_cap():
     with pytest.raises(CloudError, match="could pass"):  # $4.04 + $2.02 could pass $5
         m.generate_json("p", {})
     assert m.usage()["calls"] == 2 and m.spent_usd <= m.max_usd
+
+
+def test_the_spend_is_on_disk_before_each_request_is_sent(tmp_path):
+    """With a ledger, the spend counting a request at its most is saved before the request is
+    sent, and its counted cost once it answers, so a kill mid-request leaves no charge unsaved
+    (CodeRabbit on #272)."""
+    ledger = tmp_path / "spend.json"
+    seen: list[float] = []
+
+    class _Saw(_Stub):
+        def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+            seen.append(json.loads(ledger.read_text(encoding="utf-8"))["spent_usd"])
+            return _Out(10, 10)
+
+    m = hickman_run.Budgeted(_Saw(), max_usd=15.0, spent_usd=3.0, ledger=ledger, build_id="b1")
+    m.generate_json("x" * 1_000_000, {})
+    assert 9.0 < seen[0] < 9.1  # $3 + the request's most, about $6.02, before it was sent
+    saved = json.loads(ledger.read_text(encoding="utf-8"))
+    assert saved == {"build_id": "b1", "spent_usd": m.spent_usd} and m.spent_usd < 3.01

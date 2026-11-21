@@ -216,9 +216,9 @@ def test_a_fresh_probe_starts_its_cap_at_zero_and_keeps_the_earlier_spend(
     seen: list[float] = []
     real = hickman_run.Budgeted
 
-    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+    def budgeted(model, max_usd, spent_usd=0.0, **kw):  # noqa: ANN001, ANN003, ANN202
         seen.append(spent_usd)
-        return real(model, max_usd, spent_usd)
+        return real(model, max_usd, spent_usd, **kw)
 
     from core.llm import cloud
 
@@ -269,9 +269,9 @@ def test_a_run_rebuilt_after_a_run_keeps_counting_its_spend(ufdr, tmp_path, monk
     seen: list[float] = []
     real = hickman_run.Budgeted
 
-    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+    def budgeted(model, max_usd, spent_usd=0.0, **kw):  # noqa: ANN001, ANN003, ANN202
         seen.append(spent_usd)
-        return real(model, max_usd, spent_usd)
+        return real(model, max_usd, spent_usd, **kw)
 
     from core.llm import cloud
 
@@ -318,9 +318,9 @@ def test_a_resume_starts_from_the_spend_unrounded(ufdr, tmp_path, monkeypatch):
     seen: list[float] = []
     real = hickman_run.Budgeted
 
-    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+    def budgeted(model, max_usd, spent_usd=0.0, **kw):  # noqa: ANN001, ANN003, ANN202
         seen.append(spent_usd)
-        m = real(model, max_usd, spent_usd)
+        m = real(model, max_usd, spent_usd, **kw)
         m.spent_usd += 0.004  # as a request that cost under a cent would
         return m
 
@@ -427,3 +427,44 @@ def test_a_run_json_write_stopped_partway_keeps_the_earlier_record(ufdr, tmp_pat
     again = json.loads(run_path.read_text(encoding="utf-8"))
     assert again["earlier_cases"][-1]["cloud"]["spent_usd"] == 3.0
     assert not (tmp_path / "probe" / "run.json.tmp").exists()
+
+
+def test_a_resume_after_a_hard_stop_starts_from_the_saved_spend(ufdr, tmp_path, monkeypatch):
+    """A run killed mid-request (no finally runs, so run.json keeps an older spend) resumes
+    from spend.json, which counted that request at its most before it was sent; a spend.json
+    from another build is not this case's (CodeRabbit on #272)."""
+    from core.llm import cloud
+
+    sent: list[dict] = []
+
+    class _Counts(_NoAnswer):
+        class messages:  # noqa: N801 - the SDK's attribute name
+            @staticmethod
+            def create(**kw):  # noqa: ANN003, ANN205
+                sent.append(kw)
+                raise RuntimeError("Error code: 400 - credit balance is too low")
+
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _Counts())
+    args = [a for a in _args(ufdr, tmp_path, "probe", "--coverage-probe") if a != "--fake"]
+    cap = [*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]
+    assert hickman_run.main(cap) == 3
+    out = tmp_path / "probe"
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    spend = out / hickman_run.SPEND_FILE
+    assert json.loads(spend.read_text(encoding="utf-8"))["build_id"] == run["build_id"]
+    # another build's spend.json is not this case's: the resume sends again
+    spend.write_text(json.dumps({"build_id": "other", "spent_usd": 4.996}), encoding="utf-8")
+    before = len(sent)
+    assert hickman_run.main(cap) == 3 and len(sent) > before
+    # as a kill mid-request leaves it: run.json at $0, spend.json at that request's most
+    spend.write_text(json.dumps({"build_id": run["build_id"], "spent_usd": 4.996}), "utf-8")
+    before = len(sent)
+    assert hickman_run.main(cap) == 3
+    assert len(sent) == before  # $4.996 + the next request's most could pass $5
+    again = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert again["cloud"]["spent_usd"] == pytest.approx(4.996)
+    assert again["cloud"]["recovered_usd"] == pytest.approx(4.996)
+    spend.write_text("{", encoding="utf-8")
+    with pytest.raises(SystemExit, match="spend is unknown"):
+        hickman_run.main(cap)

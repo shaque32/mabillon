@@ -39,10 +39,15 @@
   - run.json, built.ok and probe.json are written to a temporary file and moved into place, so
     a stop partway through a write keeps the earlier run.json and the spend a resume starts
     from.
+  - The driver saves its spend to DIR/spend.json before each cloud request is sent (counting
+    that request at its most) and again once its answer is counted. The next attempt starts its
+    cap from the larger of that and run.json's spend for the same build, so a run killed
+    mid-request (SIGKILL, power loss) never resumes from a spend below what was charged.
+    Recovered spend is recorded as `recovered_usd`.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 15 tests, and the two cap tests in
+- Verified: `tests/test_coverage_probe.py`, 16 tests, and the three cap tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.
