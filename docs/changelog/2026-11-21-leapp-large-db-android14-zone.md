@@ -42,6 +42,6 @@
 - Affects: capabilities (LAVA databases over 2 GiB import; Android 14 phones get their zone);
   privacy (a database over 2 GB is written to a temporary file during import, removed at the end, best effort)
 - Status doc: pending: in "Importers (main)", the LEAPP line's version becomes `leapp` 0.3.0 and
-  gains "; a LAVA database over 2 GB is read from a temporary copy removed when the import ends;
+  gains "; a LAVA database over 2 GB is read from a temporary plain copy, removed (best effort) when the import ends;
   the Android zone is read from ALEAPP battery usage v4 and v9". If the #264 or #268 edit is not
   applied yet, apply it first with this version.
