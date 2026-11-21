@@ -22,15 +22,17 @@
     rebuilt after a run keeps counting its spend.
   - The stand-in labeler's module is in `eval/`, so the run is marked fake and no scorer or report
     takes it.
-  - `--max-usd` is now a hard cap for every cloud run of the driver, probe or pass: a request is
-    sent only if the spend so far plus the most it can cost (its whole request body at one
-    token per byte, a 4,096-token margin that is not measured, and its whole output allowance)
-    stays within the cap. Before, the cap was checked against the spend so far, so the last
-    request could end above it.
+  - `--max-usd` now holds before each request for every cloud run of the driver, probe or pass:
+    a request is sent only if the spend so far plus the most it can cost (its whole request
+    body at one token per byte, 4,096 tokens for what the API adds, and its whole output
+    allowance) stays within the cap. Before, the cap was checked against the spend so far, so
+    the last request could end above it. The 4,096-token margin is not measured, so the cap is
+    an estimate, not a guarantee. run.json now keeps the spend unrounded, so a resume never
+    starts its cap from a spend rounded down.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 10 tests, and the hard-cap test in
+- Verified: `tests/test_coverage_probe.py`, 11 tests, and the hard-cap test in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.

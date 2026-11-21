@@ -837,14 +837,14 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 
 
 # Tokens the API may add around a request body (its own framing and the structured-output
-# instructions): a margin, not measured.
+# instructions): a margin, not measured, so the cap holds only if the API adds no more.
 FRAMING_TOKENS = 4096
 
 
 class Budgeted:
     """A cloud model that counts its spend and sends no request that could take it past its
     cap: a request is sent only while the spend so far plus the most it can cost stays within
-    the cap, so a run never ends above --max-usd (CodeRabbit on #272). The cap and the
+    the cap (CodeRabbit on #272), a bound that rests on FRAMING_TOKENS. The cap and the
     out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
     the answers stored so far are kept, and a resume picks up where it stopped."""
 
@@ -1523,7 +1523,9 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             if cloud_model is not None:
                 total = run.setdefault("cloud", {"sessions": []})
                 total["sessions"].append(cloud_model.usage())
-                total["spent_usd"] = round(cloud_model.spent_usd, 2)
+                # full precision: a resume starts its cap from this, and a spend rounded down
+                # would let it pass the cap (CodeRabbit on #272)
+                total["spent_usd"] = cloud_model.spent_usd
                 run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
                 log(f"cloud spend so far: ${cloud_model.spent_usd:.2f}")
     except CloudPaused as e:

@@ -305,3 +305,29 @@ def test_the_earlier_case_moves_on_disk_before_the_new_case_is_built(ufdr, tmp_p
     assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
     again = json.loads(run_path.read_text(encoding="utf-8"))
     assert len(again["earlier_cases"]) == 1 and "probe" in again["audit"]
+
+
+def test_a_resume_starts_from_the_spend_unrounded(ufdr, tmp_path, monkeypatch):
+    """run.json keeps the spend at full precision, so a resume near its cap never starts from a
+    spend rounded down to the cent (CodeRabbit on #272)."""
+    seen: list[float] = []
+    real = hickman_run.Budgeted
+
+    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+        seen.append(spent_usd)
+        m = real(model, max_usd, spent_usd)
+        m.spent_usd += 0.004  # as a request that cost under a cent would
+        return m
+
+    from core.llm import cloud
+
+    monkeypatch.setattr(hickman_run, "Budgeted", budgeted)
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _NoAnswer())
+    args = [a for a in _args(ufdr, tmp_path, "probe", "--coverage-probe") if a != "--fake"]
+    cap = [*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]
+    assert hickman_run.main(cap) == 3
+    run = json.loads((tmp_path / "probe" / "run.json").read_text(encoding="utf-8"))
+    assert run["cloud"]["spent_usd"] == pytest.approx(0.004)
+    assert hickman_run.main(cap) == 3
+    assert seen == [0.0, pytest.approx(0.004)]

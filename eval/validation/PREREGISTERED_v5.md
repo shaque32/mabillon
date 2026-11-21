@@ -155,11 +155,13 @@ after the tag reaches the run.
   with a second probe), inside the free Ultra credit, with the balance
   checked in the console just before the OK. A pass that hits its cap or a sticky API failure
   pauses and resumes in the same folder with stored answers reused; a resume is not a new pass,
-  and a pass that hits its cap is not resumed without a new OK. Every cap is hard: the driver
-  sends a request only if the spend so far plus the most that request can cost stays within
-  the cap (its whole request body at one token per byte, plus a 4,096-token margin for the
-  API's framing, which is not measured, and its whole 16,000-token output allowance). A run
-  never ends above its cap; it can stop up to one request's worth short of it.
+  and a pass that hits its cap is not resumed without a new OK. The driver sends a request only
+  if the spend so far (kept unrounded) plus the most that request can cost stays within the
+  cap: its whole request body at one token per byte, plus 4,096 tokens for what the API adds
+  around it, plus its whole 16,000-token output allowance. That bound holds only if the API
+  adds no more than 4,096 tokens, which is not measured, so the cap is an estimate, not a
+  guarantee; one token per byte is far more than prompt text usually takes, which leaves room.
+  A run can stop up to one request's worth short of its cap.
 - One scored run. A crash that leaves no usable case restarts from scratch at the same tag and is
   reported. What the abandoned attempt spent counts against its pass's $55 cap (the restart runs
   with `--max-usd` set to what is left of it), so a restart never raises the ceiling; a restart
