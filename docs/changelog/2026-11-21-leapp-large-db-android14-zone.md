@@ -1,4 +1,4 @@
-## 2026-11-21: LEAPP importer reads a LAVA database over 2 GiB and the Android 14 zone (PR pending)
+## 2026-11-21: LEAPP importer reads a LAVA database over 2 GiB and the Android 14 zone (#274)
 - Changed: Importer `leapp` 0.3.0 (`core/ingest/leapp.py`, doc `docs/ingest/leapp.md`). Two
   generic format bugs, both found at v5 gate C2 on the held-out public test packages, before any
   claim was written (aggregates only: `/mnt/project-files/baker/validation/v5/C2_RESULT.md`).
@@ -16,7 +16,7 @@
   it in `battery-usage-db-v9`, which ALEAPP writes as `get_battery_usage_v9`
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
-- Where: branch `claude/project-thread-4espav` (PR pending)
+- Where: PR #274
 - Verified: `tests/test_leapp.py` 128 passed (13 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
