@@ -1,4 +1,4 @@
-## 2026-11-21: Filler 13: owner identity with nothing to test, "connected" beside a call length (#PR)
+## 2026-11-21: Filler 13: owner identity with nothing to test, "connected" beside a call length (#273)
 - Changed: the assumption filler (version 12 to 13, `core/audit/assumption_filler.py`) now
   refuses a model's person_identity that names no account and no handle, only people who each
   own a phone by confirmed stipulation ("The account belongs to SUBJECT-1"). No check or
@@ -8,7 +8,7 @@
   was, and a call "that was answered (or connected) and lasted ..." gets its code-made caller
   row. Found by a coverage recount that replays stored filler answers with no model calls
   (`baker/validation/coverage-recount/recount.py`, project files).
-- Where: branch claude/project-thread-8xaz0s
+- Where: PR #273
 - Verified: `tests/test_fill_calls.py` (5 new tests: the owner row refused and the claim then
   SUPPORTED on its checks, kept when it names an account or a non-owner; caller read after
   "answered/connected and lasted"; reversed caller CONTRADICTED; another length not
@@ -25,5 +25,5 @@
 - Status doc: pending: section 2 table, step 5 (Assumptions): add "Filler 13 refuses a
   person_identity naming no account or handle when every person it names owns a phone by
   confirmed stipulation, reads "connected" beside a tested call length, and reads a call
-  'that was answered (or connected) and lasted ...' for its caller row (#PR)." Header
+  'that was answered (or connected) and lasted ...' for its caller row (#273)." Header
   "Other versions": assumption filler 13.
