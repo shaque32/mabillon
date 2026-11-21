@@ -32,7 +32,7 @@ CSS = """
 .tl > li { display: grid; gap: var(--s2) var(--s6); margin: 0; max-width: none;
   padding: var(--s4) 0; border-bottom: 1px solid var(--line);
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr) 120px; }
-.tl > li:target { outline: 0; background: var(--line); }
+.tl > li:target { outline: 0; background: var(--accent-wash); }
 .tl .meta { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .tl .said { margin: var(--s1) 0; font-weight: 600; }
 .tl details { margin: 0 0 var(--s1); }
@@ -49,7 +49,7 @@ CSS = """
 .tl .notes { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0;
   font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .tl .notes li { max-width: none; }
-.d-ok { color: var(--ink); }
+.d-ok { color: var(--support); }
 .d-flag { color: var(--signal); font-weight: 600; }
 
 /* Gaps: per phone, the day strip, then its quiet stretches as ruled rows */

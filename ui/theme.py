@@ -1,10 +1,16 @@
 """The review screen's design system: the tokens, the app chrome and every shared control.
 
-One spacing scale, one type scale and five colors (TOKENS_CSS). Every rule in this file and in
+One spacing scale, one type scale and eleven colors (TOKENS_CSS). Every rule in this file and in
 ui/css/ draws from them, and tests/test_design_system.py fails on anything else: an off-scale
 margin, a font size outside the scale, a color literal, a gradient or a shadow. Hierarchy comes
 from size, weight and space; structure from hairlines, not boxes. The app's pages carry only this
 stylesheet; the exported report keeps its own (core/report/html.py).
+
+Color carries meaning, never decoration. Four neutrals hold the page. Three hues, the site's own
+(site/styles.css), each with a pale wash: navy for what the expert can act on and where they are,
+green for the claim as stated, red against it. Green is earned: only support an expert, counsel
+or the code checks stand behind takes it, never a model's label or the AI reviewer's acceptance,
+and the same test fails if a rule gives it to either. A highlighter marks quoted words.
 
 IBM Plex Sans for all text, IBM Plex Mono only for ids and hashes, Instrument Serif only for the
 wordmark. The fonts (SIL Open Font License) are vendored in ui/static/fonts and served by this
@@ -54,12 +60,21 @@ MARK = (
 # spacing length.
 TOKENS_CSS = """
 :root {
-  /* color: five, each with one job */
-  --ink: #141414;     /* text, the main action, marks that mean "holds" */
-  --muted: #5f5a51;   /* secondary text, control edges */
+  /* color: four neutrals, then three hues that each mean one thing, each with a pale wash for
+     a fill behind its own text, and a highlighter */
+  --ink: #141414;     /* text */
+  --muted: #5f5a51;   /* secondary text, control edges, marks that mean "neither way" */
   --paper: #f7f5f0;   /* the one background */
   --line: #dedad0;    /* hairlines, quiet fills */
+  --accent: #1d3557;  /* yours to act on, and where you are: the main action, links, focus,
+                         the open page and row, what waits on you */
+  --accent-wash: #e4eaf2;
+  --support: #2f5d43; /* for the claim as stated, once an expert, counsel or the code checks
+                         stand behind it; never a model's label or the AI reviewer's */
+  --support-wash: #e6eee8;
   --signal: #9a3a2c;  /* against the claim as stated, and errors; nothing else */
+  --signal-wash: #f4e5e1;
+  --quote: #f3e3a6;   /* the highlighter: words quoted from a record */
   /* space: margin, padding and gap take only these */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
   /* type: size and its line height, in pairs */
@@ -86,9 +101,9 @@ THEME_CSS = (
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scrollbar-color: var(--muted) var(--paper); }
 body { margin: 0; padding: 0 0 0 var(--sidebar); font: 400 var(--t2)/var(--l2) var(--sans);
-  color: var(--ink); background: var(--paper); accent-color: var(--ink);
+  color: var(--ink); background: var(--paper); accent-color: var(--accent);
   -webkit-font-smoothing: antialiased; }
-::selection { background: var(--ink); color: var(--paper); }
+::selection { background: var(--accent); color: var(--paper); }
 main { max-width: 1120px; margin: 0; padding: var(--s6) var(--s7) var(--s8); }
 main.wide { max-width: 1360px; }
 p { margin: 0 0 var(--s3); }
@@ -110,14 +125,13 @@ small, .meta, .where { font-size: var(--t1); line-height: var(--l1); color: var(
 /* visually hidden: kept for a screen reader and for tools that read the page */
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
   white-space: nowrap; }
-a { color: var(--ink); text-decoration: underline 1px var(--muted);
-  text-underline-offset: 0.2em; }
-a:hover { text-decoration-color: var(--ink); }
-:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+a { color: var(--accent); text-decoration: underline 1px; text-underline-offset: 0.2em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 blockquote { margin: var(--s2) 0; padding: 0 0 0 var(--s3); border-left: 1px solid var(--muted); }
-/* a quoted span: a fill and an ink underline, so it still shows on a --line surface
-   (an incoming message bubble) */
-mark { background: var(--line); color: inherit; border-bottom: 1px solid var(--ink); }
+/* a quoted span: the highlighter and an ink underline, so it shows on every message bubble
+   and without color */
+mark { background: var(--quote); color: inherit; border-bottom: 1px solid var(--ink); }
 hr { border: 0; border-top: 1px solid var(--line); margin: var(--s5) 0; }
 
 /* ---- sidebar: the wordmark, the open case, the pages in groups; the footer holds where the
@@ -140,7 +154,7 @@ nav.tabs { order: 2; display: flex; flex-direction: column;
 nav.tabs a { color: var(--ink); text-decoration: none; padding: var(--s1) var(--s2);
   border-radius: var(--radius); white-space: nowrap; }
 nav.tabs a:hover { background: var(--line); }
-nav.tabs a.on { font-weight: 600; background: var(--line); }
+nav.tabs a.on { font-weight: 600; background: var(--accent-wash); color: var(--accent); }
 nav.tabs .sep { flex: none; height: var(--s4); }
 .bar .right { order: 3; margin-top: auto; display: flex; flex-direction: column;
   align-items: flex-start; gap: var(--s1); padding: var(--s4); font-size: var(--t1);
@@ -169,7 +183,8 @@ a.pill:hover { color: var(--ink); }
 .banner .banner { margin: var(--s2) 0 0; padding: 0; border: 0; }
 p.warn:not(.format-notice), .caution, .flash { max-width: var(--measure); margin: 0 0 var(--s4);
   padding: var(--s2) var(--s3); border: 1px solid var(--muted); border-radius: var(--radius); }
-.flash.err { border-color: var(--signal); color: var(--signal); }
+.flash.err { border-color: var(--signal); background: var(--signal-wash);
+  color: var(--signal); }
 .flash.toast { position: fixed; right: var(--s5); bottom: var(--s5); z-index: 10; margin: 0;
   max-width: min(420px, calc(100vw - var(--s7))); background: var(--ink); color: var(--paper);
   border-color: var(--ink); animation: toast-out 0.3s ease 7s forwards; }
@@ -183,9 +198,9 @@ p.format-notice strong { font-weight: 600; }
 
 /* coming back to the item a form acted on: mark it */
 [id] { scroll-margin-top: var(--s5); }
-:target { outline: 2px solid var(--ink); outline-offset: var(--s1); }
+:target { outline: 2px solid var(--accent); outline-offset: var(--s1); }
 main:target, section:target, h2:target, h3:target, tr:target, details:target { outline: 0; }
-tr:target td, tr.target td { background: var(--line); }
+tr:target td, tr.target td { background: var(--accent-wash); }
 tr.target td { font-weight: 600; }
 
 /* ---- tables: a ruled ledger. No frame and no fill; the header sits on an ink rule, rows on
@@ -228,7 +243,7 @@ input[type=text], input[type=password], input[type=number], input[type=search],
 input[type=file], textarea, select { font: 400 var(--t2)/var(--l2) var(--sans);
   color: var(--ink); background: var(--paper); border: 1px solid var(--muted);
   border-radius: var(--radius); padding: 0 var(--s2); margin: 0; max-width: 100%;
-  caret-color: var(--ink); }
+  caret-color: var(--accent); }
 input[type=text], input[type=password] { min-width: min(280px, 100%); }
 input[type=text].wide, textarea { width: 100%; }
 textarea { display: block; padding: var(--s2); min-height: 96px; resize: vertical; }
@@ -238,11 +253,11 @@ input[type=file]::file-selector-button { font: 600 var(--t2)/var(--l2) var(--san
   padding: var(--s1) var(--s3); margin-right: var(--s3); cursor: pointer; }
 select { padding-right: var(--s1); cursor: pointer; }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
-input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--ink);
-  outline-offset: 1px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; }
 input:disabled, select:disabled, textarea:disabled { color: var(--muted);
   border-color: var(--line); cursor: not-allowed; }
-/* Checkboxes and radios drawn in CSS (the page allows no images): a 16px box, ink when
+/* Checkboxes and radios drawn in CSS (the page allows no images): a 16px box, accent when
    checked. Forced-colors mode gets the system control back. */
 input[type=checkbox], input[type=radio] { appearance: none; -webkit-appearance: none;
   flex: none; display: inline-grid; place-content: center; width: 16px; height: 16px;
@@ -254,8 +269,8 @@ input[type=checkbox]::before { content: ""; width: 8px; height: 4px;
   transform: translateY(-1px) rotate(-45deg) scale(0); }
 input[type=radio]::before { content: ""; width: 6px; height: 6px; border-radius: 50%;
   background: var(--paper); transform: scale(0); }
-input[type=checkbox]:checked, input[type=radio]:checked { background: var(--ink);
-  border-color: var(--ink); }
+input[type=checkbox]:checked, input[type=radio]:checked { background: var(--accent);
+  border-color: var(--accent); }
 input[type=checkbox]:checked::before { transform: translateY(-1px) rotate(-45deg) scale(1); }
 input[type=radio]:checked::before { transform: scale(1); }
 @media (forced-colors: active) {
@@ -265,7 +280,7 @@ input[type=radio]:checked::before { transform: scale(1); }
 /* a number with its unit inside the field */
 .unit-input { display: flex; align-items: center; height: var(--control); max-width: 200px;
   border: 1px solid var(--muted); border-radius: var(--radius); font-weight: 400; }
-.unit-input:focus-within { outline: 2px solid var(--ink); outline-offset: 1px; }
+.unit-input:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 .unit-input input[type=number] { flex: 1; min-width: 0; height: auto; border: 0; outline: 0;
   background: transparent; -moz-appearance: textfield; appearance: textfield; }
 .unit-input input::-webkit-outer-spin-button,
@@ -281,23 +296,25 @@ form.settings label.field { display: grid; align-content: start; gap: var(--s1);
 form.settings small { font-weight: 400; }
 form.settings .actions { display: flex; }
 
-/* ---- buttons: three ranks. Solid ink is the page's main action, and Accept on each open
+/* ---- buttons: three ranks. Solid accent is the page's main action, and Accept on each open
    evidence item (the one decision that item waits for); every other button is a quiet fill;
-   a link does the rest. */
+   a link does the rest. Accept is never green: it accepts what the item shows, for the claim or
+   against it. */
 button, a.button, a.dl { display: inline-flex; align-items: center; justify-content: center;
   gap: var(--s1); min-height: var(--control); padding: 0 var(--s3); margin: 0;
   font: 600 var(--t2)/var(--l2) var(--sans); color: var(--ink); background: var(--line);
   border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none;
   cursor: pointer; vertical-align: middle; white-space: nowrap;
   transition: border-color 0.15s var(--ease), background-color 0.15s var(--ease); }
-button:hover, a.button:hover, a.dl:hover { border-color: var(--ink); }
-button.primary, button[value=accepted], a.button.primary { background: var(--ink);
-  border-color: var(--ink); color: var(--paper); }
+button:hover, a.button:hover, a.dl:hover { border-color: var(--accent); }
+button.primary, button[value=accepted], a.button.primary { background: var(--accent);
+  border-color: var(--accent); color: var(--paper); }
 button.primary:hover, button[value=accepted]:hover, a.button.primary:hover {
-  background: var(--muted); border-color: var(--muted); }
+  background: var(--ink); border-color: var(--ink); }
 button:disabled, button.primary:disabled { color: var(--muted); background: var(--paper);
   border-color: var(--line); cursor: not-allowed; }
-button[aria-pressed=true] { background: var(--paper); border-color: var(--ink); }
+button[aria-pressed=true] { background: var(--accent-wash); border-color: var(--accent);
+  color: var(--accent); }
 button + button, form.inline + form.inline button, button + a.button { margin-left: var(--s2); }
 @media (prefers-reduced-motion: reduce) {
   button, a.button, a.dl, .flash.toast { transition: none; animation: none; }
@@ -315,21 +332,26 @@ details > summary:hover::before { border-color: var(--ink); }
 details[open] > summary { margin-bottom: var(--s2); }
 
 /* ---- status words. A verdict is its signed words behind a mark. The color says which way:
-   ink for the claim, signal against it, muted for neither. The fill says how far it has gone:
-   solid for support the expert confirmed and for contradicted; a ring for support by code
-   checks, counsel or the AI reviewer, for a contradiction that waits on the expert's confirm,
-   and for unproven; a dashed ring for not tested. So support the expert has not confirmed
-   never wears the expert-confirmed mark. The words always show, so no verdict rests on the
-   mark or its color. */
+   support green for the claim, signal against it, accent for support that waits on the
+   expert's answer, muted for neither. The fill says how far it has gone: solid for support the
+   expert confirmed and for contradicted; a ring for support by code checks or counsel, for a
+   contradiction that waits on the expert's confirm, and for unproven; a dashed ring for not
+   tested. So support the expert has not confirmed never wears the expert-confirmed mark, and
+   support that rests on the AI reviewer (v-supai) takes no green at all: it keeps the plain ink
+   ring. The words always show, so no verdict rests on the mark or its color. */
 .verdict { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600;
   white-space: nowrap; text-decoration: none; color: var(--ink); }
 .verdict::before { content: ""; flex: none; width: var(--dot); height: var(--dot);
   border-radius: 50%; border: 2px solid var(--ink); }
-.v-sup::before { background: var(--ink); }
+.v-sup, .v-supchk, .v-supcou { color: var(--support); }
+.v-sup::before { background: var(--support); border-color: var(--support); }
+.v-supchk::before, .v-supcou::before { border-color: var(--support); }
 .v-con, .v-confirm { color: var(--signal); }
 .v-con::before { background: var(--signal); border-color: var(--signal); }
 .v-confirm::before { border-color: var(--signal); }
-.v-unp::before, .v-await::before { border-color: var(--muted); }
+.v-await { color: var(--accent); }
+.v-await::before { border-color: var(--accent); }
+.v-unp::before { border-color: var(--muted); }
 .verdict.v-nt::before { border-style: dashed; border-width: 1px; }
 /* every other tag is plain small text; a run of them is joined by a middle dot */
 .badge, .stpill, .chip, .tag, .sel-n { font-size: var(--t1); line-height: var(--l1);
@@ -339,14 +361,16 @@ details[open] > summary { margin-bottom: var(--s2); }
 .b-against, .st-rejected.stpill, .chip.flag, .tag.left, .sel-n { color: var(--signal);
   font-weight: 600; }
 .sel-n.none { color: var(--muted); font-weight: 400; }
-.b-conf, .st-confirmed.stpill, .chip.ok, .tag.pick { color: var(--ink); font-weight: 600; }
+.b-conf, .st-confirmed.stpill, .tag.pick { color: var(--ink); font-weight: 600; }
+/* the Timeline's "Matches": the records agree with the time the document states, by code */
+.chip.ok { color: var(--support); font-weight: 600; }
 .stpill b { color: var(--ink); margin-left: var(--s1); }
 /* a count of none is not a status: no weight and no signal */
 .stpill.zero, .stpill.zero b { color: var(--muted); font-weight: 400; }
 .counts { display: flex; flex-wrap: wrap; align-items: baseline; }
 /* the one filled tag: this waits on you */
 .gap.you { display: inline-block; padding: 0 var(--s1); border-radius: var(--radius);
-  background: var(--ink); color: var(--paper); font-weight: 600; }
+  background: var(--accent); color: var(--paper); font-weight: 600; }
 
 /* ---- a list of claims: one ruled row each */
 .ledger { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
@@ -367,20 +391,21 @@ section.group { margin: var(--s7) 0 0; }
 .ghead h2 { margin: 0; }
 .ghead .muted { font-size: var(--t1); line-height: var(--l1); }
 
-/* ---- a conversation around a record. Received messages are filled, sent ones outlined and
-   set right; the record itself takes an ink edge. */
+/* ---- a conversation around a record. Received messages take the quiet fill; the phone's own
+   take the accent wash and sit right; the record itself takes an accent edge. */
 .thread { display: flex; flex-direction: column; gap: var(--s1); margin: var(--s2) 0; }
 .msg { max-width: 72%; align-self: flex-start; padding: var(--s1) var(--s3);
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--line);
   display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--s4); }
-.msg.out { align-self: flex-end; background: var(--paper); }
-.msg.target { border-color: var(--ink); outline: 1px solid var(--ink); }
+.msg.out { align-self: flex-end; background: var(--accent-wash);
+  border-color: var(--accent-wash); }
+.msg.target { border-color: var(--accent); outline: 1px solid var(--accent); }
 .msg .who2 { grid-column: 1; font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .msg .t { grid-column: 2; grid-row: 1; font-size: var(--t1); line-height: var(--l1);
   color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .msg .body { grid-column: 1 / -1; overflow-wrap: anywhere; }
 .msg.cont .body { grid-column: 1; grid-row: 1; }
-.msg .cited { margin-right: var(--s2); font-weight: 600; color: var(--ink); }
+.msg .cited { margin-right: var(--s2); font-weight: 600; color: var(--accent); }
 
 /* ---- an evidence item and other ruled blocks */
 .item { padding: var(--s4) 0; border-top: 1px solid var(--line); }

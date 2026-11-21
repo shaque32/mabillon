@@ -22,7 +22,7 @@ CSS = """
   list-style: none; padding: 0; margin: 0; }
 .pg-overview .casestatus .findings li { margin: 0; }
 .pg-overview .casestatus .findings a { display: inline-flex; align-items: center;
-  gap: var(--s2); text-decoration: none; }
+  gap: var(--s2); color: var(--ink); text-decoration: none; }
 .pg-overview .casestatus .findings .name { display: inline-flex; align-items: center;
   gap: var(--s2); color: var(--muted); }
 .pg-overview .casestatus .findings a:hover .name { color: var(--ink); }
@@ -30,8 +30,8 @@ CSS = """
   height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
 .pg-overview .casestatus .findings .t-con::before { background: var(--signal);
   border-color: var(--signal); }
-.pg-overview .casestatus .findings .t-sup::before { background: var(--ink);
-  border-color: var(--ink); }
+.pg-overview .casestatus .findings .t-sup::before { background: var(--support);
+  border-color: var(--support); }
 .pg-overview .casestatus .findings b { font-variant-numeric: tabular-nums; }
 .pg-overview .casestatus .verdict { margin: 0; }
 .pg-overview #withheld { margin: 0 0 var(--s4); }

@@ -47,16 +47,18 @@ ul.sel-quotes li { margin: 0 0 var(--s2); color: var(--muted); }
 .sel-convo { display: flex; flex-direction: column; gap: var(--s1); margin: var(--s3) 0;
   padding: var(--s3) 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
-/* messages. Received ones are filled, sent ones outlined and set right, as on the claim page.
-   A quoted message takes an ink edge; one the document left out takes a dashed signal edge.
+/* messages. Received ones take the quiet fill, the phone's own the accent wash and the right
+   side, as on the claim page. A quoted message takes an accent edge; one the document left out
+   takes a dashed signal edge.
    The tag names each state, so none rests on the edge alone. Messages outside the exchange
    recede to muted text. */
 .bub { max-width: 76%; align-self: flex-start; padding: var(--s1) var(--s3);
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--line);
   overflow-wrap: anywhere; }
-.bub.out { align-self: flex-end; background: var(--paper); }
+.bub.out { align-self: flex-end; background: var(--accent-wash);
+  border-color: var(--accent-wash); }
 .bub.dim .body { color: var(--muted); }
-.bub.pick { border-color: var(--ink); outline: 1px solid var(--ink); }
+.bub.pick { border-color: var(--accent); outline: 1px solid var(--accent); }
 .bub.left { border: 1px dashed var(--signal); }
 .bub .who2, .bub .att { font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .bub .t { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline;

@@ -25,10 +25,15 @@ CSS = """
   font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .pg-claims .tile .name::before { content: ""; width: var(--dot); height: var(--dot);
   border-radius: 50%; border: 2px solid var(--muted); }
-.pg-claims .tile.t-you .name::before, .pg-claims .tile.t-sup .name::before {
-  background: var(--ink); border-color: var(--ink); }
-.pg-claims .tile.t-you .name::before { border-radius: 0; }
+.pg-claims .tile.t-you .name::before { background: var(--accent); border-color: var(--accent);
+  border-radius: 0; }
+.pg-claims .tile.t-sup .name::before { background: var(--support);
+  border-color: var(--support); }
 .pg-claims .tile.t-con .name::before { background: var(--signal); border-color: var(--signal); }
+/* the counts take their finding's color; unproven and not audited stay ink */
+.pg-claims .tile.t-you .n { color: var(--accent); }
+.pg-claims .tile.t-sup .n { color: var(--support); }
+.pg-claims .tile.t-con .n { color: var(--signal); }
 .pg-claims a.tile:hover .name { color: var(--ink); }
 .pg-claims .tile.empty .n { color: var(--muted); }
 
@@ -44,7 +49,16 @@ CSS = """
   color: var(--muted); }
 .pg-claims .nextup .gap b { color: var(--ink); margin-right: var(--s2); }
 
-/* groups: a heading and its count */
+/* groups: a heading behind its finding's mark, and its count */
+.pg-claims section.group .ghead h2 { display: inline-flex; align-items: center; gap: var(--s2); }
+.pg-claims section.group .ghead h2::before { content: ""; flex: none; width: var(--dot);
+  height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
+.pg-claims section#you .ghead h2::before { background: var(--accent);
+  border-color: var(--accent); border-radius: 0; }
+.pg-claims section#sup .ghead h2::before { background: var(--support);
+  border-color: var(--support); }
+.pg-claims section#con .ghead h2::before { background: var(--signal);
+  border-color: var(--signal); }
 .pg-claims details.fold > summary { color: var(--muted); }
 
 /* a claim row: name | claim | status, then small lines under the claim */
@@ -55,7 +69,7 @@ CSS = """
 .pg-claims .ledger .cid a { color: var(--ink); text-decoration: none; }
 .pg-claims .ledger .cid a::after { content: ""; position: absolute; inset: 0; }
 .pg-claims .ledger .cid a:focus-visible { outline: none; }
-.pg-claims .ledger li:has(.cid a:focus-visible) { outline: 2px solid var(--ink);
+.pg-claims .ledger li:has(.cid a:focus-visible) { outline: 2px solid var(--accent);
   outline-offset: 2px; }
 .pg-claims .ledger .text { grid-column: 2; max-width: 80ch; text-wrap: pretty; }
 .pg-claims .ledger .verdict { grid-column: 3; justify-self: end; }
