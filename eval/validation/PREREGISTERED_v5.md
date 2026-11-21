@@ -166,6 +166,14 @@ since (on #265, then on merged main 975e37e) changed no check outcome, and the t
 on check outcomes, so 42 stands on current code. This is inferred from the replays, not
 recounted, and it is a different claim set from v5's.
 
+**Correction after signing (2026-11-21 04:25Z, a fact, not a changed number or bar):** the
+inference above was wrong. A recount that replays pass 1's stored filler answers through the
+checks (`recount.py` in the project's validation files, no model calls) reproduces 42 / 19 / 21 at tag
+`validation-v4` and gives **39 code-checked** on main 8b66573 (17 unsettled, 20 expert only, 74
+untested), with zero false supported or contradicted. The 3 lost (D083, D087, D094) are the
+wrong-window claims filler 10 (#261) now refuses, as intended. C1 still passes (at least 30). 39
+is v4's claim set, not v5's; v5's claims are written to C3's mix, which v4's were not.
+
 C4's bar (40) is set above bar 5's floor (30) because pass 1 refills every claim afresh: v4's two
 passes differed by 2. The probe is used instead of a paid first slice of pass 1 because it covers
 all 150 claims for about a twentieth of a pass, where a 15-claim slice would cost more and
