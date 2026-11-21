@@ -1876,3 +1876,129 @@ core/schema.sql
      kind             TEXT NOT NULL CHECK (kind IN ('ufdr', 'cellebrite_excel', 'cellebrite_pdf',
 -                         'cellebrite_html', 'axiom', 'raw_zip', 'govdoc', 'synthetic')),
 +                         'cellebrite_html', 'axiom', 'leapp', 'raw_zip', 'govdoc', 'synthetic')),
+
+## 2026-11-21 claude/project-thread-8xaz0s: rules 0.6.0, rule 3d': a model "complicates" no longer blocks a time the check computed
+NOT SIGNED. Needs Arsh's "approved" on this exact wording and diff before anyone edits
+`core/audit/rules.py`.
+File: core/audit/rules.py
+Why: under 0.5.0 any undismissed "complicates" label blocks SUPPORTED, even when the claim rests
+on code checks alone (rule 3c') and the label sits on the time assumption that the time check
+already computed from the records. On the A13 dev phone's stored v4 labels (free replay, no
+model call, merged main 93defd5e), 5 true claims whose checks all pass stay UNPROVEN this way:
+D064, D077, D093, D122 and D133. The labels on their time assumptions are of two kinds: a
+neighbouring reply that "bears on" the message but is not it (D064, D093, D077), and the model
+saying the other party's name is not tied to the account (D077, D122), which the check did tie
+through the account name in the source.
+What changes: when rule 3c' carries the claim, a "complicates" label on a core TIME assumption
+whose checks all passed and named their records does not block. The reasons list it for the
+expert ("Rule 3d': ..."), and it is never cited as support. Everything else stays as 0.5.0:
+- a "complicates" on an identity assumption still blocks. That keeps the shared-account guard
+  (C16's "its ilya btw"): filler-made sender and caller assumptions have no authorship check, so
+  the model's flag is the only thing that catches someone else using the account;
+- a "complicates" on a non-core assumption, on a time whose check is inconclusive or names no
+  records, or on any claim that checks alone cannot carry, still blocks;
+- an unconfirmed "contradicts" still blocks everywhere.
+What it does not catch: a record that says the device clock was wrong. The time check reads the
+record's timestamp; the flag stays listed on the claim for the expert, and the basis stays
+"supported by the records (code checks)", which an expert can override.
+Measured (free replay of stored v4 labels and filler answers, 2026-11-21, cloud container):
+- A13 (150 claims): SUPPORTED with stored labels 3 -> 6 (D077, D093, D122), all true. 0 false
+  Supported, 0 false Contradicted. D064 and D133 stay UNPROVEN on their sender flags.
+- iOS 15 (106 claims): no change (none of its claims was blocked this way). 0 false.
+- Tests on a scratch copy with the diff: 5,110 passed; the only new failures are the two
+  "0.5.0" version pins, which the implementation PR updates. 25 encryption tests fail in this
+  container on main too (no encryption library here); CI runs them.
+- `make eval` is model-free (no labels), so case01, hostile and case02 cannot change; the
+  implementation PR runs it anyway. Dev data only, correlated with filler development: the v5
+  held-out run is the real test. Synthetic and public data, not real-case validation.
+Follow-up if approved: one PR applies this diff, adds tests/contract/test_rules_060.py (nine
+cases: the rule, identity still blocks, non-core, no records, inconclusive, contradicts, claims
+checks cannot carry), updates the two version pins, and adds a changelog entry. CLAUDE.md says
+"Under rules 0.5.0 a SUPPORTED rests on one of three things"; the three bases do not change, so
+that line can stay or read 0.6.0, Arsh's choice.
+Diff:
+```diff
+@@ -77,7 +77,11 @@ Rule 3. SUPPORTED needs all of:
+         one on a curated report, which may leave records out; Greptile review, #228). No model
+         label and no reviewer is used, and the basis is checked;
+     (d) no complicating item that is not dismissed, no counting contradiction and no failed
+-        check on any assumption of the claim, core or not;
++        check on any assumption of the claim, core or not. Rule 3d' (0.6.0, Arsh, 2026-11-21):
++        when rule 3c' carries the claim, a complicating item on a core time assumption whose
++        checks all passed and named their records does not block; the time check computed that
++        time from the records. The reasons list the item for the expert. A complicating item on
++        any other assumption, identity included, still blocks;
+     (e) the core assumptions include the kind the claim type turns on: identity for a
+         communication claim (who sent it: C16's shared account) or an identity claim, a
+         meaning assumption for a content-meaning claim, completeness for an absence or count
+@@ -119,6 +123,10 @@ acceptance under rules 1b and 3c (option B), and rule 3c' with the checked basis
+ A case with no counsel review decides as 0.4.0 did, except that a COMMUNICATION, TIMING or
+ COUNT claim whose core assumptions all passed their checks, with nothing blocking, is
+ SUPPORTED (checked) under 0.5.0 where 0.4.0 left it UNPROVEN awaiting an expert.
++0.6.0 (Arsh, 2026-11-21) adds rule 3d'. A claim decides as under 0.5.0, except that a
++COMMUNICATION, TIMING or COUNT claim whose only blocker was an undismissed "complicates" label on
++a core time assumption that passed its checks is SUPPORTED (checked) under 0.6.0, where 0.5.0
++left it UNPROVEN until an expert dismissed the label.
+ """
+ 
+ from __future__ import annotations
+@@ -149,7 +157,7 @@ from core.contracts import (
+     verdict_id,
+ )
+ 
+-RULE_VERSION = "0.5.0"
++RULE_VERSION = "0.6.0"
+ 
+ _CITABLE_RECORD = frozenset({ProvenanceTier.OBSERVED, ProvenanceTier.DERIVED})
+ _REVIEWED = frozenset({EvidenceStatus.AI_ACCEPTED, EvidenceStatus.ACCEPTED})
+@@ -184,6 +192,16 @@ _REQUIRED_KIND = {
+ _NO_AI_COVERAGE = frozenset({ClaimType.IDENTITY, ClaimType.ROLE, ClaimType.CONTENT_MEANING})
+ 
+ 
++def _time_settled_by_check(f: _Finding, checks: list[CheckResult]) -> bool:
++    """Rule 3d' (0.6.0): a core time assumption whose checks all passed and named records."""
++    return (
++        f.assumption.is_core
++        and f.assumption.kind is AssumptionKind.TIME
++        and bool(checks)
++        and all(c.outcome is CheckOutcome.PASS and c.record_ids for c in checks)
++    )
++
++
+ @dataclass
+ class _Finding:
+     """What the rules found for one assumption of this claim."""
+@@ -471,6 +489,7 @@ def decide_verdict(
+                     "an exact count needs an expert."
+                 )
+             )
++    notes: list[str] = []
+     for f in findings:
+         if not f.assumption.is_core:
+             blockers += [
+@@ -500,6 +519,16 @@ def decide_verdict(
+                 f"({_how(e)}) and is not dismissed."
+                 for e in f.unconfirmed
+             ]
++        if by_code and _time_settled_by_check(f, ck_by[f.assumption.id]):
++            # rule 3d' (0.6.0): a time the check computed is not left open by a model's
++            # "complicates"; the label stays on the claim for the expert
++            notes += [
++                f"Rule 3d': {e.record_id} complicates '{f.assumption.text}' and is not "
++                "dismissed. The time check computed this time from the records, so the label "
++                "does not block support by code checks; an expert can review it."
++                for e in f.complicating
++            ]
++            continue
+         blockers += [
+             f"Rule 3d: {e.record_id} complicates '{f.assumption.text}' and is not dismissed."
+             for e in f.complicating
+@@ -507,6 +536,7 @@ def decide_verdict(
+     if blockers:
+         reasons += blockers
+         return decide(Verdict.UNPROVEN)
++    reasons += notes  # rule 3d': listed on every SUPPORTED it did not block
+ 
+     expert_supports = [e for e in supports if e.status is EvidenceStatus.ACCEPTED]
+     counsel_supports = [e for e in supports if e.status is EvidenceStatus.COUNSEL_ACCEPTED]
+```
