@@ -1052,7 +1052,7 @@ def test_a_blank_side_is_never_a_party_who_does_not_own_the_phone(conn):
 
 AT2 = "On June 2, 2026, at about 9:00 p.m. EDT,"
 RT2 = proposal(people=["Marcus Reyes"], accounts=[{"as_written": "(212) 555-0199", "app": "call"}],
-               quoted_text="", channels=["call"],
+               phones=["Item 1"], quoted_text="", channels=["call"],
                window=W("June 2", "2026-06-02T20:52", "2026-06-02T21:09")).model_dump()  # fmt: skip
 TIE = {"template_id": "person_identity", "people": ["Marcus Reyes"],
        "accounts": [{"as_written": "(212) 555-0199", "app": "call"}], "handles": [],
@@ -1074,15 +1074,45 @@ def test_a_person_s_number_is_timed_as_the_number(conn, words):
     rt = made["record_time"]
     assert REYES not in rt.params.person_ids, [d.reason for d in f.drops]
     assert set(rt.params.account_ids) == set(NUM)
+    assert list(rt.params.device_ids) == ["dev:item1"]
     (r,) = run_checks(rt, conn)
     assert r.outcome is CheckOutcome.PASS, r.detail
-    # whose number it is stays the identity row's to test: the claim is not supported on the
-    # call alone
+    # whose number it is stays the identity row's to test, and who placed the call an event
+    # row's, which no check covers: the call found with the number never carries the claim
     assert list(made["person_identity"].params.person_ids) == [REYES]
+    event = made["event"]
+    assert event.is_core and TEMPLATES["event"].checks == ()
+    assert REYES in event.params.person_ids
     assumptions = list(made.values())
     checks = [x for a in assumptions for x in run_checks(a, conn)]
     v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
     assert v.verdict is Verdict.UNPROVEN, v.reasons
+    assert any("belongs to person:reyes" in x for x in v.reasons), v.reasons
+    assert any("The event the claim states" in x for x in v.reasons), v.reasons
+
+
+def test_a_person_s_number_keeps_the_claimed_caller_for_the_expert(conn):
+    # Claude review on #273: on June 1 the log holds only calls Item 1 placed. Written with
+    # the number alone the reversed caller is CONTRADICTED; written with the person beside the
+    # number no caller row is read, and the event row keeps the direction from being skipped.
+    rt = {**RT2, "window": W("June 1", "2026-06-01T20:52", "2026-06-01T21:09")}
+    text = "On June 1, 2026, at about 9:00 p.m. EDT, Marcus Reyes at (212) 555-0199 called Item 1."
+    made, _ = fill(conn, text, items=[rt, TIE])
+    assert "caller" not in made
+    assert made["event"].is_core
+    assumptions = list(made.values())
+    checks = [x for a in assumptions for x in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN, v.reasons
+
+
+def test_an_identity_claim_keeps_its_owner_row_for_the_expert(conn):
+    # Claude review on #273: for an identity claim the owner row is the claim itself
+    row = {"template_id": "person_identity", "people": ["PETROV"], "accounts": [],
+           "handles": [], "phones": ["Item 1"], "channels": [], "quoted_text": "",
+           "count": None, "duration": None, "window": None}  # fmt: skip
+    made, f = fill(conn, "PETROV is the user of Item 1.", ClaimType.IDENTITY, items=[row])
+    assert "person_identity" in made, [d.reason for d in f.drops]
 
 
 @pytest.mark.parametrize(

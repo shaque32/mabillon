@@ -4325,7 +4325,15 @@ class LocalAssumptionFiller:
             params["window"] = self._stated(claim, para, device_ids, tpl.id, None)
             code_made = True
 
-        if tpl.id == "person_identity" and not account_ids and not handles:
+        if (
+            tpl.id == "person_identity"
+            and not account_ids
+            and not handles
+            and claim.claim_type in _CHECKED_TYPES
+        ):
+            # only beside the rows that decide a communication, timing or count claim: for an
+            # identity claim the row is the claim itself, and it goes to the expert (Claude
+            # review on #273)
             self._owner_identity_names_nothing(
                 list(params.get("person_ids", [])),
                 list(params.get("device_ids", device_ids)),
@@ -4336,7 +4344,9 @@ class LocalAssumptionFiller:
 
     def _exactly_owned(self, person: str) -> set[str]:
         """The phones this person is the one confirmed owner of, with their own accounts
-        exactly the person's party (as `_exact_owner` reads one phone)."""
+        exactly the person's party (as `_exact_owner` reads one phone): none for a person who
+        owns two phones or has a confirmed link to an account off the phone, whose row is then
+        kept."""
         owners: dict[str, set[str]] = {}
         for _, device, pid, status in self.data.stipulations:
             if status == "confirmed":
@@ -4896,8 +4906,8 @@ class LocalAssumptionFiller:
             out = self._shaped(claim, self._add_sender(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_recipient(claim, out), call_id)
-            out = self._shaped(claim, self._person_s_number(claim, out), call_id)
             out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
+            out = self._shaped(claim, self._person_s_number(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._bind_named_app(claim, out), call_id)
             out = self._add_meaning(claim, out, allowed_ids, call_id)
@@ -4906,7 +4916,9 @@ class LocalAssumptionFiller:
             self._drop(claim, None, f"code could not read the claim's own words: {e}", call_id)
             return []
 
-    def _person_s_number(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
+    def _person_s_number(
+        self, claim: Claim, out: list[Proposal], allowed_ids: set[str]
+    ) -> list[Proposal]:
         """A call's time range that names a person and, as a second party, the number the
         claim writes as that person's ("a call from SUBJECT-2's number, (919) 888-7386",
         "called SUBJECT-2 at (919) 888-7386") searches calls between the person's accounts and
@@ -4915,7 +4927,14 @@ class LocalAssumptionFiller:
         the claim keeps for the person and the number tests whose number it is. Only when the
         claim writes the person right before the number in one of those forms, the number is
         every account the time range names, and a core person_identity row names that person
-        and those accounts; otherwise the rows stay as they were."""
+        and those accounts; otherwise the rows stay as they were.
+
+        These wordings give no caller row, so a core event row the checks never cover keeps
+        the rest of what the claim says, who placed the call among it, for the expert: a call
+        found with the number never carries the claim on its own (Claude review on #273). With
+        no event template allowed, or a caller row already made, nothing changes."""
+        if "event" not in allowed_ids or any(p.template_id == "caller" for p in out):
+            return out
         ties = {
             (tuple(p.params.get("person_ids", [])), frozenset(p.params.get("account_ids", [])))
             for p in out
@@ -4925,6 +4944,7 @@ class LocalAssumptionFiller:
         if not ties or not written:
             return out
         fixed: list[Proposal] = []
+        held: list[dict[str, Any]] = []  # each changed time range, as the model gave it
         for p in out:
             params = p.params
             if (
@@ -4947,10 +4967,15 @@ class LocalAssumptionFiller:
                     )
                 }
                 if len(drop) == 1:
+                    held.append(dict(params))
                     kept = [x for x in params["person_ids"] if x not in drop]
                     params = {**params, "person_ids": kept}
                     p = Proposal(p.template_id, params, is_core=p.is_core, code_made=True)
             fixed.append(p)
+        if held and not any(p.template_id == "event" and p.is_core for p in fixed):
+            allowed = TEMPLATES["event"].allowed
+            event = {k: v for k, v in held[0].items() if k in allowed}
+            fixed.append(Proposal("event", event, is_core=True, code_made=True))
         return fixed
 
     def _person_number_pairs(self, claim: Claim) -> list[tuple[str, str]]:
