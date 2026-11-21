@@ -602,10 +602,70 @@ def test_a_claim_supported_on_ai_review_or_with_ai_dismissed_support_waits_on_th
         row = sup.split(f"id={cid}'", 1)[1].split("</li>", 1)[0]
         assert "<span class='gap you'>Needs you</span>" in row, cid
     assert "4 claims need you</h1>" in page  # C16, D03 and these two
-    # the case page's Supported mark is green only when every supported claim earned it: one
-    # AI-reviewed claim marks the list, and the stylesheet keeps the mark ink (ui/css/overview.py)
-    assert "<ul class='findings ai-support'>" in pages._case_status(states)
-    assert "<ul class='findings'>" in pages._case_status(claim_states(conn))
+    # the Supported count and heading are green only when every supported claim earned it: one
+    # AI-reviewed claim leaves both pages without the class the green rules hang on
+    assert "<div class='pg-claims'>" in page
+    assert "<ul class='findings'>" in pages._case_status(states)
+
+
+def test_supported_green_follows_the_weakest_supported_claim_and_leaves_a_stale_verdict(root):
+    """The stylesheet gives the Supported count, its heading and a Supported verdict the support
+    green only through classes this markup sets (tests/test_design_system.py holds the CSS to
+    them). The group's class follows its weakest claim; a verdict that waits on a re-run carries
+    v-stale and its group takes no green, on Claims, the case page and the claim page."""
+    import dataclasses
+    from datetime import UTC, datetime
+
+    from core.contracts import SupportedBasis
+    from core.review.status import STALE, claim_states
+    from ui import pages
+
+    case = _case(root)
+    conn = connect(case.db)
+    states = claim_states(conn)
+    sup = [st for st in states if pages._verdict_group(st) == "sup"]
+    assert {st.css for st in sup} == {"v-sup", "v-supchk"}  # the demo case holds both kinds
+    assert not any("v-stale" in pages._vcls(st) for st in states)
+    assert pages._support_mark(states) == " sup-earned"  # one rests on the code checks: a ring
+    assert pages._support_mark([st for st in states if st.css != "v-supchk"]) == " sup-confirmed"
+    assert pages._support_mark([st for st in states if st not in sup]) == ""  # none: no green
+    counsel = [
+        dataclasses.replace(
+            st,
+            decision=st.decision.model_copy(
+                update={"supported_basis": SupportedBasis.COUNSEL_REVIEWED}
+            ),
+        )
+        if st.css == "v-sup"
+        else st
+        for st in states
+    ]
+    assert pages._support_mark(counsel) == " sup-earned"  # counsel never wears the solid mark
+
+    app = App(home=demo.cases_dir(root), port=PORT, model_check=None)
+    app.open_case(case)
+
+    def get(path: str, **query: str) -> str:
+        return app.handle(Request("GET", path, query, dict(HOST))).body.decode()
+
+    assert "<div class='pg-claims sup-earned'>" in get("/claims")
+    assert "<ul class='findings sup-earned'>" in get("/")
+    assert "<span class='verdict v-sup'>" in get("/claim", id="C01")
+    # an identity decision after the run: every verdict waits on a re-run, so none is green
+    with conn:
+        audit_log.append(conn, datetime.now(UTC), EXPERT, "identity.confirm", {})
+    stale = claim_states(conn)
+    c01 = next(st for st in stale if st.claim.id == "C01")
+    assert c01.css == "v-sup" and c01.explain_lines() == [STALE]
+    assert pages._vcls(c01) == "v-sup v-stale" and pages._support_mark(stale) == ""
+    assert "<div class='pg-claims'>" in get("/claims")
+    assert "<ul class='findings'>" in get("/")
+    c01_page = get("/claim", id="C01")
+    assert "<span class='verdict v-sup v-stale'>" in c01_page
+    assert "<span class='verdict v-sup'>" not in c01_page
+    # an expert's override is their own word and no re-run changes it: it is never stale
+    over = dataclasses.replace(c01, decision=c01.decision.model_copy(update={"override_note": "x"}))
+    assert over.stale and pages._vcls(over) == "v-sup"
 
 
 def test_gap_lines_follow_the_stored_coverage_until_it_is_stale_and_tiles_have_destinations(root):

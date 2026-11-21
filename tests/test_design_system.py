@@ -34,6 +34,7 @@ COLORS = {
 }
 # Colors that carry text, and the fills text sits on. Every pair must pass WCAG AA for body text.
 TEXT_COLORS = ("--ink", "--muted", "--accent", "--support", "--signal")
+FILLS = ("--paper", "--line", "--accent-wash", "--support-wash", "--signal-wash", "--quote")
 AA = 4.5
 # The only places the support green may show: a Supported verdict an expert confirmed (v-sup),
 # one that rests on the code checks (v-supchk) or on counsel's review (v-supcou), the counts and
@@ -45,14 +46,19 @@ SUPPORT_HOOKS = re.compile(
     r"|li\.ok \.said|\.chip\.ok(?![a-z])|\.d-ok(?![a-z])"
 )
 # Marks that must never take it: support resting on the AI reviewer, support that still waits on
-# the expert, unproven, not tested, and a model's own stance label or AI-reviewed tier.
-NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|b-ai|b-open|ai_reviewed")
+# the expert, unproven, not tested, a verdict that waits on a re-run, and a model's own stance
+# label or AI-reviewed tier.
+NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|v-stale|b-ai|b-open|ai_reviewed")
+# A Supported verdict that waits on a re-run carries v-stale (_vcls in ui/pages.py) and takes no
+# green: every rule that gives green to a verdict class must say so with this guard.
+VERDICT = re.compile(r"\.v-sup(chk|cou)?(?![a-z])")
+CURRENT = ":not(.v-stale)"
 # The Supported count and heading stand for a whole group, which can hold a claim whose support
-# rests on the AI reviewer. Their green rules must carry one of these guards, so one such claim
-# turns the group's marks back to ink: on Claims the page holds no v-supai row; on the case page
-# ui/pages.py did not mark the list ai-support.
+# rests on the AI reviewer or waits on a re-run. Their green rules must hang on a class that
+# ui/pages.py (_support_mark) sets only when every supported claim earned it, so a page that
+# sets none stays ink.
 AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
-AI_GUARDS = (":not(:has(.verdict.v-supai))", ":not(.ai-support)")
+EARNED = (".sup-earned", ".sup-confirmed")
 SPACING = {f"--s{i + 1}": f"{px}px" for i, px in enumerate((4, 8, 12, 16, 24, 32, 48, 64))}
 TYPE = {
     "--t1": "12px",
@@ -190,16 +196,12 @@ def test_no_color_outside_the_tokens() -> None:
 
 
 def test_text_passes_aa_on_every_fill_it_sits_on() -> None:
-    """Each text color on the page, on the quiet fill and on its own wash; ink and muted on every
-    wash and on the highlighter; and every rule that sets a text color and a fill together."""
-    pairs = {(text, "--paper") for text in TEXT_COLORS}
-    pairs |= {(text, "--line") for text in TEXT_COLORS}
-    pairs |= {(hue, f"{hue}-wash") for hue in ("--accent", "--support", "--signal")}
-    pairs |= {
-        (text, fill)
-        for text in ("--ink", "--muted")
-        for fill in ("--accent-wash", "--support-wash", "--signal-wash", "--quote")
-    }
+    """Every text color on every fill text can sit on: the page, the quiet fill, each wash and
+    the highlighter. A page puts one rule's text on another rule's fill (a red verdict in the
+    open ledger row, a green match on a targeted Timeline row), so every pair is held, not only
+    the ones a single rule sets. Then every rule that sets a text color and a fill together,
+    which also covers light text on a dark fill."""
+    pairs = {(text, fill) for text in TEXT_COLORS for fill in FILLS}
     for _, block in _rules(_app_css()):
         rule = dict(block)
         text = _token(rule.get("color", ""))
@@ -218,23 +220,27 @@ def test_support_green_reaches_only_what_earned_it() -> None:
     for selector, block in _rules(_app_css()):
         if not any("--support" in value for _, value in block):
             continue
-        for one in selector.split(","):
-            guarded = any(guard in one for guard in AI_GUARDS)
-            for guard in AI_GUARDS:
-                one = one.replace(guard, "")
+        for part in selector.split(","):
+            one = part.replace(CURRENT, "")
             if not SUPPORT_HOOKS.search(one) or NEVER_SUPPORT.search(one):
-                bad.append(one.strip())
-            elif AGGREGATE.search(one) and not guarded:
-                bad.append(f"unguarded aggregate: {one.strip()}")
+                bad.append(part.strip())
+            elif AGGREGATE.search(one) and not any(cls in one for cls in EARNED):
+                bad.append(f"aggregate without an earned class: {part.strip()}")
+            elif VERDICT.search(one) and len(VERDICT.findall(one)) != part.count(CURRENT):
+                bad.append(f"verdict green without {CURRENT}: {part.strip()}")
     assert bad == []
+    # the solid green aggregate mark, the expert-confirmed mark, hangs on sup-confirmed alone
+    for selector, block in _rules(_app_css()):
+        if "var(--support)" in dict(block).get("background", ""):
+            for part in selector.split(","):
+                if AGGREGATE.search(part):
+                    assert ".sup-confirmed" in part and ".sup-earned" not in part, part
     # an assumption covered only by the AI reviewer is turned back to muted, after the green rule
     rules = _rules(_app_css())
     green = next(i for i, (s, _) in enumerate(rules) if s.endswith("li.ok .said"))
     ai = next(i for i, (s, _) in enumerate(rules) if "li.ok[data-tier=ai_reviewed] .said" in s)
     assert ai > green and dict(rules[ai][1])["color"] == "var(--muted)"
     # the AI-reviewed Supported mark keeps the base ring: no rule gives v-supai a color at all
-    for guard in AI_GUARDS:
-        rules = [(s.replace(guard, ""), block) for s, block in rules]
     assert not any("v-supai" in s for s, _ in rules)
 
 

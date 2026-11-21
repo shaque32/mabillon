@@ -406,13 +406,12 @@ def _case_status(states: list[ClaimState]) -> str:
         for g, name in GROUPS
         if g != "you" and (by[g] or g != "not")
     )
-    # the Supported mark is green only when every supported claim earned it; one that rests on
-    # the AI reviewer keeps the whole count's mark ink (ui/css/overview.py)
-    ai = " ai-support" if any(st.css == "v-supai" for st in states) else ""
+    # how the Supported count is marked: green only when every supported claim earned it
+    # (_support_mark; the rules that read the class are in ui/css/overview.py)
     return (
         "<div class='casestatus'>"
         f"<a class='button primary' href='/claims'>{e(action)}</a>"
-        f"<ul class='findings{ai}'>{counts}</ul></div>"
+        f"<ul class='findings{_support_mark(states)}'>{counts}</ul></div>"
     )
 
 
@@ -719,9 +718,32 @@ def _device_notes(conn: sqlite3.Connection) -> str:
 # ---------------------------------------------------------------- queue
 
 
+def _waits_on_rerun(st: ClaimState) -> bool:
+    """The stored verdict is not current: something it rests on changed after the run, nobody
+    overrode it, and only a re-run settles it (the overview's and the report's "Not current")."""
+    return st.explain_lines() == [STALE]
+
+
 def _vcls(st: ClaimState) -> str:
-    """The pill's classes: the verdict's, plus its own style for a claim nothing tested."""
-    return f"{st.css} v-nt" if st.untested else st.css
+    """The pill's classes: the verdict's, plus its own style for a claim nothing tested, plus
+    v-stale for a verdict that waits on a re-run. A stale Supported keeps its words and its mark
+    but takes no green (ui/theme.py): what stood behind it may no longer."""
+    cls = f"{st.css} v-nt" if st.untested else st.css
+    return f"{cls} v-stale" if _waits_on_rerun(st) else cls
+
+
+def _support_mark(states: list[ClaimState]) -> str:
+    """The class (with its leading space) that lets the Supported count and heading take the
+    support green, on Claims and on the case page. They stand for every supported claim, so
+    they follow the weakest one: " sup-confirmed" (solid green mark) only when an expert
+    confirmed every one and each is current; " sup-earned" (green ring) when every one rests on
+    an expert, counsel or the code checks and each is current; "" (ink ring, ink count) when
+    there is none, or when one rests on the AI reviewer or waits on a re-run. No class means no
+    green, so a page that forgets to ask stays ink."""
+    sup = [st for st in states if _verdict_group(st) == "sup"]
+    if not sup or any(st.css == "v-supai" or _waits_on_rerun(st) for st in sup):
+        return ""
+    return " sup-confirmed" if all(st.css == "v-sup" for st in sup) else " sup-earned"
 
 
 def _ledger_anchor(claim_id: str) -> str:
@@ -767,7 +789,7 @@ def needs_you(st: ClaimState) -> bool:
         st.priority <= NEEDS_YOU
         or st.css == "v-supai"
         or st.ai_dismissed > 0
-        or st.explain_lines() == [STALE]  # its verdict waits on a re-run
+        or _waits_on_rerun(st)
     )
 
 
@@ -898,7 +920,7 @@ def claims_queue(conn: sqlite3.Connection, page: Page, next_step: str | None = N
     elif next_step and not you:
         lede = f"<p class='lede'>Next: {e(next_step)} <a href='/setup'>Set up and run</a>.</p>"
     out = [
-        "<div class='pg-claims'>"
+        f"<div class='pg-claims{_support_mark(states)}'>"
         f"<div class='overview-head'><h1>{e(head)}</h1>"
         "<span class='head-acts'><a href='/help#words'>What the words mean</a> "
         "<a class='button' href='/claim/new'>Add a claim</a></span></div>" + lede,

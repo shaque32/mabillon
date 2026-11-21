@@ -35,7 +35,8 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 /* the verdict: the page's answer, as large as the claim it answers, on a plate. The plate
    follows the mark: filled with its finding's wash where the mark is solid (support the expert
    confirmed, contradicted), an outline in the finding's color where the mark is a ring, and a
-   hairline for unproven and for support that rests on the AI reviewer. */
+   hairline for unproven, for support that rests on the AI reviewer and for any verdict that
+   waits on a re-run. */
 .pg-claim #verdict { margin: 0 0 var(--s5); }
 .pg-claim .vhead { margin: 0 0 var(--s3); }
 .pg-claim .vhead h2 { position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -43,14 +44,16 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .pg-claim #verdict .vhead .verdict { font: 600 var(--t4)/var(--l4) var(--sans);
   gap: var(--s3); white-space: normal; padding: var(--s2) var(--s4);
   border: 1px solid var(--line); border-radius: var(--radius); }
-.pg-claim #verdict .vhead .v-sup { background: var(--support-wash);
+.pg-claim #verdict .vhead .v-sup:not(.v-stale) { background: var(--support-wash);
   border-color: var(--support-wash); }
 .pg-claim #verdict .vhead .v-con { background: var(--signal-wash);
   border-color: var(--signal-wash); }
-.pg-claim #verdict .vhead .v-supchk, .pg-claim #verdict .vhead .v-supcou {
-  border-color: var(--support); }
+.pg-claim #verdict .vhead .v-supchk:not(.v-stale),
+.pg-claim #verdict .vhead .v-supcou:not(.v-stale) { border-color: var(--support); }
 .pg-claim #verdict .vhead .v-confirm { border-color: var(--signal); }
 .pg-claim #verdict .vhead .v-await { border-color: var(--accent); }
+/* a verdict that waits on a re-run sits on the plain hairline plate, whatever its finding */
+.pg-claim #verdict .vhead .verdict.v-stale { background: none; border-color: var(--line); }
 .pg-claim #verdict .vhead .verdict::before { width: var(--s3); height: var(--s3); }
 .pg-claim ul.needs { list-style: none; margin: 0 0 var(--s3); padding: 0; }
 .pg-claim ul.needs li { margin: 0 0 var(--s1); }
@@ -183,7 +186,7 @@ p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .pg-claim form.wording-acts { margin: var(--s2) 0 var(--s3); }
 .pg-claim form.wording-acts.done button[value=accepted] { color: var(--ink);
   background: var(--line); border-color: var(--line); }
-.pg-claim form.wording-acts.done button[value=accepted]:hover { border-color: var(--ink); }
+.pg-claim form.wording-acts.done button[value=accepted]:hover { border-color: var(--accent); }
 
 /* the side ledger keeps the open claim in view. A ledger link lands on that claim's row
    (#lg-<id>), which scrolls the ledger to it, a third of the way down; the window stays at

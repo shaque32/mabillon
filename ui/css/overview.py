@@ -30,11 +30,12 @@ CSS = """
   height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
 .pg-overview .casestatus .findings .t-con::before { background: var(--signal);
   border-color: var(--signal); }
-.pg-overview .casestatus .findings .t-sup::before { background: var(--ink);
-  border-color: var(--ink); }
-/* green only when every supported claim earned it: _case_status marks the list ai-support when
-   one rests on the AI reviewer, and the mark stays ink (as on Claims, ui/css/claims.py) */
-.pg-overview .casestatus .findings:not(.ai-support) .t-sup::before {
+.pg-overview .casestatus .findings .t-sup::before { border-color: var(--ink); }
+/* the Supported mark follows the weakest supported claim, as on Claims (ui/css/claims.py):
+   an ink ring unless _case_status marks the list sup-earned (green ring) or sup-confirmed
+   (solid green, an expert confirmed every one) */
+.pg-overview .casestatus .findings.sup-earned .t-sup::before { border-color: var(--support); }
+.pg-overview .casestatus .findings.sup-confirmed .t-sup::before {
   background: var(--support); border-color: var(--support); }
 .pg-overview .casestatus .findings b { font-variant-numeric: tabular-nums; }
 .pg-overview .casestatus .verdict { margin: 0; }
