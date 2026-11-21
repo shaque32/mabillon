@@ -3470,22 +3470,42 @@ _CONNECTED_RE = re.compile(r"\bconnected\b", re.IGNORECASE)
 
 
 _BY_RE = re.compile(r"\bby\b", re.IGNORECASE)
+_ID_CHAR_RE = re.compile(r"[\w.+@:/-]")
+
+
+def _in_identifier(text: str, start: int, end: int) -> bool:
+    """True when text[start:end] is part of one handle, address or id ("@connected",
+    "connected@example.org", "live:connected", "connected.com"), read on the run of identifier
+    marks around it. A parenthesis, comma or space ends the run, so "connected(@northstar"
+    keeps "connected" outside the handle (CodeRabbit on #273)."""
+    a, b = start, end
+    while a > 0 and _ID_CHAR_RE.match(text[a - 1]):
+        a -= 1
+    while b < len(text) and _ID_CHAR_RE.match(text[b]):
+        b += 1
+    run = text[a:b].rstrip(".:")
+    return (
+        "@" in run
+        or ":" in run
+        or _WEB_ADDRESS_RE.fullmatch(run) is not None
+        or re.search(r"\.(?:com|net|org|us|io)\b", run, re.IGNORECASE) is not None
+    )
 
 
 def connected_with_object(bare: str) -> bool:
-    """True when the claim's words (unquoted, no party blanked) write "connected" other than
+    """True when the claim's words (unquoted, nothing blanked) write "connected" other than
     as the call's own: "PETROV connected REYES with SUBJECT-2", "Item 1 connected Marcus Reyes
     for two minutes". Someone put others on a call, which no row reads (Claude review on
     #273). The call's own "connected" with "by" anywhere after it names who connected it ("the
     call was connected for a minute by PETROV"), so it is not plain either (CodeRabbit on
-    #273). A handle or an address is an account, never the verb ("@connected"): it is blanked
-    first (CodeRabbit on #273)."""
-    bare = _blank(
-        bare,
-        [m.span() for rx in (_HANDLE_RE, _ADDRESS_RE, _WEB_ADDRESS_RE) for m in rx.finditer(bare)],
-    )
+    #273). A "connected" inside a handle or an address is an account, never the verb
+    ("@connected"), but one written against a handle ("connected(@northstar") is still the
+    verb (CodeRabbit on #273)."""
     own = {m.end() for m in _OWN_CONNECTED_RE.finditer(bare) if not _BY_RE.search(bare, m.end())}
-    return any(m.end() not in own for m in _CONNECTED_RE.finditer(bare))
+    return any(
+        m.end() not in own and not _in_identifier(bare, m.start(), m.end())
+        for m in _CONNECTED_RE.finditer(bare)
+    )
 
 
 def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:

@@ -1145,6 +1145,10 @@ def test_an_owner_with_no_accounts_is_never_given_a_row(conn: sqlite3.Connection
         ("the call to @connected lasted two minutes", True),
         ("the call to connected@example.org lasted two minutes", True),
         ("PETROV connected @connected with REYES on a call lasting two minutes", False),
+        ("PETROV connected(@northstar, REYES) on a call lasting two minutes", False),
+        ("PETROV connected(connected@example.org, REYES) on a call lasting two minutes", False),
+        ("the call to live:connected lasted two minutes", True),
+        ("the call to connected.com lasted two minutes", True),
     ],
 )
 def test_only_the_call_s_own_connected_is_plain_beside_a_length(

@@ -49,8 +49,8 @@
   caller beside a person's number held by the event row, and the person kept without the
   identity row or when written as a second party; an identity claim keeps its owner row; a
   row read through the owner's stipulation says so, and an owner with no accounts gets none;
-  only the call's own "connected" is plain, never "Reyes was connected", "connected ... by PETROV" or a handle such as "@connected"). `tests/checks` and
-  the filler, testability, replay and timeline test files: 1,429 passed. `make eval` unchanged: case01 model-free 1.00
+  only the call's own "connected" is plain, never "Reyes was connected", "connected ... by PETROV" or a handle such as "@connected", though "connected(@northstar" is still the verb). `tests/checks` and
+  the filler, testability, replay and timeline test files: 1,433 passed. `make eval` unchanged: case01 model-free 1.00
   (unreviewed 0.70), 0 false supported, hostile PASS (0 of 7 structural claims supported),
   case02 aggregate 0.90, 0 false supported (run on this head). Cloud container, Linux x86_64, 4 CPUs,
   2026-11-21. Free replay of stored answers (development data, no spend), Android 13 v4 pass 1
