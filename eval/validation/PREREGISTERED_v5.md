@@ -114,8 +114,9 @@ As v4, with these changes:
   that maps to no record or several, with why, and never matches it to a near miss.
 - Absence claims: the key is set by a script from a structured form (parties, phone, app,
   window), as in v4.
-- Reported before adjudication: Fleiss' kappa across the three readers, and the blind 30's
-  agreement with the signed key.
+- Fleiss' kappa across the three readers, computed before adjudication, and the blind 30's
+  agreement with the signed key, measured once the sample (drawn after C4) is labeled. Both
+  are reported before pass 1.
 - `gold.jsonl` in the `GoldClaim` format, `labeled_by` Arsh, signed before the freeze.
 
 ## 6. Code, frozen at a tag

@@ -1441,6 +1441,9 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                 "report_xml_sha256", "model", "coverage_probe")  # fmt: skip
         earlier = {k: run.pop(k) for k in keys if k in run}
         run.setdefault("earlier_cases", []).append(earlier)
+        # on disk before built.ok can exist: a stop between the two must not leave a built.ok
+        # beside a run.json whose top-level spend is the earlier case's (CodeRabbit on #272)
+        run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),

@@ -277,3 +277,31 @@ def test_a_run_rebuilt_after_a_run_keeps_counting_its_spend(ufdr, tmp_path, monk
     assert hickman_run.main([*args, "--cloud", "claude-opus-5-5", "--max-usd", "55"]) == 3
     assert seen == [40.0]
     assert "earlier_cases" not in json.loads((out / "run.json").read_text(encoding="utf-8"))
+
+
+def test_the_earlier_case_moves_on_disk_before_the_new_case_is_built(ufdr, tmp_path, monkeypatch):
+    """A probe stopped after its new case is built but before run.json is written again must
+    not resume with the earlier case's spend as its baseline (CodeRabbit on #272)."""
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    run_path = tmp_path / "probe" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["cloud"] = {"sessions": [{"spent_usd": 3.0}], "spent_usd": 3.0}
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    on_disk: list[dict] = []
+    real_build = hickman_run.build
+
+    def build_then_stop(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        on_disk.append(json.loads(run_path.read_text(encoding="utf-8")))
+        real_build(*a, **k)
+        raise KeyboardInterrupt  # stopped before built.ok and run.json are written
+
+    monkeypatch.setattr(hickman_run, "build", build_then_stop)
+    with pytest.raises(KeyboardInterrupt):
+        hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe"))
+    (seen,) = on_disk
+    assert "cloud" not in seen and "build_id" not in seen
+    assert seen["earlier_cases"][0]["cloud"]["spent_usd"] == 3.0
+    monkeypatch.setattr(hickman_run, "build", real_build)
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    again = json.loads(run_path.read_text(encoding="utf-8"))
+    assert len(again["earlier_cases"]) == 1 and "probe" in again["audit"]
