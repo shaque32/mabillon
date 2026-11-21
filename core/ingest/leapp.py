@@ -342,7 +342,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     man_member = found[0]
     _check_size(z, man_member, MAX_MANIFEST_BYTES, file_name)
     try:
-        manifest = json.loads(z.read(man_member).decode("utf-8"))
+        manifest = json.loads(_read_member(z, man_member, file_name).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
         raise ValueError(f"{man_member} in {file_name} is not a LEAPP manifest") from err
     if not isinstance(manifest, dict) or not isinstance(manifest.get("artifacts"), dict):
@@ -426,8 +426,8 @@ def _open_database(
 
 
 # zipfile's errors for a member it cannot unpack: an unsupported method such as Deflate64
-# (NotImplementedError, a RuntimeError), a password (RuntimeError), a bad CRC or header
-# (BadZipFile), or a broken compressed stream (zlib.error, EOFError)
+# (NotImplementedError), a password (RuntimeError), or damage: a bad CRC or header
+# (BadZipFile), a broken compressed stream (zlib.error) or a cut-off member (EOFError)
 ZIP_MEMBER_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
     zipfile.BadZipFile,
@@ -437,11 +437,20 @@ ZIP_MEMBER_ERRORS: tuple[type[Exception], ...] = (
 
 
 def _unpack_error(z: zipfile.ZipFile, member: str, file_name: str, err: Exception) -> ValueError:
+    """The examiner's message for a member zipfile cannot unpack."""
     method = z.getinfo(member).compress_type
+    if isinstance(err, NotImplementedError) or (
+        type(err) is RuntimeError and "password" in str(err).lower()
+    ):
+        return ValueError(
+            f"{member} in {file_name} cannot be unpacked ({err}; zip compression method "
+            f"{method}); zip the LEAPP output folder again with standard (Deflate) compression "
+            "and no password"
+        )
     return ValueError(
-        f"{member} in {file_name} cannot be unpacked ({type(err).__name__}: {err}; zip "
-        f"compression method {method}); zip the LEAPP output folder again with standard "
-        "(Deflate) compression and no password"
+        f"{member} in {file_name} cannot be unpacked: the zip is damaged ({type(err).__name__}: "
+        f"{err}); copy the LEAPP output zip again from its source, check its SHA-256, and "
+        "import it again"
     )
 
 
@@ -449,6 +458,8 @@ def _read_member(z: zipfile.ZipFile, member: str, file_name: str) -> bytes:
     try:
         return z.read(member)
     except ZIP_MEMBER_ERRORS as err:
+        if isinstance(err, RecursionError):  # a RuntimeError, but not zipfile's
+            raise
         raise _unpack_error(z, member, file_name, err) from err
 
 
@@ -460,17 +471,29 @@ COPY_CHUNK_BYTES = 1024 * 1024
 def _copy_member(
     z: zipfile.ZipFile, member: str, file_name: str, dst: BinaryIO, temp_dir: Path
 ) -> None:
-    """Stream the member into dst, refreshing the folder's time as it goes."""
+    """Stream the member into dst, refreshing the folder's time as it goes. A failure reading
+    the input names the input; a failure writing dst is an OSError for the caller."""
     since = 0
     try:
         with z.open(member) as src:
-            while chunk := src.read(COPY_CHUNK_BYTES):
+            while True:
+                try:
+                    chunk = src.read(COPY_CHUNK_BYTES)
+                except OSError as err:
+                    raise ValueError(
+                        f"Mabillon could not read {member} from {file_name} ({err}); check the "
+                        "disk that holds the input and import it again"
+                    ) from err
+                if not chunk:
+                    break
                 dst.write(chunk)
                 since += len(chunk)
                 if since >= TOUCH_EVERY_BYTES:
                     _touch(temp_dir)
                     since = 0
     except ZIP_MEMBER_ERRORS as err:
+        if isinstance(err, RecursionError):  # a RuntimeError, but not zipfile's
+            raise
         raise _unpack_error(z, member, file_name, err) from err
 
 

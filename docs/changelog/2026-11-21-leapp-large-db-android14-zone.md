@@ -13,8 +13,9 @@
   removal leaves the named copy until the import ends), and a later large import tries, best
   effort, to remove copies a stopped import left untouched for six hours (a copy in progress
   refreshes its folder's time; on Linux and macOS only this user's own). A disk error during the
-  copy, or a database member the zip library cannot unpack (Deflate64, a password, damage), ends
-  the import with a message instead of a traceback.
+  copy, a failed read of the input, or a manifest or database member the zip library cannot
+  unpack ends the import with a message instead of a traceback (re-zip for Deflate64 or a
+  password; the zip is damaged for a bad CRC or a broken stream).
   `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
   disk lacks its size plus 512 MiB, and the size ceiling rises from 8 GiB to 64 GiB. The
   coverage record says how it was read (`leapp.database_read_from`). (2) Android 14 zone:
@@ -23,13 +24,15 @@
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
 - Where: PR #274
-- Verified: `tests/test_leapp.py` 141 passed (26 new): the import through a temporary copy
+- Verified: `tests/test_leapp.py` 147 passed (32 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
   copy is read-only, gone once open on Linux and gone after close; a database at the limit stays
   in memory; no room on disk, a non-database and an unknown tool each leave no copy; an encrypted
   case's copy reads through; a memory failure falls back to the copy; a stale copy is swept and
-  a fresh one kept; a zip member that cannot be opened or read is a clear error and leaves no copy; a disk
+  a fresh one kept; a zip member that cannot be opened or read, and a manifest that cannot be unpacked, is a clear
+  error and leaves no copy; an unsupported or password-protected member asks for a re-zip and a
+  damaged one says the zip is damaged; a read error on the input names the input; a disk
   error mid-copy or a folder that cannot be made is a clear error; a database SQLite refuses to
   load is "not a SQLite database"; a copy in progress refreshes its folder's time; a copy SQLite
   cannot open is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
@@ -48,8 +51,8 @@
   v9 module notes name a sample row count for the public Pixel 7a phone; only its headers were
   used. Format support stays unverified.
 - Affects: capabilities (LAVA databases over 2 GiB import; Android 14 phones get their zone);
-  privacy (a database over 2 GB is written to a temporary file during import, removed at the end, best effort)
+  privacy (a database over 2 GB, or a smaller one the computer lacks memory to load, is written to a temporary plain file during import, removed at the end, best effort)
 - Status doc: pending: in "Importers (main)", the LEAPP line's version becomes `leapp` 0.3.0 and
-  gains "; a LAVA database over 2 GB is read from a temporary plain copy, removed (best effort) when the import ends;
+  gains "; a LAVA database over 2 GB (or a smaller one the computer lacks memory to load) is read from a temporary plain copy, removed (best effort) when the import ends;
   the Android zone is read from ALEAPP battery usage v4 and v9". If the #264 or #268 edit is not
   applied yet, apply it first with this version.

@@ -2263,6 +2263,64 @@ def test_a_zip_member_that_cannot_be_read_into_memory_is_a_clear_error(
         leapp.read_lava(f, z.name)
 
 
+@pytest.mark.parametrize(
+    ("error", "says"),
+    [
+        (NotImplementedError("That compression method is not supported"), "Deflate"),
+        (RuntimeError("File 'x' is encrypted, password required for extraction"), "password"),
+        (zipfile.BadZipFile("Bad CRC-32 for file 'lava.db'"), "damaged"),
+        (EOFError(), "damaged"),
+    ],
+)
+def test_an_unpack_error_says_whether_to_re_zip_or_that_the_zip_is_damaged(
+    tmp_path: Path, error: Exception, says: str
+) -> None:
+    z = zipfile.ZipFile(_android().write_zip(tmp_path / "a.zip"))
+    member = next(n for n in z.namelist() if n.endswith(".db"))
+    got = leapp._unpack_error(z, member, "a.zip", error)
+    assert isinstance(got, ValueError)
+    assert says in str(got)
+    assert ("damaged" in str(got)) == (says == "damaged")
+
+
+def test_a_read_error_on_the_input_names_the_input_not_the_temporary_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    real = zipfile.ZipExtFile.read
+
+    def drop_out(self, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if self.name.endswith(".db"):
+            raise OSError(5, "Input/output error")
+        return real(self, *a, **k)
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", drop_out)
+    with z.open("rb") as f, pytest.raises(ValueError, match="could not read") as got:
+        leapp.read_lava(f, z.name)
+    assert "temporary" not in str(got.value)
+    assert list(temp.iterdir()) == []
+
+
+def test_a_manifest_that_cannot_be_unpacked_is_a_clear_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = zipfile.ZipFile.read
+
+    def refuse(self, name, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(getattr(name, "filename", name)).endswith(".lava"):
+            raise NotImplementedError("That compression method is not supported")
+        return real(self, name, *a, **k)
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(zipfile.ZipFile, "read", refuse)
+    with z.open("rb") as f, pytest.raises(ValueError, match="cannot be unpacked"):
+        leapp.read_lava(f, z.name)
+
+
 def test_a_disk_error_while_copying_is_a_clear_error_and_leaves_no_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2286,6 +2344,9 @@ def test_a_disk_error_while_copying_is_a_clear_error_and_leaves_no_copy(
 def test_a_folder_that_cannot_be_made_is_a_clear_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))  # the sweep never sees the real folder
     monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
 
     def refused(*a, **k):  # noqa: ANN002, ANN003, ANN202

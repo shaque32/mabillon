@@ -46,9 +46,10 @@ plain database, also in an encrypted case, where the case's own copy of the zip 
 (`docs/encryption.md`, "Not covered"). Where the temporary folder is in memory (tmpfs on some
 Linux systems), the copy takes memory too; set `TMPDIR` to a folder on disk. The import refuses
 a database whose temporary disk lacks its size plus 512 MiB free, and any database over 64 GiB. A
-write that fails during the copy (a full disk or a quota) and a database member the zip library
-cannot unpack (Deflate64, a password, damage) end the import with a message saying so, leaving no
-copy. The coverage record says which way it was read (`leapp.database_read_from`: `memory` or
+write that fails during the copy (a full disk or a quota), a read of the input that fails, and a
+manifest or database member the zip library cannot unpack end the import with a message saying
+so, leaving no copy: Deflate64 or a password asks for a re-zip, and a bad CRC or a broken stream
+says the zip is damaged. The coverage record says which way it was read (`leapp.database_read_from`: `memory` or
 `temporary_file`).
 
 ## What is read
