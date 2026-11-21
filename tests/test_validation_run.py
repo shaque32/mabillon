@@ -2225,3 +2225,51 @@ def test_a_sync_uses_a_full_flush_where_the_system_has_one(monkeypatch):
     monkeypatch.setattr(hickman_run, "fcntl", None)  # Windows
     hickman_run._sync(3)
     assert calls == ["fsync"]
+
+
+class _NoConnect(_Stub):
+    def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+        from core.llm.cloud import CloudError
+
+        class ConnectError(Exception):  # httpx's name for a refused or failed connect
+            pass
+
+        class APIConnectionError(Exception):
+            pass
+
+        try:
+            try:
+                raise ConnectError("connection refused")
+            except ConnectError as low:
+                raise APIConnectionError("Connection error.") from low
+        except APIConnectionError as e:
+            raise CloudError(f"{e}", sticky=True, retryable=True) from e
+
+
+def test_a_failure_to_connect_is_not_counted_as_spent():
+    """A request that never left the machine cannot have been charged, so an outage does not
+    use up the cap (Claude review on #272)."""
+    from core.llm.cloud import CloudError
+
+    m = hickman_run.Budgeted(_NoConnect(), max_usd=5.0)
+    for _ in range(5):
+        with pytest.raises(CloudError):
+            m.generate_json("p", {})
+    assert m.spent_usd == m.uncertain_usd == 0.0 and m.calls == 5
+
+
+def test_a_folder_that_cannot_be_synced_still_takes_the_write(tmp_path, monkeypatch):
+    """Some filesystems refuse to sync a folder; the file itself is synced, and the write
+    goes through (Claude review on #272)."""
+    import stat
+
+    real = hickman_run._sync
+
+    def sync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(22, "Invalid argument")
+        real(fd)
+
+    monkeypatch.setattr(hickman_run, "_sync", sync)
+    hickman_run._write_json(tmp_path / "run.json", {"a": 1})
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8")) == {"a": 1}

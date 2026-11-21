@@ -21,7 +21,7 @@ import sqlite3
 from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 
-from core.contracts import Assumption, ModelRun, Stance, StanceLabel
+from core.contracts import Assumption, EvidenceCandidate, ModelRun, Stance, StanceLabel
 
 PROBE_RUN_ID = "mr:coverage-probe-stance"
 
@@ -50,7 +50,7 @@ class ProbeLabeler:
             ),
         )
 
-    def label(self, assumption: Assumption, candidate) -> StanceLabel:  # noqa: ANN001
+    def label(self, assumption: Assumption, candidate: EvidenceCandidate) -> StanceLabel:
         return StanceLabel(
             assumption_id=assumption.id,
             record_id=candidate.record_id,

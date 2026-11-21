@@ -30,7 +30,8 @@
     an estimate, not a guarantee. run.json now keeps the spend unrounded, so a resume never
     starts its cap from a spend rounded down. A request that times out or loses its
     connection may still be charged, so its most is counted as spent (`uncertain_usd`) and
-    never given back.
+    never given back. A failure to connect at all (refused, DNS, connect timeout) never reached
+    the API and is not counted, so an outage does not use up the cap.
   - A probe never starts in a DIR that holds a run's record: its run.json, progress.log and
     report hold claims and verdicts, and its results are not the probe's to delete. The driver
     refuses it under DIR's lock, before touching DIR.
@@ -49,7 +50,7 @@
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 16 tests, and the five cap and write tests in
+- Verified: `tests/test_coverage_probe.py`, 16 tests, and the seven cap and write tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.
@@ -64,10 +65,11 @@
     mutation-checked).
   - A cloud probe builds no stance labeler (mutation-checked).
   - `tests/test_validation_run.py` and `tests/test_validation_score.py` pass unchanged.
-  - Dev pair, free: a `--fake` probe ran on the A13 and iOS 15 LEAPP zips over 150 claims. A probe
-    with v4's stored filler answers on the A13 LEAPP zip gave 13 code-checked. Most claims were
-    untested because they name apps the LEAPP importer does not read. That run is approximate: the
-    prompts' app list differed, and the scratch tool is not in the repo.
+  - Dev pair, free (cloud container, 2026-11-21): a `--fake` probe ran on the A13 and iOS 15
+    LEAPP zips over 150 claims. A probe with v4's stored filler answers on the A13 LEAPP zip gave
+    13 code-checked (unverified: it cannot be reproduced from the repo, since the scratch tool
+    is not in it and the prompts' app list differed). Most claims were untested because they
+    name apps the LEAPP importer does not read.
 - Open: the filler is not deterministic, so the probe's counts estimate a later pass's tiers
   rather than fix them (v4's two passes gave 42 and 40 code-checked). The held-out probe's cost
   is unmeasured (estimate $2 to $4, cap $5). Arsh OK'd the first attempt on 2026-11-21.

@@ -93,6 +93,20 @@ def test_the_probe_counts_the_tiers_a_full_run_gives(ufdr, tmp_path):
     assert sorted(tiers) == sorted(
         t for t, n in probe["tiers"].items() for _ in range(n) if t != coverage_probe.NOT_TESTED
     )
+    # the stand-in filler tests every claim, so an untested one is made here: the probe counts
+    # it untested whatever its checks, as the scorer's coverage() does (Claude review on #272)
+    conn = sqlite3.connect(tmp_path / "run" / "case.db")
+    try:
+        one_untested = coverage_probe.counts(conn, run["manifest"], {"C02"})
+    finally:
+        conn.close()
+    assert one_untested["tiers"][coverage_probe.NOT_TESTED] == 1
+    assert sorted(
+        t
+        for t, n in one_untested["tiers"].items()
+        for _ in range(n)
+        if t != coverage_probe.NOT_TESTED
+    ) == sorted(t for c, t in zip(IDS, tiers, strict=True) if c != "C02")
 
 
 def test_counts_follow_the_scorers_tiers_and_the_phones_a_deciding_check_rests_on(ufdr, tmp_path):

@@ -65,6 +65,7 @@ from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
 
 from core.audit.assumption_filler import NATIVE_CALL_APP
 from core.audit.checks._common import _ts, namespace
@@ -76,6 +77,9 @@ try:
     import fcntl
 except ImportError:  # Windows
     fcntl = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from eval.validation.coverage_probe import ProbeLabeler
 
 ACTOR = "expert:validation"
 SOURCE_ID = "ios15"  # the default; --source-id names another phone (validation v4)
@@ -846,6 +850,25 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 FRAMING_TOKENS = 4096
 
 
+# Failures before a request leaves this machine (httpx's, and the OS errors under them): no
+# request reached the API, so nothing can have been charged.
+NEVER_SENT = frozenset(
+    {"ConnectError", "ConnectTimeout", "PoolTimeout", "ConnectionRefusedError", "gaierror"}
+)
+
+
+def _never_sent(e: BaseException) -> bool:
+    """Whether e, or an error under it, failed before the request was sent."""
+    seen: set[int] = set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if type(cur).__name__ in NEVER_SENT:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 class Budgeted:
     """A cloud model that counts its spend and sends no request that could take it past its
     cap: a request is sent only while the spend so far plus the most it can cost stays within
@@ -928,10 +951,15 @@ class Budgeted:
             answer = getattr(e, "response", None)
             if answer is not None:
                 self._count(answer)
-            elif e.retryable and getattr(e.__cause__, "status_code", None) is None:
+            elif (
+                e.retryable
+                and getattr(e.__cause__, "status_code", None) is None
+                and not _never_sent(e)
+            ):
                 # a timeout or a dropped connection: the request may have been served and
                 # charged with no answer back, so its most is counted as spent; nothing reports
-                # what it really cost, so it is never given back (CodeRabbit on #272)
+                # what it really cost, so it is never given back (CodeRabbit on #272). A failure
+                # to connect is not counted: no request reached the API (Claude review on #272)
                 self.uncertain_usd += most
                 self.spent_usd += most
             self._save(self.spent_usd)
@@ -950,7 +978,9 @@ class Budgeted:
         }
 
 
-def cloud_components(conn, model, labeler=None):  # noqa: ANN001, ANN201
+def cloud_components(
+    conn: sqlite3.Connection, model: Budgeted, labeler: ProbeLabeler | None = None
+) -> Any:
     """The product's components with Claude filling assumptions and labeling stance (or the
     labeler given, which the coverage probe passes so no stance labeler is built)."""
     from core import pipeline
@@ -1391,8 +1421,9 @@ def _sync(fd: int) -> None:
 def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
     """Write JSON to path whole or not at all, and durably: a stop mid-write leaves the earlier
     file, and the file and then its folder are synced, so a run.json or spend.json never loses
-    the spend a resume starts its cap from, even to a power loss (CodeRabbit on #272). Windows
-    cannot sync a folder; there the rename is as durable as NTFS makes it."""
+    the spend a resume starts its cap from, even to a power loss (CodeRabbit on #272). The
+    folder sync is best effort: Windows and some network or FUSE filesystems cannot sync a
+    folder, and there the rename is as durable as that filesystem makes it."""
     tmp = path.with_name(f"{path.name}.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         f.write(json.dumps(obj, indent=indent))
@@ -1400,11 +1431,14 @@ def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
         _sync(f.fileno())
     tmp.replace(path)
     if os.name != "nt":  # the rename itself survives a power loss once its folder is synced
-        fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            _sync(fd)
-        finally:
-            os.close(fd)
+        # best effort: some filesystems (FUSE, SMB, NFS, WSL drives) refuse to sync a folder,
+        # and the file itself is already synced (Claude review on #272)
+        with suppress(OSError):
+            fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                _sync(fd)
+            finally:
+                os.close(fd)
 
 
 SPEND_FILE = "spend.json"
@@ -1681,7 +1715,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
 PROBE_FILE = "probe.json"
 
 
-def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN001
+def _probe_done(out: Path, run: dict, run_path: Path, plog: TextIO) -> int:
     """Finish a coverage probe: probe.json gets the counts, and the case and its affidavit go, so
     nothing in DIR holds a claim's text, verdict, check result or evidence (PREREGISTERED_v5 gate
     C4). run.json
