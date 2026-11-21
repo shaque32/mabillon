@@ -3,7 +3,7 @@
   PROPOSED_CHANGES.md entry in the coverage thread), with two amendments from the CodeRabbit and
   Claude reviews of #275, each approved by Arsh. A "complicates" label no longer blocks
   SUPPORTED when all of these hold: rule 3c' carries the claim (code checks alone), no expert or
-  counsel accepted a supporting item on it, it has a core identity assumption (which passed its
+  counsel accepted a supporting item on an observed record of a core assumption, it has a core identity assumption (which passed its
   checks), and the label is open (no reviewer accepted it) and sits on a core time assumption
   whose checks all passed and named their records. The reasons list it for the expert ("Rule
   3d': ...", shown on the claim page as a plain line), and it is never cited as support. Every
@@ -31,10 +31,10 @@
   bullet "Verdicts come from code or the expert": "rules 0.6.0". Section 4 "Opus's influence on
   verdicts": add a sub-bullet after the first: "A 'complicates' label blocks SUPPORTED except one nobody
   reviewed on a core time assumption whose checks all passed and named records, with every
-  'complicates' on that time unreviewed, on a code-checked claim with a core identity assumption
-  and no accepted support; that one is listed for the expert (rule 3d', rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
+  non-dismissed 'complicates' on that time unreviewed, on a code-checked claim with a core
+  identity assumption and no accepted support on an observed record; that one is listed for the expert (rule 3d', rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
   Outcome table heading: "(rules 0.6.0)", and in the code-checked Supported row add "a model's
   'complicates' nobody reviewed, on a core time assumption whose checks all passed and named
-  records, with every 'complicates' on that time unreviewed, in a claim with a core identity
-  assumption and no accepted support, is listed and does not block (rule 3d', #275); any other
+  records, with every non-dismissed 'complicates' on that time unreviewed, in a claim with a
+  core identity assumption and no accepted support on an observed record, is listed and does not block (rule 3d', #275); any other
   open label blocks". Claims table rows 1 and 8: `RULE_VERSION = "0.6.0"`.

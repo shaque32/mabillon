@@ -93,8 +93,9 @@ claims only, when every core assumption passed all its deterministic checks agai
 ("Supported by the records (code checks)", no model label and no reviewer). There, since rules
 0.6.0, a model's "complicates" label does not block when all of these hold: nobody has reviewed
 it, it sits on a core time assumption whose checks all passed and named their records, every
-other "complicates" on that time is also unreviewed, the claim has a core identity assumption
-(which passed its checks), and no examiner or counsel accepted support on the claim. The label
+other "complicates" on that time that nobody dismissed is also unreviewed, the claim has a core
+identity assumption (which passed its checks), and no examiner or counsel accepted a supporting
+item on an observed record of a core assumption. The label
 is listed for the examiner. Any other open "complicates" or "contradicts" still blocks. Otherwise the screen
 asks "Support found: do you agree?". An optional
 local AI reviewer may sort evidence for the examiner, but in this version its acceptance covers
