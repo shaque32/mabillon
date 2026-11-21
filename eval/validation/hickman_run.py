@@ -836,8 +836,15 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
+# Tokens the API may add around a request body (its own framing and the structured-output
+# instructions): a margin, not measured.
+FRAMING_TOKENS = 4096
+
+
 class Budgeted:
-    """A cloud model that counts its spend and stops once it passes a cap. The cap and the
+    """A cloud model that counts its spend and sends no request that could take it past its
+    cap: a request is sent only while the spend so far plus the most it can cost stays within
+    the cap, so a run never ends above --max-usd (CodeRabbit on #272). The cap and the
     out-of-credit stop both raise a sticky CloudError, which pauses the audit (CloudPaused):
     the answers stored so far are kept, and a resume picks up where it stopped."""
 
@@ -867,13 +874,25 @@ class Budgeted:
         if self._price is not None:
             self.spent_usd += (inp * self._price[0] + outp * self._price[1]) / 1_000_000
 
+    def _most(self, prompt: str, schema) -> float:  # noqa: ANN001
+        """The most one request can cost, so the cap is never passed (CodeRabbit on #272): its
+        prompt at one token per byte of the request body (a token is at least one byte), plus
+        FRAMING_TOKENS for what the API adds around it, and the whole max_tokens of output."""
+        if self._price is None:
+            return 0.0
+        build = getattr(self._m, "request", None)
+        body = json.dumps(build(prompt, schema)) if build is not None else prompt
+        inp = len(body.encode("utf-8")) + FRAMING_TOKENS
+        outp = int(getattr(self._m.params, "max_tokens", 0) or 0)
+        return (inp * self._price[0] + outp * self._price[1]) / 1_000_000
+
     def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
         from core.llm.cloud import CloudError
 
-        if self.max_usd is not None and self.spent_usd >= self.max_usd:
+        if self.max_usd is not None and self.spent_usd + self._most(prompt, schema) > self.max_usd:
             raise CloudError(
-                f"the run's spend cap of ${self.max_usd:.2f} is reached"
-                f" (${self.spent_usd:.2f} spent)",
+                f"the run's spend cap of ${self.max_usd:.2f} is reached: the next request could"
+                f" pass it (${self.spent_usd:.2f} spent)",
                 sticky=True,
             )
         self.calls += 1

@@ -266,23 +266,35 @@ class _Out:
 
 
 class _Stub:
-    name, sha256, params, where = "claude-opus-5-5", "api:claude-opus-5-5", None, "cloud"
+    """A model whose every call uses its whole allowance: a 1,000,000-byte prompt read as
+    1,000,000 tokens and 100,000 output tokens, $4 in + $2 out at the Opus price."""
+
+    name, sha256, where = "claude-opus-5-5", "api:claude-opus-5-5", "cloud"
+
+    class params:  # noqa: N801 - CloudParams' attribute
+        max_tokens = 100_000
+
+    def request(self, prompt, schema):  # noqa: ANN001, ANN201
+        return {"messages": [{"role": "user", "content": prompt}]}
 
     def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
-        return _Out(1_000_000, 100_000)  # $4 in + $2 out at the Opus price
+        return _Out(1_000_000, 100_000)
 
 
-def test_the_spend_cap_stops_further_calls_as_a_sticky_failure():
+def test_the_spend_cap_sends_no_request_that_could_pass_it():
     from core.llm.cloud import CloudError
 
-    m = hickman_run.Budgeted(_Stub(), max_usd=10.0, spent_usd=3.0)
-    m.generate_json("p", {})
+    prompt = "x" * 1_000_000  # with the framing margin, the most a call can cost is about $6.02
+    m = hickman_run.Budgeted(_Stub(), max_usd=15.0, spent_usd=3.0)
+    m.generate_json(prompt, {})
     assert round(m.spent_usd, 2) == 9.0
-    m.generate_json("p", {})  # under the cap when sent; it may end past it
-    assert round(m.spent_usd, 2) == 15.0
-    with pytest.raises(CloudError) as e:
-        m.generate_json("p", {})
-    assert e.value.sticky
+    with pytest.raises(CloudError) as e:  # $9 + $6.02 could pass $15, so it is not sent
+        m.generate_json(prompt, {})
+    assert e.value.sticky and "could pass" in str(e.value)
+    assert m.usage()["calls"] == 1 and m.spent_usd <= m.max_usd
+    m = hickman_run.Budgeted(_Stub(), max_usd=15.0, spent_usd=3.0)
+    m.generate_json("p", {})  # a short prompt's most is about $2.02: a second call still fits
+    m.generate_json("p", {})
     assert m.usage()["calls"] == 2
 
 
