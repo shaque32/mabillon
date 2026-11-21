@@ -30,9 +30,9 @@
 - Status doc: pending: Header "Rule version" line: 0.6.0 on main (add "0.6.0 #275"). Section 4
   bullet "Verdicts come from code or the expert": "rules 0.6.0". Section 4 "Opus's influence on
   verdicts": add a sub-bullet after the first: "A 'complicates' label blocks SUPPORTED except one nobody
-  reviewed on a core time assumption that passed its checks, on a code-checked claim with a core
-  identity assumption and no accepted support; that one is listed for the expert (rule 3d',
-  rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
+  reviewed on a core time assumption whose checks all passed and named records, with every
+  'complicates' on that time unreviewed, on a code-checked claim with a core identity assumption
+  and no accepted support; that one is listed for the expert (rule 3d', rules 0.6.0, #275)." Pipeline table row 11: "applies rules 0.6.0 (0.5.0 #228, 0.6.0 #275)".
   Outcome table heading: "(rules 0.6.0)", and in the code-checked Supported row add "a model's
   'complicates' nobody reviewed, on a core time assumption whose checks all passed and named
   records, with every 'complicates' on that time unreviewed, in a claim with a core identity
