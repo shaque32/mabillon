@@ -1370,14 +1370,22 @@ def _lock_holder(lock: Path) -> str:
 
 
 def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
-    """Write JSON to path whole or not at all: a stop mid-write leaves the earlier file, so a
-    run.json never loses the spend a resume starts its cap from (CodeRabbit on #272)."""
+    """Write JSON to path whole or not at all, and durably: a stop mid-write leaves the earlier
+    file, and the file and then its folder are synced, so a run.json or spend.json never loses
+    the spend a resume starts its cap from, even to a power loss (CodeRabbit on #272). Windows
+    cannot sync a folder; there the rename is as durable as NTFS makes it."""
     tmp = path.with_name(f"{path.name}.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         f.write(json.dumps(obj, indent=indent))
         f.flush()
         os.fsync(f.fileno())
     tmp.replace(path)
+    if os.name != "nt":  # the rename itself survives a power loss once its folder is synced
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 SPEND_FILE = "spend.json"

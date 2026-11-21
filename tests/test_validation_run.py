@@ -2170,3 +2170,27 @@ def test_the_spend_is_on_disk_before_each_request_is_sent(tmp_path):
     assert 9.0 < seen[0] < 9.1  # $3 + the request's most, about $6.02, before it was sent
     saved = json.loads(ledger.read_text(encoding="utf-8"))
     assert saved == {"build_id": "b1", "spent_usd": m.spent_usd} and m.spent_usd < 3.01
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot sync a folder")
+def test_a_json_write_syncs_the_file_then_the_rename(tmp_path, monkeypatch):
+    """The file is synced before it replaces the old one, and its folder after, so the new
+    spend survives a power loss before the next request is sent (CodeRabbit on #272)."""
+    import stat
+
+    steps: list[str] = []
+    real_fsync, real_replace = os.fsync, Path.replace
+
+    def fsync(fd: int) -> None:
+        steps.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    def replace(self, target):  # noqa: ANN001, ANN202
+        steps.append("replace")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(hickman_run.os, "fsync", fsync)
+    monkeypatch.setattr(Path, "replace", replace)
+    hickman_run._write_json(tmp_path / "spend.json", {"spent_usd": 1.0})
+    assert steps == ["file", "replace", "dir"]
+    assert json.loads((tmp_path / "spend.json").read_text(encoding="utf-8")) == {"spent_usd": 1.0}
