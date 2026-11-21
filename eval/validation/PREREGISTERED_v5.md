@@ -161,7 +161,9 @@ after the tag reaches the run.
   around it, plus its whole 16,000-token output allowance. That bound holds only if the API
   adds no more than 4,096 tokens, which is not measured, so the cap is an estimate, not a
   guarantee; one token per byte is far more than prompt text usually takes, which leaves room.
-  A run can stop up to one request's worth short of its cap.
+  A request that times out or loses its connection may still be charged, so its most is
+  counted as spent and never given back. A run can stop up to one request's worth short of
+  its cap, and its recorded spend can be above what was charged.
 - One scored run. A crash that leaves no usable case restarts from scratch at the same tag and is
   reported. What the abandoned attempt spent counts against its pass's $55 cap (the restart runs
   with `--max-usd` set to what is left of it), so a restart never raises the ceiling; a restart

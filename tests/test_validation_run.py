@@ -2125,3 +2125,29 @@ def test_results_zip_holds_its_case_and_run_json_and_no_refused_report(tmp_path)
     (tmp_path / "run.json").write_text("{}", encoding="utf-8")
     with zipfile.ZipFile(hickman_run.publish_results(tmp_path)) as z:
         assert sorted(z.namelist()) == ["case.db", "run.json"]
+
+
+class _TimesOut(_Stub):
+    def generate_json(self, prompt, schema, params=None):  # noqa: ANN001, ANN201
+        from core.llm.cloud import CloudError
+
+        try:
+            raise TimeoutError("read timed out")
+        except TimeoutError as e:
+            raise CloudError(f"{e}", sticky=True, retryable=True) from e
+
+
+def test_a_request_that_times_out_counts_its_most_against_the_cap():
+    """A timed-out request may have been served and charged, so its most is counted as spent
+    and a retry cannot take the run past its cap (CodeRabbit on #272)."""
+    from core.llm.cloud import CloudError
+
+    m = hickman_run.Budgeted(_TimesOut(), max_usd=5.0)
+    with pytest.raises(CloudError):
+        m.generate_json("p", {})  # most about $2.02: counted, though nothing came back
+    assert 2.0 < m.spent_usd == m.uncertain_usd < 2.1
+    with pytest.raises(CloudError):
+        m.generate_json("p", {})
+    with pytest.raises(CloudError, match="could pass"):  # $4.04 + $2.02 could pass $5
+        m.generate_json("p", {})
+    assert m.usage()["calls"] == 2 and m.spent_usd <= m.max_usd

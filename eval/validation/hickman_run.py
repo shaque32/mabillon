@@ -855,6 +855,7 @@ class Budgeted:
         self.max_usd = max_usd
         self.spent_usd = spent_usd
         self.calls = self.input_tokens = self.output_tokens = 0
+        self.uncertain_usd = 0.0  # counted for requests that got no answer and may be charged
         self._price = PRICES_PER_MTOK.get(model.name)
 
     def request(self, prompt: str, schema):  # noqa: ANN001, ANN201
@@ -889,7 +890,8 @@ class Budgeted:
     def generate_json(self, prompt: str, schema, params=None):  # noqa: ANN001, ANN201
         from core.llm.cloud import CloudError
 
-        if self.max_usd is not None and self.spent_usd + self._most(prompt, schema) > self.max_usd:
+        most = self._most(prompt, schema)
+        if self.max_usd is not None and self.spent_usd + most > self.max_usd:
             raise CloudError(
                 f"the run's spend cap of ${self.max_usd:.2f} is reached: the next request could"
                 f" pass it (${self.spent_usd:.2f} spent)",
@@ -899,7 +901,15 @@ class Budgeted:
         try:
             out = self._m.generate_json(prompt, schema, params)
         except CloudError as e:
-            self._count(getattr(e, "response", None))
+            answer = getattr(e, "response", None)
+            if answer is not None:
+                self._count(answer)
+            elif e.retryable and getattr(e.__cause__, "status_code", None) is None:
+                # a timeout or a dropped connection: the request may have been served and
+                # charged with no answer back, so its most is counted as spent; nothing reports
+                # what it really cost, so it is never given back (CodeRabbit on #272)
+                self.uncertain_usd += most
+                self.spent_usd += most
             raise
         self._count(out)
         return out
@@ -910,6 +920,7 @@ class Budgeted:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "spent_usd": round(self.spent_usd, 2),
+            "uncertain_usd": round(self.uncertain_usd, 2),
         }
 
 
@@ -1332,6 +1343,8 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     """One attempt on DIR, run while main() holds its lock."""
     # an earlier attempt's results never stand for this one, even if this one is refused
     (a.out / "results.zip").unlink(missing_ok=True)
+    # nor its report, which holds the claims and verdicts a probe never leaves (CodeRabbit on #272)
+    (a.out / "report.html").unlink(missing_ok=True)
     (a.out / PROBE_FILE).unlink(missing_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 

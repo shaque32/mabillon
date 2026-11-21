@@ -28,11 +28,15 @@
     allowance) stays within the cap. Before, the cap was checked against the spend so far, so
     the last request could end above it. The 4,096-token margin is not measured, so the cap is
     an estimate, not a guarantee. run.json now keeps the spend unrounded, so a resume never
-    starts its cap from a spend rounded down.
+    starts its cap from a spend rounded down. A request that times out or loses its
+    connection may still be charged, so its most is counted as spent (`uncertain_usd`) and
+    never given back.
+  - Every attempt now deletes an earlier attempt's report.html, as it already deleted
+    results.zip, so a probe in a used DIR leaves no claims or verdicts.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
     corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py`, 11 tests, and the hard-cap test in
+- Verified: `tests/test_coverage_probe.py`, 12 tests, and the two cap tests in
   `tests/test_validation_run.py`, cloud container, 2026-11-21, stand-in
   components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
   removed.

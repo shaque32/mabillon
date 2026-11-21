@@ -331,3 +331,13 @@ def test_a_resume_starts_from_the_spend_unrounded(ufdr, tmp_path, monkeypatch):
     assert run["cloud"]["spent_usd"] == pytest.approx(0.004)
     assert hickman_run.main(cap) == 3
     assert seen == [0.0, pytest.approx(0.004)]
+
+
+def test_a_probe_leaves_no_report_from_an_earlier_run(ufdr, tmp_path):
+    """A probe in a DIR an earlier run used leaves none of that run's report, which holds the
+    claims and verdicts (CodeRabbit on #272)."""
+    out = tmp_path / "probe"
+    out.mkdir()
+    (out / "report.html").write_text("C01 SUPPORTED", encoding="utf-8")
+    assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
+    assert sorted(p.name for p in out.iterdir()) == ["probe.json", "progress.log", "run.json"]
