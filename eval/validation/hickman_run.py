@@ -36,6 +36,12 @@ The claims file holds claims only, never their answers: the run machine never se
 Run it again with the same DIR to resume: a built case is kept, and the audit reuses the model
 outputs of the claims it finished. A case built by an earlier SETUP is refused, never resumed.
 --fake swaps in the eval's stand-in components (tests only).
+
+--coverage-probe (validation v5, PREREGISTERED_v5 section 7a, gate C4) builds the case the same
+way and runs the same filler and checks, but labels no evidence: a stand-in labeler makes no
+model call, so the run costs only the filler's calls. It writes DIR/probe.json with the coverage
+tiers counted by claim kind and by phone, and nothing else: no claim, verdict or check result is
+printed or kept, and the case is deleted once it is counted. With --cloud it needs --max-usd.
 """
 
 from __future__ import annotations
@@ -61,6 +67,7 @@ from core.audit.assumption_filler import NATIVE_CALL_APP
 from core.audit.checks._common import _ts, namespace
 from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
+from eval.validation.coverage_probe import CHECK_UNSETTLED, CODE_CHECKED, EXPERT_ONLY, NOT_TESTED
 
 ACTOR = "expert:validation"
 SOURCE_ID = "ios15"  # the default; --source-id names another phone (validation v4)
@@ -950,7 +957,9 @@ def case_stop(conn, built: dict) -> str | None:  # noqa: ANN001
     return None
 
 
-def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:  # noqa: ANN001
+def audit(  # noqa: ANN001
+    out: Path, fake: bool, log, cloud_model=None, *, built: dict, probe: bool = False
+) -> dict:
     """Audit the case in out/case.db. `built` is the build record main() checked or wrote, not
     read again from disk, so a built.ok swapped together with its case.db is refused too. On
     success out/audited.db is a copy of the audited case, taken on the connection that ran the
@@ -988,6 +997,15 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             comps = cloud_components(conn, cloud_model)
         else:
             comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
+        if probe:
+            # the same filler and checks; no evidence is labeled, so no stance call is made
+            from eval.validation.coverage_probe import ProbeLabeler
+
+            comps.labeler = ProbeLabeler()
+            comps.model_runs = (
+                *(m for m in comps.model_runs if m.purpose != "stance"),
+                *comps.labeler.model_runs,
+            )
         # The run 3 plan keeps the challenge step off (on by default since #162), so run 3
         # changes only the filler and stays comparable to run 2. The audit's configuration
         # records it.
@@ -998,7 +1016,11 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
 
         def progress(done: int, total: int, d) -> None:  # noqa: ANN001
             spent = f" (${cloud_model.spent_usd:.2f} spent)" if cloud_model is not None else ""
-            log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
+            # the probe keeps no claim's outcome, not even in its log
+            if probe:
+                log(f"[{done}/{total}]{spent}")
+            else:
+                log(f"[{done}/{total}] {d.claim_id}: {d.verdict.value}{spent}")
             if done == total:
                 final_check()
                 checked.append(done)
@@ -1084,14 +1106,24 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
             except sqlite3.Error as e:  # the reason, not a traceback (Claude review on #269)
                 raise SystemExit(f"{why} (and storing it as stopped failed: {e})") from e
             raise SystemExit(why)
-        try:
-            with closing(sqlite3.connect(out / AUDITED)) as copy:
-                conn.backup(copy)
-        finally:
-            conn.commit()
-        tally: dict[str, int] = {}
-        for d in result.decisions:
-            tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+        if probe:
+            # counted in the read transaction the check above passed in; no copy is kept
+            from eval.validation import coverage_probe
+
+            try:
+                outcome = {"probe": coverage_probe.counts(conn, result.manifest, result.not_tested)}
+            finally:
+                conn.commit()
+        else:
+            try:
+                with closing(sqlite3.connect(out / AUDITED)) as copy:
+                    conn.backup(copy)
+            finally:
+                conn.commit()
+            tally: dict[str, int] = {}
+            for d in result.decisions:
+                tally[d.verdict.value] = tally.get(d.verdict.value, 0) + 1
+            outcome = {"verdicts": tally}
         calls = {
             purpose: {"calls": n, "first_utc": first, "last_utc": last}
             for purpose, n, first, last in conn.execute(
@@ -1105,12 +1137,13 @@ def audit(out: Path, fake: bool, log, cloud_model=None, *, built: dict) -> dict:
         "run_id": result.run_id,
         "fake": result.fake,
         "challenge": comps.challenge,
-        "verdicts": tally,
+        **outcome,
         "audit_seconds": round(time.monotonic() - t),
         "model_calls": calls,
         "model_outputs_reused": result.model_outputs_reused,
         "dropped_labels": result.dropped_labels,
-        "unlabeled": result.unlabeled,
+        # the probe keeps no claim id, so only how many
+        "unlabeled": len(result.unlabeled) if probe else result.unlabeled,
     }
 
 
@@ -1185,6 +1218,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--max-usd", type=float, help="with --cloud: stop once the run's spend passes this"
     )
+    ap.add_argument(
+        "--coverage-probe",
+        action="store_true",
+        help="fill and check every claim but label no evidence; write DIR/probe.json with the"
+        " coverage tiers (counts only) and delete the case (PREREGISTERED_v5 gate C4)",
+    )
     ap.add_argument("--source-id", default=SOURCE_ID, help="with --ufdr: the phone's source id")
     ap.add_argument(
         "--definitions",
@@ -1204,12 +1243,18 @@ def main(argv: list[str] | None = None) -> int:
     if a.cloud and a.max_usd is not None and a.cloud not in PRICES_PER_MTOK:
         # Without a price the spend counter never moves, so the cap would never stop a call.
         raise SystemExit(f"--max-usd: no price for {a.cloud}; add it to PRICES_PER_MTOK")
+    if a.coverage_probe and a.cloud and a.max_usd is None:
+        raise SystemExit("--coverage-probe with --cloud needs --max-usd")
     # What the case is built from, compared on a resume (the zone is given only at build).
     setup = {
         "source_id": a.source_id if a.ufdr is not None else None,
         "definitions": defs,
         "phones": [ph.record() for ph in phones],
     }
+    if a.coverage_probe:
+        # a probe's case holds no stance labels, so it never resumes as a run, nor a run's as
+        # a probe; only a probe's built.ok records the key, and a resume checks it both ways
+        setup["coverage_probe"] = True
     a.out.mkdir(parents=True, exist_ok=True)
     # One invocation owns DIR at a time, from its first write through publication, so a
     # results.zip never mixes two attempts' files (CodeRabbit on #269).
@@ -1257,6 +1302,7 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     """One attempt on DIR, run while main() holds its lock."""
     # an earlier attempt's results never stand for this one, even if this one is refused
     (a.out / "results.zip").unlink(missing_ok=True)
+    (a.out / PROBE_FILE).unlink(missing_ok=True)
     plog = (a.out / "progress.log").open("a", encoding="utf-8")
 
     def log(msg: str) -> None:
@@ -1289,6 +1335,11 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             raise SystemExit(
                 f"{a.out} was built from claims {was['claims_sha256']}; use a new --out"
             )
+        if bool(was.get("coverage_probe")) != a.coverage_probe:
+            kinds = (
+                ("a run", "a coverage probe") if a.coverage_probe else ("a coverage probe", "a run")
+            )
+            raise SystemExit(f"{a.out} was built for {kinds[0]}, not {kinds[1]}; use a new --out")
         if a.report_sha256 and was.get("report_xml_sha256") != a.report_sha256:
             raise SystemExit(
                 f"{a.out} was built from report.xml {was.get('report_xml_sha256')}; use a new --out"
@@ -1420,10 +1471,12 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
         )
         spent_before = float(run.get("cloud", {}).get("spent_usd", 0.0))
         cloud_model = Budgeted(cloud.ClaudeModel(cfg), a.max_usd, spent_before)
-        run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": ["assumptions", "stance"]}
+        jobs = ["assumptions"] if a.coverage_probe else ["assumptions", "stance"]
+        run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": jobs}
+    run["coverage_probe"] = a.coverage_probe
     try:
         try:
-            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was)
+            run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was, probe=a.coverage_probe)
         finally:
             if cloud_model is not None:
                 total = run.setdefault("cloud", {"sessions": []})
@@ -1439,6 +1492,8 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     except ComponentsMissing as e:
         raise SystemExit(f"audit: {e}") from e
     run["finished_utc"] = f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}"
+    if a.coverage_probe:
+        return _probe_done(a.out, run, run_path, plog)
     # The report and results.zip are made from the copy of the audited case, never case.db
     # read again by path, so they hold the audited build whatever case.db holds by then
     # (CodeRabbit on #269).
@@ -1447,6 +1502,34 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
     plog.close()
     publish_results(a.out)
     print(f"done: {run['audit']['verdicts']}; results in {a.out / 'results.zip'}")
+    return 0
+
+
+PROBE_FILE = "probe.json"
+
+
+def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN001
+    """Finish a coverage probe: probe.json gets the counts, and the case goes, so nothing in DIR
+    holds a claim's verdict, check result or evidence (PREREGISTERED_v5 gate C4). run.json
+    keeps the versions, times, spend and counts; built.ok goes with the case, so running the
+    same command again builds and probes afresh."""
+    counts = run["audit"]["probe"]
+    tmp = out / f"{PROBE_FILE}.tmp"
+    tmp.write_text(json.dumps(counts, indent=2), encoding="utf-8")
+    tmp.replace(out / PROBE_FILE)
+    run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    for db in ("case.db", AUDITED):
+        for name in (db, *(f"{db}{s}" for s in SQLITE_SIDECARS)):
+            (out / name).unlink(missing_ok=True)
+    (out / "built.ok").unlink(missing_ok=True)
+    plog.close()
+    t = counts["tiers"]
+    print(
+        f"coverage probe: {counts['claims']} claims, {t[CODE_CHECKED]} code-checked,"
+        f" {t[CHECK_UNSETTLED]} check unsettled, {t[EXPERT_ONLY]} expert only,"
+        f" {t[NOT_TESTED]} not tested; by phone {counts['code_checked_by_phone']};"
+        f" counts in {out / PROBE_FILE}"
+    )
     return 0
 
 
