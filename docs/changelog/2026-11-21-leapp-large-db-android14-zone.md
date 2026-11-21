@@ -30,7 +30,10 @@
   is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
   and v4 and v9 must agree. Local check (cloud container, 2026-11-21): a synthetic 2.30 GB LAVA
   database raises MemoryError through `deserialize` and imports through the new path in 3.0 s at
-  37 MB peak memory, leaving no temporary file. `ruff` clean; full `make check` runs in CI.
+  37 MB peak memory, leaving no temporary file. CI `make check` (ubuntu-latest, 2026-11-21, head
+  f2445f4): `ruff` clean, 5,101 tests passed (7 skipped); eval: case01 model-free
+  accuracy 1.00 with 0 false supported (unreviewed 0.70, report only), hostile mode PASS (0 of 7
+  structural claims supported), case02 aggregate 0.90 with 0 false supported (report only).
 - Open: the temporary copy is the plain database, also in an encrypted case (the case's own
   copy of the zip stays encrypted; the examiner's original zip is plain on the same machine).
   Unlinked blocks are not wiped. Every removal is best effort: a copy left by a stopped import stays
