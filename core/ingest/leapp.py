@@ -402,7 +402,8 @@ def _open_database(
             with os.fdopen(fd, "wb") as dst:
                 _copy_member(z, member, file_name, dst, temp_dir)
         except OSError as err:
-            folder = temp_dir.parent if temp_dir is not None else Path(tempfile.gettempdir())
+            # no gettempdir() here: when mkdtemp found no usable folder, it would raise again
+            folder = temp_dir.parent if temp_dir is not None else "the system's temporary folder"
             raise ValueError(
                 f"Mabillon could not write its temporary copy of {member} from {file_name} in "
                 f"{folder} ({err}); free space there, or set TMPDIR (TEMP on Windows) to a "
@@ -463,6 +464,9 @@ def _read_member(z: zipfile.ZipFile, member: str, file_name: str) -> bytes:
         raise _unpack_error(z, member, file_name, err) from err
 
 
+# zip methods whose reads zipfile does not bound on every Python 3.12 release
+UNBOUNDED_METHODS = {zipfile.ZIP_BZIP2: "bzip2", zipfile.ZIP_LZMA: "LZMA"}
+
 # a copy in progress refreshes its folder's time this often, so a slow copy is never swept
 TOUCH_EVERY_BYTES = 256 * 1024 * 1024
 COPY_CHUNK_BYTES = 1024 * 1024
@@ -472,7 +476,16 @@ def _copy_member(
     z: zipfile.ZipFile, member: str, file_name: str, dst: BinaryIO, temp_dir: Path
 ) -> None:
     """Stream the member into dst, refreshing the folder's time as it goes. A failure reading
-    the input names the input; a failure writing dst is an OSError for the caller."""
+    the input names the input; a failure writing dst is an OSError for the caller. A bzip2 or
+    LZMA member is refused: zipfile does not bound how much one read of those unpacks on every
+    Python 3.12 release, so a small read could need gigabytes of memory."""
+    method = z.getinfo(member).compress_type
+    if method in UNBOUNDED_METHODS:
+        raise ValueError(
+            f"{member} in {file_name} is too large to read in memory and uses zip compression "
+            f"method {method} ({UNBOUNDED_METHODS[method]}), which Mabillon does not stream; zip "
+            "the LEAPP output folder again with standard (Deflate) compression"
+        )
     since = 0
     try:
         with z.open(member) as src:

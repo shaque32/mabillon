@@ -15,7 +15,9 @@
   refreshes its folder's time; on Linux and macOS only this user's own). A disk error during the
   copy, a failed read of the input, or a manifest or database member the zip library cannot
   unpack ends the import with a message instead of a traceback (re-zip for Deflate64 or a
-  password; the zip is damaged for a bad CRC or a broken stream).
+  password; the zip is damaged for a bad CRC or a broken stream). A database that needs the
+  temporary copy and is stored with bzip2 or LZMA is refused with the re-zip advice, since
+  zipfile does not bound one read of those.
   `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
   disk lacks its size plus 512 MiB, and the size ceiling rises from 8 GiB to 64 GiB. The
   coverage record says how it was read (`leapp.database_read_from`). (2) Android 14 zone:
@@ -24,7 +26,7 @@
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
 - Where: PR #274
-- Verified: `tests/test_leapp.py` 147 passed (32 new): the import through a temporary copy
+- Verified: `tests/test_leapp.py` 150 passed (35 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
   copy is read-only, gone once open on Linux and gone after close; a database at the limit stays
@@ -32,7 +34,8 @@
   case's copy reads through; a memory failure falls back to the copy; a stale copy is swept and
   a fresh one kept; a zip member that cannot be opened or read, and a manifest that cannot be unpacked, is a clear
   error and leaves no copy; an unsupported or password-protected member asks for a re-zip and a
-  damaged one says the zip is damaged; a read error on the input names the input; a disk
+  damaged one says the zip is damaged; a read error on the input names the input; a bzip2 or LZMA database is not streamed; no usable
+  temporary folder is a clear error; a disk
   error mid-copy or a folder that cannot be made is a clear error; a database SQLite refuses to
   load is "not a SQLite database"; a copy in progress refreshes its folder's time; a copy SQLite
   cannot open is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,

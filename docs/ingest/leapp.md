@@ -49,7 +49,9 @@ a database whose temporary disk lacks its size plus 512 MiB free, and any databa
 write that fails during the copy (a full disk or a quota), a read of the input that fails, and a
 manifest or database member the zip library cannot unpack end the import with a message saying
 so, leaving no copy: Deflate64 or a password asks for a re-zip, and a bad CRC or a broken stream
-says the zip is damaged. The coverage record says which way it was read (`leapp.database_read_from`: `memory` or
+says the zip is damaged. A database that needs the temporary copy and is stored with bzip2 or LZMA
+is refused with the same re-zip advice, since the zip library does not bound how much one read of
+those unpacks. The coverage record says which way it was read (`leapp.database_read_from`: `memory` or
 `temporary_file`).
 
 ## What is read

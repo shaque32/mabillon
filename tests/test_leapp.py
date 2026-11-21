@@ -2321,6 +2321,47 @@ def test_a_manifest_that_cannot_be_unpacked_is_a_clear_error(
         leapp.read_lava(f, z.name)
 
 
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_a_bzip2_or_lzma_database_is_not_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: int
+) -> None:
+    # CodeRabbit on #274: zipfile does not bound one read of a bzip2 or LZMA member, so the copy
+    # refuses them with the re-zip advice instead of risking a huge allocation.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    plain = _android().write_zip(tmp_path / "a.zip")
+    packed = tmp_path / "b.zip"
+    with zipfile.ZipFile(plain) as src, zipfile.ZipFile(packed, "w") as dst:
+        for info in src.infolist():
+            how = method if info.filename.endswith(".db") else zipfile.ZIP_DEFLATED
+            dst.writestr(info.filename, src.read(info), compress_type=how)
+    with packed.open("rb") as f, pytest.raises(ValueError, match="Deflate"):
+        leapp.read_lava(f, packed.name)
+    assert list(temp.iterdir()) == []
+
+
+def test_no_usable_temporary_folder_is_a_clear_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit on #274: when mkdtemp finds no usable folder, the message must not look it up
+    # again (that raises the same error and hides the message).
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    z = _android().write_zip(tmp_path / "a.zip")
+
+    def none_usable(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise FileNotFoundError(2, "No usable temporary directory found")
+
+    monkeypatch.setattr(leapp.tempfile, "mkdtemp", none_usable)
+    monkeypatch.setattr(leapp.tempfile, "gettempdir", none_usable)
+    with z.open("rb") as f, pytest.raises(ValueError, match="system's temporary folder"):
+        leapp.read_lava(f, z.name)
+
+
 def test_a_disk_error_while_copying_is_a_clear_error_and_leaves_no_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
