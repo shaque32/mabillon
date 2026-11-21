@@ -28,7 +28,7 @@
     The time check never fails on a call, so this only lets calls be found. The owner rule
     moved to `core/audit/checks/_common.py` (`phone_side`), shared with the caller check.
 - Where: PR #273
-- Verified: `tests/test_fill_calls.py` (19 new tests: the owner row refused and the claim then
+- Verified: `tests/test_fill_calls.py` (15 new test functions: the owner row refused and the claim then
   SUPPORTED on its checks, and kept where it says more; caller read after "answered/connected
   and lasted", also after the call's app; reversed caller CONTRADICTED; "connected" without a
   length unread; a call from the owner's phone gets its caller and the check passes, but not
