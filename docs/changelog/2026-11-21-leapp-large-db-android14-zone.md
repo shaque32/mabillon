@@ -9,8 +9,9 @@
   2,000,000,000 bytes is still read into memory and never written out; a larger one (or a
   smaller one the computer lacks memory to load) is streamed to a new owner-only temporary
   folder, opened read-only (`mode=ro&immutable=1`) and removed when the import ends or fails
-  (`Lava.close`); on Linux its name is removed once it is open (macOS untested), and the next
-  large import removes this user's copies older than six hours that a stopped import left.
+  (`Lava.close`); on Linux it then tries to remove the name at once (macOS untested; a failed
+  removal leaves the named copy until the import ends), and the next large import tries, best
+  effort, to remove this user's copies older than six hours that a stopped import left.
   `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
   disk lacks its size plus 512 MiB, and the size ceiling rises from 8 GiB to 64 GiB. The
   coverage record says how it was read (`leapp.database_read_from`). (2) Android 14 zone:

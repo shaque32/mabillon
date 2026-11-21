@@ -34,10 +34,11 @@ LAVA database can be larger (a public iOS 17 phone's is 5.6 GB, mostly file syst
 import does not read). A larger one, or a smaller one this computer lacks the memory to load, is
 streamed to a new owner-only temporary folder (the system's, or `TMPDIR`; `TEMP` on Windows),
 opened read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds
-or not. On Linux its name is removed as soon as it is open (macOS should behave the same; not
-yet tested there); its freed disk blocks are not wiped. An import stopped mid-copy (killed,
-crashed, power lost) leaves its folder, and the next large import removes this user's folders
-older than six hours. The copy is the plain database, also in an encrypted case, where the case's
+or not. On Linux the import then tries to remove its name at once (macOS should behave the
+same; not yet tested there); if that removal fails, the named copy stays until the import ends.
+Its freed disk blocks are not wiped. An import stopped mid-copy (killed, crashed, power lost)
+leaves its folder; the next large import tries to remove this user's folders older than six
+hours, best effort (a folder it cannot remove, or a newer one, stays). The copy is the plain database, also in an encrypted case, where the case's
 own copy of the zip stays encrypted (`docs/encryption.md`, "Not covered"). Where the temporary
 folder is in memory (tmpfs on some Linux systems), the copy takes memory too; set `TMPDIR` to a
 folder on disk. The import refuses a database whose temporary disk lacks its size plus 512 MiB
