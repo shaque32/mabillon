@@ -2003,3 +2003,80 @@ Diff:
      expert_supports = [e for e in supports if e.status is EvidenceStatus.ACCEPTED]
      counsel_supports = [e for e in supports if e.status is EvidenceStatus.COUNSEL_ACCEPTED]
 ```
+
+## 2026-11-21 claude/project-thread-8xaz0s: amend rules 0.6.0, rule 3d' exempts only open labels and keeps listing them
+NOT SIGNED. Needs Arsh's "approved" on this wording before `core/audit/rules.py` changes again.
+File: core/audit/rules.py (on PR #275, over the signed 0.6.0 diff above)
+Why: CodeRabbit review of #275 found two gaps, both verified.
+1. As signed, the exemption covers any undismissed "complicates" label, including one that the
+   AI reviewer, counsel or an expert accepted. An accepted "complicates" is a reviewer agreeing
+   the record leaves the time open, so it must keep blocking. The amendment exempts only open
+   (unreviewed) labels; if any complicating item on that time was accepted, all of them block as
+   under 0.5.0.
+2. As signed, when another blocker remains (say an identity label), the exempted time label is
+   dropped from the reasons. The amendment lists it ("Rule 3d': ...") on every decision.
+Stricter only: it can make no claim SUPPORTED that the signed 0.6.0 diff left UNPROVEN.
+Measured (same free replay, 2026-11-21): unchanged from the signed diff. A13 SUPPORTED with
+stored labels 3 -> 6 (D077, D093, D122; their labels are open), 0 false; iOS 15 unchanged, 0
+false. Contract tests 176 passed, with two new tests (accepted labels still block; the label is
+listed beside another blocker).
+Diff:
+```diff
+--- a/core/audit/rules.py
++++ b/core/audit/rules.py
+@@ -78,10 +78,11 @@ Rule 3. SUPPORTED needs all of:
+         label and no reviewer is used, and the basis is checked;
+     (d) no complicating item that is not dismissed, no counting contradiction and no failed
+         check on any assumption of the claim, core or not. Rule 3d' (0.6.0, Arsh, 2026-11-21):
+-        when rule 3c' carries the claim, a complicating item on a core time assumption whose
+-        checks all passed and named their records does not block; the time check computed that
+-        time from the records. The reasons list the item for the expert. A complicating item on
+-        any other assumption, identity included, still blocks;
++        when rule 3c' carries the claim, a complicating item that no reviewer accepted, on a
++        core time assumption whose checks all passed and named their records, does not block;
++        the time check computed that time from the records. The reasons list the item for the
++        expert. A complicating item that the AI reviewer, counsel or an expert accepted, or one
++        on any other assumption, identity included, still blocks;
+     (e) the core assumptions include the kind the claim type turns on: identity for a
+         communication claim (who sent it: C16's shared account) or an identity claim, a
+         meaning assumption for a content-meaning claim, completeness for an absence or count
+@@ -124,9 +125,9 @@ A case with no counsel review decides as 0.4.0 did, except that a COMMUNICATION,
+ COUNT claim whose core assumptions all passed their checks, with nothing blocking, is
+ SUPPORTED (checked) under 0.5.0 where 0.4.0 left it UNPROVEN awaiting an expert.
+ 0.6.0 (Arsh, 2026-11-21) adds rule 3d'. A claim decides as under 0.5.0, except that a
+-COMMUNICATION, TIMING or COUNT claim whose only blocker was an undismissed "complicates" label on
+-a core time assumption that passed its checks is SUPPORTED (checked) under 0.6.0, where 0.5.0
+-left it UNPROVEN until an expert dismissed the label.
++COMMUNICATION, TIMING or COUNT claim whose only blocker was an open (unreviewed) "complicates"
++label on a core time assumption that passed its checks is SUPPORTED (checked) under 0.6.0, where
++0.5.0 left it UNPROVEN until an expert dismissed the label.
+ """
+ 
+ from __future__ import annotations
+@@ -519,7 +520,12 @@ def decide_verdict(
+                 f"({_how(e)}) and is not dismissed."
+                 for e in f.unconfirmed
+             ]
+-        if by_code and _time_settled_by_check(f, ck_by[f.assumption.id]):
++        if (
++            by_code
++            and _time_settled_by_check(f, ck_by[f.assumption.id])
++            # only open model labels: one that any reviewer accepted keeps blocking
++            and all(e.status is EvidenceStatus.OPEN for e in f.complicating)
++        ):
+             # rule 3d' (0.6.0): a time the check computed is not left open by a model's
+             # "complicates"; the label stays on the claim for the expert
+             notes += [
+@@ -533,10 +539,10 @@ def decide_verdict(
+             f"Rule 3d: {e.record_id} complicates '{f.assumption.text}' and is not dismissed."
+             for e in f.complicating
+         ]
++    reasons += notes  # rule 3d': listed on every decision, beside any blocker left
+     if blockers:
+         reasons += blockers
+         return decide(Verdict.UNPROVEN)
+-    reasons += notes  # rule 3d': listed on every SUPPORTED it did not block
+ 
+     expert_supports = [e for e in supports if e.status is EvidenceStatus.ACCEPTED]
+     counsel_supports = [e for e in supports if e.status is EvidenceStatus.COUNSEL_ACCEPTED]
+```
