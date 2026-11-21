@@ -43,7 +43,7 @@ COMMUNICATION = claim_of(CT.COMMUNICATION)
 
 
 def test_version_and_sets():
-    assert rules.RULE_VERSION == "0.5.0"
+    assert rules.RULE_VERSION == "0.6.0"
     assert rules._CODE_MAY_SUPPORT == frozenset({CT.COMMUNICATION, CT.TIMING, CT.COUNT})
 
 

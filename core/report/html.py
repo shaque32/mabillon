@@ -924,6 +924,8 @@ def _limitations(
             f" <strong>{SUPPORTED_CHECKED}</strong> means every core assumption of the claim "
             "passed Mabillon's deterministic checks against the records, which the finding "
             "cites. No model label and no reviewer was used, and no expert has confirmed it. "
+            "A model's label that nobody reviewed may still be listed beside a time the check "
+            "worked out from the records; it does not set the status, and you can review it. "
             "It is offered only for communication, timing and count claims."
         )
     if used(SUPPORTED_COUNSEL):

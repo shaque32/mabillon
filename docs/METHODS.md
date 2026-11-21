@@ -73,9 +73,11 @@ the examiner's decisions into a verdict. No model decides a verdict. In brief (r
   the examiner confirms it, or the examiner rejects the proposal instead.
 - **Supported** only if every core assumption is covered (by a passed check, or by support the
   examiner accepted on an observed or derived record), the examiner accepted at least one
-  supporting record that was observed directly, nothing complicating or contradicting remains open,
-  and the assumption the claim turns on (for example who sent it, for a communication claim) is
-  among those covered.
+  supporting record that was observed directly (or, for communication, timing and count claims,
+  every core assumption passed its checks instead), nothing complicating or contradicting remains
+  open, and the assumption the claim turns on (for example who sent it, for a communication
+  claim) is among those covered. The one open label allowed (rules 0.6.0, rule 3d') is described
+  in section 3.
 - **Unproven** otherwise, naming each assumption left uncovered.
 
 **Invariants.** After the rules run, separate code re-checks every decision against the stored
@@ -84,11 +86,17 @@ the claim's results are rolled back and the run stops.
 
 ## 3. The expert gate
 
-Nothing is Supported on a model's label. Under rules 0.5.0 a claim becomes Supported when the
+Nothing is Supported on a model's label. Under rules 0.6.0 a claim becomes Supported when the
 examiner accepts its supporting evidence, when defense counsel does ("Supported (reviewed by
 counsel)", work product, never shown as confirmed), or, for communication, timing and count
 claims only, when every core assumption passed all its deterministic checks against the records
-("Supported by the records (code checks)", no model label and no reviewer). Otherwise the screen
+("Supported by the records (code checks)", no model label and no reviewer). There, since rules
+0.6.0, a model's "complicates" label does not block when all of these hold: nobody has reviewed
+it, it sits on a core time assumption whose checks all passed and named their records, every
+other "complicates" on that time that nobody dismissed is also unreviewed, the claim has a core
+identity assumption (which passed its checks), and no examiner or counsel accepted a supporting
+item on an observed record of a core assumption. The label
+is listed for the examiner. Any other open "complicates" or "contradicts" still blocks. Otherwise the screen
 asks "Support found: do you agree?". An optional
 local AI reviewer may sort evidence for the examiner, but in this version its acceptance covers
 nothing and never makes a claim Supported. Identity links between accounts and people stay
@@ -115,7 +123,7 @@ own decision with that note, not as a rule outcome.
 
 | Verdict | Means | Does not mean |
 |---|---|---|
-| **Supported** | From the rules: every core assumption is covered by a passed check or by evidence the examiner accepted, and nothing open complicates or contradicts it | That the claim is true beyond the data imported, that the data is complete, or that Mabillon formed an opinion. An examiner override to Supported is the examiner's decision and is labeled as one |
+| **Supported** | From the rules: every core assumption is covered by a passed check or by evidence the examiner accepted, and nothing open complicates or contradicts it, except an unreviewed model "complicates" on a checked time that rule 3d' lists (section 3) | That the claim is true beyond the data imported, that the data is complete, or that Mabillon formed an opinion. An examiner override to Supported is the examiner's decision and is labeled as one |
 | **Contradicted** | A deterministic check failed, or the examiner accepted a "contradicts" label on the cited record | That the person did not do something, or any conclusion about guilt |
 | **Unproven** | Mabillon could not cover every core assumption with the data it had; the uncovered ones are named | That the claim is false, or that the event did not happen |
 
