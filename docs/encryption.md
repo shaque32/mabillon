@@ -14,12 +14,12 @@ the case's recovery key.
 | `case.json` (the case name, when and by whom it was made, the claim order, timeline settings) | No | So the case list can name a locked case. Do not put a client's name in the case name if that matters |
 | `case.db.anchors.jsonl` (audit-log entry numbers and hashes, [review-screen.md](review-screen.md#the-audit-log-check)) | No | Holds no case content: entry numbers and hashes only |
 
-Not covered: a report or request letter the expert downloads (saved wherever they choose, as a
-plain file), the expert's original evidence files (Mabillon never changes them), anything on
-screen while a case is unlocked, and, while a LEAPP output is imported whose database is over 2 GB
-(or smaller but too large for the computer's free memory), a plain temporary copy of that database in the system's temporary folder, removed, best
-effort, when the import ends (or by a later large import, if Mabillon was stopped mid-import); its freed disk
-blocks are not wiped (`docs/ingest/leapp.md`).
+Not covered: a report or request letter the expert downloads (saved wherever they choose, as a plain
+file), the expert's original evidence files (Mabillon never changes them), anything on screen while
+a case is unlocked, and, while a LEAPP output is imported whose database is over 2 GB (or smaller
+but too large for the computer's free memory), a plain temporary copy of that database in the
+system's temporary folder, removed, best effort, when the import ends (or by a later large import,
+if Mabillon was stopped mid-import); its freed disk blocks are not wiped (`docs/ingest/leapp.md`).
 
 The SHA-256 Mabillon records for every imported file is of the plain bytes, so it still matches the
 original file and the hash in the report, encrypted or not.
