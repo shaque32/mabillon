@@ -18,9 +18,8 @@ def test_version_0_6_0():
     assert rules.RULE_VERSION == "0.6.0"
 
 
-@pytest.mark.parametrize("status", [S.OPEN, S.AI_ACCEPTED])
-def test_a_complicates_label_on_a_checked_time_no_longer_blocks(status):
-    flag = ev(2, TIME, Stance.COMPLICATES, status)
+def test_a_complicates_label_on_a_checked_time_no_longer_blocks():
+    flag = ev(2, TIME, Stance.COMPLICATES, S.OPEN)
     d = decide([SENDER, TIME], [flag], [chk(SENDER, name="sender"), chk(TIME)], claim=COMMUNICATION)
     assert d.verdict is Verdict.SUPPORTED
     assert d.supported_basis is SupportedBasis.CHECKED
@@ -76,3 +75,32 @@ def test_claims_checks_cannot_carry_keep_the_old_rule():
     flag = ev(3, TIME, Stance.COMPLICATES, S.OPEN)
     d = decide([TIME, event], [ev(1, event, status=S.ACCEPTED), flag], [chk(TIME)], claim=TIMING)
     assert d.verdict is Verdict.UNPROVEN
+
+
+@pytest.mark.parametrize("status", [S.AI_ACCEPTED, S.COUNSEL_ACCEPTED, S.ACCEPTED])
+def test_a_complicates_label_a_reviewer_accepted_still_blocks(status):
+    """CodeRabbit, #275: an accepted "complicates" is a reviewer's doubt, not a model's."""
+    accepted = ev(2, TIME, Stance.COMPLICATES, status)
+    d = decide(
+        [SENDER, TIME], [accepted], [chk(SENDER, name="sender"), chk(TIME)], claim=COMMUNICATION
+    )
+    assert d.verdict is Verdict.UNPROVEN
+    assert any(r.startswith("Rule 3d:") and accepted.record_id in r for r in d.reasons)
+    mixed = [ev(3, TIME, Stance.COMPLICATES, S.OPEN), accepted]
+    d = decide([SENDER, TIME], mixed, [chk(SENDER, name="sender"), chk(TIME)], claim=COMMUNICATION)
+    assert d.verdict is Verdict.UNPROVEN
+
+
+def test_the_time_label_is_listed_when_another_blocker_remains():
+    """CodeRabbit, #275: the exempt label stays in the reasons beside an identity blocker."""
+    on_time = ev(2, TIME, Stance.COMPLICATES, S.OPEN)
+    on_sender = ev(3, SENDER, Stance.COMPLICATES, S.OPEN)
+    d = decide(
+        [SENDER, TIME],
+        [on_time, on_sender],
+        [chk(SENDER, name="sender"), chk(TIME)],
+        claim=COMMUNICATION,
+    )
+    assert d.verdict is Verdict.UNPROVEN
+    assert any(r.startswith("Rule 3d':") and on_time.record_id in r for r in d.reasons)
+    assert any(r.startswith("Rule 3d:") and on_sender.record_id in r for r in d.reasons)

@@ -2005,7 +2005,8 @@ Diff:
 ```
 
 ## 2026-11-21 claude/project-thread-8xaz0s: amend rules 0.6.0, rule 3d' exempts only open labels and keeps listing them
-NOT SIGNED. Needs Arsh's "approved" on this wording before `core/audit/rules.py` changes again.
+SIGNED by Arsh on 2026-11-21 ("approved", project chat, on this amendment). APPLIED verbatim by
+PR #275, with the two tests named below.
 File: core/audit/rules.py (on PR #275, over the signed 0.6.0 diff above)
 Why: CodeRabbit review of #275 found two gaps, both verified.
 1. As signed, the exemption covers any undismissed "complicates" label, including one that the
