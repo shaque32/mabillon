@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import shutil
 import sqlite3
+import tempfile
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -1954,3 +1958,203 @@ def test_an_entry_with_no_name_key_or_table_is_listed_by_its_category(tmp_path: 
     assert [(t["name"], t["may_hold_records"]) for t in rows] == [
         ("an unnamed Call Logs entry", True)
     ]
+
+
+# ---------------------------------------------------------------- Android 14 zone (gate C2)
+
+
+def test_an_android_14_phone_takes_its_zone_from_battery_usage_v9(tmp_path: Path) -> None:
+    # Found at v5 gate C2: Android 14 keeps battery usage in battery-usage-db-v9, which ALEAPP
+    # writes as get_battery_usage_v9 (battery_usage_v9.py at ed1b63d), so the phone had no zone.
+    lv = _android()
+    for i in range(3):
+        lv.add(
+            "get_battery_usage_v9",
+            **{"Timestamp": f"2024-03-0{i + 1}T00:00:00Z", "Timezone": "America/New_York"},
+        )
+    lv.add("usagestatsVersion", **{"Property": "Android Version", "Property Value": "14"})
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT os_version, timezone FROM devices").fetchall() == [
+        ("Android 14", "America/New_York")
+    ]
+    seen = coverage.load(conn, "and").payload["leapp"]["device"]["zones_seen"]
+    assert seen == [
+        {
+            "zone": "America/New_York",
+            "rows": 3,
+            "first": "2024-03-01T00:00:00Z",
+            "last": "2024-03-03T00:00:00Z",
+            "tables": ["get_battery_usage_v9"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("v9", "zone"),
+    [("America/New_York", "America/New_York"), ("America/Chicago", None), ("-0500", None)],
+)
+def test_battery_usage_v4_and_v9_zones_must_agree(tmp_path: Path, v9: str, zone) -> None:  # noqa: ANN001
+    # A phone that kept both databases gets a zone only when every zone in both is the same one,
+    # and a v9 value this reader cannot read sets none, as for v4.
+    lv = _android()
+    ny = {"Timestamp": "2024-03-01T00:00:00Z", "Timezone": "America/New_York"}
+    lv.add("get_battery_usage_v4", **ny)
+    lv.add("get_battery_usage_v9", **{"Timestamp": "2024-03-02T00:00:00Z", "Timezone": v9})
+    conn = _db()
+    LeappImporter(source_id="and").import_source(lv.write_zip(tmp_path / "a.zip"), conn)
+    assert conn.execute("SELECT timezone FROM devices").fetchall() == [(zone,)]
+
+
+def test_battery_usage_v9_is_not_a_zone_source_for_ileapp(tmp_path: Path) -> None:
+    assert ("iLEAPP", "get_battery_usage_v9") not in leapp.ZONE_SOURCES
+    assert leapp.ZONE_SOURCES[("ALEAPP", "get_battery_usage_v9")] == ("Timestamp", "Timezone")
+
+
+# ---------------------------------------------------------------- a database too large for memory
+
+
+def _rows(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Every table's rows but the coverage record and the audit log (compared by payload)."""
+    names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    skip = {"source_coverage", "audit_log"}
+    return {
+        t: sorted(map(repr, conn.execute(f'SELECT * FROM "{t}"')))  # noqa: S608  (schema names)
+        for t in names
+        if t not in skip and not t.startswith("sqlite_")
+    }
+
+
+def _payload(conn: sqlite3.Connection, src: str) -> dict:
+    p = coverage.load(conn, src).payload
+    p["leapp"].pop("database_read_from")
+    return p
+
+
+@pytest.mark.parametrize("make", [_ios, _android])
+def test_a_database_too_large_for_memory_imports_the_same_from_a_temporary_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make
+) -> None:  # noqa: ANN001
+    # Found at v5 gate C2: SQLite refuses to load a database over about 2 GiB into memory (one
+    # allocation), so a 5.58 GB iOS 17 LAVA database could not be imported on any machine.
+    path = make().write_zip(tmp_path / "p.zip")
+    now = datetime(2026, 11, 21, tzinfo=UTC)
+    small = _db()
+    LeappImporter(source_id="s", now=now).import_source(path, small)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+
+    def no_memory(data: bytes) -> sqlite3.Connection:
+        raise AssertionError("a database over IN_MEMORY_DB_BYTES was loaded into memory")
+
+    monkeypatch.setattr(leapp, "_in_memory", no_memory)
+    big = _db()
+    LeappImporter(source_id="s", now=now).import_source(path, big)
+    assert _rows(big) == _rows(small)
+    assert _payload(big, "s") == _payload(small, "s")
+    assert coverage.load(big, "s").payload["leapp"]["database_read_from"] == "temporary_file"
+    assert coverage.load(small, "s").payload["leapp"]["database_read_from"] == "memory"
+    assert list(temp.iterdir()) == []  # the copy is gone once the import ends
+
+
+def test_the_temporary_copy_is_read_only_and_gone_once_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    assert lava.read_from == "temporary_file" and lava.temp_dir is not None
+    assert lava.temp_dir.name.startswith(leapp.TEMP_PREFIX)
+    assert lava.db.execute("SELECT count(*) FROM get_sms_mms").fetchone()[0] > 0
+    with pytest.raises(sqlite3.OperationalError):
+        lava.db.execute("CREATE TABLE x (a)")
+    if os.name == "posix":
+        # its name is removed as soon as it is open, so nothing is left if Mabillon stops
+        assert list(temp.iterdir()) == []
+    lava.close()
+    assert list(temp.iterdir()) == []
+
+
+def test_a_database_at_the_memory_limit_stays_in_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    z = _android().write_zip(tmp_path / "a.zip")
+    with zipfile.ZipFile(z) as zz:
+        size = next(i.file_size for i in zz.infolist() if i.filename.endswith(".db"))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", size)
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    assert lava.read_from == "memory" and lava.temp_dir is None
+    lava.close()
+
+
+def test_a_large_database_is_refused_when_its_disk_has_no_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    real = shutil.disk_usage
+    monkeypatch.setattr(
+        leapp.shutil, "disk_usage", lambda p: real(p)._replace(free=leapp.TEMP_HEADROOM_BYTES)
+    )
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f, pytest.raises(ValueError, match="bytes free"):
+        leapp.read_lava(f, z.name)
+    assert list(temp.iterdir()) == []
+
+
+@pytest.mark.parametrize("bad", ["not a database", "tool"])
+def test_a_refused_large_database_leaves_no_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    manifest, data = _android().build()
+    if bad == "tool":
+        manifest["parser_info"]["leapp_name"] = "OtherTool"
+    else:
+        data = b"x" * 4096
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zz:
+        zz.writestr("LEAPP_Reports_x/_lava_data.lava", json.dumps(manifest))
+        zz.writestr("LEAPP_Reports_x/_lava_artifacts.db", data)
+    buf.seek(0)
+    with pytest.raises(ValueError):
+        leapp.read_lava(buf, "a.zip")
+    assert list(temp.iterdir()) == []
+
+
+def test_a_large_database_reads_through_an_encrypted_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An encrypted case's copy is decrypted as it streams; the temporary copy is the plain
+    # database, removed at close like any other (disclosed in the changelog).
+    from core import encryption
+
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    key_id, dek = os.urandom(16).hex(), os.urandom(32)
+    encryption.remember(key_id, dek)
+    plain = _android().write_zip(tmp_path / "a.zip")
+    enc = tmp_path / "input-x"
+    encryption.encrypt_file(plain, enc, key_id, dek)
+    with encryption.open_input(enc) as f:
+        lava = leapp.read_lava(f, "a.zip")
+    try:
+        assert lava.read_from == "temporary_file"
+        assert lava.db.execute("SELECT count(*) FROM get_sms_mms").fetchone()[0] > 0
+    finally:
+        lava.close()
+    assert list(temp.iterdir()) == []

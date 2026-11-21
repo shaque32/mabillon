@@ -1,6 +1,6 @@
 # iLEAPP and ALEAPP import (unverified)
 
-Importer: `core/ingest/leapp.py` (`LeappImporter`, importer `leapp` 0.2.0). It implements
+Importer: `core/ingest/leapp.py` (`LeappImporter`, importer `leapp` 0.3.0). It implements
 `EvidenceImporter` and writes the same canonical rows as the other importers, through the same
 writer (`_Writer` in `core/ingest/cellebrite_common.py`), so retrieval, checks, rules, the review
 screen and the report work unchanged. `core/ingest/pick.py` chooses it for a `.zip` that holds a
@@ -27,6 +27,18 @@ A zip of one iLEAPP or ALEAPP run's output folder, or of just its LAVA pair:
 
 The zip must hold exactly one manifest, with its database beside it. HTML, TSV and media files in
 the zip are not read.
+
+A database up to 2,000,000,000 bytes is read into memory and never written out. SQLite loads a
+database into memory as one allocation and refuses one above about 2 GiB, and a real phone's
+LAVA database can be larger (a public iOS 17 phone's is 5.6 GB, mostly file system events the
+import does not read). A larger one is streamed to a new owner-only temporary folder, opened
+read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds or not.
+On macOS and Linux its name is removed as soon as it is open, so nothing is left behind even if
+Mabillon stops mid-import; on Windows the folder is removed when the import closes it. The copy
+is the plain database, also in an encrypted case, where the case's own copy of the zip stays
+encrypted. The import refuses a database whose temporary disk lacks its size plus 512 MiB free,
+and any database over 64 GiB. The coverage record says which way it was read
+(`leapp.database_read_from`: `memory` or `temporary_file`).
 
 ## What is read
 
@@ -274,7 +286,8 @@ phone's own value, from the source path LEAPP names.
 
 `devices.timezone` is the IANA zone the phone's own tables recorded: iLEAPP's `powerlogTimeZone`
 (Time Zone Name, with its time) and `timezone_info` (the `Last Bootstrap Timezone` property),
-ALEAPP's `get_battery_usage_v4` (Timezone, with its time). It is set only when every zone those
+ALEAPP's `get_battery_usage_v4` (Android 13 and earlier) and `get_battery_usage_v9` (Android 14,
+ALEAPP's `battery_usage_v9.py`), each its Timezone with its time. It is set only when every zone those
 tables recorded is the same one. A phone that recorded two or more zones, or none, gets no zone
 and an attention item saying so, and a claim with a time window is not tested until the expert
 sets the zone (case screen, or `mabillon set-device-zone`). Any name the standard library knows

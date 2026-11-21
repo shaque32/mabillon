@@ -79,6 +79,15 @@ HEADERS: dict[str, tuple[Header, ...]] = {
         "% Of Consumed", "Foreground Usage (Seconds)", "Background Usage (Seconds)",
         "Battery Level (%)", "Battery Status",
     ),
+    # ALEAPP battery_usage_v9.py (Android 14) at ed1b63d
+    "get_battery_usage_v9": (
+        ("Timestamp", "datetime"), "Boot Timestamp", "Application", "Package Name", "Hidden",
+        "Timezone", "Total Power", "Consumed Power", "Foreground Usage (Seconds)",
+        "Proto Field 20 (as decoded)", "Proto Field 20 / 1000 (derived)",
+        "Background Usage (Seconds)", "Battery Level (%)", "Proto 1.2 (stored status)",
+        "Battery Status (existing interpretation)", "Proto 1.3 (stored health)",
+        "Battery Health (existing interpretation)", "Drain Type",
+    ),
     "usagestatsVersion": ("Property", "Property Value"),
     # chat apps, read through LEAPP's conversation view
     "whatsAppMessages": (
@@ -169,6 +178,10 @@ NAMES = {
     "timezone_info": ("Identifiers", "App Store Preferences"),
     "last_build": ("IOS Build", "iOS Information"),
     "get_battery_usage_v4": ("Settings Services", "battery_usage_v4"),
+    "get_battery_usage_v9": (
+        "Settings Services - Battery Usage v9 - Battery States",
+        "Settings Services - Battery Usages v9 - Battery States",
+    ),
     "usagestatsVersion": ("Device Information", "OS Version"),
     "whatsAppMessages": ("WhatsApp", "WhatsApp - Messages"),
     "instagramDirectMessages": ("Instagram", "Instagram - Direct Messages"),

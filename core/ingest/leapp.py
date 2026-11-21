@@ -64,8 +64,11 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
@@ -105,7 +108,7 @@ from core.ingest.source_file import require_sha256, sha256_input
 from core.review import audit_log
 
 IMPORTER_NAME = "leapp"
-IMPORTER_VERSION = "0.2.0"
+IMPORTER_VERSION = "0.3.0"
 # The app every importer gives a phone's own messages (a UFDR's name for iMessage, SMS, MMS and
 # RCS together; assumption_filler APP_ALIASES and WIDER_APPS).
 NATIVE_MESSAGES_APP = "Native Messages"
@@ -113,11 +116,21 @@ NATIVE_MESSAGES_APP = "Native Messages"
 FORMAT_SUPPORT = "unverified"
 MANIFEST_NAMES = ("_lava_data.lava", "_lava_data.json")  # LAVA accepts both names
 DEFAULT_DB_NAME = "_lava_artifacts.db"
-# The most the manifest and the database may unpack to. The database is read into memory (never
-# written out unencrypted), so a zip member that claims more is refused before it is expanded.
-# The public iOS 15 test phone's database is 1.4 GB, most of it file system events.
+# The most the manifest and the database may unpack to; a zip member that claims more is refused
+# before it is expanded. The public iOS 15 test phone's database is 1.4 GB and a public iOS 17
+# phone's 5.6 GB, most of it file system events the import does not read.
 MAX_MANIFEST_BYTES = 256 * 1024 * 1024
-MAX_DB_BYTES = 8 * 1024 * 1024 * 1024
+MAX_DB_BYTES = 64 * 1024 * 1024 * 1024
+# A database up to this size is read into memory and never written out. SQLite takes a database
+# it loads into memory as one allocation and refuses one above SQLITE_MAX_ALLOCATION_SIZE
+# (2,147,483,391 bytes in a default build), so a larger one is copied to a temporary file,
+# opened read-only, and removed when the import closes it (Lava.close).
+IN_MEMORY_DB_BYTES = 2_000_000_000
+# Free space a temporary copy must leave on its disk, beyond its own size.
+TEMP_HEADROOM_BYTES = 512 * 1024 * 1024
+TEMP_PREFIX = "mabillon-lava-"
+DB_IN_MEMORY = "memory"
+DB_IN_TEMP_FILE = "temporary_file"
 LEAPP_NAMES = {"ileapp": "iLEAPP", "aleapp": "ALEAPP"}
 # LEAPP input types that are a phone's file system (fs, tar, zip, gz); an iTunes backup is not.
 FILE_SYSTEM_INPUTS = {"fs", "tar", "zip", "gz", "tgz", "file"}
@@ -205,6 +218,17 @@ class Lava:
     _has_rows: dict[str, bool | None] = field(default_factory=dict, repr=False)
     # record kinds stored from a table read as another kind (a chat table's call notices)
     extra_kinds: set[RecordKind] = field(default_factory=set)
+    # the folder holding the temporary copy of a database too large for memory, else None
+    temp_dir: Path | None = None
+
+    @property
+    def read_from(self) -> str:
+        """Where the database was read: in memory, or from a temporary copy (DB_IN_TEMP_FILE)."""
+        return DB_IN_MEMORY if self.temp_dir is None else DB_IN_TEMP_FILE
+
+    def close(self) -> None:
+        """Close the database and remove its temporary copy, if it has one."""
+        _discard(self.db, self.temp_dir)
 
     def has_table(self, art: Artifact) -> bool:
         return _find_table(self.db, art.table) is not None
@@ -324,20 +348,104 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
     if db_member not in names:
         raise ValueError(f"{file_name} holds {man_member} but not {db_name} beside it")
     _check_size(z, db_member, MAX_DB_BYTES, file_name)
-    db = sqlite3.connect(":memory:")
+    db, temp_dir = _open_database(z, db_member, file_name)
     try:
-        # deserialize copies the bytes into SQLite, so the read is not kept past this call
-        db.deserialize(z.read(db_member))
+        return _lava(manifest, db, temp_dir, man_member, db_member, file_name)
+    except BaseException:
+        _discard(db, temp_dir)
+        raise
+
+
+def _open_database(
+    z: zipfile.ZipFile, member: str, file_name: str
+) -> tuple[sqlite3.Connection, Path | None]:
+    """The LAVA database, read-only, and the folder of its temporary copy (None when it was read
+    into memory). A database over IN_MEMORY_DB_BYTES is streamed to a new owner-only temporary
+    folder and opened read-only there; on macOS and Linux its name is removed as soon as it is
+    open, so nothing is left behind if Mabillon stops, and on Windows the folder is removed when
+    the import closes it."""
+    size = z.getinfo(member).file_size
+    temp_dir: Path | None = None
+    db: sqlite3.Connection | None = None
+    try:
+        if size <= IN_MEMORY_DB_BYTES:
+            db = _in_memory(z.read(member))
+        else:
+            temp_dir = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))  # owner-only (0700)
+            free = shutil.disk_usage(temp_dir).free
+            if free < size + TEMP_HEADROOM_BYTES:
+                raise ValueError(
+                    f"{member} in {file_name} unpacks to {size:,} bytes, too large to read in "
+                    f"memory, and the temporary folder's disk has {free:,} bytes free; free at "
+                    f"least {size + TEMP_HEADROOM_BYTES - free:,} bytes and import it again"
+                )
+            path = temp_dir / "lava.db"
+            fd = os.open(
+                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
+            )
+            with z.open(member) as src, os.fdopen(fd, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+            # read-only, and immutable: no journal, no lock, nothing written beside it
+            db = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
         db.execute("PRAGMA query_only = ON")
         db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        if temp_dir is not None:
+            _unlink_open_copy(temp_dir)
     except db_errors.DatabaseError as err:
+        _discard(db, temp_dir)
+        raise ValueError(f"{member} in {file_name} is not a SQLite database") from err
+    except BaseException:
+        _discard(db, temp_dir)
+        raise
+    return db, temp_dir
+
+
+def _in_memory(data: bytes) -> sqlite3.Connection:
+    """A database read into memory: deserialize copies the bytes into SQLite, so the read is not
+    kept past this call."""
+    db = sqlite3.connect(":memory:")
+    try:
+        db.deserialize(data)
+    except BaseException:
         db.close()
-        raise ValueError(f"{db_member} in {file_name} is not a SQLite database") from err
+        raise
+    return db
+
+
+def _unlink_open_copy(temp_dir: Path) -> None:
+    """Remove the open copy's name where the system allows it (macOS, Linux): the open database
+    keeps reading it, and the system frees it when the database closes or Mabillon stops. Windows
+    refuses while it is open; the copy is then removed at close."""
+    try:
+        for f in temp_dir.iterdir():
+            f.unlink()
+        temp_dir.rmdir()
+    except OSError:
+        pass
+
+
+def _discard(db: sqlite3.Connection | None, temp_dir: Path | None) -> None:
+    """Close the database, then remove its temporary copy's folder, if it has one."""
+    if db is not None:
+        db.close()
+    if temp_dir is not None:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _lava(
+    manifest: dict[str, Any],
+    db: sqlite3.Connection,
+    temp_dir: Path | None,
+    man_member: str,
+    db_member: str,
+    file_name: str,
+) -> Lava:
+    """The Lava for a manifest and its open database. The caller closes the database if this
+    raises."""
     info = manifest.get("parser_info") if isinstance(manifest.get("parser_info"), dict) else {}
     raw_name = str(info.get("leapp_name") or "")
     leapp = LEAPP_NAMES.get(raw_name.strip().lower())
     if leapp is None:
-        db.close()
         raise ValueError(
             f"{file_name}'s manifest names {raw_name or 'no tool'}; Mabillon reads iLEAPP and "
             "ALEAPP output only"
@@ -394,7 +502,6 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         if not _reads(leapp, art.key) or _find_table(db, art.table) is None:
             continue  # a table it never reads, or one not in the database, stores no row
         if art.table in seen:
-            db.close()
             raise ValueError(
                 f"{file_name}'s manifest names table {art.table!r} twice; each table is read"
                 " once, so the import stops"
@@ -409,6 +516,7 @@ def read_lava(data: io.BufferedIOBase | io.BytesIO, file_name: str) -> Lava:
         leapp_version=str(version) if version else None,
         artifacts=arts,
         tableless=tableless,
+        temp_dir=temp_dir,
     )
 
 
@@ -1694,6 +1802,9 @@ ZONE_SOURCES: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {
     ("iLEAPP", "powerlogTimeZone"): ("Timestamp", "Time Zone Name"),
     ("iLEAPP", "timezone_info"): ("Property", "Property Value", "Last Bootstrap Timezone"),
     ("ALEAPP", "get_battery_usage_v4"): ("Timestamp", "Timezone"),
+    # Android 14 keeps battery usage in com.android.settings' battery-usage-db-v9; ALEAPP
+    # battery_usage_v9.py at ed1b63d writes the zone from each row's protobuf under "Timezone"
+    ("ALEAPP", "get_battery_usage_v9"): ("Timestamp", "Timezone"),
 }
 # Where LEAPP writes the phone's OS version: (tool, artifact) -> (property header, value header,
 # properties joined in order).
@@ -1925,7 +2036,7 @@ class LeappImporter:
         try:
             source = self._write(path, sha, conn, lava)
         finally:
-            lava.db.close()
+            lava.close()
         return source
 
     def _write(self, path: Path, sha: str, conn: sqlite3.Connection, lava: Lava) -> Source:
@@ -2037,6 +2148,8 @@ class LeappImporter:
                     "processing_status": lava.manifest.get("processing_status"),
                     "manifest_member": lava.manifest_member,
                     "database_member": lava.db_member,
+                    # memory, or a temporary copy removed at close (too large for memory)
+                    "database_read_from": lava.read_from,
                     "artifacts_read": [
                         {
                             "key": a.key,
