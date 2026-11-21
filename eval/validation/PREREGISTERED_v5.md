@@ -21,7 +21,8 @@ the probe's cap sits outside the $112 ceiling (section 7); a C4 top-up replaces 
 set stays at 150 and keeps at least 100 not supported (section 7a); a restart's spend counts
 against its pass's cap (section 7); the claims and key are frozen before C4, the blind 30 is
 drawn from the final set after C4, and the freeze addendum is approved after C4 with its final
-hashes and counts (section 12).
+hashes and counts (section 12); a paused probe keeps its case for the resume, unopened, and C4's
+per-phone count is by the phone a deciding check's records are on (section 7a).
 
 ## 1. What this test is, and what it may let us say
 - One scored run of Mabillon on a two-phone case it has never imported, on the pilot setup:
@@ -170,7 +171,7 @@ the only paid step before the passes.
 | C1 | Baseline on current code: v4's 150 claims, stored answers replayed on merged main | free, done | at least 30 code-checked |
 | C2 | Data gate on the held-out packages: the driver builds both phones with no model calls, and prints only aggregate counts (readable calls with a side, native texts with a party, per phone; each phone's recorded zone) | free | both phones build; the call-log gate (#269) passes; each phone has one known zone and the two agree (otherwise every windowed claim is refused); at least 20 readable calls and 100 native texts across the pair (Arsh sets) |
 | C3 | Claim-mix gate, by script, on the writer's private form before the freeze (no Mabillon output) | free | at least 90 claims of the kinds code can check (communication, timing, count) about native texts, iMessage or the call log; each phone named in capitals; no chat-app absence claims; iOS native-message counts are not counted toward the 90 (they fail closed) |
-| C4 | Coverage probe on the frozen claims: the run's own filler and checks on all 150 claims, with no stance labeling, capped; it prints only tier counts per kind and per phone, never a claim, a verdict or a check result, and its case is deleted | about $2 to $4 (filler is 150 of v4's 2,203 calls and about 4% of its prompt text: an estimate, not measured), `--max-usd 5`, needs Arsh's OK | at least **40** code-checked of 150 and at least 10 on each phone (Arsh sets) |
+| C4 | Coverage probe on the frozen claims: the run's own filler and checks on all 150 claims, with no stance labeling, capped; it prints only tier counts per kind and per phone, never a claim, a verdict or a check result, and its case is deleted once counted (a paused probe keeps it for its resume, and nobody opens it) | about $2 to $4 (filler is 150 of v4's 2,203 calls and about 4% of its prompt text: an estimate, not measured), `--max-usd 5`, needs Arsh's OK | at least **40** code-checked of 150 and at least 10 on each phone (Arsh sets) |
 
 C1's result: v4 pass 1 had 42 code-checked and pass 2 had 40. The replays of v4's stored answers
 since (on #265, then on merged main 975e37e) changed no check outcome, and the tier depends only

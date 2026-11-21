@@ -42,7 +42,9 @@ way and runs the same filler and checks, but labels no evidence: a stand-in labe
 model call, so the run costs only the filler's calls. It writes DIR/probe.json with the coverage
 tiers counted by claim kind and by phone, and nothing else: no claim, verdict or check result is
 printed or kept, and the case and its affidavit are deleted once counted. With --cloud it needs
---max-usd.
+--max-usd. A probe that pauses or stops keeps its case in DIR so that a resume reuses the
+filler's paid answers; until it finishes, nobody opens DIR's files but probe.json and run.json
+(run with the same DIR to finish, or delete DIR to discard it).
 """
 
 from __future__ import annotations
@@ -892,15 +894,17 @@ class Budgeted:
         }
 
 
-def cloud_components(conn, model):  # noqa: ANN001, ANN201
-    """The product's components with Claude filling assumptions and labeling stance."""
+def cloud_components(conn, model, labeler=None):  # noqa: ANN001, ANN201
+    """The product's components with Claude filling assumptions and labeling stance (or the
+    labeler given, which the coverage probe passes so no stance labeler is built)."""
     from core import pipeline
     from core.audit import assumption_filler, stance
 
     # The product's cloud path for every job (#254): each request logged before it is sent,
     # and a sticky failure pauses the audit (core/audit/_local_model.py open_cloud_run).
     filler = assumption_filler.create(conn, cloud_model=model)
-    labeler = stance.create(conn, cloud_model=model)
+    if labeler is None:
+        labeler = stance.create(conn, cloud_model=model)
     return pipeline.real_components(conn, replace={"labeler": labeler}, filler=filler)
 
 
@@ -990,23 +994,28 @@ def audit(  # noqa: ANN001
             # with no claim the pipeline never calls the final check below, so a run with no
             # claims would be stored as completed unchecked (CodeRabbit on #269)
             raise SystemExit(f"{out}/case.db holds no claim to audit; check the claims file")
+        # The probe's labeler stands in from the start, so no stance labeler (its model or
+        # signed prompt) is built for a run that labels nothing (Claude review on #272): the
+        # same filler and checks run, and no stance call is made.
+        from eval.validation.coverage_probe import ProbeLabeler
+
+        probe_labeler = ProbeLabeler() if probe else None
         if fake:
             from eval.pipeline_fakes import fake_components
 
             comps = fake_components()
+            if probe_labeler is not None:
+                comps.labeler = probe_labeler
+                comps.model_runs = (
+                    *(m for m in comps.model_runs if m.purpose != "stance"),
+                    *probe_labeler.model_runs,
+                )
         elif cloud_model is not None:
-            comps = cloud_components(conn, cloud_model)
+            comps = cloud_components(conn, cloud_model, labeler=probe_labeler)
+        elif probe_labeler is not None:
+            comps = pipeline.real_components(conn, replace={"labeler": probe_labeler})
         else:
             comps = pipeline.real_components(conn)  # local model, no AI reviewer, no cloud
-        if probe:
-            # the same filler and checks; no evidence is labeled, so no stance call is made
-            from eval.validation.coverage_probe import ProbeLabeler
-
-            comps.labeler = ProbeLabeler()
-            comps.model_runs = (
-                *(m for m in comps.model_runs if m.purpose != "stance"),
-                *comps.labeler.model_runs,
-            )
         # The run 3 plan keeps the challenge step off (on by default since #162), so run 3
         # changes only the filler and stays comparable to run 2. The audit's configuration
         # records it.
@@ -1142,7 +1151,8 @@ def audit(  # noqa: ANN001
         "audit_seconds": round(time.monotonic() - t),
         "model_calls": calls,
         "model_outputs_reused": result.model_outputs_reused,
-        "dropped_labels": result.dropped_labels,
+        # the probe's stand-in labels are not a model's, so their drops are not reported
+        "dropped_labels": None if probe else result.dropped_labels,
         # the probe keeps no claim id, so only how many
         "unlabeled": len(result.unlabeled) if probe else result.unlabeled,
     }
@@ -1422,6 +1432,15 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                 raise SystemExit(f"{sid}: {stop}")
             if note:
                 log(f"{sid}: {note}")  # as a fresh build logs it (CodeRabbit on #269)
+    if not resuming and (run.get("coverage_probe") or a.coverage_probe) and "build_id" in run:
+        # A fresh case after a probe's (which deleted its case), or a probe after a run's: the
+        # new case's spend cap starts at zero, and the earlier case's record, spend included,
+        # moves to earlier_cases, never dropped (CodeRabbit and Claude review on #272). A run
+        # rebuilt after a run keeps counting its spend, so a restart never raises its cap.
+        keys = ("build_id", "cloud", "audit", "started_utc", "finished_utc", "report",
+                "report_xml_sha256", "model", "coverage_probe")  # fmt: skip
+        earlier = {k: run.pop(k) for k in keys if k in run}
+        run.setdefault("earlier_cases", []).append(earlier)
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -1431,11 +1450,6 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
         claims={"file": a.claims.name, "sha256": claims_sha, "n": len(claims)},
     )
     if not resuming:
-        # A fresh case (a probe deleted the last one, so built.ok is gone): its spend cap starts
-        # at zero, and what earlier cases spent stays recorded, never dropped (CodeRabbit on #272)
-        if "cloud" in run or "audit" in run:
-            earlier = {k: run.pop(k) for k in ("build_id", "cloud", "audit") if k in run}
-            run.setdefault("earlier_cases", []).append(earlier)
         report_sha = None
         if a.ufdr is not None:
             log("checking the phone package's report.xml")
@@ -1525,10 +1539,12 @@ def _probe_done(out: Path, run: dict, run_path: Path, plog) -> int:  # noqa: ANN
     tmp.write_text(json.dumps(counts, indent=2), encoding="utf-8")
     tmp.replace(out / PROBE_FILE)
     run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    # built.ok first: a probe stopped in between leaves no built.ok naming a deleted case, so
+    # the same command builds and probes afresh (Claude review on #272)
+    (out / "built.ok").unlink(missing_ok=True)
     for db in ("case.db", AUDITED):
         for name in (db, *(f"{db}{s}" for s in SQLITE_SIDECARS)):
             (out / name).unlink(missing_ok=True)
-    (out / "built.ok").unlink(missing_ok=True)
     # the affidavit holds every claim's text; the probe keeps counts only (CodeRabbit on #272)
     (out / "affidavit.pdf").unlink(missing_ok=True)
     plog.close()

@@ -61,14 +61,27 @@ class ProbeLabeler:
         )
 
 
+def _deciding_phones(conn: sqlite3.Connection, record_ids: list, searched: list) -> set[str]:
+    """The phones whose records a pass or fail check rests on: the sources of the records it
+    cites, never every source it searched (a check that searched both phones may rest on one;
+    Claude review on #272). A check citing no record counts for the one source it searched, or
+    for none when it searched several."""
+    from core.enrich.records import get_record
+
+    phones = {rec.ref.source_id for rid in record_ids if (rec := get_record(conn, str(rid)))}
+    if not phones and len(searched) == 1:
+        phones = {str(searched[0])}
+    return phones
+
+
 def tier(conn: sqlite3.Connection, check_ids: Collection[str]) -> tuple[str, set[str]]:
     """A tested claim's tier from the checks its manifest cites, as score_hickman._check_tier
-    sets it, and the sources its pass or fail checks on core assumptions searched."""
+    sets it, and the phones its pass or fail checks on core assumptions rest on."""
     outcomes: set[str] = set()
     phones: set[str] = set()
     for cid in sorted(check_ids):
         row = conn.execute(
-            "SELECT c.outcome, c.source_ids_json FROM check_results c"
+            "SELECT c.outcome, c.record_ids_json, c.source_ids_json FROM check_results c"
             " JOIN assumptions a ON a.id = c.assumption_id WHERE c.id = ? AND a.is_core = 1",
             (cid,),
         ).fetchone()
@@ -76,7 +89,7 @@ def tier(conn: sqlite3.Connection, check_ids: Collection[str]) -> tuple[str, set
             continue
         outcomes.add(row[0])
         if row[0] in ("pass", "fail"):
-            phones.update(str(x) for x in json.loads(row[1] or "[]"))
+            phones |= _deciding_phones(conn, json.loads(row[1] or "[]"), json.loads(row[2] or "[]"))
     if outcomes & {"pass", "fail"}:
         return CODE_CHECKED, phones
     return (CHECK_UNSETTLED if outcomes else EXPERT_ONLY), set()
@@ -88,11 +101,15 @@ def counts(
     not_tested: Collection[str],
 ) -> dict:
     """The tiers of every claim the run audited, counted in total, by claim kind and, for the
-    code-checked ones, by each phone a deciding check searched (a claim checked on both phones
-    counts for each). Counts only: no claim id, verdict or check result."""
+    code-checked ones, by each phone whose records a deciding check rests on (a claim decided on
+    both phones counts for each; one no phone can be named for counts as unattributed). Every
+    phone in the case is listed, 0 included. Counts only: no claim id, verdict or check result."""
     total = dict.fromkeys(TIERS, 0)
     by_kind: dict[str, dict[str, int]] = {}
-    by_phone: dict[str, int] = {}
+    by_phone: dict[str, int] = {
+        str(sid): 0 for (sid,) in conn.execute("SELECT DISTINCT source_id FROM devices")
+    }
+    unattributed = 0
     for claim_id in sorted(manifest):
         row = conn.execute("SELECT claim_type FROM claims WHERE id = ?", (claim_id,)).fetchone()
         kind = str(row[0]) if row else "unknown"
@@ -104,9 +121,12 @@ def counts(
         by_kind.setdefault(kind, dict.fromkeys(TIERS, 0))[t] += 1
         for ph in phones:
             by_phone[ph] = by_phone.get(ph, 0) + 1
+        if t == CODE_CHECKED and not phones:
+            unattributed += 1
     return {
         "claims": sum(total.values()),
         "tiers": total,
         "by_kind": dict(sorted(by_kind.items())),
         "code_checked_by_phone": dict(sorted(by_phone.items())),
+        "code_checked_unattributed": unattributed,
     }

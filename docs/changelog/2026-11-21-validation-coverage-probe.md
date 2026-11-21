@@ -1,30 +1,50 @@
 ## 2026-11-21: The validation driver's coverage probe (PREREGISTERED_v5 gate C4) (#272)
-- Changed: validation v4's paid pass reached 42 code-checked claims of 150, found only after
-  paying for every stance label. The coverage tier of a claim (code-checked, check unsettled,
-  expert only, not tested, as `score_hickman._check_tier` sets it) depends only on the filler's
+- Changed: validation v4's paid pass reached 42 code-checked claims of 150, a number found only
+  after paying for every stance label. A claim's coverage tier (code-checked, check unsettled,
+  expert only or not tested, as `score_hickman._check_tier` sets it) depends only on the filler's
   assumptions and the deterministic checks, never on stance labels. `eval/validation/hickman_run.py
-  --coverage-probe` now builds the case the same way and runs the same filler and checks, but a
-  stand-in labeler (`eval/validation/coverage_probe.py` ProbeLabeler, every candidate irrelevant,
-  no model call) replaces the stance labeler, so a cloud probe pays only for the filler's calls
-  (about 150 of v4's 2,203). It writes `DIR/probe.json` with the tiers counted in total, by claim
-  kind and, for code-checked claims, by each phone a deciding check searched. No claim id,
-  verdict or check result is printed, logged or kept, and the case (case.db, the audited copy,
-  built.ok, and the affidavit, which holds the claims' text) is deleted once counted, so whoever runs the probe on held-out phones sees counts
-  only. A probe's case never resumes as a run, nor a run's as a probe; with `--cloud` it needs
-  `--max-usd`. The stand-in labeler's module is in `eval/`, so the run is marked fake and no
-  scorer or report takes it.
+  --coverage-probe` now builds the case the same way and runs the same filler and checks. A
+  stand-in labeler (`eval/validation/coverage_probe.py` ProbeLabeler: every candidate irrelevant,
+  no model call) is built in place of the stance labeler, so no stance model or prompt is loaded,
+  and a cloud probe pays only for the filler's calls (about 150 of v4's 2,203).
+  - It writes `DIR/probe.json`: the tiers in total and by claim kind, and the code-checked claims
+    by each phone whose records a deciding check rests on. Every phone is listed, 0 included, and
+    claims no phone can be named for are counted apart.
+  - No claim id, verdict or check result is printed, logged or kept. Once the counts are written,
+    the case is deleted: built.ok first, then case.db, the audited copy and the affidavit, which
+    holds the claims' text.
+  - A probe that pauses or stops keeps its case, so that a resume reuses the filler's paid
+    answers. Until it finishes, nobody opens DIR's other files.
+  - A probe's case never resumes as a run, nor a run's as a probe, and with `--cloud` the probe
+    needs `--max-usd`.
+  - A fresh case after a probe, or a probe after a run, moves the earlier case's record into
+    run.json's `earlier_cases`, so its spend cap starts at zero and nothing spent is dropped. A run
+    rebuilt after a run keeps counting its spend.
+  - The stand-in labeler's module is in `eval/`, so the run is marked fake and no scorer or report
+    takes it.
+  - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated
+    corrections and clarifications.
 - Where: PR #272 (branch `claude/project-thread-ds0ify`).
-- Verified: `tests/test_coverage_probe.py` (8 tests, cloud container, 2026-11-21, stand-in
-  components on synthetic case01): the probe's counts equal a full run's tiers on the same claims,
-  tier for tier, as the scorer reads them; tiers and per-phone counts on crafted check rows; no
-  claim id or verdict in the log, run.json, probe.json or output (mutation-checked: a log line
-  with the claim id fails it); the resume guard both ways (mutation-checked); a later run in the
-  same DIR leaves no probe.json; a fresh probe after a deleted case starts its spend cap at zero and
-  keeps the earlier spend in run.json (mutation-checked). `tests/test_validation_run.py` and
-  `tests/test_validation_score.py` pass unchanged. Not yet run with a real filler: the probe's
-  cost and counts on the held-out phones are unmeasured.
+- Verified: `tests/test_coverage_probe.py`, 9 tests, cloud container, 2026-11-21, stand-in
+  components on synthetic case01. Six checks were mutation-checked: each test fails with its fix
+  removed.
+  - The probe's counts equal a full run's tiers on the same claims, tier for tier, as the scorer
+    reads them.
+  - Tiers and per-phone counts on crafted check rows: a check that searched two sources but
+    rests on one phone's record counts for that phone only (mutation-checked).
+  - No claim id or verdict in the log, run.json, probe.json or the output (mutation-checked).
+  - The resume guard works both ways (mutation-checked).
+  - A later run in the same DIR leaves no probe.json.
+  - The spend baseline: a fresh probe starts at zero, and a rebuilt run keeps its spend (both
+    mutation-checked).
+  - A cloud probe builds no stance labeler (mutation-checked).
+  - `tests/test_validation_run.py` and `tests/test_validation_score.py` pass unchanged.
+  - Dev pair, free: a `--fake` probe ran on the A13 and iOS 15 LEAPP zips over 150 claims. A probe
+    with v4's stored filler answers on the A13 LEAPP zip gave 13 code-checked. Most claims were
+    untested because they name apps the LEAPP importer does not read. That run is approximate: the
+    prompts' app list differed, and the scratch tool is not in the repo.
 - Open: the filler is not deterministic, so the probe's counts estimate a later pass's tiers
-  rather than fix them (v4's two passes gave 42 and 40 code-checked). The probe needs Arsh's OK
-  for its spend (estimate $2 to $4, cap $5, unverified until run).
+  rather than fix them (v4's two passes gave 42 and 40 code-checked). The held-out probe's cost
+  is unmeasured (estimate $2 to $4, cap $5). Arsh OK'd the first attempt on 2026-11-21.
 - Affects: the validation driver (`eval/`) only. No capability, privacy, model or customer claim.
 - Status doc: no change

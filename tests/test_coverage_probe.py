@@ -95,7 +95,7 @@ def test_the_probe_counts_the_tiers_a_full_run_gives(ufdr, tmp_path):
     )
 
 
-def test_counts_follow_the_scorers_tiers_and_the_phones_a_deciding_check_searched(ufdr, tmp_path):
+def test_counts_follow_the_scorers_tiers_and_the_phones_a_deciding_check_rests_on(ufdr, tmp_path):
     assert hickman_run.main(_args(ufdr, tmp_path, "run")) == 0
     db = tmp_path / "run" / "case.db"
     conn = sqlite3.connect(db)
@@ -105,23 +105,33 @@ def test_counts_follow_the_scorers_tiers_and_the_phones_a_deciding_check_searche
         manifest = run["manifest"]
         checks = {c: manifest[c]["checks"] for c in IDS}
         assert all(checks.values()), "the stand-in checks run on every claim"
+        (msg,) = conn.execute(
+            "SELECT id FROM messages WHERE source_id = 'ios15' ORDER BY id LIMIT 1"
+        ).fetchone()
+        searched = json.dumps(["ios15", "item2"])
         with conn:
-            # C01: a pass on one phone and a fail on two; C02: inconclusive only; D01's
-            # assumptions made not core, so no check counts and it is expert only
+            # C01: a check that searched two sources and rests on one record of ios15 passes,
+            # and the rest fail citing no record; C02: inconclusive only; D01's assumptions made
+            # not core, so no check counts and it is expert only
             first, *rest = checks["C01"]
             conn.execute(
-                "UPDATE check_results SET outcome = 'pass', source_ids_json = ? WHERE id = ?",
-                (json.dumps(["ios15"]), first),
+                "UPDATE check_results SET outcome = 'pass', source_ids_json = ?,"
+                " record_ids_json = ? WHERE id = ?",
+                (searched, json.dumps([msg]), first),
             )
-            for cid in rest or [first]:
+            for cid in rest:
                 conn.execute(
-                    "UPDATE check_results SET outcome = 'fail', source_ids_json = ? WHERE id = ?",
-                    (json.dumps(["ios15", "item2"]), cid),
+                    "UPDATE check_results SET outcome = 'fail', source_ids_json = ?,"
+                    " record_ids_json = '[]' WHERE id = ?",
+                    (searched, cid),
                 )
             conn.execute("UPDATE assumptions SET is_core = 0 WHERE claim_id = 'D01'")
         got = coverage_probe.counts(conn, manifest, {})
         tiers = {c: score_hickman._check_tier(conn, manifest, c) for c in IDS}
         untested = coverage_probe.counts(conn, manifest, {"C02": "no core assumption"})
+        with conn:  # the deciding check cites no record now, and searched two sources
+            conn.execute("UPDATE check_results SET record_ids_json = '[]' WHERE id = ?", (first,))
+        unnamed = coverage_probe.counts(conn, manifest, {})
     finally:
         conn.close()
     assert tiers == {"C01": "code_checked", "C02": "check_unsettled", "D01": "expert_only"}
@@ -133,8 +143,12 @@ def test_counts_follow_the_scorers_tiers_and_the_phones_a_deciding_check_searche
     }
     assert got["by_kind"]["communication"]["code_checked"] == 1
     assert got["by_kind"]["timing"]["expert_only"] == 1
-    # a claim counts once for each phone its deciding checks searched
-    assert got["code_checked_by_phone"] == {"ios15": 1, "item2": 1}
+    # a claim counts for the phone its deciding records are on, not every source searched
+    assert got["code_checked_by_phone"] == {"ios15": 1}
+    assert got["code_checked_unattributed"] == 0
+    # one no phone can be named for is counted apart, and every phone is listed, 0 included
+    assert unnamed["code_checked_by_phone"] == {"ios15": 0}
+    assert unnamed["code_checked_unattributed"] == 1
     # a claim the pipeline left untested is counted so, whatever check rows it has
     assert untested["tiers"]["not_tested"] == 1
     assert untested["by_kind"]["content_meaning"]["not_tested"] == 1
@@ -206,6 +220,13 @@ def test_a_fresh_probe_starts_its_cap_at_zero_and_keeps_the_earlier_spend(
     monkeypatch.setattr(hickman_run, "Budgeted", budgeted)
     monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
     monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _NoAnswer())
+
+    def no_stance(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("a probe builds no stance labeler")
+
+    from core.audit import stance
+
+    monkeypatch.setattr(stance, "create", no_stance)
     args = [a for a in _args(ufdr, tmp_path, "probe", "--coverage-probe") if a != "--fake"]
     assert hickman_run.main([*args, "--cloud", "claude-opus-5-5", "--max-usd", "5"]) == 3
     assert seen == [0.0]  # the deleted case's $3 does not count against this case's cap
@@ -228,3 +249,31 @@ class _NoAnswer:
         @staticmethod
         def create(**kw):  # noqa: ANN003, ANN205
             raise RuntimeError("Error code: 400 - credit balance is too low")
+
+
+def test_a_run_rebuilt_after_a_run_keeps_counting_its_spend(ufdr, tmp_path, monkeypatch):
+    """Only a probe's case (or a probe after a run) starts a fresh cap: a run rebuilt in the
+    same DIR after a crash keeps its earlier spend against --max-usd (Claude review on #272)."""
+    assert hickman_run.main(_args(ufdr, tmp_path, "run")) == 0
+    out = tmp_path / "run"
+    run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    run["cloud"] = {"sessions": [{"spent_usd": 40.0}], "spent_usd": 40.0}
+    (out / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    (out / "built.ok").unlink()  # as an operator clearing a crashed attempt would
+    (out / "case.db").unlink()
+    seen: list[float] = []
+    real = hickman_run.Budgeted
+
+    def budgeted(model, max_usd, spent_usd=0.0):  # noqa: ANN001, ANN202
+        seen.append(spent_usd)
+        return real(model, max_usd, spent_usd)
+
+    from core.llm import cloud
+
+    monkeypatch.setattr(hickman_run, "Budgeted", budgeted)
+    monkeypatch.setenv(cloud.KEY_ENV, "sk-test")
+    monkeypatch.setattr(cloud.ClaudeModel, "_get_client", lambda self: _NoAnswer())
+    args = [a for a in _args(ufdr, tmp_path, "run") if a != "--fake"]
+    assert hickman_run.main([*args, "--cloud", "claude-opus-5-5", "--max-usd", "55"]) == 3
+    assert seen == [40.0]
+    assert "earlier_cases" not in json.loads((out / "run.json").read_text(encoding="utf-8"))
