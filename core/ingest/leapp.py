@@ -71,13 +71,14 @@ import sqlite3
 import tempfile
 import time
 import zipfile
+import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import db as db_errors
@@ -365,35 +366,48 @@ def _open_database(
 ) -> tuple[sqlite3.Connection, Path | None]:
     """The LAVA database, read-only, and the folder of its temporary copy (None when it was read
     into memory). A database over IN_MEMORY_DB_BYTES, or one this computer has too little memory
-    to load, is streamed to a new owner-only temporary folder and opened read-only there. Where
-    the system allows (Linux; macOS unverified) the copy's name is removed once it is open; the
-    folder is removed when the import closes it, and a folder left by an import that was stopped
-    is removed by the next large import (_sweep_stale_copies)."""
+    to load, is streamed to a new temporary folder (owner-only on Linux and macOS; on Windows it
+    takes TEMP's permissions) and opened read-only there. Where the system allows (Linux; macOS
+    unverified) the copy's name is removed once it is open; the folder is removed when the import
+    closes it, and a folder left by an import that was stopped is removed by a later large import
+    (_sweep_stale_copies). Every removal is best effort."""
     size = z.getinfo(member).file_size
     if size <= IN_MEMORY_DB_BYTES:
         try:
-            mem = _in_memory(z.read(member))
+            mem = _in_memory(_read_member(z, member, file_name))
         except MemoryError:
             pass  # too little free memory for this one: read it from a temporary copy instead
+        except (*db_errors.DatabaseError, OverflowError) as err:
+            raise ValueError(f"{member} in {file_name} is not a SQLite database") from err
         else:
             return _checked(mem, None, member, file_name), None
     _sweep_stale_copies()
-    temp_dir = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))  # owner-only (0700)
+    temp_dir: Path | None = None
     db: sqlite3.Connection | None = None
     try:
-        free = shutil.disk_usage(temp_dir).free
-        if free < size + TEMP_HEADROOM_BYTES:
+        try:
+            temp_dir = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))  # 0700 on Linux and macOS
+            free = shutil.disk_usage(temp_dir).free
+            if free < size + TEMP_HEADROOM_BYTES:
+                raise ValueError(
+                    f"{member} in {file_name} unpacks to {size:,} bytes, too large to read in "
+                    f"memory, and the temporary folder {temp_dir.parent} has {free:,} bytes free; "
+                    f"free at least {size + TEMP_HEADROOM_BYTES - free:,} bytes there, or set "
+                    "TMPDIR (TEMP on Windows) to a folder on a disk with room, and import it again"
+                )
+            path = temp_dir / "lava.db"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            fd = os.open(path, flags, 0o600)
+            # the descriptor is owned first, so it is closed even if the member cannot be opened
+            with os.fdopen(fd, "wb") as dst:
+                _copy_member(z, member, file_name, dst, temp_dir)
+        except OSError as err:
+            folder = temp_dir.parent if temp_dir is not None else Path(tempfile.gettempdir())
             raise ValueError(
-                f"{member} in {file_name} unpacks to {size:,} bytes, too large to read in memory, "
-                f"and the temporary folder {temp_dir.parent} has {free:,} bytes free; free at "
-                f"least {size + TEMP_HEADROOM_BYTES - free:,} bytes there, or set TMPDIR (TEMP on "
-                "Windows) to a folder on a disk with room, and import it again"
-            )
-        path = temp_dir / "lava.db"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
-        # the descriptor is owned first, so it is closed even if the member cannot be opened
-        with os.fdopen(fd, "wb") as dst, z.open(member) as src:
-            shutil.copyfileobj(src, dst, 1024 * 1024)
+                f"Mabillon could not write its temporary copy of {member} from {file_name} in "
+                f"{folder} ({err}); free space there, or set TMPDIR (TEMP on Windows) to a "
+                "folder on a disk with room, and import it again"
+            ) from err
         try:
             # read-only, and immutable: no journal, no lock, nothing written beside it
             db = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
@@ -403,11 +417,69 @@ def _open_database(
                 f"{temp_dir.parent} ({err})"
             ) from err
         db = _checked(db, temp_dir, member, file_name)
+        _touch(temp_dir)
     except BaseException:
         _discard(db, temp_dir)
         raise
     _unlink_open_copy(temp_dir)
     return db, temp_dir
+
+
+# zipfile's errors for a member it cannot unpack: an unsupported method such as Deflate64
+# (NotImplementedError, a RuntimeError), a password (RuntimeError), a bad CRC or header
+# (BadZipFile), or a broken compressed stream (zlib.error, EOFError)
+ZIP_MEMBER_ERRORS: tuple[type[Exception], ...] = (
+    RuntimeError,
+    zipfile.BadZipFile,
+    zlib.error,
+    EOFError,
+)
+
+
+def _unpack_error(z: zipfile.ZipFile, member: str, file_name: str, err: Exception) -> ValueError:
+    method = z.getinfo(member).compress_type
+    return ValueError(
+        f"{member} in {file_name} cannot be unpacked ({type(err).__name__}: {err}; zip "
+        f"compression method {method}); zip the LEAPP output folder again with standard "
+        "(Deflate) compression and no password"
+    )
+
+
+def _read_member(z: zipfile.ZipFile, member: str, file_name: str) -> bytes:
+    try:
+        return z.read(member)
+    except ZIP_MEMBER_ERRORS as err:
+        raise _unpack_error(z, member, file_name, err) from err
+
+
+# a copy in progress refreshes its folder's time this often, so a slow copy is never swept
+TOUCH_EVERY_BYTES = 256 * 1024 * 1024
+COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def _copy_member(
+    z: zipfile.ZipFile, member: str, file_name: str, dst: BinaryIO, temp_dir: Path
+) -> None:
+    """Stream the member into dst, refreshing the folder's time as it goes."""
+    since = 0
+    try:
+        with z.open(member) as src:
+            while chunk := src.read(COPY_CHUNK_BYTES):
+                dst.write(chunk)
+                since += len(chunk)
+                if since >= TOUCH_EVERY_BYTES:
+                    _touch(temp_dir)
+                    since = 0
+    except ZIP_MEMBER_ERRORS as err:
+        raise _unpack_error(z, member, file_name, err) from err
+
+
+def _touch(temp_dir: Path) -> None:
+    """Mark the folder as in use now, so _sweep_stale_copies leaves it alone."""
+    try:
+        os.utime(temp_dir)
+    except OSError:
+        pass
 
 
 def _checked(
@@ -426,8 +498,9 @@ def _checked(
 
 def _sweep_stale_copies(now: float | None = None) -> None:
     """Remove temporary copies left by an import that was stopped (killed, crashed, power lost)
-    before it closed its copy. Only this user's own folders older than STALE_COPY_SECONDS are
-    removed, so another import still copying is left alone."""
+    before it closed its copy. Only folders untouched for STALE_COPY_SECONDS are removed (a copy
+    in progress refreshes its folder's time), and on Linux and macOS only this user's own. Windows
+    has no user id here: its TEMP is the user's own folder unless TEMP was pointed elsewhere."""
     cutoff = (time.time() if now is None else now) - STALE_COPY_SECONDS
     try:
         found = list(Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*"))

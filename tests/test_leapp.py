@@ -12,6 +12,7 @@ import sqlite3
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1995,7 +1996,9 @@ def test_an_android_14_phone_takes_its_zone_from_battery_usage_v9(tmp_path: Path
     ("v9", "zone"),
     [("America/New_York", "America/New_York"), ("America/Chicago", None), ("-0500", None)],
 )
-def test_battery_usage_v4_and_v9_zones_must_agree(tmp_path: Path, v9: str, zone) -> None:  # noqa: ANN001
+def test_battery_usage_v4_and_v9_zones_must_agree(
+    tmp_path: Path, v9: str, zone: str | None
+) -> None:
     # A phone that kept both databases gets a zone only when every zone in both is the same one,
     # and a v9 value this reader cannot read sets none, as for v4.
     lv = _android()
@@ -2008,8 +2011,19 @@ def test_battery_usage_v4_and_v9_zones_must_agree(tmp_path: Path, v9: str, zone)
 
 
 def test_battery_usage_v9_is_not_a_zone_source_for_ileapp(tmp_path: Path) -> None:
-    assert ("iLEAPP", "get_battery_usage_v9") not in leapp.ZONE_SOURCES
-    assert leapp.ZONE_SOURCES[("ALEAPP", "get_battery_usage_v9")] == ("Timestamp", "Timezone")
+    # ALEAPP's battery usage tables are read for the zone only from an ALEAPP output: an iLEAPP
+    # output that holds a table of that name gets no zone from it.
+    def zone(extra: bool) -> list[tuple[str | None]]:
+        lv = _ios()
+        if extra:
+            lv.add("get_battery_usage_v9", Timestamp="2024-03-02T00:00:00Z", Timezone="Asia/Tokyo")
+        conn = _db()
+        name = f"i{int(extra)}.zip"
+        LeappImporter(source_id="ios").import_source(lv.write_zip(tmp_path / name), conn)
+        return conn.execute("SELECT timezone FROM devices").fetchall()
+
+    assert zone(True) == zone(False)
+    assert ("Asia/Tokyo",) not in zone(True)
 
 
 # ---------------------------------------------------------------- a database too large for memory
@@ -2034,8 +2048,8 @@ def _payload(conn: sqlite3.Connection, src: str) -> dict:
 
 @pytest.mark.parametrize("make", [_ios, _android])
 def test_a_database_too_large_for_memory_imports_the_same_from_a_temporary_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make
-) -> None:  # noqa: ANN001
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make: Callable[[], Lava]
+) -> None:
     # Found at v5 gate C2: SQLite refuses to load a database over about 2 GiB into memory (one
     # allocation), so a 5.58 GB iOS 17 LAVA database could not be imported on any machine.
     path = make().write_zip(tmp_path / "p.zip")
@@ -2206,12 +2220,13 @@ def test_a_copy_left_by_a_stopped_import_is_removed_by_the_next_large_import(
     assert sorted(p.name for p in temp.iterdir()) == sorted([fresh.name, other.name])
 
 
-@pytest.mark.parametrize("error", [NotImplementedError, RuntimeError])
+@pytest.mark.parametrize("error", [NotImplementedError, RuntimeError, zipfile.BadZipFile])
 def test_a_zip_member_that_cannot_be_opened_leaves_no_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
-    # Claude review on #274: a Deflate64 or password-protected member fails to open after the
-    # copy's file is made; the file is closed and removed.
+    # Claude review on #274: a Deflate64, password-protected or damaged member fails to open
+    # after the copy's file is made; the file is closed and removed, and the examiner is told
+    # what to do rather than shown a traceback.
     temp = tmp_path / "temp"
     temp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp))
@@ -2225,9 +2240,100 @@ def test_a_zip_member_that_cannot_be_opened_leaves_no_copy(
 
     z = _android().write_zip(tmp_path / "a.zip")
     monkeypatch.setattr(zipfile.ZipFile, "open", refuse)
-    with z.open("rb") as f, pytest.raises(error):
+    with z.open("rb") as f, pytest.raises(ValueError, match="cannot be unpacked") as got:
+        leapp.read_lava(f, z.name)
+    assert isinstance(got.value.__cause__, error)
+    assert list(temp.iterdir()) == []
+
+
+@pytest.mark.parametrize("error", [NotImplementedError, RuntimeError, zipfile.BadZipFile])
+def test_a_zip_member_that_cannot_be_read_into_memory_is_a_clear_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    real = zipfile.ZipFile.read
+
+    def refuse(self, name, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(getattr(name, "filename", name)).endswith(".db"):
+            raise error("compression type 9 (deflate64)")
+        return real(self, name, *a, **k)
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(zipfile.ZipFile, "read", refuse)
+    with z.open("rb") as f, pytest.raises(ValueError, match="cannot be unpacked"):
+        leapp.read_lava(f, z.name)
+
+
+def test_a_disk_error_while_copying_is_a_clear_error_and_leaves_no_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude review on #274: the free-space check cannot see quotas or another program filling
+    # the disk; a write that fails mid-copy names the temporary folder instead of a traceback.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+
+    def full(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(leapp, "_copy_member", full)
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f, pytest.raises(ValueError, match="could not write its temporary copy"):
         leapp.read_lava(f, z.name)
     assert list(temp.iterdir()) == []
+
+
+def test_a_folder_that_cannot_be_made_is_a_clear_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+
+    def refused(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise PermissionError(13, "Permission denied")
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(leapp.tempfile, "mkdtemp", refused)
+    with z.open("rb") as f, pytest.raises(ValueError, match="could not write its temporary copy"):
+        leapp.read_lava(f, z.name)
+
+
+def test_a_database_sqlite_refuses_to_load_in_memory_is_not_a_sqlite_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(data: bytes) -> sqlite3.Connection:
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(leapp, "_in_memory", refuse)
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f, pytest.raises(ValueError, match="not a SQLite database"):
+        leapp.read_lava(f, z.name)
+
+
+def test_a_copy_in_progress_keeps_its_folder_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude review on #274: the sweep judges a folder by its time, so a slow copy refreshes it
+    # and is never taken for a stopped import's.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    monkeypatch.setattr(leapp, "TOUCH_EVERY_BYTES", 1)
+    monkeypatch.setattr(leapp, "COPY_CHUNK_BYTES", 4096)
+    touched: list[Path] = []
+    real = leapp._touch
+
+    def spy(d: Path) -> None:
+        touched.append(d)
+        real(d)
+
+    monkeypatch.setattr(leapp, "_touch", spy)
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    lava.close()
+    assert len(touched) >= 2
+    assert all(d.name.startswith(leapp.TEMP_PREFIX) for d in touched)
 
 
 def test_a_temporary_copy_sqlite_cannot_open_is_not_called_a_bad_database(

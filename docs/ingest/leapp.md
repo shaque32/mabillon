@@ -32,18 +32,24 @@ A database up to 2,000,000,000 bytes is read into memory and never written out. 
 database into memory as one allocation and refuses one above about 2 GiB, and a real phone's
 LAVA database can be larger (a public iOS 17 phone's is 5.6 GB, mostly file system events the
 import does not read). A larger one, or a smaller one this computer lacks the memory to load, is
-streamed to a new owner-only temporary folder (the system's, or `TMPDIR`; `TEMP` on Windows),
-opened read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds
-or not (best effort: a folder the system will not let it remove stays). On Linux the import then tries to remove its name at once (macOS should behave the
-same; not yet tested there); if that removal fails, the named copy stays until the import ends.
-Its freed disk blocks are not wiped. An import stopped mid-copy (killed, crashed, power lost)
-leaves its folder; the next large import tries to remove this user's folders older than six
-hours, best effort (a folder it cannot remove, or a newer one, stays). The copy is the plain database, also in an encrypted case, where the case's
-own copy of the zip stays encrypted (`docs/encryption.md`, "Not covered"). Where the temporary
-folder is in memory (tmpfs on some Linux systems), the copy takes memory too; set `TMPDIR` to a
-folder on disk. The import refuses a database whose temporary disk lacks its size plus 512 MiB
-free, and any database over 64 GiB. The coverage record says which way it was read
-(`leapp.database_read_from`: `memory` or `temporary_file`).
+streamed to a new temporary folder (the system's, or `TMPDIR`; `TEMP` on Windows), opened
+read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds or not
+(best effort: a folder the system will not let it remove stays). The folder is owner-only on
+Linux and macOS; on Windows it takes the permissions of `TEMP`, which is the user's own folder
+unless `TEMP` was pointed elsewhere. On Linux the import then tries to remove the copy's name at
+once (macOS should behave the same; not yet tested there); if that removal fails, the named copy
+stays until the import ends. Its freed disk blocks are not wiped. An import stopped mid-copy
+(killed, crashed, power lost) leaves its folder; a later large import tries to remove folders
+untouched for six hours (a copy in progress refreshes its folder's time; on Linux and macOS only
+this user's own), best effort (a folder it cannot remove, or a newer one, stays). The copy is the
+plain database, also in an encrypted case, where the case's own copy of the zip stays encrypted
+(`docs/encryption.md`, "Not covered"). Where the temporary folder is in memory (tmpfs on some
+Linux systems), the copy takes memory too; set `TMPDIR` to a folder on disk. The import refuses
+a database whose temporary disk lacks its size plus 512 MiB free, and any database over 64 GiB. A
+write that fails during the copy (a full disk or a quota) and a database member the zip library
+cannot unpack (Deflate64, a password, damage) end the import with a message saying so, leaving no
+copy. The coverage record says which way it was read (`leapp.database_read_from`: `memory` or
+`temporary_file`).
 
 ## What is read
 

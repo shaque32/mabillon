@@ -7,11 +7,14 @@
   `sqlite3.deserialize`, which SQLite refuses above about 2 GiB (one allocation), so a public
   iOS 17 phone's 5.58 GB database could not be imported on any machine. A database up to
   2,000,000,000 bytes is still read into memory and never written out; a larger one (or a
-  smaller one the computer lacks memory to load) is streamed to a new owner-only temporary
-  folder, opened read-only (`mode=ro&immutable=1`) and removed, best effort, when the import ends
+  smaller one the computer lacks memory to load) is streamed to a new temporary folder
+  (owner-only on Linux and macOS; on Windows it takes TEMP's permissions), opened read-only (`mode=ro&immutable=1`) and removed, best effort, when the import ends
   or fails (`Lava.close`); on Linux it then tries to remove the name at once (macOS untested; a failed
-  removal leaves the named copy until the import ends), and the next large import tries, best
-  effort, to remove this user's copies older than six hours that a stopped import left.
+  removal leaves the named copy until the import ends), and a later large import tries, best
+  effort, to remove copies a stopped import left untouched for six hours (a copy in progress
+  refreshes its folder's time; on Linux and macOS only this user's own). A disk error during the
+  copy, or a database member the zip library cannot unpack (Deflate64, a password, damage), ends
+  the import with a message instead of a traceback.
   `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
   disk lacks its size plus 512 MiB, and the size ceiling rises from 8 GiB to 64 GiB. The
   coverage record says how it was read (`leapp.database_read_from`). (2) Android 14 zone:
@@ -20,15 +23,17 @@
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
 - Where: PR #274
-- Verified: `tests/test_leapp.py` 133 passed (18 new): the import through a temporary copy
+- Verified: `tests/test_leapp.py` 141 passed (26 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
   copy is read-only, gone once open on Linux and gone after close; a database at the limit stays
   in memory; no room on disk, a non-database and an unknown tool each leave no copy; an encrypted
   case's copy reads through; a memory failure falls back to the copy; a stale copy is swept and
-  a fresh one kept; a zip member that cannot be opened leaves no copy; a copy SQLite cannot open
-  is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
-  and v4 and v9 must agree. Local check (cloud container, 2026-11-21): a synthetic 2.30 GB LAVA
+  a fresh one kept; a zip member that cannot be opened or read is a clear error and leaves no copy; a disk
+  error mid-copy or a folder that cannot be made is a clear error; a database SQLite refuses to
+  load is "not a SQLite database"; a copy in progress refreshes its folder's time; a copy SQLite
+  cannot open is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
+  and v4 and v9 must agree; an iLEAPP output with a table of that name gets no zone from it. Local check (cloud container, 2026-11-21): a synthetic 2.30 GB LAVA
   database raises MemoryError through `deserialize` and imports through the new path in 3.0 s at
   37 MB peak memory, leaving no temporary file. CI `make check` (ubuntu-latest, 2026-11-21, head
   f2445f4): `ruff` clean, 5,101 tests passed (7 skipped); eval: case01 model-free
