@@ -4384,9 +4384,10 @@ class LocalAssumptionFiller:
 
     def _exactly_owned(self, person: str) -> set[str]:
         """The phones this person is the one confirmed owner of, with their own accounts
-        exactly the person's party (as `_exact_owner` reads one phone): none for a person who
-        owns two phones or has a confirmed link to an account off the phone, whose row is then
-        kept."""
+        exactly the person's party (as `_exact_owner` reads one phone): none for a person whose
+        accounts are more than one phone's own (a second phone's, or a confirmed link to an
+        account off the phone), whose row is then kept. Accounts are compared by key, so a
+        second phone holding only the same keys adds none."""
         devices = {did for _, did, _, status in self.data.stipulations if status == "confirmed"}
         return {d for d in devices if self._exact_owner_of(d) == person}
 

@@ -874,6 +874,37 @@ def test_the_length_forms_follow_the_call_s_app(conn: sqlite3.Connection, joined
     assert "event" not in made, made["event"].text
 
 
+@pytest.mark.parametrize(
+    ("joined", "read"),
+    [
+        ("that connected for", True),
+        ("that was connected and lasted", True),
+        ("and PETROV was connected for", False),
+        ("that was connected by PETROV for", False),
+    ],
+)
+def test_only_the_call_s_own_connected_needs_no_event_on_a_fill(
+    conn: sqlite3.Connection, joined: str, read: bool
+) -> None:
+    # CodeRabbit on #273: through the whole fill, a connecting act no row tests gets a core
+    # event, and the call's own "connected" beside a tested length does not.
+    length = "about one minute and 30 seconds"
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a call to PETROV on"
+        f" WhatsApp {joined} {length}."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+                   duration={"as_written": length})  # fmt: skip
+    assert "record_time" in made, f.drops
+    if read:
+        assert "event" not in made, made["event"].text
+    else:
+        assert made["event"].is_core, f.drops
+        assert "states more than its checks read" in made["event"].text
+        assert "connected" in f.unread_words(text, tests={"length", "call"})
+
+
 def test_connected_with_no_tested_length_is_left_for_the_expert(conn: sqlite3.Connection) -> None:
     # "connected" is read only beside a length a row tests; alone, no check reads it.
     made, _ = fill(conn, f"{AT} Item 1 placed a call to (212) 555-0199 that connected.")
