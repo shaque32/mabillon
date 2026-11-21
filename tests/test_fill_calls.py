@@ -849,6 +849,22 @@ def test_answered_or_connected_before_a_tested_length_still_names_the_caller(con
     )
 
 
+@pytest.mark.parametrize(
+    "joined", ["that lasted", "that was answered and lasted", "that connected and lasted"]
+)
+def test_the_length_forms_follow_the_call_s_app(conn, joined):
+    # CodeRabbit on #273: the app tail ("... on WhatsApp") must stop before every length form.
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a call to PETROV on"
+        f" WhatsApp {joined} about one minute and 30 seconds."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+                   duration={"as_written": "about one minute and 30 seconds"})  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [REYES], f.drops
+    assert "event" not in made, made["event"].text
+
+
 def test_connected_with_no_tested_length_is_left_for_the_expert(conn):
     # "connected" is read only beside a length a row tests; alone, no check reads it.
     made, _ = fill(conn, f"{AT} Item 1 placed a call to (212) 555-0199 that connected.")

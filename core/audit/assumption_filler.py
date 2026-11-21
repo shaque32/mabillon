@@ -1908,7 +1908,7 @@ _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
 _CALL_APP_TAIL_RE = re.compile(
     r"^\s*,?\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
-    r"(?=\s*(?:,|\.|$|that\s+lasted|lasting|for\s))",
+    r"(?=\s*(?:,|\.|$|that\s+(?:(?:was\s+)?(?:answered|connected)\s+and\s+)?lasted|lasting|for\s))",
     re.IGNORECASE,
 )
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
