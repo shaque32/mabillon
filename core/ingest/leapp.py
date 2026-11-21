@@ -69,6 +69,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
@@ -129,6 +130,9 @@ IN_MEMORY_DB_BYTES = 2_000_000_000
 # Free space a temporary copy must leave on its disk, beyond its own size.
 TEMP_HEADROOM_BYTES = 512 * 1024 * 1024
 TEMP_PREFIX = "mabillon-lava-"
+# A temporary copy's folder this old was left by an import that stopped; the next large import
+# removes it. Copying even a 64 GiB database takes far less.
+STALE_COPY_SECONDS = 6 * 60 * 60
 DB_IN_MEMORY = "memory"
 DB_IN_TEMP_FILE = "temporary_file"
 LEAPP_NAMES = {"ileapp": "iLEAPP", "aleapp": "ALEAPP"}
@@ -360,44 +364,85 @@ def _open_database(
     z: zipfile.ZipFile, member: str, file_name: str
 ) -> tuple[sqlite3.Connection, Path | None]:
     """The LAVA database, read-only, and the folder of its temporary copy (None when it was read
-    into memory). A database over IN_MEMORY_DB_BYTES is streamed to a new owner-only temporary
-    folder and opened read-only there; on macOS and Linux its name is removed as soon as it is
-    open, so nothing is left behind if Mabillon stops, and on Windows the folder is removed when
-    the import closes it."""
+    into memory). A database over IN_MEMORY_DB_BYTES, or one this computer has too little memory
+    to load, is streamed to a new owner-only temporary folder and opened read-only there. Where
+    the system allows (Linux; macOS unverified) the copy's name is removed once it is open; the
+    folder is removed when the import closes it, and a folder left by an import that was stopped
+    is removed by the next large import (_sweep_stale_copies)."""
     size = z.getinfo(member).file_size
-    temp_dir: Path | None = None
+    if size <= IN_MEMORY_DB_BYTES:
+        try:
+            mem = _in_memory(z.read(member))
+        except MemoryError:
+            pass  # too little free memory for this one: read it from a temporary copy instead
+        else:
+            return _checked(mem, None, member, file_name), None
+    _sweep_stale_copies()
+    temp_dir = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))  # owner-only (0700)
     db: sqlite3.Connection | None = None
     try:
-        if size <= IN_MEMORY_DB_BYTES:
-            db = _in_memory(z.read(member))
-        else:
-            temp_dir = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))  # owner-only (0700)
-            free = shutil.disk_usage(temp_dir).free
-            if free < size + TEMP_HEADROOM_BYTES:
-                raise ValueError(
-                    f"{member} in {file_name} unpacks to {size:,} bytes, too large to read in "
-                    f"memory, and the temporary folder's disk has {free:,} bytes free; free at "
-                    f"least {size + TEMP_HEADROOM_BYTES - free:,} bytes and import it again"
-                )
-            path = temp_dir / "lava.db"
-            fd = os.open(
-                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
+        free = shutil.disk_usage(temp_dir).free
+        if free < size + TEMP_HEADROOM_BYTES:
+            raise ValueError(
+                f"{member} in {file_name} unpacks to {size:,} bytes, too large to read in memory, "
+                f"and the temporary folder {temp_dir.parent} has {free:,} bytes free; free at "
+                f"least {size + TEMP_HEADROOM_BYTES - free:,} bytes there, or set TMPDIR (TEMP on "
+                "Windows) to a folder on a disk with room, and import it again"
             )
-            with z.open(member) as src, os.fdopen(fd, "wb") as dst:
-                shutil.copyfileobj(src, dst, 1024 * 1024)
+        path = temp_dir / "lava.db"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        # the descriptor is owned first, so it is closed even if the member cannot be opened
+        with os.fdopen(fd, "wb") as dst, z.open(member) as src:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+        try:
             # read-only, and immutable: no journal, no lock, nothing written beside it
             db = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
-        db.execute("PRAGMA query_only = ON")
-        db.execute("SELECT count(*) FROM sqlite_master").fetchone()
-        if temp_dir is not None:
-            _unlink_open_copy(temp_dir)
-    except db_errors.DatabaseError as err:
-        _discard(db, temp_dir)
-        raise ValueError(f"{member} in {file_name} is not a SQLite database") from err
+        except db_errors.DatabaseError as err:
+            raise ValueError(
+                f"Mabillon could not open its temporary copy of {member} from {file_name} in "
+                f"{temp_dir.parent} ({err})"
+            ) from err
+        db = _checked(db, temp_dir, member, file_name)
     except BaseException:
         _discard(db, temp_dir)
         raise
+    _unlink_open_copy(temp_dir)
     return db, temp_dir
+
+
+def _checked(
+    db: sqlite3.Connection, temp_dir: Path | None, member: str, file_name: str
+) -> sqlite3.Connection:
+    """The database, made query-only, once SQLite reads its schema; else ValueError (and the
+    database closed and its copy removed)."""
+    try:
+        db.execute("PRAGMA query_only = ON")
+        db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except db_errors.DatabaseError as err:
+        _discard(db, temp_dir)
+        raise ValueError(f"{member} in {file_name} is not a SQLite database") from err
+    return db
+
+
+def _sweep_stale_copies(now: float | None = None) -> None:
+    """Remove temporary copies left by an import that was stopped (killed, crashed, power lost)
+    before it closed its copy. Only this user's own folders older than STALE_COPY_SECONDS are
+    removed, so another import still copying is left alone."""
+    cutoff = (time.time() if now is None else now) - STALE_COPY_SECONDS
+    try:
+        found = list(Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*"))
+    except OSError:
+        return
+    for d in found:
+        try:
+            st = d.lstat()
+            if not d.is_dir() or d.is_symlink() or st.st_mtime > cutoff:
+                continue
+            if hasattr(os, "getuid") and st.st_uid != os.getuid():
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def _in_memory(data: bytes) -> sqlite3.Connection:
@@ -413,9 +458,10 @@ def _in_memory(data: bytes) -> sqlite3.Connection:
 
 
 def _unlink_open_copy(temp_dir: Path) -> None:
-    """Remove the open copy's name where the system allows it (macOS, Linux): the open database
-    keeps reading it, and the system frees it when the database closes or Mabillon stops. Windows
-    refuses while it is open; the copy is then removed at close."""
+    """Remove the open copy's name where the system allows it (Linux; macOS unverified): the
+    open database keeps reading it, and the system frees it when the database closes or Mabillon
+    stops. Windows refuses while it is open; the copy is then removed at close. Freed blocks are
+    not wiped."""
     try:
         for f in temp_dir.iterdir():
             f.unlink()

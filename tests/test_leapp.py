@@ -10,6 +10,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2157,4 +2158,94 @@ def test_a_large_database_reads_through_an_encrypted_copy(
         assert lava.db.execute("SELECT count(*) FROM get_sms_mms").fetchone()[0] > 0
     finally:
         lava.close()
+    assert list(temp.iterdir()) == []
+
+
+def test_a_database_with_too_little_memory_to_load_reads_from_a_temporary_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude review on #274: loading needs about twice the database in memory, so a database
+    # under the limit can still fail on a small laptop; it then takes the temporary copy.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+
+    def no_room(data: bytes) -> sqlite3.Connection:
+        raise MemoryError
+
+    monkeypatch.setattr(leapp, "_in_memory", no_room)
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        lava = leapp.read_lava(f, z.name)
+    assert lava.read_from == "temporary_file"
+    assert lava.db.execute("SELECT count(*) FROM get_sms_mms").fetchone()[0] > 0
+    lava.close()
+    assert list(temp.iterdir()) == []
+
+
+def test_a_copy_left_by_a_stopped_import_is_removed_by_the_next_large_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude review on #274: an import killed while copying leaves its copy; the next large
+    # import removes this user's copies older than STALE_COPY_SECONDS and leaves newer ones.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    old, fresh, other = (temp / f"{leapp.TEMP_PREFIX}old", temp / f"{leapp.TEMP_PREFIX}new",
+                         temp / "someone-else")  # fmt: skip
+    for d in (old, fresh, other):
+        d.mkdir()
+        (d / "lava.db").write_bytes(b"x")
+    stale = time.time() - leapp.STALE_COPY_SECONDS - 60
+    os.utime(old, (stale, stale))
+    os.utime(other, (stale, stale))
+    z = _android().write_zip(tmp_path / "a.zip")
+    with z.open("rb") as f:
+        leapp.read_lava(f, z.name).close()
+    assert sorted(p.name for p in temp.iterdir()) == sorted([fresh.name, other.name])
+
+
+@pytest.mark.parametrize("error", [NotImplementedError, RuntimeError])
+def test_a_zip_member_that_cannot_be_opened_leaves_no_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    # Claude review on #274: a Deflate64 or password-protected member fails to open after the
+    # copy's file is made; the file is closed and removed.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+    real = zipfile.ZipFile.open
+
+    def refuse(self, name, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(getattr(name, "filename", name)).endswith(".db"):
+            raise error("compression type 9 (deflate64)")
+        return real(self, name, *a, **k)
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(zipfile.ZipFile, "open", refuse)
+    with z.open("rb") as f, pytest.raises(error):
+        leapp.read_lava(f, z.name)
+    assert list(temp.iterdir()) == []
+
+
+def test_a_temporary_copy_sqlite_cannot_open_is_not_called_a_bad_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude review on #274: a failure opening the local copy names the temporary folder, not
+    # the examiner's evidence.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(leapp, "IN_MEMORY_DB_BYTES", 0)
+
+    def cannot_open(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise sqlite3.OperationalError("unable to open database file")
+
+    z = _android().write_zip(tmp_path / "a.zip")
+    monkeypatch.setattr(leapp.sqlite3, "connect", cannot_open)
+    with z.open("rb") as f, pytest.raises(ValueError, match="temporary copy") as got:
+        leapp.read_lava(f, z.name)
+    assert "not a SQLite database" not in str(got.value)
     assert list(temp.iterdir()) == []

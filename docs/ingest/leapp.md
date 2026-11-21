@@ -31,13 +31,17 @@ the zip are not read.
 A database up to 2,000,000,000 bytes is read into memory and never written out. SQLite loads a
 database into memory as one allocation and refuses one above about 2 GiB, and a real phone's
 LAVA database can be larger (a public iOS 17 phone's is 5.6 GB, mostly file system events the
-import does not read). A larger one is streamed to a new owner-only temporary folder, opened
-read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds or not.
-On macOS and Linux its name is removed as soon as it is open, so nothing is left behind even if
-Mabillon stops mid-import; on Windows the folder is removed when the import closes it. The copy
-is the plain database, also in an encrypted case, where the case's own copy of the zip stays
-encrypted. The import refuses a database whose temporary disk lacks its size plus 512 MiB free,
-and any database over 64 GiB. The coverage record says which way it was read
+import does not read). A larger one, or a smaller one this computer lacks the memory to load, is
+streamed to a new owner-only temporary folder (the system's, or `TMPDIR`; `TEMP` on Windows),
+opened read-only (`mode=ro&immutable=1`), and removed when the import ends, whether it succeeds
+or not. On Linux its name is removed as soon as it is open (macOS should behave the same; not
+yet tested there); its freed disk blocks are not wiped. An import stopped mid-copy (killed,
+crashed, power lost) leaves its folder, and the next large import removes this user's folders
+older than six hours. The copy is the plain database, also in an encrypted case, where the case's
+own copy of the zip stays encrypted (`docs/encryption.md`, "Not covered"). Where the temporary
+folder is in memory (tmpfs on some Linux systems), the copy takes memory too; set `TMPDIR` to a
+folder on disk. The import refuses a database whose temporary disk lacks its size plus 512 MiB
+free, and any database over 64 GiB. The coverage record says which way it was read
 (`leapp.database_read_from`: `memory` or `temporary_file`).
 
 ## What is read

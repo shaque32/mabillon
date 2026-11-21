@@ -6,10 +6,12 @@
   packages was opened for it. (1) Large databases: `read_lava` loaded the LAVA database with
   `sqlite3.deserialize`, which SQLite refuses above about 2 GiB (one allocation), so a public
   iOS 17 phone's 5.58 GB database could not be imported on any machine. A database up to
-  2,000,000,000 bytes is still read into memory and never written out; a larger one is streamed
-  to a new owner-only temporary folder, opened read-only (`mode=ro&immutable=1`) and removed
-  when the import ends or fails (`Lava.close`); on macOS and Linux its name is removed as soon
-  as it is open, so a stopped import leaves nothing. A database is refused when its temporary
+  2,000,000,000 bytes is still read into memory and never written out; a larger one (or a
+  smaller one the computer lacks memory to load) is streamed to a new owner-only temporary
+  folder, opened read-only (`mode=ro&immutable=1`) and removed when the import ends or fails
+  (`Lava.close`); on Linux its name is removed once it is open (macOS untested), and the next
+  large import removes this user's copies older than six hours that a stopped import left.
+  `docs/encryption.md` lists the copy under "Not covered". A database is refused when its temporary
   disk lacks its size plus 512 MiB, and the size ceiling rises from 8 GiB to 64 GiB. The
   coverage record says how it was read (`leapp.database_read_from`). (2) Android 14 zone:
   `ZONE_SOURCES` read the Android zone only from ALEAPP `get_battery_usage_v4`; Android 14 keeps
@@ -17,18 +19,21 @@
   (`battery_usage_v9.py` at the pinned ed1b63d: `Timestamp`, `Timezone`), now read the same way.
   A phone holding both gets a zone only when every zone in both agrees, as before.
 - Where: PR #274
-- Verified: `tests/test_leapp.py` 128 passed (13 new): the import through a temporary copy
+- Verified: `tests/test_leapp.py` 133 passed (18 new): the import through a temporary copy
   (forced by setting the memory limit to 0, with the in-memory loader made to fail) stores the
   same rows and coverage as the in-memory import on the synthetic iOS and Android outputs; the
   copy is read-only, gone once open on Linux and gone after close; a database at the limit stays
   in memory; no room on disk, a non-database and an unknown tool each leave no copy; an encrypted
-  case's copy reads through. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
+  case's copy reads through; a memory failure falls back to the copy; a stale copy is swept and
+  a fresh one kept; a zip member that cannot be opened leaves no copy; a copy SQLite cannot open
+  is reported as the temporary folder's problem. Synthetic `get_battery_usage_v9` (ALEAPP's headers) sets the zone,
   and v4 and v9 must agree. Local check (cloud container, 2026-11-21): a synthetic 2.30 GB LAVA
   database raises MemoryError through `deserialize` and imports through the new path in 3.0 s at
   37 MB peak memory, leaving no temporary file. `ruff` clean; full `make check` runs in CI.
 - Open: the temporary copy is the plain database, also in an encrypted case (the case's own
   copy of the zip stays encrypted; the examiner's original zip is plain on the same machine).
-  On Windows a copy can stay in the user's temp folder if Mabillon is killed mid-import. Not yet
+  Unlinked blocks are not wiped. A copy left by a stopped import stays until the next large
+  import (or forever, if none follows). Not yet tested on macOS or Windows. Not yet
   run on the held-out iOS 17 or Android 14 packages (the validation thread does that). ALEAPP's
   v9 module notes name a sample row count for the public Pixel 7a phone; only its headers were
   used. Format support stays unverified.
