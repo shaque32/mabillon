@@ -1868,12 +1868,15 @@ _ONE_CALL_RE = re.compile(
 # One call's clause in the plain forms whose two sides code reads from the claim's words, with
 # each side a party token (`_party_tokens`): "<A> placed (or made) a call to <B>", "<A> called
 # <B>", "<A> received a call from <B>", "<A> missed a call from <B>", and "<A> had N calls with
-# <B>", which names no caller. Nothing else may sit in the clause: a word the forms do not hold
-# ("returned", "attempted", "answered", "connected", "back") leaves the caller unread.
+# <B>", which names no caller. "<A> placed a call from <PHONE> to <B>" names the phone A used,
+# read only when A is that phone's exact owner (`call_form`). Nothing else may sit in the
+# clause: a word the forms do not hold ("returned", "attempted", "answered", "connected",
+# "back") leaves the caller unread.
 _TOKEN = "\x01\x03*\x02"
 _CALL_FORM_RE = re.compile(
     rf"^(?P<lead>[^\x01]*?)(?:the\s+)?(?P<a>{_TOKEN})\s+(?:"
-    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call\s+to"
+    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call"
+    rf"(?:\s+from\s+(?:the\s+)?(?P<via>{_TOKEN}))?\s+to"
     rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
@@ -1892,11 +1895,12 @@ _WRITTEN_ID_LABEL_RE = re.compile(
 )
 _ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
 # The other side's id set beside its name, right after the clause: '"Marc R.," user ID
-# 4984911', "(account ID 4984911)". The id never adds a party: the caller is read only when
-# the name and the id are one account (`CallForm.one_account`). It does not pick between
-# accounts: a name that two accounts carry is refused before the id is read.
+# 4984911', "(account ID 4984911)", or with no label when the id is itself a party token:
+# '"ThisIs DfirTwo," live:.cid.5638f9306b7b8594'. The id never adds a party: the caller is
+# read only when the name and the id are one account (`CallForm.one_account`). It does not
+# pick between accounts: a name that two accounts carry is refused before the id is read.
 _CALL_ID_TAIL_RE = re.compile(
-    rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
+    rf"^\s*,?\s*(?P<open>\()?\s*(?:{_ID_LABEL})?"
     rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
     re.IGNORECASE,
 )
@@ -1933,6 +1937,7 @@ class CallForm:
     missed: bool
     length: str | None
     one_account: bool = False  # the clause names b by a name and its id: one account
+    from_phone: str | None = None  # "placed a call from <PHONE> to": the phone a used
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -2002,6 +2007,13 @@ _MESSAGE_WORD_RE = re.compile(
     r"\b(?:texts?|texted|texting|messages?|messaged|messaging|wrote|writes?|written|writing|"
     r"chats?|chatted|chatting|dms?|dm'?d|e-?mails?|e-?mailed|e-?mailing|replied|replies|"
     r"spoke|speak|speaks|speaking|spoken|talked|talks?|talking)\b",
+    re.IGNORECASE,
+)
+# A person written right before a number as theirs: "SUBJECT-2's number, (919) 888-7386",
+# "SUBJECT-2's cell phone number (919) 888-7386", "SUBJECT-2 at (919) 888-7386".
+_PERSON_S_NUMBER_RE = re.compile(
+    r"(?:['\u2019]s\s+(?:(?:cell(?:ular)?|mobile|tele)?\s*phone\s+|cell\s+)?number,?\s*"
+    r"|\s+at\s+)",
     re.IGNORECASE,
 )
 _OFFSET_EDGE_RE = re.compile(
@@ -4884,6 +4896,7 @@ class LocalAssumptionFiller:
             out = self._shaped(claim, self._add_sender(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_recipient(claim, out), call_id)
+            out = self._shaped(claim, self._person_s_number(claim, out), call_id)
             out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._bind_named_app(claim, out), call_id)
@@ -4892,6 +4905,76 @@ class LocalAssumptionFiller:
         except Reject as e:
             self._drop(claim, None, f"code could not read the claim's own words: {e}", call_id)
             return []
+
+    def _person_s_number(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
+        """A call's time range that names a person and, as a second party, the number the
+        claim writes as that person's ("a call from SUBJECT-2's number, (919) 888-7386",
+        "called SUBJECT-2 at (919) 888-7386") searches calls between the person's accounts and
+        the number, which are one side of the call, so it finds none. The person is taken off
+        the time range, which then times the call with the number, and the core identity row
+        the claim keeps for the person and the number tests whose number it is. Only when the
+        claim writes the person right before the number in one of those forms, the number is
+        every account the time range names, and a core person_identity row names that person
+        and those accounts; otherwise the rows stay as they were."""
+        ties = {
+            (tuple(p.params.get("person_ids", [])), frozenset(p.params.get("account_ids", [])))
+            for p in out
+            if p.template_id == "person_identity" and p.is_core and isinstance(p.params, dict)
+        }
+        written = self._person_number_pairs(claim)
+        if not ties or not written:
+            return out
+        fixed: list[Proposal] = []
+        for p in out:
+            params = p.params
+            if (
+                p.template_id == "record_time"
+                and isinstance(params, dict)
+                and CALL_CHANNEL in params.get("channels", [])
+                and not params.get("quoted_text")
+                and params.get("account_ids")
+                and not params.get("handles")
+            ):
+                accounts = frozenset(params["account_ids"])
+                drop = {
+                    pid
+                    for pid in params.get("person_ids", [])
+                    if ((pid,), accounts) in ties
+                    and any(
+                        who == pid
+                        and all(_same_number(number, self.data.accounts[a]) for a in accounts)
+                        for who, number in written
+                    )
+                }
+                if len(drop) == 1:
+                    kept = [x for x in params["person_ids"] if x not in drop]
+                    params = {**params, "person_ids": kept}
+                    p = Proposal(p.template_id, params, is_core=p.is_core, code_made=True)
+            fixed.append(p)
+        return fixed
+
+    def _person_number_pairs(self, claim: Claim) -> list[tuple[str, str]]:
+        """(person id, number digits) for each place the claim writes a person right before a
+        phone number as that person's: "SUBJECT-2's number, (919) 888-7386", "SUBJECT-2's cell
+        phone number (919) 888-7386", "SUBJECT-2 at (919) 888-7386"."""
+        try:
+            skeleton, tokens = self._party_tokens(claim.text, NATIVE_CALL_APP)
+        except Reject:
+            return []
+        out: list[tuple[str, str]] = []
+        starts = sorted(tokens)
+        for st, nxt in zip(starts, starts[1:], strict=False):
+            kind, value = tokens[st]
+            nkind, nvalue = tokens[nxt]
+            if kind != "person" or nkind != "acct":
+                continue
+            end = skeleton.index("\x02", st) + 1
+            if not _PERSON_S_NUMBER_RE.fullmatch(skeleton[end:nxt]):
+                continue
+            digits = phone_digits(nvalue)
+            if digits is not None:
+                out.append((value, digits))
+        return out
 
     def _add_recipient(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message's time range that names its writer alone gets the one the claim writes it
@@ -6590,6 +6673,19 @@ class LocalAssumptionFiller:
         if not self._plain_call_noun(np, verb, app):
             return None
         b = tokens[m.start("b")]
+        from_phone = None
+        if m.group("via") is not None:
+            # "SUBJECT-1 placed a call from the TARGET PHONE to ...": the phone is the one
+            # searched, never a side, and the caller is read only when the person placing the
+            # call is that phone's exact owner by confirmed stipulation (`_exact_owner`).
+            via = tokens[m.start("via")]
+            a = tokens[m.start("a")]
+            if via[0] != "phone" or a[0] != "person" or b[0] == "phone":
+                return None
+            own = {x.id for x in self.data.accounts.values() if x.device_id == via[1]}
+            if not own or self._exact_owner(own) != a[1]:
+                return None
+            from_phone = via[1]
         if m.group("desc") is not None:
             # "called the Instagram user ...": only the call's own app may name the side
             # (`_plain_call_noun`), and only for an account side, never a person.
@@ -6629,6 +6725,7 @@ class LocalAssumptionFiller:
             missed=verb == "missed",
             length=length,
             one_account=one_account,
+            from_phone=from_phone,
         )
 
     @staticmethod
@@ -6758,6 +6855,8 @@ class LocalAssumptionFiller:
         phones = [v for k, v in (form.a, form.b) if k == "phone"]
         if len(phones) > 1:
             return None
+        if form.from_phone is not None and device_ids != [form.from_phone]:
+            return None  # the time range searches another phone than the one the claim names
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
         if form.one_account and not self._one_party(accounts):
             # The name and the id beside it are not one account. `_call_parties` already

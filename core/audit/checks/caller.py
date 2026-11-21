@@ -14,6 +14,7 @@ from core.audit.checks._common import (
     in_window,
     local_str,
     parties,
+    phone_side,
     sentences,
     window_str,
     zone_notes,
@@ -106,7 +107,7 @@ class CallerCheck(TemplateCheck):
                 lo, hi = p.duration_s
                 if not lo <= r["duration_s"] <= hi:
                     continue
-            phone_at = _phone_side(data, r["device_id"], pids)
+            phone_at = phone_side(data, r["device_id"], pids)
             # the other side's accounts must sit on the row for it to be a call between them
             if phone_at is not None:
                 other_ids = ids[1 - phone_at]
@@ -206,23 +207,6 @@ def _calls(data: CaseData, account_ids: set[str]) -> list[dict[str, Any]]:
                     "to": to, "direction": direction, "ts": t, "duration_s": dur,
                     "row": row})  # fmt: skip
     return out
-
-
-def _phone_side(data: CaseData, device_id: str | None, pids: list[str | None]) -> int | None:
-    """Which side (0 or 1) is the phone's owner by the one confirmed device_owner stipulation
-    on the device; None when the device has no one confirmed owner, or it is not exactly one
-    of the two sides."""
-    if device_id is None:
-        return None
-    owners = {
-        pid
-        for _, did, pid, status in data.stipulations
-        if did == device_id and status == "confirmed"
-    }
-    if len(owners) != 1:
-        return None
-    at = [i for i, pid in enumerate(pids) if pid is not None and pid in owners]
-    return at[0] if len(at) == 1 else None
 
 
 def _placed_by(data: CaseData, r: dict[str, Any], phone_at: int, other_ids: set[str]) -> int | None:

@@ -13,6 +13,7 @@ from core.audit.checks._common import (
     TEXT_MATCH,
     CaseData,
     Row,
+    call_devices,
     calls_for_accounts,
     channel_ok,
     in_window,
@@ -21,6 +22,7 @@ from core.audit.checks._common import (
     local_str,
     messages_with_text,
     parties,
+    phone_side,
     sentence_aligned,
     sentences,
     window_str,
@@ -36,7 +38,10 @@ class TimeCheck(TemplateCheck):
     describes exists, at another time. Calls are picked by their parties, not their content,
     so a call outside the window could be a different call, and is never a fail. A call
     picked with an app beside "call" ("a Signal call": channels call and Signal) is a call on
-    that app only; "call" alone admits every app's calls."""
+    that app only; "call" alone admits every app's calls. A call row that leaves the phone's
+    own side blank (an iOS call log, or a UFDR's, names only the other side) is a call between
+    the phone's owner and that side when the phone's one confirmed device_owner stipulation
+    makes one of the two parties its owner, as the caller check reads it."""
 
     name = "time"
     # 1.0.2: a call is on the app named beside "call". 1.0.3: the text match folds (TEXT_MATCH).
@@ -44,7 +49,8 @@ class TimeCheck(TemplateCheck):
     # neither passes nor fails it.
     # 1.1.1: a message with the words that names no sender or no receiver keeps it from failing
     # (Greptile on #264).
-    version = "1.1.1"
+    # 1.2.0: a call row with the phone's own side blank is read as the phone owner's call.
+    version = "1.2.0"
 
     def evaluate(self, assumption_id: str, p: AssumptionParams, data: CaseData) -> CheckResult:
         if p.window is None:
@@ -86,7 +92,12 @@ class TimeCheck(TemplateCheck):
             # #264); with two, a known sender must be one of them.
             and (len(party_ids) == 1 or r.sender is None or r.sender in everyone)
         ]
-        rows = [r for r in rows if not party_ids or involves_all(r, party_ids)]
+        owners_calls = (
+            set() if by_text or len(party_ids) != 2 else _owners_calls(data, p, rows, party_ids)
+        )
+        rows = [
+            r for r in rows if not party_ids or involves_all(r, party_ids) or r.id in owners_calls
+        ]
         searched = f"{what.capitalize()} in {', '.join(sources)}; window {window_str(p.window)}."
         notes = [n for x in found for n in x.notes] + zone_notes(data, p.window, sources)
         if not rows:
@@ -147,3 +158,26 @@ class TimeCheck(TemplateCheck):
             if outside and not by_text:
                 lines.append("Calls are matched by their parties only, so these may be other calls")
         return self.done(assumption_id, outcome, searched, sentences(lines, notes), ids, sources)
+
+
+def _owners_calls(
+    data: CaseData, p: AssumptionParams, rows: list[Row], party_ids: list[set[str]]
+) -> set[str]:
+    """Calls between two parties, one of them the phone's owner, on rows that leave the
+    phone's own side blank: the row is on a phone whose one confirmed device_owner stipulation
+    makes one party its owner, and its one named side is an account of the other party only."""
+    pids: list[str | None] = [*p.person_ids, *([None] if p.account_ids or p.handles else [])]
+    if len(pids) != 2:
+        return set()
+    blank = [r for r in rows if r.kind == "call" and (r.sender is None) != (not r.recipients)]
+    devices = call_devices(data, [r.id for r in blank])
+    out: set[str] = set()
+    for r in blank:
+        owner_at = phone_side(data, devices.get(r.id), pids)
+        if owner_at is None:
+            continue
+        named = r.accounts
+        other = party_ids[1 - owner_at]
+        if len(named) == 1 and named <= other and not named & party_ids[owner_at]:
+            out.add(r.id)
+    return out

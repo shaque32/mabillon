@@ -946,3 +946,154 @@ def test_an_owner_identity_that_could_say_more_than_the_stipulation_is_kept(conn
     ]
     f._data = data
     f._owner_identity_names_nothing([PETROV], [], [])
+
+
+# ---------------------------------------------------------------- more call wordings
+
+
+AT24 = "On June 24, 2026, at about 9:00 p.m. EDT,"
+W24 = W("June 24, 2026", "2026-06-24T20:52", "2026-06-24T21:09")
+
+
+def _wa_out(conn: sqlite3.Connection) -> None:
+    # June 24, 9:00 p.m. EDT: PETROV's phone called REYES on WhatsApp.
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:wa:out', 'item1', 'c:wa:out', 'dev:item1',"
+        " 'WhatsApp', ?, ?, 'outgoing', '2026-06-25T01:00:00Z', 0, NULL, 60, 0)",
+        (PETROV_WA, REYES_WA),
+    )
+
+
+def from_phone_fill(conn, words: str, phone: str) -> tuple[dict, LocalAssumptionFiller]:
+    _wa_out(conn)
+    rt = proposal(people=["PETROV", "Marcus Reyes"], phones=[phone], quoted_text="",
+                  channels=["call", "WhatsApp"], window=W24).model_dump()  # fmt: skip
+    return fill(conn, f"{AT24} {words}", items=[rt])
+
+
+def test_a_call_placed_from_the_owner_s_phone_names_its_caller(conn):
+    # validation iOS 15 C11: "SUBJECT-1 placed a WhatsApp call from the TARGET PHONE to ..."
+    made, f = from_phone_fill(conn, "PETROV placed a WhatsApp call from Item 1 to Marcus Reyes.",
+                              "Item 1")  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.device_ids) == ["dev:item1"]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+@pytest.mark.parametrize(
+    ("words", "phone"),
+    [
+        # REYES does not own Item 1: who used the phone is not what its log says
+        ("Marcus Reyes placed a WhatsApp call from Item 1 to PETROV.", "Item 1"),
+        # PETROV does not own Item 2
+        ("PETROV placed a WhatsApp call from Item 2 to Marcus Reyes.", "Item 2"),
+    ],
+)
+def test_a_call_placed_from_a_phone_its_caller_does_not_own_names_no_caller(conn, words, phone):
+    made, _ = from_phone_fill(conn, words, phone)
+    assert "caller" not in made
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # validation v4 D103: '"ThisIs DfirTwo," live:.cid.5638f9306b7b8594, that lasted ...'
+        'PETROV called the Instagram user "Marc Garage," 49800011122.',
+        'PETROV called "Marc Garage" (49800011122) on Instagram.',
+    ],
+)
+def test_an_id_with_no_label_beside_its_name_gets_a_caller(conn, words):
+    made, f = ig_fill(conn, words)
+    a = made["caller"]
+    assert list(a.params.account_ids) == [GARAGE_IG], [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+def test_an_id_with_no_label_of_another_account_names_no_caller(conn):
+    _add_instagram(conn)
+    words = 'PETROV called the Instagram user "Marc Garage," 49800099999.'
+    made, f = fill(conn, f"{IG_AT} {words}", people=["PETROV"],
+                   accounts=[*NAMED, {"as_written": "49800099999", "app": "Instagram"}],
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    assert "caller" not in made
+
+
+# ---------------------------------------------------------------- a blank side on the phone
+
+
+def time_row(conn, d: int, people=(PETROV,), accounts=NUM):
+    params = {"person_ids": list(people), "account_ids": list(accounts), "window": day(d),
+              "channels": ["call"], "device_ids": ["dev:item1"]}  # fmt: skip
+    return CHECKS["time"].run(instantiate("CT", "record_time", params), conn)
+
+
+def test_a_call_row_with_the_phone_s_side_blank_is_the_owner_s_call(conn):
+    # validation iOS 15 B06: the log names only the other side of a call on the phone, so
+    # "SUBJECT-1 placed a Telegram call to SUBJECT-2" found no row between the two.
+    r = time_row(conn, 2)  # c:in: from the number, to no account
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    assert list(r.record_ids) == ["c:in"]
+    r = time_row(conn, 1)  # c:out:a leaves the phone's side blank, c:out:b names it
+    assert set(r.record_ids) == {"c:out:a", "c:out:b"}, r.detail
+
+
+def test_a_blank_side_is_never_a_party_who_does_not_own_the_phone(conn):
+    # REYES owns Item 2, not Item 1, where the call is logged
+    r = time_row(conn, 2, people=(REYES,))
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "None found" in r.detail
+
+
+# ---------------------------------------------------------------- a person's number
+
+AT2 = "On June 2, 2026, at about 9:00 p.m. EDT,"
+RT2 = proposal(people=["Marcus Reyes"], accounts=[{"as_written": "(212) 555-0199", "app": "call"}],
+               quoted_text="", channels=["call"],
+               window=W("June 2", "2026-06-02T20:52", "2026-06-02T21:09")).model_dump()  # fmt: skip
+TIE = {"template_id": "person_identity", "people": ["Marcus Reyes"],
+       "accounts": [{"as_written": "(212) 555-0199", "app": "call"}], "handles": [],
+       "phones": [], "channels": ["call"], "quoted_text": "", "count": None,
+       "duration": None, "window": None}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # validation v4 D022 and D023
+        "Item 1 received a call from Marcus Reyes's number, (212) 555-0199.",
+        "Marcus Reyes at (212) 555-0199 called Item 1.",
+    ],
+)
+def test_a_person_s_number_is_timed_as_the_number(conn, words):
+    text = f"{AT2} {words}"
+    made, f = fill(conn, text, items=[RT2, TIE])
+    rt = made["record_time"]
+    assert REYES not in rt.params.person_ids, [d.reason for d in f.drops]
+    assert set(rt.params.account_ids) == set(NUM)
+    (r,) = run_checks(rt, conn)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    # whose number it is stays the identity row's to test: the claim is not supported on the
+    # call alone
+    assert list(made["person_identity"].params.person_ids) == [REYES]
+    assumptions = list(made.values())
+    checks = [x for a in assumptions for x in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN, v.reasons
+
+
+@pytest.mark.parametrize(
+    ("words", "items"),
+    [
+        # no identity row ties the person to the number
+        ("Item 1 received a call from Marcus Reyes's number, (212) 555-0199.", [RT2]),
+        # the person and the number are written as two parties
+        ("Item 1 had a call with Marcus Reyes and (212) 555-0199.", [RT2, TIE]),
+    ],
+)
+def test_a_person_not_written_as_the_number_s_holder_stays_a_party(conn, words, items):
+    made, f = fill(conn, f"{AT2} {words}", items=items)
+    assert REYES in made["record_time"].params.person_ids, [d.reason for d in f.drops]
