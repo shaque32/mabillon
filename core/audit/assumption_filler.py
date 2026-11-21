@@ -199,7 +199,16 @@ MAX_PROPOSALS = 8
 #  11: a call's other side may be described by its app ("called the Instagram user ...") and
 #      given with its id beside its name (', user ID ...'), when both are one account; a
 #      comma inside a quoted name's closing mark is the claim's.
-FILLER_VERSION = "12"
+#  12: words no check reads add a core event only an expert carries (#265).
+#  13: on a communication, timing or count claim, a person_identity naming no account or
+#      handle, only a phone's exact owner by confirmed stipulation, is refused; "connected"
+#      beside a tested call length is read (never "connected X with Y"); a call "that was
+#      answered (or connected) and lasted ...", one "placed ... from <PHONE> to ..." by that
+#      phone's exact owner, and one with an unlabelled id beside the other side's name get
+#      their caller row; a person written right before their number ("SUBJECT-2's number,
+#      ...", "SUBJECT-2 at ...") comes off the call's time range when a core identity row ties
+#      them, with a core event row holding the rest (coverage recount, 2026-11-21).
+FILLER_VERSION = "13"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1863,12 +1872,16 @@ _ONE_CALL_RE = re.compile(
 # One call's clause in the plain forms whose two sides code reads from the claim's words, with
 # each side a party token (`_party_tokens`): "<A> placed (or made) a call to <B>", "<A> called
 # <B>", "<A> received a call from <B>", "<A> missed a call from <B>", and "<A> had N calls with
-# <B>", which names no caller. Nothing else may sit in the clause: a word the forms do not hold
-# ("returned", "attempted", "answered", "connected", "back") leaves the caller unread.
+# <B>", which names no caller. "<A> placed a call from <PHONE> to <B>" names the phone A used,
+# read only when A is that phone's exact owner (`call_form`). Nothing else may sit in the
+# clause: a word the forms do not hold ("returned", "attempted", "answered", "connected",
+# "back") leaves the caller unread, though "answered" and "connected" are read in a stated
+# length after it ("that was answered and lasted ...", `_CALL_LENGTH_TAIL_RE`).
 _TOKEN = "\x01\x03*\x02"
 _CALL_FORM_RE = re.compile(
     rf"^(?P<lead>[^\x01]*?)(?:the\s+)?(?P<a>{_TOKEN})\s+(?:"
-    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call\s+to"
+    rf"(?P<placed>placed|made)\s+(?P<np_to>[a-z][\w\s-]*?)\s+call"
+    rf"(?:\s+from\s+(?:the\s+)?(?P<via>{_TOKEN}))?\s+to"
     rf"|(?P<got>received|missed)\s+(?P<np_from>[a-z][\w\s-]*?)\s+call\s+from"
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
@@ -1887,11 +1900,12 @@ _WRITTEN_ID_LABEL_RE = re.compile(
 )
 _ID_LABEL = r"(?:user\s+id|account\s+id|user\s*name|id)\s*(?:number\s+)?:?\s*"
 # The other side's id set beside its name, right after the clause: '"Marc R.," user ID
-# 4984911', "(account ID 4984911)". The id never adds a party: the caller is read only when
-# the name and the id are one account (`CallForm.one_account`). It does not pick between
-# accounts: a name that two accounts carry is refused before the id is read.
+# 4984911', "(account ID 4984911)", or with no label when the id is itself a party token:
+# '"ThisIs DfirTwo," live:.cid.5638f9306b7b8594'. The id never adds a party: the caller is
+# read only when the name and the id are one account (`CallForm.one_account`). It does not
+# pick between accounts: a name that two accounts carry is refused before the id is read.
 _CALL_ID_TAIL_RE = re.compile(
-    rf"^\s*,?\s*(?P<open>\()?\s*{_ID_LABEL}"
+    rf"^\s*,?\s*(?P<open>\()?\s*(?:{_ID_LABEL})?"
     rf"(?P<tok>{_TOKEN})\s*(?(open)\))",  # a bracket is read only when it closes
     re.IGNORECASE,
 )
@@ -1903,12 +1917,16 @@ _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
 _CALL_APP_TAIL_RE = re.compile(
     r"^\s*,?\s*(?:on|via|over|using|through)\s+(?:the\s+)?(?P<app>[A-Za-z][\w\s-]*?)(?:\s+app)?"
-    r"(?=\s*(?:,|\.|$|that\s+lasted|lasting|for\s))",
+    r"(?=\s*(?:,|\.|$|that\s+(?:(?:was\s+)?(?:answered|connected)\s+and\s+)?lasted|lasting|for\s))",
     re.IGNORECASE,
 )
 # A stated length after the clause: "that lasted about two minutes", "lasting 40 seconds".
+# "that was answered and lasted ...", "that connected and lasted ...": a call with a stated
+# length, which the time row tests, was answered (`_GATED_WORDS`, "length").
 _CALL_LENGTH_TAIL_RE = re.compile(
-    r"^\s*,?\s*(?:that\s+lasted|lasting|for)\s+(?P<len>.+?)\s*\.?\s*$", re.I
+    r"^\s*,?\s*(?:that\s+(?:(?:was\s+)?(?:answered|connected)\s+and\s+)?lasted|lasting|for)"
+    r"\s+(?P<len>.+?)\s*\.?\s*$",
+    re.I,
 )
 
 
@@ -1924,6 +1942,7 @@ class CallForm:
     missed: bool
     length: str | None
     one_account: bool = False  # the clause names b by a name and its id: one account
+    from_phone: str | None = None  # "placed a call from <PHONE> to": the phone a used
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -1993,6 +2012,13 @@ _MESSAGE_WORD_RE = re.compile(
     r"\b(?:texts?|texted|texting|messages?|messaged|messaging|wrote|writes?|written|writing|"
     r"chats?|chatted|chatting|dms?|dm'?d|e-?mails?|e-?mailed|e-?mailing|replied|replies|"
     r"spoke|speak|speaks|speaking|spoken|talked|talks?|talking)\b",
+    re.IGNORECASE,
+)
+# A person written right before a number as theirs: "SUBJECT-2's number, (919) 888-7386",
+# "SUBJECT-2's cell phone number (919) 888-7386", "SUBJECT-2 at (919) 888-7386".
+_PERSON_S_NUMBER_RE = re.compile(
+    r"(?:['\u2019]s\s+(?:(?:cell(?:ular)?|mobile|tele)?\s*phone\s+|cell\s+)?number,?\s*"
+    r"|\s+at\s+)",
     re.IGNORECASE,
 )
 _OFFSET_EDGE_RE = re.compile(
@@ -3202,8 +3228,10 @@ _GATED_WORDS = {
     # sender alone, so "PETROV received from @northstar" on a sender row for PETROV passed on
     # PETROV's own message (Claude review on #265)
     "direction": frozenset("received receive receives receiving".split()),
-    # "a call that was answered and lasted ...": a call with a tested length was answered
-    "length": frozenset("lasted lasting lasts length duration long answered".split()),
+    # "a call that was answered and lasted ...": a call with a tested length was answered.
+    # "connected" says the same: a tested length is never below one second (duration_range),
+    # so a call the row finds with it connected (coverage recount 2026-11-21).
+    "length": frozenset("lasted lasting lasts length duration long answered connected".split()),
     # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
     "contact": frozenset("saved stored listed".split()),
     # "exchanged messages", "had a conversation": messages between both sides, which only a
@@ -3428,6 +3456,56 @@ _OWNED_RE = re.compile(
 # both sides, and only by one that sets each_way ("both_ways"): a total between the two may
 # all be one side's (Claude review and CodeRabbit on #265)
 _EACH_OTHER_RE = re.compile(r"\b(?:each\s+other|one\s+another)\b", re.IGNORECASE)
+# The call's own "connected", plain beside a tested length: the call (or "that", "which") is
+# its subject, with or without "was"/"were" ("that was connected"; never "Reyes was
+# connected", Claude review on #273), and a length or the clause's end comes right after
+# it: "the call connected and lasted", "that connected, lasting", "which connected for two
+# minutes". Read on the claim's words before any party is blanked (`connected_with_object`).
+_OWN_CONNECTED_RE = re.compile(
+    r"\b(?:call|calls|that|which)\s+(?:(?:was|were)\s+)?connected\b"
+    r"(?=\s*(?:[.;:)]|$|and\s+lasted\b|,\s*(?:lasting|that\s+lasted)\b|for\b|lasting\b))",
+    re.IGNORECASE,
+)
+_CONNECTED_RE = re.compile(r"\bconnected\b", re.IGNORECASE)
+
+
+_BY_RE = re.compile(r"\bby\b", re.IGNORECASE)
+_ID_CHAR_RE = re.compile(r"[\w.+@:/-]")
+
+
+def _in_identifier(text: str, start: int, end: int) -> bool:
+    """True when text[start:end] is part of one handle, address or id ("@connected",
+    "connected@example.org", "live:connected", "connected.com"), read on the run of identifier
+    marks around it. A parenthesis, comma or space ends the run, so "connected(@northstar"
+    keeps "connected" outside the handle (CodeRabbit on #273)."""
+    a, b = start, end
+    while a > 0 and _ID_CHAR_RE.match(text[a - 1]):
+        a -= 1
+    while b < len(text) and _ID_CHAR_RE.match(text[b]):
+        b += 1
+    run = text[a:b].rstrip(".:")
+    return (
+        "@" in run
+        or ":" in run
+        or _WEB_ADDRESS_RE.fullmatch(run) is not None
+        or re.search(r"\.(?:com|net|org|us|io)\b", run, re.IGNORECASE) is not None
+    )
+
+
+def connected_with_object(bare: str) -> bool:
+    """True when the claim's words (unquoted, nothing blanked) write "connected" other than
+    as the call's own: "PETROV connected REYES with SUBJECT-2", "Item 1 connected Marcus Reyes
+    for two minutes". Someone put others on a call, which no row reads (Claude review on
+    #273). The call's own "connected" with "by" anywhere after it names who connected it ("the
+    call was connected for a minute by PETROV"), so it is not plain either (CodeRabbit on
+    #273). A "connected" inside a handle or an address is an account, never the verb
+    ("@connected"), but one written against a handle ("connected(@northstar") is still the
+    verb (CodeRabbit on #273)."""
+    own = {m.end() for m in _OWN_CONNECTED_RE.finditer(bare) if not _BY_RE.search(bare, m.end())}
+    return any(
+        m.end() not in own and not _in_identifier(bare, m.start(), m.end())
+        for m in _CONNECTED_RE.finditer(bare)
+    )
 
 
 def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = ()) -> list[str]:
@@ -3856,6 +3934,8 @@ class LocalAssumptionFiller:
         # (Claude review on #265)
         words = re.sub(r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
         out = plain_tokens(words, phrases, tests)
+        if "connected" not in out and connected_with_object(bare):
+            out.append("connected")
         return [
             *out,
             *(w for w in lengths if not set(w.split()) & set(out)),
@@ -4302,7 +4382,70 @@ class LocalAssumptionFiller:
             params["window"] = self._stated(claim, para, device_ids, tpl.id, None)
             code_made = True
 
+        if (
+            tpl.id == "person_identity"
+            and not account_ids
+            and not handles
+            and not params.get("window")
+            and not params.get("quoted_text")
+            and claim.claim_type in _CHECKED_TYPES
+        ):
+            # only beside the rows that decide a communication, timing or count claim: for an
+            # identity claim the row is the claim itself, and it goes to the expert; and never
+            # a row with a time or a message, which says who held the phone then, not who owns
+            # it (Claude review on #273)
+            self._owner_identity_names_nothing(
+                list(params.get("person_ids", [])),
+                list(params.get("device_ids", device_ids)),
+                list(params.get("channels", [])),
+            )
+
         return Proposal(p.template_id, params, is_core=True, code_made=code_made)
+
+    def _exactly_owned(self, person: str) -> set[str]:
+        """The phones this person is the one confirmed owner of, with their own accounts
+        exactly the person's party (as `_exact_owner` reads one phone): none for a person whose
+        accounts are more than one phone's own (a second phone's, or a confirmed link to an
+        account off the phone), whose row is then kept. Accounts are compared by key, so a
+        second phone holding only the same keys adds none."""
+        devices = {did for _, did, _, status in self.data.stipulations if status == "confirmed"}
+        return {d for d in devices if self._exact_owner_of(d) == person}
+
+    def _owner_identity_names_nothing(
+        self, person_ids: list[str], device_ids: list[str], channels: list[str]
+    ) -> None:
+        """A person_identity naming no account and no handle, only one person who is the one
+        confirmed owner of a phone ("The account belongs to SUBJECT-1"), says nothing the
+        stipulation does not: the expert already confirmed that the phone's own accounts are
+        that person's, and the checks read them so. No check or reviewer could test it, yet
+        as a core assumption it keeps the claim unproven whatever its checks find (validation
+        v4 D077, coverage recount 2026-11-21). It is refused, so the claim is decided by the
+        rows that name accounts; rule 3e still needs one of them to be an identity row.
+        The row is kept, for the expert, when it could say more than the stipulation: a
+        person who is no phone's one owner (none, or a phone shared with another owner), a
+        phone it names that those people do not own so, or an app on which none of their own
+        phones holds an account ("Item 2's account belongs to PETROV" when PETROV owns Item 1;
+        Claude review on #273)."""
+        if len(person_ids) != 1:
+            # one person only: with two, a phone or app one of them owns says nothing of the
+            # other (Claude review on #273)
+            return
+        phones = self._exactly_owned(person_ids[0])
+        if not phones:
+            return
+        if any(d not in phones for d in device_ids):
+            return
+        apps = {
+            a.app.casefold()
+            for a in self.data.accounts.values()
+            if a.device_id in (set(device_ids) or phones)
+        }
+        if any(c.casefold() != CALL_CHANNEL and c.casefold() not in apps for c in channels):
+            return
+        raise Reject(
+            "person_identity names no account or handle, only a phone's one owner by confirmed"
+            " stipulation, which already ties the phone's own accounts to them"
+        )
 
     def _side_names(self, params: dict[str, Any]) -> list[str]:
         """The names a count's accounts side is written by: its handles, and its accounts'
@@ -4817,6 +4960,7 @@ class LocalAssumptionFiller:
             out = self._shaped(claim, self._add_record_time(claim, para, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_recipient(claim, out), call_id)
             out = self._shaped(claim, self._add_caller(claim, out, allowed_ids), call_id)
+            out = self._shaped(claim, self._person_s_number(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._add_call_count(claim, out, allowed_ids), call_id)
             out = self._shaped(claim, self._bind_named_app(claim, out), call_id)
             out = self._add_meaning(claim, out, allowed_ids, call_id)
@@ -4824,6 +4968,95 @@ class LocalAssumptionFiller:
         except Reject as e:
             self._drop(claim, None, f"code could not read the claim's own words: {e}", call_id)
             return []
+
+    def _person_s_number(
+        self, claim: Claim, out: list[Proposal], allowed_ids: set[str]
+    ) -> list[Proposal]:
+        """A call's time range that names a person and, as a second party, the number the
+        claim writes as that person's ("a call from SUBJECT-2's number, (919) 888-7386",
+        "called SUBJECT-2 at (919) 888-7386") searches calls between the person's accounts and
+        the number, which are one side of the call, so it finds none. The person is taken off
+        the time range, which then times the call with the number, and the core identity row
+        the claim keeps for the person and the number tests whose number it is. Only when the
+        claim writes the person right before the number in one of those forms, the number is
+        every account the time range names, and a core person_identity row names that person
+        and those accounts; otherwise the rows stay as they were.
+
+        These wordings give no caller row, so a core event row the checks never cover keeps
+        the rest of what the claim says, who placed the call among it, for the expert: a call
+        found with the number never carries the claim on its own (Claude review on #273). With
+        no event template allowed, or a caller row already made, nothing changes."""
+        if "event" not in allowed_ids or any(p.template_id == "caller" for p in out):
+            return out
+        ties = {
+            (tuple(p.params.get("person_ids", [])), frozenset(p.params.get("account_ids", [])))
+            for p in out
+            if p.template_id == "person_identity" and p.is_core and isinstance(p.params, dict)
+        }
+        written = self._person_number_pairs(claim)
+        if not ties or not written:
+            return out
+        fixed: list[Proposal] = []
+        held: list[dict[str, Any]] = []  # each changed time range, as the model gave it
+        for p in out:
+            params = p.params
+            if (
+                p.template_id == "record_time"
+                and isinstance(params, dict)
+                and CALL_CHANNEL in params.get("channels", [])
+                and not params.get("quoted_text")
+                and params.get("account_ids")
+                and not params.get("handles")
+            ):
+                accounts = frozenset(params["account_ids"])
+                drop = {
+                    pid
+                    for pid in params.get("person_ids", [])
+                    if ((pid,), accounts) in ties
+                    and any(
+                        who == pid
+                        and all(_same_number(number, self.data.accounts[a]) for a in accounts)
+                        for who, number in written
+                    )
+                }
+                if len(drop) == 1:
+                    held.append(dict(params))
+                    kept = [x for x in params["person_ids"] if x not in drop]
+                    params = {**params, "person_ids": kept}
+                    p = Proposal(p.template_id, params, is_core=p.is_core, code_made=True)
+            fixed.append(p)
+        if len(held) != 1:
+            # one call's time range only: an event row holds one call's window (Claude review
+            # on #273)
+            return out
+        if not any(p.template_id == "event" and p.is_core for p in fixed):
+            allowed = TEMPLATES["event"].allowed
+            event = {k: v for k, v in held[0].items() if k in allowed}
+            fixed.append(Proposal("event", event, is_core=True, code_made=True))
+        return fixed
+
+    def _person_number_pairs(self, claim: Claim) -> list[tuple[str, str]]:
+        """(person id, number digits) for each place the claim writes a person right before a
+        phone number as that person's: "SUBJECT-2's number, (919) 888-7386", "SUBJECT-2's cell
+        phone number (919) 888-7386", "SUBJECT-2 at (919) 888-7386"."""
+        try:
+            skeleton, tokens = self._party_tokens(claim.text, NATIVE_CALL_APP)
+        except Reject:
+            return []
+        out: list[tuple[str, str]] = []
+        starts = sorted(tokens)
+        for st, nxt in zip(starts, starts[1:], strict=False):
+            kind, value = tokens[st]
+            nkind, nvalue = tokens[nxt]
+            if kind != "person" or nkind != "acct":
+                continue
+            end = skeleton.index("\x02", st) + 1
+            if not _PERSON_S_NUMBER_RE.fullmatch(skeleton[end:nxt]):
+                continue
+            digits = phone_digits(nvalue)
+            if digits is not None:
+                out.append((value, digits))
+        return out
 
     def _add_recipient(self, claim: Claim, out: list[Proposal]) -> list[Proposal]:
         """A message's time range that names its writer alone gets the one the claim writes it
@@ -6522,6 +6755,19 @@ class LocalAssumptionFiller:
         if not self._plain_call_noun(np, verb, app):
             return None
         b = tokens[m.start("b")]
+        from_phone = None
+        if m.group("via") is not None:
+            # "SUBJECT-1 placed a call from the TARGET PHONE to ...": the phone is the one
+            # searched, never a side, and the caller is read only when the person placing the
+            # call is that phone's exact owner by confirmed stipulation (`_exact_owner`).
+            via = tokens[m.start("via")]
+            a = tokens[m.start("a")]
+            if via[0] != "phone" or a[0] != "person" or b[0] == "phone":
+                return None
+            own = {x.id for x in self.data.accounts.values() if x.device_id == via[1]}
+            if not own or self._exact_owner(own) != a[1]:
+                return None
+            from_phone = via[1]
         if m.group("desc") is not None:
             # "called the Instagram user ...": only the call's own app may name the side
             # (`_plain_call_noun`), and only for an account side, never a person.
@@ -6561,6 +6807,7 @@ class LocalAssumptionFiller:
             missed=verb == "missed",
             length=length,
             one_account=one_account,
+            from_phone=from_phone,
         )
 
     @staticmethod
@@ -6690,6 +6937,8 @@ class LocalAssumptionFiller:
         phones = [v for k, v in (form.a, form.b) if k == "phone"]
         if len(phones) > 1:
             return None
+        if form.from_phone is not None and device_ids != [form.from_phone]:
+            return None  # the time range searches another phone than the one the claim names
         people, accounts, _ = self._call_parties(claim, device_ids, app, phone_is_side=bool(phones))
         if form.one_account and not self._one_party(accounts):
             # The name and the id beside it are not one account. `_call_parties` already
@@ -7322,6 +7571,12 @@ class LocalAssumptionFiller:
         if len(devices) != 1 or None in devices:
             return None
         (device,) = devices
+        return self._exact_owner_of(device)
+
+    def _exact_owner_of(self, device: str) -> str | None:
+        """The one person a confirmed stipulation makes owner of this phone, when that
+        person's accounts are exactly the phone's own; else None. The one owner rule for
+        `_exact_owner` and `_exactly_owned`."""
         owners = {
             pid
             for _, did, pid, status in self.data.stipulations

@@ -2,17 +2,24 @@
 check that reads it against the call log's direction. Synthetic case01 with made-up calls added;
 every number, name and wording is invented."""
 
+import copy
 import json
 import sqlite3
 from datetime import datetime
 
 import pytest
 
-from core.audit.assumption_filler import CallForm, LocalAssumptionFiller, _Account
-from core.audit.assumptions import TEMPLATES, TemplateAssumptionBuilder, instantiate
+from core.audit.assumption_filler import (
+    CallForm,
+    LocalAssumptionFiller,
+    Reject,
+    _Account,
+)
+from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, instantiate
 from core.audit.checks import CHECKS, run_checks
+from core.audit.checks._common import calls_for_accounts
 from core.audit.rules import decide_verdict
-from core.contracts import CheckOutcome, ClaimType, Verdict
+from core.contracts import CheckOutcome, CheckResult, ClaimType, Verdict
 from core.pipeline import load_stipulations
 from eval.synthetic.generate import generate
 from tests.checks.helpers import stipulate, window
@@ -821,3 +828,460 @@ def test_a_name_and_its_number_held_under_two_keys_get_a_caller(conn: sqlite3.Co
     assert sorted(a.params.account_ids) == sorted(DUNN_WA), [d.reason for d in f.drops]
     (r,) = run_checks(a, conn)
     assert r.outcome is CheckOutcome.PASS
+
+
+# ---------------------------------------------------------------- coverage recount (2026-11-21)
+
+LENGTH = "about one minute and 40 seconds"
+
+
+@pytest.mark.parametrize("joined", ["that was answered and lasted", "that connected and lasted"])
+def test_answered_or_connected_before_a_tested_length_still_names_the_caller(
+    conn: sqlite3.Connection, joined: str
+) -> None:
+    # validation dev iOS 15 C06: "... placed a Signal call to the TARGET PHONE that was
+    # answered and lasted about one and a half minutes" got no caller row, so rule 3e kept it
+    # unproven. A tested length is never below one second, so the call it finds connected.
+    text = f"{AT} Item 1 placed a call to (212) 555-0199 {joined} {LENGTH}."
+    made, f = fill(conn, text, duration={"as_written": LENGTH})
+    assert list(made["caller"].params.sent_by) == [PETROV], f.drops
+    assert made["caller"].params.duration_s == made["record_time"].params.duration_s
+    assert "event" not in made, made["event"].text  # "answered"/"connected" are read
+    v = verdict(conn, text, 1, duration={"as_written": LENGTH})
+    assert v.verdict is Verdict.SUPPORTED, v.reasons
+    # the same words with the other side calling: the log says the phone placed it
+    reversed_ = text.replace(
+        "Item 1 placed a call to (212) 555-0199", "(212) 555-0199 placed a call to Item 1"
+    )
+    assert (
+        verdict(conn, reversed_, 1, duration={"as_written": LENGTH}).verdict is Verdict.CONTRADICTED
+    )
+
+
+@pytest.mark.parametrize(
+    "joined", ["that lasted", "that was answered and lasted", "that connected and lasted"]
+)
+def test_the_length_forms_follow_the_call_s_app(conn: sqlite3.Connection, joined: str) -> None:
+    # CodeRabbit on #273: the app tail ("... on WhatsApp") must stop before every length form.
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a call to PETROV on"
+        f" WhatsApp {joined} about one minute and 30 seconds."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+                   duration={"as_written": "about one minute and 30 seconds"})  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [REYES], f.drops
+    assert "event" not in made, made["event"].text
+
+
+@pytest.mark.parametrize(
+    ("joined", "read"),
+    [
+        ("that connected for", True),
+        ("that was connected and lasted", True),
+        ("and PETROV was connected for", False),
+        ("that was connected by PETROV for", False),
+    ],
+)
+def test_only_the_call_s_own_connected_needs_no_event_on_a_fill(
+    conn: sqlite3.Connection, joined: str, read: bool
+) -> None:
+    # CodeRabbit on #273: through the whole fill, a connecting act no row tests gets a core
+    # event, and the call's own "connected" beside a tested length does not.
+    length = "about one minute and 30 seconds"
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a call to PETROV on"
+        f" WhatsApp {joined} {length}."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+                   duration={"as_written": length})  # fmt: skip
+    assert "record_time" in made, f.drops
+    if read:
+        assert "event" not in made, made["event"].text
+    else:
+        assert made["event"].is_core, f.drops
+        assert "states more than its checks read" in made["event"].text
+        assert "connected" in f.unread_words(text, tests={"length", "call"})
+
+
+def test_connected_with_no_tested_length_is_left_for_the_expert(conn: sqlite3.Connection) -> None:
+    # "connected" is read only beside a length a row tests; alone, no check reads it.
+    made, _ = fill(conn, f"{AT} Item 1 placed a call to (212) 555-0199 that connected.")
+    assert "caller" not in made
+    made, _ = fill(conn, f"{AT} Item 1 placed a connected call to (212) 555-0199.")
+    assert "caller" not in made
+
+
+def test_a_connected_call_of_another_length_is_not_supported(conn: sqlite3.Connection) -> None:
+    text = (
+        f"{AT} Item 1 placed a call to (212) 555-0199 that connected and lasted about ten minutes."
+    )
+    v = verdict(conn, text, 1, duration={"as_written": "about ten minutes"})
+    assert v.verdict is not Verdict.SUPPORTED, v.reasons
+
+
+OWNER_ONLY = {"template_id": "person_identity", "people": ["PETROV"]}
+
+
+def test_an_owner_identity_naming_no_account_is_refused(conn: sqlite3.Connection) -> None:
+    # validation v4 D077: the model added "The account belongs to SUBJECT-1" (no account, no
+    # handle) beside a passing time and caller row. Nothing can test it, and it kept a true
+    # claim unproven. PETROV owns Item 1 by confirmed stipulation, which already says the
+    # phone's own accounts are his.
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV."
+    rt = {
+        **proposal(
+            people=[],
+            quoted_text="",
+            channels=["call", "WhatsApp"],
+            window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"),
+        ).model_dump()
+    }
+    made, f = fill(conn, text, items=[rt, OWNER_ONLY])
+    assert "person_identity" not in made
+    assert any("person_identity names no account or handle" in d.reason for d in f.drops)
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assumptions = list(made.values())
+    checks = [r for a in assumptions for r in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.SUPPORTED, v.reasons
+    # before: the owner row stood beside them, untestable, and the claim stayed unproven
+    kept = [*assumptions, instantiate("X", "person_identity", {"person_ids": [PETROV]})]
+    v = decide_verdict(claim(text), kept, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN
+
+
+def test_an_identity_naming_an_account_or_a_person_who_owns_no_phone_is_kept(
+    conn: sqlite3.Connection,
+) -> None:
+    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.")
+    f._owner_identity_names_nothing(["person:volkov"], [], [])  # owns no phone: still open
+    f._owner_identity_names_nothing([], [], [])
+    f._owner_identity_names_nothing([PETROV, "person:volkov"], [], [])
+    # two owners: Item 1 is PETROV's, not REYES's, so the row may say more (Claude review on
+    # #273)
+    f._owner_identity_names_nothing([PETROV, REYES], ["dev:item1"], [])
+    f._owner_identity_names_nothing([PETROV, REYES], [], [])
+    with pytest.raises(Reject, match="names no account or handle"):
+        f._owner_identity_names_nothing([PETROV], ["dev:item1"], ["WhatsApp", "call"])
+    # a row naming an account is never refused this way, and is built
+    with_account = {"template_id": "person_identity", "people": ["PETROV"],
+                    "accounts": [{"as_written": "12125550111@s.whatsapp.net",
+                                  "app": "WhatsApp"}]}  # fmt: skip
+    text = "PETROV uses the WhatsApp account 12125550111@s.whatsapp.net."
+    made, f = fill(conn, text, ClaimType.IDENTITY, items=[with_account])
+    assert "person_identity" in made, f.drops
+    assert list(made["person_identity"].params.account_ids)
+
+
+def test_an_owner_identity_that_could_say_more_than_the_stipulation_is_kept(
+    conn: sqlite3.Connection,
+) -> None:
+    # Claude review on #273: "Item 2's account belongs to PETROV" when PETROV owns Item 1 says
+    # more than his stipulation, and so does an app none of his phones holds an account on.
+    _, f = fill(conn, f"{AT} Item 1 called (212) 555-0199.")
+    f._owner_identity_names_nothing([PETROV], ["dev:item2"], [])
+    f._owner_identity_names_nothing([PETROV], [], ["Signal"])
+    # a phone with two confirmed owners: the stipulation does not say which one is meant
+    data = copy.copy(f.data)
+    data.stipulations = [
+        *f.data.stipulations,
+        ("stip:x", "dev:item1", "person:volkov", "confirmed"),
+    ]
+    f._data = data
+    f._owner_identity_names_nothing([PETROV], [], [])
+
+
+# ---------------------------------------------------------------- more call wordings
+
+
+AT24 = "On June 24, 2026, at about 9:00 p.m. EDT,"
+W24 = W("June 24, 2026", "2026-06-24T20:52", "2026-06-24T21:09")
+
+
+def _wa_out(conn: sqlite3.Connection) -> None:
+    # June 24, 9:00 p.m. EDT: PETROV's phone called REYES on WhatsApp.
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT OR IGNORE INTO calls VALUES ('c:wa:out', 'item1', 'c:wa:out', 'dev:item1',"
+        " 'WhatsApp', ?, ?, 'outgoing', '2026-06-25T01:00:00Z', 0, NULL, 60, 0)",
+        (PETROV_WA, REYES_WA),
+    )
+
+
+def from_phone_fill(
+    conn: sqlite3.Connection, words: str, phone: str
+) -> tuple[dict, LocalAssumptionFiller]:
+    _wa_out(conn)
+    rt = proposal(people=["PETROV", "Marcus Reyes"], phones=[phone], quoted_text="",
+                  channels=["call", "WhatsApp"], window=W24).model_dump()  # fmt: skip
+    return fill(conn, f"{AT24} {words}", items=[rt])
+
+
+def test_a_call_placed_from_the_owner_s_phone_names_its_caller(conn: sqlite3.Connection) -> None:
+    # validation iOS 15 C11: "SUBJECT-1 placed a WhatsApp call from the TARGET PHONE to ..."
+    made, f = from_phone_fill(conn, "PETROV placed a WhatsApp call from Item 1 to Marcus Reyes.",
+                              "Item 1")  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.device_ids) == ["dev:item1"]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+
+
+@pytest.mark.parametrize(
+    ("words", "phone"),
+    [
+        # REYES does not own Item 1: who used the phone is not what its log says
+        ("Marcus Reyes placed a WhatsApp call from Item 1 to PETROV.", "Item 1"),
+        # PETROV does not own Item 2
+        ("PETROV placed a WhatsApp call from Item 2 to Marcus Reyes.", "Item 2"),
+    ],
+)
+def test_a_call_placed_from_a_phone_its_caller_does_not_own_names_no_caller(
+    conn: sqlite3.Connection, words: str, phone: str
+) -> None:
+    made, _ = from_phone_fill(conn, words, phone)
+    assert "caller" not in made
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # validation v4 D103: '"ThisIs DfirTwo," live:.cid.5638f9306b7b8594, that lasted ...'
+        'PETROV called the Instagram user "Marc Garage," 49800011122.',
+        'PETROV called "Marc Garage" (49800011122) on Instagram.',
+    ],
+)
+def test_an_id_with_no_label_beside_its_name_gets_a_caller(
+    conn: sqlite3.Connection, words: str
+) -> None:
+    made, f = ig_fill(conn, words)
+    a = made["caller"]
+    assert list(a.params.account_ids) == [GARAGE_IG], [d.reason for d in f.drops]
+    (r,) = run_checks(a, conn)
+    assert r.outcome is CheckOutcome.PASS
+
+
+def test_an_id_with_no_label_of_another_account_names_no_caller(conn: sqlite3.Connection) -> None:
+    _add_instagram(conn)
+    words = 'PETROV called the Instagram user "Marc Garage," 49800099999.'
+    made, f = fill(conn, f"{IG_AT} {words}", people=["PETROV"],
+                   accounts=[*NAMED, {"as_written": "49800099999", "app": "Instagram"}],
+                   channels=["call", "Instagram"], window=IG_W)  # fmt: skip
+    assert "caller" not in made
+
+
+# ---------------------------------------------------------------- a blank side on the phone
+
+
+def time_row(
+    conn: sqlite3.Connection, d: int, people: tuple[str, ...] = (PETROV,), accounts: list[str] = NUM
+) -> CheckResult:
+    params = {"person_ids": list(people), "account_ids": list(accounts), "window": day(d),
+              "channels": ["call"], "device_ids": ["dev:item1"]}  # fmt: skip
+    return CHECKS["time"].run(instantiate("CT", "record_time", params), conn)
+
+
+def test_a_call_row_with_the_phone_s_side_blank_is_the_owner_s_call(
+    conn: sqlite3.Connection,
+) -> None:
+    # validation iOS 15 B06: the log names only the other side of a call on the phone, so
+    # "SUBJECT-1 placed a Telegram call to SUBJECT-2" found no row between the two.
+    r = time_row(conn, 2)  # c:in: from the number, to no account
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    assert list(r.record_ids) == ["c:in"]
+    r = time_row(conn, 1)  # c:out:a leaves the phone's side blank, c:out:b names it
+    assert set(r.record_ids) == {"c:out:a", "c:out:b"}, r.detail
+
+
+def test_a_row_read_through_the_owner_s_stipulation_says_so(conn: sqlite3.Connection) -> None:
+    r = time_row(conn, 2)
+    note = r.detail.split("name only the other side")[0]
+    assert "c:in" in note.split(", ") and "c:out:b" not in note, r.detail  # c:out:b names both
+    assert "device_owner stipulation" in r.detail
+
+
+def test_an_owner_with_no_accounts_is_never_given_a_row(conn: sqlite3.Connection) -> None:
+    # Claude review on #273: as the caller check, a side with no accounts in the data reads
+    # no call
+    from core.audit.checks._common import CaseData
+    from core.audit.checks.timing import _owners_calls
+
+    params = {"person_ids": [PETROV], "account_ids": NUM, "window": day(2), "channels": ["call"]}
+    p = instantiate("CT", "record_time", params).params
+    data = CaseData(conn)
+    rows = [r for r in calls_for_accounts(data, set(NUM)) if r.id == "c:in"]
+    assert _owners_calls(data, p, rows, [set(), set(NUM)]) == set()
+    assert _owners_calls(data, p, rows, [{OWN_UNKNOWN}, set(NUM)]) == {"c:in"}
+
+
+@pytest.mark.parametrize(
+    ("words", "plain"),
+    [
+        ("the call connected and lasted two minutes", True),
+        ("a call that connected, lasting two minutes", True),
+        ("the call connected for two minutes", True),
+        ("PETROV connected REYES with the caller on a call lasting two minutes", False),
+        (
+            "PETROV connected, at 9:00 p.m., REYES with the caller on a call lasting two minutes",
+            False,
+        ),
+        ("a call that connected, that lasted two minutes", True),
+        ("which connected for two minutes", True),
+        # Claude review on #273: the object forms read before any party is blanked
+        ("PETROV connected (212) 555-0199 and Marcus Reyes on a call lasting two minutes", False),
+        ("PETROV connected Marcus Reyes and (212) 555-0199 on a call lasting two minutes", False),
+        ("Item 1 connected Marcus Reyes for two minutes", False),
+        ("PETROV connected Marcus Reyes, lasting two minutes", False),
+        ("the call connected Marcus Reyes and PETROV for two minutes", False),
+        ("Marcus Reyes was connected for about one minute and 40 seconds", False),
+        ("the call was connected for two minutes", True),
+        ("a call that was connected and lasted two minutes", True),
+        ("the WhatsApp call was connected for a minute and a half by PETROV with REYES", False),
+        ("the call connected for two minutes, placed by PETROV", False),
+        # an account is never the verb (CodeRabbit on #273)
+        ("the call to @connected lasted two minutes", True),
+        ("the call to connected@example.org lasted two minutes", True),
+        ("PETROV connected @connected with REYES on a call lasting two minutes", False),
+        ("PETROV connected(@northstar, REYES) on a call lasting two minutes", False),
+        ("PETROV connected(connected@example.org, REYES) on a call lasting two minutes", False),
+        ("the call to live:connected lasted two minutes", True),
+        ("the call to connected.com lasted two minutes", True),
+    ],
+)
+def test_only_the_call_s_own_connected_is_plain_beside_a_length(
+    conn: sqlite3.Connection, words: str, plain: bool
+) -> None:
+    f = LocalAssumptionFiller(FakeModel("{}"), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    text = f"On June 1, 2026, at about 9:00 p.m. EDT, {words}."
+    assert ("connected" not in f.unread_words(text, tests={"length", "call"})) is plain
+
+
+def test_a_blank_side_is_never_a_party_who_does_not_own_the_phone(conn: sqlite3.Connection) -> None:
+    # REYES owns Item 2, not Item 1, where the call is logged
+    r = time_row(conn, 2, people=(REYES,))
+    assert r.outcome is CheckOutcome.INCONCLUSIVE, r.detail
+    assert "None found" in r.detail
+
+
+# ---------------------------------------------------------------- a person's number
+
+AT2 = "On June 2, 2026, at about 9:00 p.m. EDT,"
+RT2 = proposal(people=["Marcus Reyes"], accounts=[{"as_written": "(212) 555-0199", "app": "call"}],
+               phones=["Item 1"], quoted_text="", channels=["call"],
+               window=W("June 2", "2026-06-02T20:52", "2026-06-02T21:09")).model_dump()  # fmt: skip
+TIE = {"template_id": "person_identity", "people": ["Marcus Reyes"],
+       "accounts": [{"as_written": "(212) 555-0199", "app": "call"}], "handles": [],
+       "phones": [], "channels": ["call"], "quoted_text": "", "count": None,
+       "duration": None, "window": None}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # validation v4 D022 and D023
+        "Item 1 received a call from Marcus Reyes's number, (212) 555-0199.",
+        "Marcus Reyes at (212) 555-0199 called Item 1.",
+    ],
+)
+def test_a_person_s_number_is_timed_as_the_number(conn: sqlite3.Connection, words: str) -> None:
+    text = f"{AT2} {words}"
+    made, f = fill(conn, text, items=[RT2, TIE])
+    rt = made["record_time"]
+    assert REYES not in rt.params.person_ids, [d.reason for d in f.drops]
+    assert set(rt.params.account_ids) == set(NUM)
+    assert list(rt.params.device_ids) == ["dev:item1"]
+    (r,) = run_checks(rt, conn)
+    assert r.outcome is CheckOutcome.PASS, r.detail
+    # whose number it is stays the identity row's to test, and who placed the call an event
+    # row's, which no check covers: the call found with the number never carries the claim
+    assert list(made["person_identity"].params.person_ids) == [REYES]
+    event = made["event"]
+    assert event.is_core and TEMPLATES["event"].checks == ()
+    assert REYES in event.params.person_ids
+    assumptions = list(made.values())
+    checks = [x for a in assumptions for x in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN, v.reasons
+    assert any("belongs to person:reyes" in x for x in v.reasons), v.reasons
+    assert any("The event the claim states" in x for x in v.reasons), v.reasons
+
+
+def test_a_person_s_number_keeps_the_claimed_caller_for_the_expert(
+    conn: sqlite3.Connection,
+) -> None:
+    # Claude review on #273: on June 1 the log holds only calls Item 1 placed. Written with
+    # the number alone the reversed caller is CONTRADICTED; written with the person beside the
+    # number no caller row is read, and the event row keeps the direction from being skipped.
+    rt = {**RT2, "window": W("June 1", "2026-06-01T20:52", "2026-06-01T21:09")}
+    text = "On June 1, 2026, at about 9:00 p.m. EDT, Marcus Reyes at (212) 555-0199 called Item 1."
+    made, _ = fill(conn, text, items=[rt, TIE])
+    assert "caller" not in made
+    assert made["event"].is_core
+    assumptions = list(made.values())
+    checks = [x for a in assumptions for x in run_checks(a, conn)]
+    v = decide_verdict(claim(text), assumptions, [], checks, load_stipulations(conn), "run")
+    assert v.verdict is Verdict.UNPROVEN, v.reasons
+
+
+def test_an_owner_row_with_a_time_says_who_held_the_phone_and_is_kept(
+    conn: sqlite3.Connection,
+) -> None:
+    # Claude review on #273: "PETROV was using Item 1 at 9 p.m." is not his stipulation
+    june8 = W("June 8", "2026-06-08T20:52", "2026-06-08T21:09")
+    rt = proposal(people=[], quoted_text="", channels=["call", "WhatsApp"], window=june8)
+    timed = {**OWNER_ONLY, "window": june8}
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV."
+    made, f = fill(conn, text, items=[rt.model_dump(), timed])
+    assert "person_identity" in made, [d.reason for d in f.drops]
+
+
+def test_a_person_s_number_on_two_calls_is_left_as_written(conn: sqlite3.Connection) -> None:
+    # Claude review on #273: one event row holds one call's window
+    text = f"{AT2} Item 1 received a call from Marcus Reyes's number, (212) 555-0199."
+    f2 = LocalAssumptionFiller(FakeModel("{}"), conn,
+                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    rows = [
+        proposal_row
+        for proposal_row in f2._person_s_number(
+            claim(text),
+            [
+                Proposal("record_time", {"person_ids": [REYES], "account_ids": NUM,
+                                         "channels": ["call"], "window": day(2)}),
+                Proposal("record_time", {"person_ids": [REYES], "account_ids": NUM,
+                                         "channels": ["call"], "window": day(3)}),
+                Proposal("person_identity", {"person_ids": [REYES], "account_ids": NUM}),
+            ],
+            {"event", "record_time", "person_identity"},
+        )
+    ]  # fmt: skip
+    assert all(REYES in r.params["person_ids"] for r in rows if r.template_id == "record_time")
+    assert not any(r.template_id == "event" for r in rows)
+
+
+def test_an_identity_claim_keeps_its_owner_row_for_the_expert(conn: sqlite3.Connection) -> None:
+    # Claude review on #273: for an identity claim the owner row is the claim itself
+    row = {"template_id": "person_identity", "people": ["PETROV"], "accounts": [],
+           "handles": [], "phones": ["Item 1"], "channels": [], "quoted_text": "",
+           "count": None, "duration": None, "window": None}  # fmt: skip
+    made, f = fill(conn, "PETROV is the user of Item 1.", ClaimType.IDENTITY, items=[row])
+    assert "person_identity" in made, [d.reason for d in f.drops]
+
+
+@pytest.mark.parametrize(
+    ("words", "items"),
+    [
+        # no identity row ties the person to the number
+        ("Item 1 received a call from Marcus Reyes's number, (212) 555-0199.", [RT2]),
+        # the person and the number are written as two parties
+        ("Item 1 had a call with Marcus Reyes and (212) 555-0199.", [RT2, TIE]),
+    ],
+)
+def test_a_person_not_written_as_the_number_s_holder_stays_a_party(
+    conn: sqlite3.Connection, words: str, items: list[dict]
+) -> None:
+    made, f = fill(conn, f"{AT2} {words}", items=items)
+    assert REYES in made["record_time"].params.person_ids, [d.reason for d in f.drops]

@@ -530,7 +530,7 @@ def test_handle_resolving_checks_record_the_version_that_skips_copy_recipients()
     # The sender check fails only on a record or a confirmed fact (1.1.0), and neither it nor
     # the time check rests on words found only inside a longer sentence (1.2.0, 1.1.0).
     assert CHECKS["sender"].version == "1.2.0"
-    assert CHECKS["time"].version == "1.1.1"  # and a call is on the app named beside "call"
+    assert CHECKS["time"].version == "1.2.0"  # and a call is on the app named beside "call"
     # and counts calls (validation fill f), holds "at most" and "exactly" open on rows that
     # name no side (1.2.1), and never passes or fails on look-alike rows (1.3.0, 1.3.1)
     assert CHECKS["count"].version == "1.3.1"

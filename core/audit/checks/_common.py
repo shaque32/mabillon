@@ -634,6 +634,33 @@ def calls_for_accounts(data: CaseData, account_ids: set[str]) -> list[Row]:
     ]
 
 
+def phone_side(data: CaseData, device_id: str | None, pids: list[str | None]) -> int | None:
+    """Which side (0 or 1) is the phone's owner by the one confirmed device_owner stipulation
+    on the device; None when the device has no one confirmed owner, or it is not exactly one
+    of the two sides. `pids` holds each side's person id, None for the accounts' side."""
+    if device_id is None:
+        return None
+    owners = {
+        pid
+        for _, did, pid, status in data.stipulations
+        if did == device_id and status == "confirmed"
+    }
+    if len(owners) != 1:
+        return None
+    at = [i for i, pid in enumerate(pids) if pid is not None and pid in owners]
+    return at[0] if len(at) == 1 else None
+
+
+def call_devices(data: CaseData, call_ids: list[str]) -> dict[str, str | None]:
+    """The device each call row is on."""
+    ids = json.dumps(sorted(set(call_ids)))
+    return dict(
+        data.conn.execute(
+            "SELECT id, device_id FROM calls WHERE id IN (SELECT value FROM json_each(?))", (ids,)
+        )
+    )
+
+
 def involves_all(row: Row, party_accounts: list[set[str]]) -> bool:
     """True if every party has an account on the row. Two parties must be on opposite sides
     (one sends, the other receives), so a group message between two others does not count."""
