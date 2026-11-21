@@ -17,7 +17,7 @@
     answers. Until it finishes, nobody opens DIR's other files.
   - A probe's case never resumes as a run, nor a run's as a probe, and with `--cloud` the probe
     needs `--max-usd`.
-  - A fresh case after a probe, or a probe after a run, moves the earlier case's record into
+  - A fresh case after a probe moves the earlier case's record into
     run.json's `earlier_cases`, so its spend cap starts at zero and nothing spent is dropped. A run
     rebuilt after a run keeps counting its spend.
   - The stand-in labeler's module is in `eval/`, so the run is marked fake and no scorer or report
@@ -31,6 +31,9 @@
     starts its cap from a spend rounded down. A request that times out or loses its
     connection may still be charged, so its most is counted as spent (`uncertain_usd`) and
     never given back.
+  - A probe never starts in a DIR that holds a run's record: its run.json, progress.log and
+    report hold claims and verdicts, and its results are not the probe's to delete. The driver
+    refuses it before touching DIR.
   - Every attempt now deletes an earlier attempt's report.html, as it already deleted
     results.zip, so a probe in a used DIR leaves no claims or verdicts.
   - The PR also adds the signed v5 plan as `eval/validation/PREREGISTERED_v5.md`, with its dated

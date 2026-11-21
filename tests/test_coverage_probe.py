@@ -174,7 +174,12 @@ def test_a_probe_never_resumes_as_a_run_nor_a_run_as_a_probe(ufdr, tmp_path, mon
     assert hickman_run.main(_args(ufdr, tmp_path, "run")) == 0
     with pytest.raises(SystemExit, match="built for a run, not a coverage probe"):
         hickman_run.main(_args(ufdr, tmp_path, "run", "--coverage-probe"))
-    assert (tmp_path / "run" / "case.db").exists()  # a refused probe deletes nothing
+    for name in ("case.db", "results.zip", "progress.log"):  # a refused probe deletes nothing
+        assert (tmp_path / "run" / name).exists()
+    (tmp_path / "run" / "built.ok").unlink()  # nor does a fresh probe start in a run's DIR
+    with pytest.raises(SystemExit, match="built for a run, not a coverage probe"):
+        hickman_run.main(_args(ufdr, tmp_path, "run", "--coverage-probe"))
+    assert (tmp_path / "run" / "results.zip").exists()
 
 
 def test_a_run_after_a_probe_in_the_same_dir_leaves_no_probe_counts(ufdr, tmp_path):

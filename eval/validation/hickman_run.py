@@ -1297,6 +1297,14 @@ def main(argv: list[str] | None = None) -> int:
         # a probe; only a probe's built.ok records the key, and a resume checks it both ways
         setup["coverage_probe"] = True
     a.out.mkdir(parents=True, exist_ok=True)
+    # A probe never starts in a run's DIR: the run's run.json, progress.log and report hold
+    # claim ids and verdicts that a probe must not leave, and its results are not a probe's to
+    # delete (CodeRabbit on #272). Checked before anything in DIR is touched.
+    if a.coverage_probe and _run_record(a.out):
+        raise SystemExit(
+            f"{a.out} was built for a run, not a coverage probe: its run.json and progress.log"
+            " hold claims and verdicts; use a new --out"
+        )
     # One invocation owns DIR at a time, from its first write through publication, so a
     # results.zip never mixes two attempts' files (CodeRabbit on #269).
     lock = a.out / LOCK
@@ -1337,6 +1345,18 @@ def _lock_holder(lock: Path) -> str:
         except OSError:
             pass  # it exists under another user
     return f"another run (process {pid}) is using {lock.parent}; {advice}"
+
+
+def _run_record(out: Path) -> bool:
+    """Whether DIR holds a run's record (a run.json not marked as a coverage probe's)."""
+    path = out / "run.json"
+    if not path.exists():
+        return False
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True  # unreadable: never assume it is a probe's
+    return not (isinstance(run, dict) and run.get("coverage_probe") is True)
 
 
 def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
@@ -1465,7 +1485,8 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
             if note:
                 log(f"{sid}: {note}")  # as a fresh build logs it (CodeRabbit on #269)
     if not resuming and (run.get("coverage_probe") or a.coverage_probe) and "build_id" in run:
-        # A fresh case after a probe's (which deleted its case), or a probe after a run's: the
+        # A fresh case after a probe's (which deleted its case; a probe never starts in a run's
+        # DIR, main() refuses it): the
         # new case's spend cap starts at zero, and the earlier case's record, spend included,
         # moves to earlier_cases, never dropped (CodeRabbit and Claude review on #272). A run
         # rebuilt after a run keeps counting its spend, so a restart never raises its cap.
@@ -1473,9 +1494,13 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
                 "report_xml_sha256", "model", "coverage_probe")  # fmt: skip
         earlier = {k: run.pop(k) for k in keys if k in run}
         run.setdefault("earlier_cases", []).append(earlier)
+        run["coverage_probe"] = a.coverage_probe
         # on disk before built.ok can exist: a stop between the two must not leave a built.ok
         # beside a run.json whose top-level spend is the earlier case's (CodeRabbit on #272)
         run_path.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    # marked from the first run.json this attempt writes, so a stopped probe's DIR still reads
+    # as a probe's (_run_record) and a stopped run's as a run's
+    run["coverage_probe"] = a.coverage_probe
     run.setdefault("started_utc", f"{datetime.now(UTC):%Y-%m-%dT%H:%M:%SZ}")
     run.update(
         build=build_mod.build_info(),
@@ -1528,7 +1553,6 @@ def _attempt(a, phones, defs, defined, setup) -> int:  # noqa: ANN001
         cloud_model = Budgeted(cloud.ClaudeModel(cfg), a.max_usd, spent_before)
         jobs = ["assumptions"] if a.coverage_probe else ["assumptions", "stance"]
         run["model"] = {"cloud": cfg.model, "effort": cfg.effort, "jobs": jobs}
-    run["coverage_probe"] = a.coverage_probe
     try:
         try:
             run["audit"] = audit(a.out, a.fake, log, cloud_model, built=was, probe=a.coverage_probe)
