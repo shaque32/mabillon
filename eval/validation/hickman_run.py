@@ -72,6 +72,11 @@ from core.contracts import ClaimType, DocKind
 from core.db import apply_schema, connect
 from eval.validation.coverage_probe import CHECK_UNSETTLED, CODE_CHECKED, EXPERT_ONLY, NOT_TESTED
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+
 ACTOR = "expert:validation"
 SOURCE_ID = "ios15"  # the default; --source-id names another phone (validation v4)
 OWNER = "SUBJECT-1"
@@ -1369,6 +1374,20 @@ def _lock_holder(lock: Path) -> str:
     return f"another run (process {pid}) is using {lock.parent}; {advice}"
 
 
+def _sync(fd: int) -> None:
+    """Flush fd to permanent storage. macOS's fsync can leave writes in the drive's volatile
+    cache, so there F_FULLFSYNC is used, falling back to fsync where the disk refuses it
+    (CodeRabbit on #272)."""
+    full = getattr(fcntl, "F_FULLFSYNC", None) if fcntl is not None else None
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError:
+            pass
+    os.fsync(fd)
+
+
 def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
     """Write JSON to path whole or not at all, and durably: a stop mid-write leaves the earlier
     file, and the file and then its folder are synced, so a run.json or spend.json never loses
@@ -1378,12 +1397,12 @@ def _write_json(path: Path, obj: object, indent: int | None = 2) -> None:
     with tmp.open("w", encoding="utf-8") as f:
         f.write(json.dumps(obj, indent=indent))
         f.flush()
-        os.fsync(f.fileno())
+        _sync(f.fileno())
     tmp.replace(path)
     if os.name != "nt":  # the rename itself survives a power loss once its folder is synced
         fd = os.open(path.parent, os.O_RDONLY)
         try:
-            os.fsync(fd)
+            _sync(fd)
         finally:
             os.close(fd)
 

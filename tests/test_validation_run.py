@@ -2179,18 +2179,49 @@ def test_a_json_write_syncs_the_file_then_the_rename(tmp_path, monkeypatch):
     import stat
 
     steps: list[str] = []
-    real_fsync, real_replace = os.fsync, Path.replace
+    real_sync, real_replace = hickman_run._sync, Path.replace
 
-    def fsync(fd: int) -> None:
+    def sync(fd: int) -> None:
         steps.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
-        real_fsync(fd)
+        real_sync(fd)
 
     def replace(self, target):  # noqa: ANN001, ANN202
         steps.append("replace")
         return real_replace(self, target)
 
-    monkeypatch.setattr(hickman_run.os, "fsync", fsync)
+    monkeypatch.setattr(hickman_run, "_sync", sync)
     monkeypatch.setattr(Path, "replace", replace)
     hickman_run._write_json(tmp_path / "spend.json", {"spent_usd": 1.0})
     assert steps == ["file", "replace", "dir"]
     assert json.loads((tmp_path / "spend.json").read_text(encoding="utf-8")) == {"spent_usd": 1.0}
+
+
+def test_a_sync_uses_a_full_flush_where_the_system_has_one(monkeypatch):
+    """On macOS, F_FULLFSYNC flushes the drive's cache, which fsync may not; where the disk
+    refuses it, fsync is used (CodeRabbit on #272)."""
+    calls: list[str] = []
+
+    class _Darwin:
+        F_FULLFSYNC = 51
+
+        def __init__(self, refuse: bool) -> None:
+            self.refuse = refuse
+
+        def fcntl(self, fd: int, op: int) -> int:
+            calls.append(f"fullfsync {op}")
+            if self.refuse:
+                raise OSError("not supported")
+            return 0
+
+    monkeypatch.setattr(hickman_run.os, "fsync", lambda fd: calls.append("fsync"))
+    monkeypatch.setattr(hickman_run, "fcntl", _Darwin(refuse=False))
+    hickman_run._sync(3)
+    assert calls == ["fullfsync 51"]
+    calls.clear()
+    monkeypatch.setattr(hickman_run, "fcntl", _Darwin(refuse=True))
+    hickman_run._sync(3)
+    assert calls == ["fullfsync 51", "fsync"]
+    calls.clear()
+    monkeypatch.setattr(hickman_run, "fcntl", None)  # Windows
+    hickman_run._sync(3)
+    assert calls == ["fsync"]

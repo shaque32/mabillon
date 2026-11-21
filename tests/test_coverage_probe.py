@@ -413,16 +413,16 @@ def test_a_run_json_write_stopped_partway_keeps_the_earlier_record(ufdr, tmp_pat
     run["cloud"] = {"sessions": [{"spent_usd": 3.0}], "spent_usd": 3.0}
     run_path.write_text(json.dumps(run), encoding="utf-8")
     before = run_path.read_bytes()
-    real_fsync = hickman_run.os.fsync
+    real_sync = hickman_run._sync
 
     def stop_partway(fd: int) -> None:
         raise KeyboardInterrupt  # stopped with the new run.json part written, not yet in place
 
-    monkeypatch.setattr(hickman_run.os, "fsync", stop_partway)
+    monkeypatch.setattr(hickman_run, "_sync", stop_partway)
     with pytest.raises(KeyboardInterrupt):
         hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe"))
     assert run_path.read_bytes() == before  # the earlier case's spend is still on record
-    monkeypatch.setattr(hickman_run.os, "fsync", real_fsync)
+    monkeypatch.setattr(hickman_run, "_sync", real_sync)
     assert hickman_run.main(_args(ufdr, tmp_path, "probe", "--coverage-probe")) == 0
     again = json.loads(run_path.read_text(encoding="utf-8"))
     assert again["earlier_cases"][-1]["cloud"]["spent_usd"] == 3.0
