@@ -1,4 +1,4 @@
-## 2026-11-21: The validation driver's coverage probe (PREREGISTERED_v5 gate C4)
+## 2026-11-21: The validation driver's coverage probe (PREREGISTERED_v5 gate C4) (#272)
 - Changed: validation v4's paid pass reached 42 code-checked claims of 150, found only after
   paying for every stance label. The coverage tier of a claim (code-checked, check unsettled,
   expert only, not tested, as `score_hickman._check_tier` sets it) depends only on the filler's
@@ -13,7 +13,7 @@
   only. A probe's case never resumes as a run, nor a run's as a probe; with `--cloud` it needs
   `--max-usd`. The stand-in labeler's module is in `eval/`, so the run is marked fake and no
   scorer or report takes it.
-- Where: local only, branch `probe` (stacked on #271); its own PR once #271 merges.
+- Where: PR #272 (branch `claude/project-thread-ds0ify`).
 - Verified: `tests/test_coverage_probe.py` (7 tests, cloud container, 2026-11-21, stand-in
   components on synthetic case01): the probe's counts equal a full run's tiers on the same claims,
   tier for tier, as the scorer reads them; tiers and per-phone counts on crafted check rows; no
