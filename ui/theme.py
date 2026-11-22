@@ -204,7 +204,7 @@ p.format-notice strong { font-weight: 600; }
 [id] { scroll-margin-top: var(--s5); }
 :target { outline: 2px solid var(--accent); outline-offset: var(--s1); }
 main:target, section:target, h2:target, h3:target, tr:target, details:target { outline: 0; }
-tr:target td, tr.target td { background: var(--accent-wash); }
+tr:target td, tr.target td { background: var(--line); }
 tr.target td { font-weight: 600; }
 
 /* ---- tables: a ruled ledger. No frame and no fill; the header sits on an ink rule, rows on
@@ -372,7 +372,7 @@ details[open] > summary { margin-bottom: var(--s2); }
 .b-against, .st-rejected.stpill, .chip.flag, .tag.left, .sel-n { color: var(--signal);
   font-weight: 600; }
 .sel-n.none { color: var(--muted); font-weight: 400; }
-.b-conf, .st-confirmed.stpill, .tag.pick { color: var(--ink); font-weight: 600; }
+.b-conf, .st-confirmed.stpill, .chip.ok, .tag.pick { color: var(--ink); font-weight: 600; }
 /* the Timeline's "Matches": the records agree with the time the document states, by code */
 .tl .chip.ok { color: var(--support); font-weight: 600; }
 .stpill b { color: var(--ink); margin-left: var(--s1); }

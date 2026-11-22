@@ -32,7 +32,7 @@ CSS = """
 .tl > li { display: grid; gap: var(--s2) var(--s6); margin: 0; max-width: none;
   padding: var(--s4) 0; border-bottom: 1px solid var(--line);
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr) 120px; }
-.tl > li:target { outline: 0; background: var(--accent-wash); }
+.tl > li:target { outline: 0; background: var(--line); }
 .tl .meta { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .tl .said { margin: var(--s1) 0; font-weight: 600; }
 .tl details { margin: 0 0 var(--s1); }

@@ -17,7 +17,9 @@
   and a covered assumption nothing stands against carries `unopposed` (all below).
   What the examiner sees. Navy is "yours to act on, and where you are": the main button and
   Accept, links, focus rings, checked boxes, the open page in the sidebar, the open claim in the
-  side ledger, the "Needs you" tag and count, "Support found: do you agree?", the phone's own
+  side ledger (a pale navy fill with a navy edge, so it stands out from the grey fill a row
+  takes under the pointer), the "Needs you" tag and count, "Support found: do you agree?", the
+  phone's own
   messages in a conversation and the outline of the cited record. Green is "for the claim as
   stated, and an expert, counsel or the code checks stand behind it": Supported
   (expert-confirmed) is a solid green mark with green words; Supported by code checks or by
@@ -76,7 +78,8 @@
   that is not current keeps its red words, mark, plate and count, as its words and mark did
   before this PR; "Not current" and "Needs you" say so in words. Accept is navy, never green,
   because it accepts what the item shows, for or against the claim. A pressed choice button
-  (Confirm or Reject on an identity link) keeps its pale navy look under the pointer.
+  (Confirm or Reject on an identity link) keeps its pale navy look under the pointer. A row
+  reached by its anchor (a Timeline row, a table row) keeps the grey fill it had before.
 - Where: PR #276
 - Verified: `tests/test_design_system.py` now pins the 11 tokens and adds two tests. One
   computes WCAG contrast for all 30 pairs of the five text colors on the six fills (paper, the
@@ -135,7 +138,9 @@
   stated time" lines, all in "Matches" rows, are green, and the 6 within-tolerance lines in
   "No record tied" rows ("1 min before", "1 min after" or "2 min after the stated time") are
   ink; each group heading's text and its
-  count share a baseline; a pressed
+  count share a baseline; the open claim's row in the side ledger carries a 2px navy edge at 1440
+  and 390 px, seen
+  beside a hovered row in a capture at 2x; a pressed
   primary button keeps navy text on its pale navy fill under hover; and a main button goes
   from navy to ink under the pointer, which reads as a change in a headless Chromium capture
   at 2x. The not-current look was
@@ -159,7 +164,13 @@
   class in the browser. On main, and unchanged here, adding a file to a case after its audit
   does not mark the verdicts not current (`case_changed_after` does not count an import), so a
   Supported verdict keeps its words, and now its green, until the audit is run again; found by
-  the Claude review of this PR and left for its own change to the staleness test. What counts
+  the Claude review of this PR and left for its own change to the staleness test. The same
+  goes for a verdict decided under an older rule version:
+  `ClaimState.stale` does not compare the run's rule version with this Mabillon's
+  RULE_VERSION, so no claim reads "Not current" for that reason and a Supported one keeps
+  its green until the verdicts are run again. On the Selection page a current Supported
+  pill is ink, the look a not-current one has elsewhere, beside red Contradicted pills; that
+  page shows the report's own pills and no "Not current" words. What counts
   as a
   change after the run reads expert review rows only (`core/review/status.py`,
   `decided_after_run`); the app has no screen where counsel withdraws an acceptance yet, and

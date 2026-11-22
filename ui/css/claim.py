@@ -12,7 +12,7 @@ the rules' working, the other explanations and the secondary forms fold; every w
 CSS = """
 /* ---- one claim: the ledger beside a readable main column. The order is the reading order:
    the claim, its verdict in the same large size, why, then what has to be true, then the
-   evidence. Nothing is framed; hairlines part the sections. */
+   evidence. Hairlines part the sections; the one framed thing is the verdict, on its plate. */
 .split { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: var(--s7);
   align-items: start; }
 aside.side { position: sticky; top: var(--s5); max-height: calc(100vh - var(--s7));
@@ -22,7 +22,11 @@ aside.side .ledger .text { font-size: var(--t1); line-height: var(--l1); color: 
   margin-top: var(--s1); display: -webkit-box; -webkit-line-clamp: 2;
   -webkit-box-orient: vertical; overflow: hidden; }
 aside.side .ledger .verdict { font-weight: 400; }
+/* the open claim: the accent wash, and an accent edge, because the wash alone is fainter than
+   the hover fill on the rows beside it */
 aside.side .ledger li.on { background: var(--accent-wash); }
+aside.side .ledger li.on::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0;
+  width: 2px; background: var(--accent); }
 aside.side .ledger li.on .text { color: var(--ink); }
 .pg-claim .claim-main { min-width: 0; max-width: 820px; }
 .pg-claim .claim-head { display: flex; justify-content: space-between; align-items: baseline;
