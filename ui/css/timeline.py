@@ -49,6 +49,8 @@ CSS = """
 .tl .notes { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0;
   font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .tl .notes li { max-width: none; }
+/* d-ok: the code compared the record's time and found it inside the stated time, or within
+   the examiner's own tolerance of it (core/report/timeline.py); the words say how far off */
 .d-ok { color: var(--support); }
 .d-flag { color: var(--signal); font-weight: 600; }
 

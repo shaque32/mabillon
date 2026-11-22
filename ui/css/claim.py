@@ -35,8 +35,8 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 /* the verdict: the page's answer, as large as the claim it answers, on a plate. The plate
    follows the mark: filled with its finding's wash where the mark is solid (support the expert
    confirmed, contradicted), an outline in the finding's color where the mark is a ring, and a
-   hairline for unproven, for support that rests on the AI reviewer and for any verdict that
-   waits on a re-run. */
+   hairline for unproven, for support that rests on the AI reviewer and for a Supported verdict
+   that has not earned its green (no v-earned: something changed after the run). */
 .pg-claim #verdict { margin: 0 0 var(--s5); }
 .pg-claim .vhead { margin: 0 0 var(--s3); }
 .pg-claim .vhead h2 { position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -44,16 +44,13 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .pg-claim #verdict .vhead .verdict { font: 600 var(--t4)/var(--l4) var(--sans);
   gap: var(--s3); white-space: normal; padding: var(--s2) var(--s4);
   border: 1px solid var(--line); border-radius: var(--radius); }
-.pg-claim #verdict .vhead .v-sup:not(.v-stale) { background: var(--support-wash);
+.pg-claim #verdict .vhead .v-earned { border-color: var(--support); }
+.pg-claim #verdict .vhead .v-sup.v-earned { background: var(--support-wash);
   border-color: var(--support-wash); }
 .pg-claim #verdict .vhead .v-con { background: var(--signal-wash);
   border-color: var(--signal-wash); }
-.pg-claim #verdict .vhead .v-supchk:not(.v-stale),
-.pg-claim #verdict .vhead .v-supcou:not(.v-stale) { border-color: var(--support); }
 .pg-claim #verdict .vhead .v-confirm { border-color: var(--signal); }
 .pg-claim #verdict .vhead .v-await { border-color: var(--accent); }
-/* a verdict that waits on a re-run sits on the plain hairline plate, whatever its finding */
-.pg-claim #verdict .vhead .verdict.v-stale { background: none; border-color: var(--line); }
 .pg-claim #verdict .vhead .verdict::before { width: var(--s3); height: var(--s3); }
 .pg-claim ul.needs { list-style: none; margin: 0 0 var(--s3); padding: 0; }
 .pg-claim ul.needs li { margin: 0 0 var(--s1); }
@@ -97,8 +94,14 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .pg-claim .checklist .meta { margin-top: var(--s1); }
 .pg-claim .checklist .said { font-size: var(--t1); line-height: var(--l1); color: var(--muted);
   white-space: nowrap; }
-.pg-claim .checklist li.ok .said { color: var(--support); font-weight: 600; }
-.pg-claim .checklist li.ok[data-tier=ai_reviewed] .said { color: var(--muted); font-weight: 400; }
+/* "Records found" is green only at a tier that earned it: the records themselves (observed,
+   derived), counsel's review or an expert's acceptance. Any other tier (the AI reviewer's, a
+   model's, a missing one) keeps the muted words, so a new tier is not green by default. */
+.pg-claim .checklist li.ok[data-tier=observed] .said,
+.pg-claim .checklist li.ok[data-tier=derived] .said,
+.pg-claim .checklist li.ok[data-tier=counsel_reviewed] .said,
+.pg-claim .checklist li.ok[data-tier=confirmed] .said { color: var(--support);
+  font-weight: 600; }
 .pg-claim .checklist li.con .said { color: var(--signal); font-weight: 600; }
 
 /* other explanations: one line per lead, the records behind them folded */

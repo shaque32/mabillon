@@ -340,20 +340,19 @@ details[open] > summary { margin-bottom: var(--s2); }
    contradiction that waits on the expert's confirm, and for unproven; a dashed ring for not
    tested. So support the expert has not confirmed never wears the expert-confirmed mark, and
    support that rests on the AI reviewer (v-supai) takes no green at all: it keeps the plain ink
-   ring. Nor does a Supported verdict that waits on a re-run (v-stale, set by _vcls in
-   ui/pages.py): what stood behind it may have changed, so its words and mark go back to ink
-   until the audit runs again. The words always show, so no verdict rests on the mark or its
-   color. */
+   ring. The green is opt-in: a Supported verdict takes it only with v-earned, which _vcls in
+   ui/pages.py writes when an expert, counsel or the code checks stand behind the verdict and
+   nothing it rests on changed after the run. Without it the words and mark are ink (solid for
+   v-sup, a ring otherwise), so a pill built anywhere else, or a verdict that is not current,
+   never shows green. The words always show, so no verdict rests on the mark or its color. */
 .verdict { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600;
   white-space: nowrap; text-decoration: none; color: var(--ink); }
 .verdict::before { content: ""; flex: none; width: var(--dot); height: var(--dot);
   border-radius: 50%; border: 2px solid var(--ink); }
-.v-sup:not(.v-stale), .v-supchk:not(.v-stale), .v-supcou:not(.v-stale) {
-  color: var(--support); }
-.v-sup:not(.v-stale)::before { background: var(--support); border-color: var(--support); }
-.v-supchk:not(.v-stale)::before, .v-supcou:not(.v-stale)::before {
-  border-color: var(--support); }
-.v-sup.v-stale::before { background: var(--ink); }
+.v-sup::before { background: var(--ink); }
+.v-earned { color: var(--support); }
+.v-earned::before { border-color: var(--support); }
+.v-sup.v-earned::before { background: var(--support); }
 .v-con, .v-confirm { color: var(--signal); }
 .v-con::before { background: var(--signal); border-color: var(--signal); }
 .v-confirm::before { border-color: var(--signal); }

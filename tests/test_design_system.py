@@ -36,29 +36,31 @@ COLORS = {
 TEXT_COLORS = ("--ink", "--muted", "--accent", "--support", "--signal")
 FILLS = ("--paper", "--line", "--accent-wash", "--support-wash", "--signal-wash", "--quote")
 AA = 4.5
-# The only places the support green may show: a Supported verdict an expert confirmed (v-sup),
-# one that rests on the code checks (v-supchk) or on counsel's review (v-supcou), the counts and
-# headings of the Supported group (t-sup, #sup), an assumption the records cover (li.ok .said,
-# with the AI-reviewed tier turned back to muted) and the Timeline's code-compared matches
-# (chip.ok, d-ok). A new use is a decision about what may look supported: add it here on purpose.
+# The only places the support green may show: a Supported verdict that has earned it (v-earned,
+# which only _vcls in ui/pages.py writes: an expert, counsel or the code checks stand behind the
+# verdict and nothing changed after the run), the counts and headings of the Supported group
+# (t-sup, #sup), an assumption the records cover (li.ok .said, at a named tier) and the
+# Timeline's code-compared matches (chip.ok; d-ok, which is inside the stated time or within
+# the examiner's own tolerance of it). A new use is a decision about what may look
+# supported: add it here on purpose.
 SUPPORT_HOOKS = re.compile(
-    r"\.v-sup(?![a-z])|\.v-supchk(?![a-z])|\.v-supcou(?![a-z])|\.t-sup(?![a-z])|#sup(?![a-z])"
-    r"|li\.ok \.said|\.chip\.ok(?![a-z])|\.d-ok(?![a-z])"
+    r"\.v-earned(?![a-z])|\.t-sup(?![a-z])|#sup(?![a-z])"
+    r"|li\.ok\[data-tier=[a-z_]+\] \.said|\.chip\.ok(?![a-z])|\.d-ok(?![a-z])"
 )
 # Marks that must never take it: support resting on the AI reviewer, support that still waits on
-# the expert, unproven, not tested, a verdict that waits on a re-run, and a model's own stance
-# label or AI-reviewed tier.
-NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|v-stale|b-ai|b-open|ai_reviewed")
-# A Supported verdict that waits on a re-run carries v-stale (_vcls in ui/pages.py) and takes no
-# green: every rule that gives green to a verdict class must say so with this guard.
+# the expert, unproven, not tested, and a model's own stance label or AI-reviewed tier.
+NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|b-ai|b-open|ai_reviewed|inferred")
+# The green is opt-in everywhere it stands for a verdict. A verdict class alone (v-sup,
+# v-supchk, v-supcou) never carries it: the rule must hang on v-earned.
 VERDICT = re.compile(r"\.v-sup(chk|cou)?(?![a-z])")
-CURRENT = ":not(.v-stale)"
 # The Supported count and heading stand for a whole group, which can hold a claim whose support
-# rests on the AI reviewer or waits on a re-run. Their green rules must hang on a class that
+# rests on the AI reviewer or is not current. Their green rules must hang on a class that
 # ui/pages.py (_support_mark) sets only when every supported claim earned it, so a page that
 # sets none stays ink.
 AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
 EARNED = (".sup-earned", ".sup-confirmed")
+# "Records found" is green only at these tiers: the records, counsel's review, an expert.
+GREEN_TIERS = {"observed", "derived", "counsel_reviewed", "confirmed"}
 SPACING = {f"--s{i + 1}": f"{px}px" for i, px in enumerate((4, 8, 12, 16, 24, 32, 48, 64))}
 TYPE = {
     "--t1": "12px",
@@ -215,33 +217,50 @@ def test_text_passes_aa_on_every_fill_it_sits_on() -> None:
 def test_support_green_reaches_only_what_earned_it() -> None:
     """Green says "for the claim as stated, and someone or the code checks stand behind it". A
     model's stance label, the AI reviewer's acceptance, support that waits on the expert,
-    unproven and not tested never take it, so an unconfirmed item cannot look confirmed."""
+    unproven and not tested never take it, so an unconfirmed item cannot look confirmed. Where
+    green stands for a verdict it is opt-in: the rule hangs on a class the page writes only
+    when the verdict earned it, so markup that says nothing stays ink."""
+    rules = _rules(_app_css())
     bad: list[str] = []
-    for selector, block in _rules(_app_css()):
+    for selector, block in rules:
         if not any("--support" in value for _, value in block):
             continue
         for part in selector.split(","):
-            one = part.replace(CURRENT, "")
-            if not SUPPORT_HOOKS.search(one) or NEVER_SUPPORT.search(one):
+            if not SUPPORT_HOOKS.search(part) or NEVER_SUPPORT.search(part):
                 bad.append(part.strip())
-            elif AGGREGATE.search(one) and not any(cls in one for cls in EARNED):
+            elif AGGREGATE.search(part) and not any(cls in part for cls in EARNED):
                 bad.append(f"aggregate without an earned class: {part.strip()}")
-            elif VERDICT.search(one) and len(VERDICT.findall(one)) != part.count(CURRENT):
-                bad.append(f"verdict green without {CURRENT}: {part.strip()}")
+            elif VERDICT.search(part) and ".v-earned" not in part:
+                bad.append(f"verdict green without v-earned: {part.strip()}")
+            elif (
+                "li.ok" in part and not set(re.findall(r"data-tier=([a-z_]+)", part)) <= GREEN_TIERS
+            ):
+                bad.append(f"records-found green at another tier: {part.strip()}")
     assert bad == []
-    # the solid green aggregate mark, the expert-confirmed mark, hangs on sup-confirmed alone
-    for selector, block in _rules(_app_css()):
-        if "var(--support)" in dict(block).get("background", ""):
-            for part in selector.split(","):
-                if AGGREGATE.search(part):
-                    assert ".sup-confirmed" in part and ".sup-earned" not in part, part
-    # an assumption covered only by the AI reviewer is turned back to muted, after the green rule
-    rules = _rules(_app_css())
-    green = next(i for i, (s, _) in enumerate(rules) if s.endswith("li.ok .said"))
-    ai = next(i for i, (s, _) in enumerate(rules) if "li.ok[data-tier=ai_reviewed] .said" in s)
-    assert ai > green and dict(rules[ai][1])["color"] == "var(--muted)"
+    # the solid green marks, the expert-confirmed marks: a verdict's only on v-sup with v-earned,
+    # a group's only on sup-confirmed
+    for selector, block in rules:
+        if "var(--support)" not in dict(block).get("background", ""):
+            continue
+        for part in selector.split(","):
+            if AGGREGATE.search(part):
+                assert ".sup-confirmed" in part and ".sup-earned" not in part, part
+            else:
+                assert ".v-sup.v-earned" in part, part
     # the AI-reviewed Supported mark keeps the base ring: no rule gives v-supai a color at all
     assert not any("v-supai" in s for s, _ in rules)
+    # one place writes v-earned (_vcls in ui/pages.py), so no other page or report fragment can
+    # hand a verdict the green
+    writers = [
+        path.relative_to(ROOT).as_posix()
+        for folder in ("ui", "core", "cli")
+        for path in sorted((ROOT / folder).rglob("*.py"))
+        if "v-earned" in path.read_text(encoding="utf-8")
+        and path.parent.name != "css"
+        and path.name != "theme.py"
+    ]
+    assert writers == ["ui/pages.py"]
+    assert (ROOT / "ui" / "pages.py").read_text(encoding="utf-8").count('v-earned"') == 1
 
 
 def test_no_gradient_shadow_or_opacity_shade() -> None:

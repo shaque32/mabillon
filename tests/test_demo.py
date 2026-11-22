@@ -608,11 +608,12 @@ def test_a_claim_supported_on_ai_review_or_with_ai_dismissed_support_waits_on_th
     assert "<ul class='findings'>" in pages._case_status(states)
 
 
-def test_supported_green_follows_the_weakest_supported_claim_and_leaves_a_stale_verdict(root):
-    """The stylesheet gives the Supported count, its heading and a Supported verdict the support
+def test_supported_green_is_opt_in_follows_the_weakest_claim_and_leaves_a_stale_verdict(root):
+    """The stylesheet gives a Supported verdict, the Supported count and its heading the support
     green only through classes this markup sets (tests/test_design_system.py holds the CSS to
-    them). The group's class follows its weakest claim; a verdict that waits on a re-run carries
-    v-stale and its group takes no green, on Claims, the case page and the claim page."""
+    them). A verdict gets v-earned when an expert, counsel or the code checks stand behind it
+    and nothing changed after the run; the group's class follows its weakest claim; and the
+    Selection page's pills, which are the report's own fragment, never carry it."""
     import dataclasses
     from datetime import UTC, datetime
 
@@ -625,22 +626,28 @@ def test_supported_green_follows_the_weakest_supported_claim_and_leaves_a_stale_
     states = claim_states(conn)
     sup = [st for st in states if pages._verdict_group(st) == "sup"]
     assert {st.css for st in sup} == {"v-sup", "v-supchk"}  # the demo case holds both kinds
-    assert not any("v-stale" in pages._vcls(st) for st in states)
+    for st in states:  # every current supported verdict earned it, and nothing else did
+        assert ("v-earned" in pages._vcls(st)) == (st in sup), st.claim.id
     assert pages._support_mark(states) == " sup-earned"  # one rests on the code checks: a ring
     assert pages._support_mark([st for st in states if st.css != "v-supchk"]) == " sup-confirmed"
     assert pages._support_mark([st for st in states if st not in sup]) == ""  # none: no green
-    counsel = [
-        dataclasses.replace(
-            st,
-            decision=st.decision.model_copy(
-                update={"supported_basis": SupportedBasis.COUNSEL_REVIEWED}
-            ),
+
+    def basis(st, value):
+        return dataclasses.replace(
+            st, decision=st.decision.model_copy(update={"supported_basis": value})
         )
-        if st.css == "v-sup"
-        else st
-        for st in states
+
+    c01 = next(st for st in states if st.claim.id == "C01")
+    assert c01.css == "v-sup"
+    counsel = [
+        basis(st, SupportedBasis.COUNSEL_REVIEWED) if st.css == "v-sup" else st for st in states
     ]
     assert pages._support_mark(counsel) == " sup-earned"  # counsel never wears the solid mark
+    assert pages._vcls(basis(c01, SupportedBasis.COUNSEL_REVIEWED)) == "v-supcou v-earned"
+    assert pages._vcls(basis(c01, SupportedBasis.AI_REVIEWED)) == "v-supai"  # never the AI's
+    # each thing a verdict rests on, changed after the run, takes the green away
+    for flag in ("decided_after_run", "edited_after_run", "case_changed_after_run"):
+        assert pages._vcls(dataclasses.replace(c01, **{flag: True})) == "v-sup", flag
 
     app = App(home=demo.cases_dir(root), port=PORT, model_check=None)
     app.open_case(case)
@@ -650,22 +657,25 @@ def test_supported_green_follows_the_weakest_supported_claim_and_leaves_a_stale_
 
     assert "<div class='pg-claims sup-earned'>" in get("/claims")
     assert "<ul class='findings sup-earned'>" in get("/")
-    assert "<span class='verdict v-sup'>" in get("/claim", id="C01")
-    # an identity decision after the run: every verdict waits on a re-run, so none is green
+    assert "<span class='verdict v-sup v-earned'>" in get("/claim", id="C01")
+    selection = get("/selection")
+    assert "class='verdict v-sup'" in selection and "v-earned'" not in selection
+    # an identity decision after the run: no verdict is current, so none is green
     with conn:
         audit_log.append(conn, datetime.now(UTC), EXPERT, "identity.confirm", {})
     stale = claim_states(conn)
     c01 = next(st for st in stale if st.claim.id == "C01")
     assert c01.css == "v-sup" and c01.explain_lines() == [STALE]
-    assert pages._vcls(c01) == "v-sup v-stale" and pages._support_mark(stale) == ""
+    assert pages._vcls(c01) == "v-sup" and pages._support_mark(stale) == ""
     assert "<div class='pg-claims'>" in get("/claims")
     assert "<ul class='findings'>" in get("/")
-    c01_page = get("/claim", id="C01")
-    assert "<span class='verdict v-sup v-stale'>" in c01_page
-    assert "<span class='verdict v-sup'>" not in c01_page
-    # an expert's override is their own word and no re-run changes it: it is never stale
+    for path, query in (("/claims", {}), ("/claim", {"id": "C01"}), ("/selection", {})):
+        assert "v-earned'" not in get(path, **query), path
+    # an expert's override is held to the same test: after a later change it is not green
+    # either, though it is not listed as waiting on a re-run
     over = dataclasses.replace(c01, decision=c01.decision.model_copy(update={"override_note": "x"}))
-    assert over.stale and pages._vcls(over) == "v-sup"
+    assert over.css == "v-sup" and over.explain_lines() == [] and pages._vcls(over) == "v-sup"
+    assert pages._vcls(dataclasses.replace(over, case_changed_after_run=False)) == "v-sup v-earned"
 
 
 def test_gap_lines_follow_the_stored_coverage_until_it_is_stale_and_tiles_have_destinations(root):

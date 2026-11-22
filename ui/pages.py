@@ -718,18 +718,27 @@ def _device_notes(conn: sqlite3.Connection) -> str:
 # ---------------------------------------------------------------- queue
 
 
-def _waits_on_rerun(st: ClaimState) -> bool:
-    """The stored verdict is not current: something it rests on changed after the run, nobody
-    overrode it, and only a re-run settles it (the overview's and the report's "Not current")."""
-    return st.explain_lines() == [STALE]
+# the Supported verdicts someone or the code checks stand behind: an expert, the deterministic
+# checks, counsel. Never v-supai (the AI reviewer).
+EARNED_CSS = ("v-sup", "v-supchk", "v-supcou")
+
+
+def _earned(st: ClaimState) -> bool:
+    """The claim's Supported verdict has earned the support green: an expert, counsel or the
+    code checks stand behind it, and nothing it rests on changed after the run (ClaimState.stale:
+    an evidence decision, the claim text, a stipulation, person or identity link). An expert's
+    override is held to the same test, because the "What has to be true" lines under it read
+    "Not current" after such a change. A re-run makes the verdict current again."""
+    return st.css in EARNED_CSS and not st.stale
 
 
 def _vcls(st: ClaimState) -> str:
     """The pill's classes: the verdict's, plus its own style for a claim nothing tested, plus
-    v-stale for a verdict that waits on a re-run. A stale Supported keeps its words and its mark
-    but takes no green (ui/theme.py): what stood behind it may no longer."""
+    v-earned for a Supported verdict that has earned the green. The stylesheet gives a verdict
+    the support green only through v-earned (ui/theme.py), and this is the one place that
+    writes it, so a pill built anywhere else stays ink."""
     cls = f"{st.css} v-nt" if st.untested else st.css
-    return f"{cls} v-stale" if _waits_on_rerun(st) else cls
+    return f"{cls} v-earned" if _earned(st) else cls
 
 
 def _support_mark(states: list[ClaimState]) -> str:
@@ -738,10 +747,10 @@ def _support_mark(states: list[ClaimState]) -> str:
     they follow the weakest one: " sup-confirmed" (solid green mark) only when an expert
     confirmed every one and each is current; " sup-earned" (green ring) when every one rests on
     an expert, counsel or the code checks and each is current; "" (ink ring, ink count) when
-    there is none, or when one rests on the AI reviewer or waits on a re-run. No class means no
-    green, so a page that forgets to ask stays ink."""
+    there is none, or when one rests on the AI reviewer or is not current (_earned). No class
+    means no green, so a page that forgets to ask stays ink."""
     sup = [st for st in states if _verdict_group(st) == "sup"]
-    if not sup or any(st.css == "v-supai" or _waits_on_rerun(st) for st in sup):
+    if not sup or not all(_earned(st) for st in sup):
         return ""
     return " sup-confirmed" if all(st.css == "v-sup" for st in sup) else " sup-earned"
 
@@ -789,7 +798,7 @@ def needs_you(st: ClaimState) -> bool:
         st.priority <= NEEDS_YOU
         or st.css == "v-supai"
         or st.ai_dismissed > 0
-        or _waits_on_rerun(st)
+        or st.explain_lines() == [STALE]  # its verdict waits on a re-run
     )
 
 
