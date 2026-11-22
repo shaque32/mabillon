@@ -716,6 +716,7 @@ def test_records_found_is_green_only_on_a_covered_assumption_nothing_stands_agai
     item = next(x for other in states for x in other.evidence).model_copy(
         update={"id": "ev:planted", "assumption_id": core.id, "stance": Stance.CONTRADICTS}
     )
+    complicating = item.model_copy(update={"stance": Stance.COMPLICATES})
 
     def row(changed) -> str:
         """The core assumption's row, read from the page as served for this state."""
@@ -724,26 +725,31 @@ def test_records_found_is_green_only_on_a_covered_assumption_nothing_stands_agai
 
     assert row(st).startswith("class='ok unopposed' data-tier='derived'>")
 
-    def with_item(status, reviewer=None):
+    def with_item(status, reviewer=None, item=item):
         return dataclasses.replace(
             st,
             evidence=[*st.evidence, item.model_copy(update={"status": status})],
             last_reviewer={**st.last_reviewer, **({item.id: reviewer} if reviewer else {})},
         )
 
-    # a contradicting record on it, accepted, open, or sorted by the AI reviewer alone: the
-    # words stay, the class goes
+    # a contradicting record on it, accepted, open, or sorted by the AI reviewer alone, or a
+    # complicating one (rule 3d holds the verdict back on it; even the open label rule 3d' lets
+    # a code-checked verdict carry): the words stay, the class goes
     for changed in (
         with_item(EvidenceStatus.ACCEPTED, "expert"),
         with_item(EvidenceStatus.OPEN),
         with_item(EvidenceStatus.AI_ACCEPTED, "ai"),
         with_item(EvidenceStatus.DISMISSED, "ai"),
+        with_item(EvidenceStatus.ACCEPTED, "expert", complicating),
+        with_item(EvidenceStatus.OPEN, None, complicating),
     ):
         assert core.id in pages._opposed(changed)
         assert row(changed).startswith("class='ok' data-tier='derived'>")
         assert "Records found (derived)" in row(changed)
     # only an expert's dismissal clears it
-    assert row(with_item(EvidenceStatus.DISMISSED, "expert")).startswith("class='ok unopposed' ")
+    for dismissed in (item, complicating):
+        changed = with_item(EvidenceStatus.DISMISSED, "expert", dismissed)
+        assert row(changed).startswith("class='ok unopposed' ")
     # a failed check on it, cited by the verdict or not
     check = next(c for c in st.checks if c.assumption_id == core.id)
     planted = check.model_copy(update={"id": "chk:planted", "outcome": CheckOutcome.FAIL})

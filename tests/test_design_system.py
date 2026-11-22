@@ -264,6 +264,8 @@ def test_support_green_reaches_only_what_earned_it() -> None:
             subject = PSEUDO_ELEMENT.sub("", part.strip())
             if not SUPPORT_HOOKS.search(subject) or NEVER_SUPPORT.search(part):
                 bad.append(part.strip())
+            elif ":not(" in part:  # the checks below read class names, so none may be negated
+                bad.append(f"negation in a green rule: {part.strip()}")
             elif AGGREGATE.search(part) and not any(cls in part for cls in EARNED):
                 bad.append(f"aggregate without an earned class: {part.strip()}")
             elif VERDICT.search(part) and ".v-earned" not in part:

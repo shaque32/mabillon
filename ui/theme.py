@@ -3,7 +3,8 @@
 One spacing scale, one type scale and eleven colors (TOKENS_CSS). Every rule in this file and in
 ui/css/ draws from them, and tests/test_design_system.py fails on anything else: an off-scale
 margin, a font size outside the scale, a color literal, a gradient or a shadow. Hierarchy comes
-from size, weight and space; structure from hairlines, not boxes. The app's pages carry only this
+from size, weight and space; structure from hairlines, not boxes, with two framed exceptions: a
+warning inside the page, and the claim page's verdict. The app's pages carry only this
 stylesheet; the exported report keeps its own (core/report/html.py).
 
 Color carries meaning, never decoration. Four neutrals hold the page. Three hues, the site's own
@@ -68,7 +69,9 @@ TOKENS_CSS = """
   --line: #dedad0;    /* hairlines, quiet fills */
   --accent: #1d3557;  /* yours to act on, and where you are: the main action, links, focus,
                          the open page and row, what waits on you */
-  --accent-wash: #e4eaf2;
+  --accent-wash: #e4eaf2;  /* its pale fill: the open page and row, and the phone's own side
+                              of a conversation (sent messages, as a messaging app shows
+                              them); the record under review takes the accent edge instead */
   --support: #2f5d43; /* for the claim as stated, once an expert, counsel or the code checks
                          stand behind it; never a model's label or the AI reviewer's */
   --support-wash: #e6eee8;
@@ -170,8 +173,9 @@ a.pill:hover { color: var(--ink); }
 .bar .right a.help:hover { color: var(--ink); }
 
 /* ---- notices. The page-top notices (demo case, untested format, verdicts out of date) are one
-   small line each over a hairline; they stay on every page. A warning inside the page is the
-   one framed box in the app, so a frame always means "read this". */
+   small line each over a hairline; they stay on every page. A warning inside the page is a
+   framed box, so a frame there always means "read this". The only other frame in the app is
+   the claim page's verdict (its plate, ui/css/claim.py). */
 .banner { margin: 0 0 var(--s4); padding: 0 0 var(--s2); border-bottom: 1px solid var(--line);
   font-size: var(--t1); line-height: var(--l1); }
 .banner + .banner { margin-top: calc(-1 * var(--s2)); }
