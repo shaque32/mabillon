@@ -660,6 +660,17 @@ def test_supported_green_is_opt_in_follows_the_weakest_claim_and_leaves_a_stale_
     assert "<span class='verdict v-sup v-earned'>" in get("/claim", id="C01")
     selection = get("/selection")
     assert "class='verdict v-sup'" in selection and "v-earned'" not in selection
+    # the Timeline's green hangs on a row's Matches chip (ui/css/timeline.py). The records
+    # around a moment no record is tied to carry the same d-ok words, and never sit in such a
+    # row; each row's records come before its status chip
+    parts = get("/timeline").split("<div class='st'>")
+    bodies, chips = parts[:-1], parts[1:]
+    around = [i for i, body in enumerate(bodies) if "(not tied by the document)" in body]
+    assert any("class='d-ok'" in bodies[i] for i in around)
+    assert all(chips[i].startswith("<span class='chip '>No record tied") for i in around)
+    matched = [i for i, chip in enumerate(chips) if chip.startswith("<span class='chip ok'>")]
+    assert matched and all(chips[i].startswith("<span class='chip ok'>Matches") for i in matched)
+    assert any("class='d-ok'" in bodies[i] for i in matched)
     # an identity decision after the run: no verdict is current, so none is green
     with conn:
         audit_log.append(conn, datetime.now(UTC), EXPERT, "identity.confirm", {})

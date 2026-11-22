@@ -23,8 +23,9 @@
   (expert-confirmed) is a solid green mark with green words; Supported by code checks or by
   counsel keeps its ring, now green; the Supported count and heading; "Records found" on an
   assumption covered at the observed, derived, counsel_reviewed or confirmed tier; and on the
-  Timeline "Matches", "inside the stated time" and a time outside the stated one but within the
-  examiner's own tolerance (the comparison the code makes; the words still say how far off).
+  Timeline the "Matches" status and, in a row with that status, "inside the stated time" and a
+  time outside the stated one but within the examiner's own tolerance (the comparison the code
+  makes on a record the sentence names; the words still say how far off).
   Red is unchanged in meaning (against the claim as stated, and errors) and now also colors the
   Contradicted count and heading on Claims. On the claim page the verdict sits on a plate that
   follows its mark: a wash where the mark is solid (expert-confirmed support, contradicted), an
@@ -32,15 +33,23 @@
   What green never reaches. The green on a verdict is opt-in: the stylesheet gives it only to
   a pill that carries `v-earned`, and one function writes that class (`_vcls` in `ui/pages.py`)
   when the verdict is Supported on an expert's, counsel's or the code checks' word and nothing
-  it rests on changed after the run (an evidence decision, the claim text, a stipulation,
-  person or identity link). So "Supported (AI-reviewed)" keeps the plain ink ring and ink
+  it rests on changed after the run (`ClaimState.stale`: an expert's decision on one of its
+  items or on an agent's failed check, an edit to the claim text, or any case-wide change
+  `case_changed_after` in `core/review/status.py` counts: a stipulation, person, identity
+  link, proposed links included, device name, device time zone, account name or defined
+  event). So "Supported (AI-reviewed)" keeps the plain ink ring and ink
   words; a Supported verdict that is not current keeps its words and mark shape in ink on a
   plain hairline plate until the audit runs again; an expert's override to Supported is held to
   the same test, because the lines under it read "Not current" after such a change; and the
   Selection page's small claim pills, which are the report's own fragment
   (`core/report/selection.py`), stay ink for every Supported verdict. A model's "supports"
   stance label stays ink; "Records found" at any other tier (ai_reviewed, inferred, none)
-  stays muted; unproven, not tested and "Support found: do you agree?" take no green.
+  stays muted; unproven, not tested and "Support found: do you agree?" take no green. On the
+  Timeline "inside the stated time" is ink in every row whose status is not "Matches": under
+  "No record tied" the report's fragment (`core/report/timeline.py`) puts the same words and
+  class on the records around the stated time, which nothing ties to the sentence, so the rule
+  hangs on the row's status chip (`.tl > li:has(.chip.ok) .d-ok`). The Claude review of this
+  PR found the first version colored those records green.
   The Supported count and heading stand for a whole group, so they follow its weakest claim, on
   Claims and on the case page: a solid green mark only when an expert confirmed every supported
   claim; a green ring when every one rests on an expert, counsel or the code checks; an ink
@@ -62,22 +71,26 @@
   allow-list, to v-supai, v-await, v-unp, v-nt, a stance tag or the ai_reviewed or inferred
   tier; if a verdict class takes green without `v-earned`; if a Supported count or heading
   takes green without `sup-earned` or `sup-confirmed` (or a solid green mark without
-  `sup-confirmed`, or without `v-sup` and `v-earned` together on a verdict); if "Records
-  found" is green at a tier outside the four named; or if any file but `ui/pages.py` writes
-  `v-earned`. Nine planted faults (eight bad rules and a second writer of the class) each made
-  it fail. `tests/test_demo.py` checks the markup those rules read, on the demo case and
+  `sup-confirmed`, or without `v-sup` and `v-earned` together on a verdict, read from
+  `background` and `background-color`); if "Records found" is green at a tier outside the four
+  named; if a Timeline record line is green outside a "Matches" row; or if any file but
+  `ui/pages.py` writes `v-earned`. Twelve planted faults (eleven bad rules and a second writer
+  of the class) each made it fail. `tests/test_demo.py` checks the markup those rules read, on
+  the demo case and
   through the app: every current Supported verdict and nothing else carries `v-earned`; a
   change after the run of each of the three kinds removes it, for an expert's override too;
   an AI-reviewed verdict never has it and a counsel-reviewed one has it without the solid
   group mark; Claims and the case page carry `sup-earned` (the case holds expert-confirmed
   and code-checked support) and a group of expert-confirmed claims alone gets `sup-confirmed`;
-  the Selection page serves its pills without the class; and after an identity decision made
+  the Selection page serves its pills without the class; on the Timeline as served, every row
+  that lists records around a moment reads "No record tied" and only "Matches" rows carry
+  the chip the green hangs on; and after an identity decision made
   after the run, Claims, the case page, the claim page and Selection serve no `v-earned` and
   no group class. `tests/test_report_consistency.py` still requires the screen and the report
   to show the same verdict classes for every claim through a review; it sets the screen's own
   `v-earned` aside for that compare and fails if the class sits on a verdict the report does
   not show as supported on an expert's, counsel's or the checks' word. Cloud container,
-  2026-11-21: `tests/test_design_system.py` and
+  2026-11-22: `tests/test_design_system.py` and
   `tests/test_demo.py` 42 passed and `tests/test_report_consistency.py` 21 passed after the
   review fixes; on the first commit 178 tests
   selected by `-k "design or review_screen or demo or report_consistency or ui or theme or
@@ -90,8 +103,12 @@
   the same and the count is ink throughout; a verdict with `v-earned` removed turns to ink
   words, an ink mark and the hairline plate while a Contradicted one is unchanged; the
   Selection page's Supported pills are ink and its Contradicted ones red; "Records found
-  (derived)" is green; each group heading's text and its count share a baseline; and a pressed
-  primary button keeps navy text on its pale navy fill under hover. The not-current look was
+  (derived)" is green; on the Timeline the 9 "inside the stated time" lines in "Matches" rows
+  are green and the 6 in "No record tied" rows are ink; each group heading's text and its
+  count share a baseline; a pressed
+  primary button keeps navy text on its pale navy fill under hover; and a main button goes
+  from navy to ink under the pointer, which reads as a change in a headless Chromium capture
+  at 2x. The not-current look was
   checked by removing the class in the browser, not by making a decision in the demo case.
 - Open: no examiner or lawyer has seen the colors yet; Safari and Windows browsers and an
   encrypted case's screens were not looked at by hand; "Supported (AI-reviewed)", "Supported

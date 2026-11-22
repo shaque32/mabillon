@@ -726,9 +726,12 @@ EARNED_CSS = ("v-sup", "v-supchk", "v-supcou")
 def _earned(st: ClaimState) -> bool:
     """The claim's Supported verdict has earned the support green: an expert, counsel or the
     code checks stand behind it, and nothing it rests on changed after the run (ClaimState.stale:
-    an evidence decision, the claim text, a stipulation, person or identity link). An expert's
-    override is held to the same test, because the "What has to be true" lines under it read
-    "Not current" after such a change. A re-run makes the verdict current again."""
+    an expert's decision on one of its items or on an agent's failed check, an edit to the claim
+    text, or any case-wide change core/review/status.py case_changed_after counts: a
+    stipulation, person, identity link, proposed links included, device name, device time zone,
+    account name or defined event). An expert's override is held to the same test, because the
+    "What has to be true" lines under it read "Not current" after such a change. A re-run makes
+    the verdict current again."""
     return st.css in EARNED_CSS and not st.stale
 
 

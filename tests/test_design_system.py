@@ -40,9 +40,9 @@ AA = 4.5
 # which only _vcls in ui/pages.py writes: an expert, counsel or the code checks stand behind the
 # verdict and nothing changed after the run), the counts and headings of the Supported group
 # (t-sup, #sup), an assumption the records cover (li.ok .said, at a named tier) and the
-# Timeline's code-compared matches (chip.ok; d-ok, which is inside the stated time or within
-# the examiner's own tolerance of it). A new use is a decision about what may look
-# supported: add it here on purpose.
+# Timeline's code-compared matches (chip.ok on a row whose status is Matches; d-ok, a record
+# inside the stated time or within the examiner's own tolerance of it, only inside such a row).
+# A new use is a decision about what may look supported: add it here on purpose.
 SUPPORT_HOOKS = re.compile(
     r"\.v-earned(?![a-z])|\.t-sup(?![a-z])|#sup(?![a-z])"
     r"|li\.ok\[data-tier=[a-z_]+\] \.said|\.chip\.ok(?![a-z])|\.d-ok(?![a-z])"
@@ -58,6 +58,10 @@ VERDICT = re.compile(r"\.v-sup(chk|cou)?(?![a-z])")
 # ui/pages.py (_support_mark) sets only when every supported claim earned it, so a page that
 # sets none stays ink.
 AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
+# The Timeline writes d-ok on every record whose time is inside the stated time or within
+# tolerance, tied to the sentence or not (core/report/timeline.py: the records around a moment
+# no record is tied to carry it too). Its green must hang on the row's Matches chip.
+MATCHED_ROW = "li:has(.chip.ok) .d-ok"
 EARNED = (".sup-earned", ".sup-confirmed")
 # "Records found" is green only at these tiers: the records, counsel's review, an expert.
 GREEN_TIERS = {"observed", "derived", "counsel_reviewed", "confirmed"}
@@ -236,11 +240,14 @@ def test_support_green_reaches_only_what_earned_it() -> None:
                 "li.ok" in part and not set(re.findall(r"data-tier=([a-z_]+)", part)) <= GREEN_TIERS
             ):
                 bad.append(f"records-found green at another tier: {part.strip()}")
+            elif ".d-ok" in part and MATCHED_ROW not in part:
+                bad.append(f"timeline green outside a Matches row: {part.strip()}")
     assert bad == []
     # the solid green marks, the expert-confirmed marks: a verdict's only on v-sup with v-earned,
     # a group's only on sup-confirmed
     for selector, block in rules:
-        if "var(--support)" not in dict(block).get("background", ""):
+        rule = dict(block)
+        if "var(--support)" not in rule.get("background", "") + rule.get("background-color", ""):
             continue
         for part in selector.split(","):
             if AGGREGATE.search(part):
