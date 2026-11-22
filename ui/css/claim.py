@@ -94,17 +94,18 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .pg-claim .checklist .meta { margin-top: var(--s1); }
 .pg-claim .checklist .said { font-size: var(--t1); line-height: var(--l1); color: var(--muted);
   white-space: nowrap; }
-/* "Records found" is green only at a tier that earned it: the records themselves (observed,
-   derived), counsel's review or an expert's acceptance. Any other tier (the AI reviewer's, a
-   model's, a missing one) keeps the muted words, so a new tier is not green by default. And
-   only on a row the page marks unopposed (_must_be_true in ui/pages.py): the rules cover an
-   assumption whatever stands against it, so a covered one with a failed check or a
-   contradicting record nobody dismissed keeps the muted words too. */
+/* "Records found" keeps the look it had before color: ink and bold, muted at the AI
+   reviewer's tier. It is green only at a tier that earned it: the records themselves
+   (observed, derived), counsel's review or an expert's acceptance, so a new tier is not green
+   by default. And only on a row the page marks unopposed (_must_be_true in ui/pages.py): the
+   rules cover an assumption whatever stands against it, so a covered one with a failed check
+   or a contradicting or complicating record no expert dismissed stays ink. */
+.pg-claim .checklist li.ok .said { color: var(--ink); font-weight: 600; }
+.pg-claim .checklist li.ok[data-tier=ai_reviewed] .said { color: var(--muted); font-weight: 400; }
 .pg-claim .checklist li.ok.unopposed[data-tier=observed] .said,
 .pg-claim .checklist li.ok.unopposed[data-tier=derived] .said,
 .pg-claim .checklist li.ok.unopposed[data-tier=counsel_reviewed] .said,
-.pg-claim .checklist li.ok.unopposed[data-tier=confirmed] .said { color: var(--support);
-  font-weight: 600; }
+.pg-claim .checklist li.ok.unopposed[data-tier=confirmed] .said { color: var(--support); }
 .pg-claim .checklist li.con .said { color: var(--signal); font-weight: 600; }
 
 /* other explanations: one line per lead, the records behind them folded */

@@ -374,7 +374,7 @@ details[open] > summary { margin-bottom: var(--s2); }
 .sel-n.none { color: var(--muted); font-weight: 400; }
 .b-conf, .st-confirmed.stpill, .tag.pick { color: var(--ink); font-weight: 600; }
 /* the Timeline's "Matches": the records agree with the time the document states, by code */
-.chip.ok { color: var(--support); font-weight: 600; }
+.tl .chip.ok { color: var(--support); font-weight: 600; }
 .stpill b { color: var(--ink); margin-left: var(--s1); }
 /* a count of none is not a status: no weight and no signal */
 .stpill.zero, .stpill.zero b { color: var(--muted); font-weight: 400; }

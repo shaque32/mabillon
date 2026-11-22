@@ -1882,9 +1882,9 @@ def _opposed(st: ClaimState) -> set[str]:
     not, an agent's that waits on the expert included), or a contradicting or complicating item
     no expert has dismissed (accepted, open, or sorted by the AI reviewer alone). Rule 2 covers
     an assumption on its passing checks or an accepted supporting item whatever stands against
-    it, so a covered assumption can be one of these; its "Records found" then keeps the muted
-    words. No exception for the open "complicates" label rule 3d' lets a code-checked Supported
-    verdict carry: the label stays on the claim for the expert, and so does the muted row."""
+    it, so a covered assumption can be one of these; its "Records found" then stays ink. No
+    exception for the open "complicates" label rule 3d' lets a code-checked Supported
+    verdict carry: the label stays on the claim for the expert, and so does the ink row."""
     out = {r.assumption_id for r in st.checks if r.outcome is CheckOutcome.FAIL}
     out |= {c.assumption_id for c in st.agent_fails}
     out |= {

@@ -45,18 +45,19 @@ AA = 4.5
 # - the Supported group's count tile (t-sup, its name mark and its number) and heading mark (#sup)
 # - "Records found" on an assumption the records cover, at a named tier, that nothing stands
 #   against (li.ok.unopposed .said)
-# - the Timeline's code-compared matches: the Matches chip (chip.ok) and, only inside a row with
-#   that chip, a record inside the stated time or within the examiner's own tolerance of it
-#   (d-ok; core/report/timeline.py writes d-ok on the records around a moment no record is tied
-#   to as well, and those stay ink)
+# - the Timeline's code-compared matches, inside the Timeline list (.tl) only, so a chip another
+#   page writes takes no green: the Matches chip (chip.ok) and, only inside a row with that
+#   chip, a record inside the stated time or within the examiner's own tolerance of it (d-ok;
+#   core/report/timeline.py writes d-ok on the records around a moment no record is tied to as
+#   well, and those stay ink)
 # A new use is a decision about what may look supported: add it here on purpose.
 SUPPORT_HOOKS = re.compile(
     r"(?:\.v-earned"
     r"|\.t-sup(?: \.name| \.n)?"
     r"|#sup \.ghead h2"
     r"|li\.ok\.unopposed\[data-tier=[a-z_]+\] \.said"
-    r"|\.chip\.ok"
-    r"|li:has\(\.chip\.ok\) \.d-ok)$"
+    r"|\.tl \.chip\.ok"
+    r"|\.tl > li:has\(\.chip\.ok\) \.d-ok)$"
 )
 PSEUDO_ELEMENT = re.compile(r"::(before|after)$")
 # Marks that must never take it: support resting on the AI reviewer, support that still waits on

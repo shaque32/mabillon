@@ -44,18 +44,21 @@
   the same test, because the lines under it read "Not current" after such a change; and the
   Selection page's small claim pills, which are the report's own fragment
   (`core/report/selection.py`), stay ink for every Supported verdict. A model's "supports"
-  stance label stays ink; "Records found" at any other tier (ai_reviewed, inferred, none)
-  stays muted; unproven, not tested and "Support found: do you agree?" take no green.
-  "Records found" also stays muted on an assumption something stands against: the rules cover
+  stance label stays ink; "Records found" at any other tier keeps the look it had before this
+  PR (ink and bold, muted at ai_reviewed); unproven, not tested and "Support found: do you
+  agree?" take no green.
+  "Records found" also keeps that ink look on an assumption something stands against: the
+  rules cover
   an assumption on its passing checks or an accepted supporting item whatever stands against
   it (rule 2), so a covered assumption can be the one a record contradicts. The row carries
   `unopposed` (`_opposed` and `_must_be_true` in `ui/pages.py`) only when it has no failed
   check, cited by the verdict or not, and no contradicting or complicating item short of one
   an expert dismissed; an item only the AI reviewer dismissed still counts, and so does the
   open "complicates" label rule 3d' lets a code-checked Supported verdict carry (the verdict
-  is green, that row is muted, and the label stays for the expert). The words on such a row are
-  unchanged ("Records found (derived)", as before this PR). The second Claude review round
-  found the earlier version showed those words in green under a Contradicted verdict. On the
+  is green, that row is ink, and the label stays for the expert). The words and weight of such
+  a row are unchanged ("Records found (derived)", ink and bold, as before this PR). The Claude
+  review rounds on this PR found earlier versions showed those words in green under a
+  Contradicted verdict, and under an Unproven one held back by a complicating item. On the
   Timeline a record's time line is ink in every row whose status is not "Matches": under
   "No record tied" the report's fragment (`core/report/timeline.py`) puts the same class, and
   for a record inside the stated time the same words, on the records around the stated time,
@@ -87,11 +90,13 @@
   takes green without `sup-earned` or `sup-confirmed` (or a solid green mark without
   `sup-confirmed`, or without `v-sup` and `v-earned` together on a verdict, read from
   `background` and `background-color`); if "Records found" is green at a tier outside the four
-  named or without `unopposed`; if a Timeline record line is green outside a "Matches" row; if
+  named or without `unopposed`; if a "Matches" chip or a record line is green outside the Timeline
+  list, or a record line
+  outside a "Matches" row; if
   a rule that sets the green negates anything with `:not()`; or
   if `v-earned`, `sup-earned`, `sup-confirmed` or `unopposed` is written anywhere but in one
   string each in `ui/pages.py` (read from the parsed source, so the quoting of the markup
-  around it does not matter). Twenty planted faults (sixteen bad rules and four second
+  around it does not matter). Twenty-one planted faults (seventeen bad rules and four second
   writers of a class) each made it fail. `tests/test_demo.py` checks the markup those rules
   read, on the demo case and through the app: every current Supported verdict and nothing else
   carries `v-earned`; a
@@ -124,7 +129,9 @@
   the same and the count is ink throughout; a verdict with `v-earned` removed turns to ink
   words, an ink mark and the hairline plate while a Contradicted one is unchanged; the
   Selection page's Supported pills are ink and its Contradicted ones red; "Records found
-  (derived)" is green and turns muted with `unopposed` removed; on the Timeline the 9 "inside the
+  (derived)" is green, turns ink and stays bold with `unopposed` removed, and is muted at the
+  ai_reviewed tier; the 6 "Matches" chips, all inside the Timeline list, are green; on the
+  Timeline the 9 "inside the
   stated time" lines, all in "Matches" rows, are green, and the 6 within-tolerance lines in
   "No record tied" rows ("1 min before", "1 min after" or "2 min after the stated time") are
   ink; each group heading's text and its
@@ -145,11 +152,15 @@
   override followed by a case-wide change (a stipulation, person or identity decision) shows
   ink without being listed under "Needs you", because the "Not current" listing leaves
   overrides out (unchanged here). A covered assumption something stands against still reads
-  "Records found", now muted, not "Contradicted by the records": `_must_be_true` tests
+  "Records found" in ink, not "Contradicted by the records": `_must_be_true` tests
   coverage first, as on main, and changing those words is left for its own change. No claim in the
   demo case has an opposed covered
   assumption, so that row was checked through planted items in the test and by removing the
-  class in the browser. What counts as a
+  class in the browser. On main, and unchanged here, adding a file to a case after its audit
+  does not mark the verdicts not current (`case_changed_after` does not count an import), so a
+  Supported verdict keeps its words, and now its green, until the audit is run again; found by
+  the Claude review of this PR and left for its own change to the staleness test. What counts
+  as a
   change after the run reads expert review rows only (`core/review/status.py`,
   `decided_after_run`); the app has no screen where counsel withdraws an acceptance yet, and
   when one lands that test and this green must count counsel's rows too. The exported report
