@@ -73,8 +73,13 @@
   and code-checked support) and a group of expert-confirmed claims alone gets `sup-confirmed`;
   the Selection page serves its pills without the class; and after an identity decision made
   after the run, Claims, the case page, the claim page and Selection serve no `v-earned` and
-  no group class. Cloud container, 2026-11-21: `tests/test_design_system.py` and
-  `tests/test_demo.py` 42 passed after the review fixes; on the first commit 178 tests
+  no group class. `tests/test_report_consistency.py` still requires the screen and the report
+  to show the same verdict classes for every claim through a review; it sets the screen's own
+  `v-earned` aside for that compare and fails if the class sits on a verdict the report does
+  not show as supported on an expert's, counsel's or the checks' word. Cloud container,
+  2026-11-21: `tests/test_design_system.py` and
+  `tests/test_demo.py` 42 passed and `tests/test_report_consistency.py` 21 passed after the
+  review fixes; on the first commit 178 tests
   selected by `-k "design or review_screen or demo or report_consistency or ui or theme or
   pages or smoke"` passed; ruff clean. Full `make check` on GitHub CI (numbers in the PR).
   Looked at by hand on the synthetic demo case (case01, scripted labels, no model call): all
