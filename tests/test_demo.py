@@ -689,6 +689,68 @@ def test_supported_green_is_opt_in_follows_the_weakest_claim_and_leaves_a_stale_
     assert pages._vcls(dataclasses.replace(over, case_changed_after_run=False)) == "v-sup v-earned"
 
 
+def test_records_found_is_green_only_on_a_covered_assumption_nothing_stands_against(root):
+    """The rules cover an assumption on its passing checks or an accepted supporting item,
+    whatever stands against it (rule 2), so "Records found" can sit on the very assumption a
+    record contradicts. Its green hangs on a class the row carries only when nothing does: no
+    failed check, and no contradicting item short of one an expert dismissed."""
+    import dataclasses
+
+    from core.contracts import CheckOutcome
+    from core.review.status import claim_states
+    from ui import pages
+
+    conn = connect(_case(root).db)
+    states = claim_states(conn)
+    rows = "".join(pages._must_be_true(conn, st) for st in states)
+    # the demo as audited: every covered assumption is unopposed, and the class sits nowhere else
+    assert "<li class='ok unopposed' data-tier='derived'>" in rows
+    assert "<li class='ok' data-tier=" not in rows
+    assert rows.count("unopposed") == rows.count("<li class='ok unopposed' data-tier='")
+
+    st = next(x for x in states if x.css == "v-supchk")  # covered by its passing checks alone
+    assert st.assumptions and not pages._opposed(st)
+    core = next(a for a in st.assumptions if a.is_core)
+    cv = next(c for c in st.decision.coverage if c.assumption_id == core.id)
+    assert cv.covered and cv.tier.value == "derived"
+    item = next(x for other in states for x in other.evidence).model_copy(
+        update={"id": "ev:planted", "assumption_id": core.id, "stance": Stance.CONTRADICTS}
+    )
+
+    def row(changed) -> str:
+        """The core assumption's row, read from the page as served for this state."""
+        order = sorted(changed.assumptions, key=lambda a: not a.is_core)  # as the page lists
+        return pages._must_be_true(conn, changed).split("<li ")[1:][order.index(core)]
+
+    assert row(st).startswith("class='ok unopposed' data-tier='derived'>")
+
+    def with_item(status, reviewer=None):
+        return dataclasses.replace(
+            st,
+            evidence=[*st.evidence, item.model_copy(update={"status": status})],
+            last_reviewer={**st.last_reviewer, **({item.id: reviewer} if reviewer else {})},
+        )
+
+    # a contradicting record on it, accepted, open, or sorted by the AI reviewer alone: the
+    # words stay, the class goes
+    for changed in (
+        with_item(EvidenceStatus.ACCEPTED, "expert"),
+        with_item(EvidenceStatus.OPEN),
+        with_item(EvidenceStatus.AI_ACCEPTED, "ai"),
+        with_item(EvidenceStatus.DISMISSED, "ai"),
+    ):
+        assert core.id in pages._opposed(changed)
+        assert row(changed).startswith("class='ok' data-tier='derived'>")
+        assert "Records found (derived)" in row(changed)
+    # only an expert's dismissal clears it
+    assert row(with_item(EvidenceStatus.DISMISSED, "expert")).startswith("class='ok unopposed' ")
+    # a failed check on it, cited by the verdict or not
+    check = next(c for c in st.checks if c.assumption_id == core.id)
+    planted = check.model_copy(update={"id": "chk:planted", "outcome": CheckOutcome.FAIL})
+    failed = dataclasses.replace(st, checks=[*st.checks, planted])
+    assert row(failed).startswith("class='ok' data-tier='derived'>")
+
+
 def test_gap_lines_follow_the_stored_coverage_until_it_is_stale_and_tiles_have_destinations(root):
     """A part the stored verdict left uncovered is "not established" even while support for it
     waits on the expert; after a later change the line says the verdict is not current instead;

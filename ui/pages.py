@@ -1877,6 +1877,23 @@ def _agent_fail_card(
     )
 
 
+def _opposed(st: ClaimState) -> set[str]:
+    """The assumptions something stands against: a failed check on it (cited by the verdict or
+    not, an agent's that waits on the expert included), or a contradicting item no expert has
+    dismissed (accepted, open, or sorted by the AI reviewer alone). Rule 2 covers an assumption
+    on its passing checks or an accepted supporting item whatever stands against it, so a
+    covered assumption can be one of these; its "Records found" then keeps the muted words."""
+    out = {r.assumption_id for r in st.checks if r.outcome is CheckOutcome.FAIL}
+    out |= {c.assumption_id for c in st.agent_fails}
+    out |= {
+        x.assumption_id
+        for x in st.evidence
+        if x.stance == Stance.CONTRADICTS
+        and not (x.status == EvidenceStatus.DISMISSED and st.last_reviewer.get(x.id) == "expert")
+    }
+    return out
+
+
 def _must_be_true(
     conn: sqlite3.Connection,
     st: ClaimState,
@@ -1900,6 +1917,7 @@ def _must_be_true(
     }
     # rules 0.4.0: a failed check on an agent's assumption counts only once an expert confirms it
     awaiting = {c.assumption_id for c in st.agent_fails}
+    opposed = _opposed(st)
     rows = []
     for a in sorted(st.assumptions, key=lambda a: not a.is_core):
         cv = coverage.get(a.id) if current else None
@@ -1910,6 +1928,10 @@ def _must_be_true(
             tier = cv.tier.value if cv.tier else "?"
             mark, said_ = "ok", f"Records found ({tier.replace('_', ' ')})"
             tier_attr = f" data-tier='{e(tier)}'"  # an ai_reviewed tier never tags as confirmed
+            # the support green is opt-in here too (ui/css/claim.py): only a covered assumption
+            # nothing stands against carries the class its rule hangs on
+            if a.id not in opposed:
+                mark = "ok unopposed"
         elif a.id in failed:
             mark, said_ = "con", "Contradicted by the records"
         elif a.id in awaiting:

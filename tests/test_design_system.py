@@ -11,6 +11,7 @@ server.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -36,17 +37,28 @@ COLORS = {
 TEXT_COLORS = ("--ink", "--muted", "--accent", "--support", "--signal")
 FILLS = ("--paper", "--line", "--accent-wash", "--support-wash", "--signal-wash", "--quote")
 AA = 4.5
-# The only places the support green may show: a Supported verdict that has earned it (v-earned,
-# which only _vcls in ui/pages.py writes: an expert, counsel or the code checks stand behind the
-# verdict and nothing changed after the run), the counts and headings of the Supported group
-# (t-sup, #sup), an assumption the records cover (li.ok .said, at a named tier) and the
-# Timeline's code-compared matches (chip.ok on a row whose status is Matches; d-ok, a record
-# inside the stated time or within the examiner's own tolerance of it, only inside such a row).
+# The only elements the support green may color, matched at the END of a selector (its
+# ::before or ::after set aside), so the hook is the element the rule colors: a condition on an
+# ancestor or inside :has() can narrow a rule but never make another element green.
+# - a Supported verdict that has earned it (v-earned, which only _vcls in ui/pages.py writes: an
+#   expert, counsel or the code checks stand behind the verdict and nothing changed after the run)
+# - the Supported group's count tile (t-sup, its name mark and its number) and heading mark (#sup)
+# - "Records found" on an assumption the records cover, at a named tier, that nothing stands
+#   against (li.ok.unopposed .said)
+# - the Timeline's code-compared matches: the Matches chip (chip.ok) and, only inside a row with
+#   that chip, a record inside the stated time or within the examiner's own tolerance of it
+#   (d-ok; core/report/timeline.py writes d-ok on the records around a moment no record is tied
+#   to as well, and those stay ink)
 # A new use is a decision about what may look supported: add it here on purpose.
 SUPPORT_HOOKS = re.compile(
-    r"\.v-earned(?![a-z])|\.t-sup(?![a-z])|#sup(?![a-z])"
-    r"|li\.ok\[data-tier=[a-z_]+\] \.said|\.chip\.ok(?![a-z])|\.d-ok(?![a-z])"
+    r"(?:\.v-earned"
+    r"|\.t-sup(?: \.name| \.n)?"
+    r"|#sup \.ghead h2"
+    r"|li\.ok\.unopposed\[data-tier=[a-z_]+\] \.said"
+    r"|\.chip\.ok"
+    r"|li:has\(\.chip\.ok\) \.d-ok)$"
 )
+PSEUDO_ELEMENT = re.compile(r"::(before|after)$")
 # Marks that must never take it: support resting on the AI reviewer, support that still waits on
 # the expert, unproven, not tested, and a model's own stance label or AI-reviewed tier.
 NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|b-ai|b-open|ai_reviewed|inferred")
@@ -58,11 +70,11 @@ VERDICT = re.compile(r"\.v-sup(chk|cou)?(?![a-z])")
 # ui/pages.py (_support_mark) sets only when every supported claim earned it, so a page that
 # sets none stays ink.
 AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
-# The Timeline writes d-ok on every record whose time is inside the stated time or within
-# tolerance, tied to the sentence or not (core/report/timeline.py: the records around a moment
-# no record is tied to carry it too). Its green must hang on the row's Matches chip.
-MATCHED_ROW = "li:has(.chip.ok) .d-ok"
 EARNED = (".sup-earned", ".sup-confirmed")
+# The classes the green rules hang on. Each is written in one place, a single string in
+# ui/pages.py (_vcls, _support_mark, _must_be_true), so no other page or report fragment can
+# hand an element the green.
+OPT_IN = ("v-earned", "sup-earned", "sup-confirmed", "unopposed")
 # "Records found" is green only at these tiers: the records, counsel's review, an expert.
 GREEN_TIERS = {"observed", "derived", "counsel_reviewed", "confirmed"}
 SPACING = {f"--s{i + 1}": f"{px}px" for i, px in enumerate((4, 8, 12, 16, 24, 32, 48, 64))}
@@ -115,6 +127,25 @@ def _rules(css: str) -> list[tuple[str, list[tuple[str, str]]]]:
                 block.append((prop.strip(), " ".join(value.split())))
         out.append((" ".join(selector.split()), block))
     return out
+
+
+def _strings(path: Path) -> list[str]:
+    """Every string a module holds outside its docstrings, the pieces of an f-string included.
+    Comments are not strings."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
 
 
 def _blocks(css: str) -> list[list[tuple[str, str]]]:
@@ -230,7 +261,8 @@ def test_support_green_reaches_only_what_earned_it() -> None:
         if not any("--support" in value for _, value in block):
             continue
         for part in selector.split(","):
-            if not SUPPORT_HOOKS.search(part) or NEVER_SUPPORT.search(part):
+            subject = PSEUDO_ELEMENT.sub("", part.strip())
+            if not SUPPORT_HOOKS.search(subject) or NEVER_SUPPORT.search(part):
                 bad.append(part.strip())
             elif AGGREGATE.search(part) and not any(cls in part for cls in EARNED):
                 bad.append(f"aggregate without an earned class: {part.strip()}")
@@ -240,8 +272,6 @@ def test_support_green_reaches_only_what_earned_it() -> None:
                 "li.ok" in part and not set(re.findall(r"data-tier=([a-z_]+)", part)) <= GREEN_TIERS
             ):
                 bad.append(f"records-found green at another tier: {part.strip()}")
-            elif ".d-ok" in part and MATCHED_ROW not in part:
-                bad.append(f"timeline green outside a Matches row: {part.strip()}")
     assert bad == []
     # the solid green marks, the expert-confirmed marks: a verdict's only on v-sup with v-earned,
     # a group's only on sup-confirmed
@@ -256,18 +286,18 @@ def test_support_green_reaches_only_what_earned_it() -> None:
                 assert ".v-sup.v-earned" in part, part
     # the AI-reviewed Supported mark keeps the base ring: no rule gives v-supai a color at all
     assert not any("v-supai" in s for s, _ in rules)
-    # one place writes v-earned (_vcls in ui/pages.py), so no other page or report fragment can
-    # hand a verdict the green
-    writers = [
-        path.relative_to(ROOT).as_posix()
-        for folder in ("ui", "core", "cli")
-        for path in sorted((ROOT / folder).rglob("*.py"))
-        if "v-earned" in path.read_text(encoding="utf-8")
-        and path.parent.name != "css"
-        and path.name != "theme.py"
-    ]
-    assert writers == ["ui/pages.py"]
-    assert (ROOT / "ui" / "pages.py").read_text(encoding="utf-8").count('v-earned"') == 1
+    # one string in ui/pages.py writes each class a green rule hangs on, whatever quotes the
+    # markup around it uses; the stylesheets (ui/css, ui/theme.py) only read them
+    written: dict[str, list[str]] = {name: [] for name in OPT_IN}
+    for folder in ("ui", "core", "cli"):
+        for path in sorted((ROOT / folder).rglob("*.py")):
+            if path.parent.name == "css" or path.name == "theme.py":
+                continue
+            for text in _strings(path):
+                for name in OPT_IN:
+                    if name in text:
+                        written[name].append(path.relative_to(ROOT).as_posix())
+    assert written == {name: ["ui/pages.py"] for name in OPT_IN}
 
 
 def test_no_gradient_shadow_or_opacity_shade() -> None:
