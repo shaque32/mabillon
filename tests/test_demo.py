@@ -602,6 +602,159 @@ def test_a_claim_supported_on_ai_review_or_with_ai_dismissed_support_waits_on_th
         row = sup.split(f"id={cid}'", 1)[1].split("</li>", 1)[0]
         assert "<span class='gap you'>Needs you</span>" in row, cid
     assert "4 claims need you</h1>" in page  # C16, D03 and these two
+    # the Supported count and heading are green only when every supported claim earned it: one
+    # AI-reviewed claim leaves both pages without the class the green rules hang on
+    assert "<div class='pg-claims'>" in page
+    assert "<ul class='findings'>" in pages._case_status(states)
+
+
+def test_supported_green_is_opt_in_follows_the_weakest_claim_and_leaves_a_stale_verdict(root):
+    """The stylesheet gives a Supported verdict, the Supported count and its heading the support
+    green only through classes this markup sets (tests/test_design_system.py holds the CSS to
+    them). A verdict gets v-earned when an expert, counsel or the code checks stand behind it
+    and nothing changed after the run; the group's class follows its weakest claim; and the
+    Selection page's pills, which are the report's own fragment, never carry it."""
+    import dataclasses
+    from datetime import UTC, datetime
+
+    from core.contracts import SupportedBasis
+    from core.review.status import STALE, claim_states
+    from ui import pages
+
+    case = _case(root)
+    conn = connect(case.db)
+    states = claim_states(conn)
+    sup = [st for st in states if pages._verdict_group(st) == "sup"]
+    assert {st.css for st in sup} == {"v-sup", "v-supchk"}  # the demo case holds both kinds
+    for st in states:  # every current supported verdict earned it, and nothing else did
+        assert ("v-earned" in pages._vcls(st)) == (st in sup), st.claim.id
+    assert pages._support_mark(states) == " sup-earned"  # one rests on the code checks: a ring
+    assert pages._support_mark([st for st in states if st.css != "v-supchk"]) == " sup-confirmed"
+    assert pages._support_mark([st for st in states if st not in sup]) == ""  # none: no green
+
+    def basis(st, value):
+        return dataclasses.replace(
+            st, decision=st.decision.model_copy(update={"supported_basis": value})
+        )
+
+    c01 = next(st for st in states if st.claim.id == "C01")
+    assert c01.css == "v-sup"
+    counsel = [
+        basis(st, SupportedBasis.COUNSEL_REVIEWED) if st.css == "v-sup" else st for st in states
+    ]
+    assert pages._support_mark(counsel) == " sup-earned"  # counsel never wears the solid mark
+    assert pages._vcls(basis(c01, SupportedBasis.COUNSEL_REVIEWED)) == "v-supcou v-earned"
+    assert pages._vcls(basis(c01, SupportedBasis.AI_REVIEWED)) == "v-supai"  # never the AI's
+    # each thing a verdict rests on, changed after the run, takes the green away
+    for flag in ("decided_after_run", "edited_after_run", "case_changed_after_run"):
+        assert pages._vcls(dataclasses.replace(c01, **{flag: True})) == "v-sup", flag
+
+    app = App(home=demo.cases_dir(root), port=PORT, model_check=None)
+    app.open_case(case)
+
+    def get(path: str, **query: str) -> str:
+        return app.handle(Request("GET", path, query, dict(HOST))).body.decode()
+
+    assert "<div class='pg-claims sup-earned'>" in get("/claims")
+    assert "<ul class='findings sup-earned'>" in get("/")
+    assert "<span class='verdict v-sup v-earned'>" in get("/claim", id="C01")
+    selection = get("/selection")
+    assert "class='verdict v-sup'" in selection and "v-earned'" not in selection
+    # the Timeline's green hangs on a row's Matches chip (ui/css/timeline.py). The records
+    # around a moment no record is tied to carry the same d-ok words, and never sit in such a
+    # row; each row's records come before its status chip
+    parts = get("/timeline").split("<div class='st'>")
+    bodies, chips = parts[:-1], parts[1:]
+    around = [i for i, body in enumerate(bodies) if "(not tied by the document)" in body]
+    assert any("class='d-ok'" in bodies[i] for i in around)
+    assert all(chips[i].startswith("<span class='chip '>No record tied") for i in around)
+    matched = [i for i, chip in enumerate(chips) if chip.startswith("<span class='chip ok'>")]
+    assert matched and all(chips[i].startswith("<span class='chip ok'>Matches") for i in matched)
+    assert any("class='d-ok'" in bodies[i] for i in matched)
+    # an identity decision after the run: no verdict is current, so none is green
+    with conn:
+        audit_log.append(conn, datetime.now(UTC), EXPERT, "identity.confirm", {})
+    stale = claim_states(conn)
+    c01 = next(st for st in stale if st.claim.id == "C01")
+    assert c01.css == "v-sup" and c01.explain_lines() == [STALE]
+    assert pages._vcls(c01) == "v-sup" and pages._support_mark(stale) == ""
+    assert "<div class='pg-claims'>" in get("/claims")
+    assert "<ul class='findings'>" in get("/")
+    for path, query in (("/claims", {}), ("/claim", {"id": "C01"}), ("/selection", {})):
+        assert "v-earned'" not in get(path, **query), path
+    # an expert's override is held to the same test: after a later change it is not green
+    # either, though it is not listed as waiting on a re-run
+    over = dataclasses.replace(c01, decision=c01.decision.model_copy(update={"override_note": "x"}))
+    assert over.css == "v-sup" and over.explain_lines() == [] and pages._vcls(over) == "v-sup"
+    assert pages._vcls(dataclasses.replace(over, case_changed_after_run=False)) == "v-sup v-earned"
+
+
+def test_records_found_is_green_only_on_a_covered_assumption_nothing_stands_against(root):
+    """The rules cover an assumption on its passing checks or an accepted supporting item,
+    whatever stands against it (rule 2), so "Records found" can sit on the very assumption a
+    record contradicts. Its green hangs on a class the row carries only when nothing does: no
+    failed check, and no contradicting item short of one an expert dismissed."""
+    import dataclasses
+
+    from core.contracts import CheckOutcome
+    from core.review.status import claim_states
+    from ui import pages
+
+    conn = connect(_case(root).db)
+    states = claim_states(conn)
+    rows = "".join(pages._must_be_true(conn, st) for st in states)
+    # the demo as audited: every covered assumption is unopposed, and the class sits nowhere else
+    assert "<li class='ok unopposed' data-tier='derived'>" in rows
+    assert "<li class='ok' data-tier=" not in rows
+    assert rows.count("unopposed") == rows.count("<li class='ok unopposed' data-tier='")
+
+    st = next(x for x in states if x.css == "v-supchk")  # covered by its passing checks alone
+    assert st.assumptions and not pages._opposed(st)
+    core = next(a for a in st.assumptions if a.is_core)
+    cv = next(c for c in st.decision.coverage if c.assumption_id == core.id)
+    assert cv.covered and cv.tier.value == "derived"
+    item = next(x for other in states for x in other.evidence).model_copy(
+        update={"id": "ev:planted", "assumption_id": core.id, "stance": Stance.CONTRADICTS}
+    )
+    complicating = item.model_copy(update={"stance": Stance.COMPLICATES})
+
+    def row(changed) -> str:
+        """The core assumption's row, read from the page as served for this state."""
+        order = sorted(changed.assumptions, key=lambda a: not a.is_core)  # as the page lists
+        return pages._must_be_true(conn, changed).split("<li ")[1:][order.index(core)]
+
+    assert row(st).startswith("class='ok unopposed' data-tier='derived'>")
+
+    def with_item(status, reviewer=None, item=item):
+        return dataclasses.replace(
+            st,
+            evidence=[*st.evidence, item.model_copy(update={"status": status})],
+            last_reviewer={**st.last_reviewer, **({item.id: reviewer} if reviewer else {})},
+        )
+
+    # a contradicting record on it, accepted, open, or sorted by the AI reviewer alone, or a
+    # complicating one (rule 3d holds the verdict back on it; even the open label rule 3d' lets
+    # a code-checked verdict carry): the words stay, the class goes
+    for changed in (
+        with_item(EvidenceStatus.ACCEPTED, "expert"),
+        with_item(EvidenceStatus.OPEN),
+        with_item(EvidenceStatus.AI_ACCEPTED, "ai"),
+        with_item(EvidenceStatus.DISMISSED, "ai"),
+        with_item(EvidenceStatus.ACCEPTED, "expert", complicating),
+        with_item(EvidenceStatus.OPEN, None, complicating),
+    ):
+        assert core.id in pages._opposed(changed)
+        assert row(changed).startswith("class='ok' data-tier='derived'>")
+        assert "Records found (derived)" in row(changed)
+    # only an expert's dismissal clears it
+    for dismissed in (item, complicating):
+        changed = with_item(EvidenceStatus.DISMISSED, "expert", dismissed)
+        assert row(changed).startswith("class='ok unopposed' ")
+    # a failed check on it, cited by the verdict or not
+    check = next(c for c in st.checks if c.assumption_id == core.id)
+    planted = check.model_copy(update={"id": "chk:planted", "outcome": CheckOutcome.FAIL})
+    failed = dataclasses.replace(st, checks=[*st.checks, planted])
+    assert row(failed).startswith("class='ok' data-tier='derived'>")
 
 
 def test_gap_lines_follow_the_stored_coverage_until_it_is_stale_and_tiles_have_destinations(root):

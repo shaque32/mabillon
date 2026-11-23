@@ -49,7 +49,13 @@ CSS = """
 .tl .notes { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0;
   font-size: var(--t1); line-height: var(--l1); color: var(--muted); }
 .tl .notes li { max-width: none; }
+/* d-ok: the code compared the record's time and found it inside the stated time, or within
+   the examiner's own tolerance of it (core/report/timeline.py); the words say how far off.
+   It is green only in a row whose status is Matches (chip.ok), where every such record is one
+   the sentence names. In any other row it stays ink: under "No record tied" the same words sit
+   on records around the stated time that nothing ties to the sentence. */
 .d-ok { color: var(--ink); }
+.tl > li:has(.chip.ok) .d-ok { color: var(--support); }
 .d-flag { color: var(--signal); font-weight: 600; }
 
 /* Gaps: per phone, the day strip, then its quiet stretches as ruled rows */

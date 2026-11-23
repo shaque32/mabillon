@@ -406,10 +406,12 @@ def _case_status(states: list[ClaimState]) -> str:
         for g, name in GROUPS
         if g != "you" and (by[g] or g != "not")
     )
+    # how the Supported count is marked: green only when every supported claim earned it
+    # (_support_mark; the rules that read the class are in ui/css/overview.py)
     return (
         "<div class='casestatus'>"
         f"<a class='button primary' href='/claims'>{e(action)}</a>"
-        f"<ul class='findings'>{counts}</ul></div>"
+        f"<ul class='findings{_support_mark(states)}'>{counts}</ul></div>"
     )
 
 
@@ -716,9 +718,44 @@ def _device_notes(conn: sqlite3.Connection) -> str:
 # ---------------------------------------------------------------- queue
 
 
+# the Supported verdicts someone or the code checks stand behind: an expert, the deterministic
+# checks, counsel. Never v-supai (the AI reviewer).
+EARNED_CSS = ("v-sup", "v-supchk", "v-supcou")
+
+
+def _earned(st: ClaimState) -> bool:
+    """The claim's Supported verdict has earned the support green: an expert, counsel or the
+    code checks stand behind it, and nothing it rests on changed after the run (ClaimState.stale:
+    an expert's decision on one of its items or on an agent's failed check, an edit to the claim
+    text, or any case-wide change core/review/status.py case_changed_after counts: a
+    stipulation, person, identity link, proposed links included, device name, device time zone,
+    account name or defined event). An expert's override is held to the same test, because the
+    "What has to be true" lines under it read "Not current" after such a change. A re-run makes
+    the verdict current again."""
+    return st.css in EARNED_CSS and not st.stale
+
+
 def _vcls(st: ClaimState) -> str:
-    """The pill's classes: the verdict's, plus its own style for a claim nothing tested."""
-    return f"{st.css} v-nt" if st.untested else st.css
+    """The pill's classes: the verdict's, plus its own style for a claim nothing tested, plus
+    v-earned for a Supported verdict that has earned the green. The stylesheet gives a verdict
+    the support green only through v-earned (ui/theme.py), and this is the one place that
+    writes it, so a pill built anywhere else stays ink."""
+    cls = f"{st.css} v-nt" if st.untested else st.css
+    return f"{cls} v-earned" if _earned(st) else cls
+
+
+def _support_mark(states: list[ClaimState]) -> str:
+    """The class (with its leading space) that lets the Supported count and heading take the
+    support green, on Claims and on the case page. They stand for every supported claim, so
+    they follow the weakest one: " sup-confirmed" (solid green mark) only when an expert
+    confirmed every one and each is current; " sup-earned" (green ring) when every one rests on
+    an expert, counsel or the code checks and each is current; "" (ink ring, ink count) when
+    there is none, or when one rests on the AI reviewer or is not current (_earned). No class
+    means no green, so a page that forgets to ask stays ink."""
+    sup = [st for st in states if _verdict_group(st) == "sup"]
+    if not sup or not all(_earned(st) for st in sup):
+        return ""
+    return " sup-confirmed" if all(st.css == "v-sup" for st in sup) else " sup-earned"
 
 
 def _ledger_anchor(claim_id: str) -> str:
@@ -895,7 +932,7 @@ def claims_queue(conn: sqlite3.Connection, page: Page, next_step: str | None = N
     elif next_step and not you:
         lede = f"<p class='lede'>Next: {e(next_step)} <a href='/setup'>Set up and run</a>.</p>"
     out = [
-        "<div class='pg-claims'>"
+        f"<div class='pg-claims{_support_mark(states)}'>"
         f"<div class='overview-head'><h1>{e(head)}</h1>"
         "<span class='head-acts'><a href='/help#words'>What the words mean</a> "
         "<a class='button' href='/claim/new'>Add a claim</a></span></div>" + lede,
@@ -1840,6 +1877,25 @@ def _agent_fail_card(
     )
 
 
+def _opposed(st: ClaimState) -> set[str]:
+    """The assumptions something stands against: a failed check on it (cited by the verdict or
+    not, an agent's that waits on the expert included), or a contradicting or complicating item
+    no expert has dismissed (accepted, open, or sorted by the AI reviewer alone). Rule 2 covers
+    an assumption on its passing checks or an accepted supporting item whatever stands against
+    it, so a covered assumption can be one of these; its "Records found" then stays ink. No
+    exception for the open "complicates" label rule 3d' lets a code-checked Supported
+    verdict carry: the label stays on the claim for the expert, and so does the ink row."""
+    out = {r.assumption_id for r in st.checks if r.outcome is CheckOutcome.FAIL}
+    out |= {c.assumption_id for c in st.agent_fails}
+    out |= {
+        x.assumption_id
+        for x in st.evidence
+        if x.stance in AGAINST
+        and not (x.status == EvidenceStatus.DISMISSED and st.last_reviewer.get(x.id) == "expert")
+    }
+    return out
+
+
 def _must_be_true(
     conn: sqlite3.Connection,
     st: ClaimState,
@@ -1863,6 +1919,7 @@ def _must_be_true(
     }
     # rules 0.4.0: a failed check on an agent's assumption counts only once an expert confirms it
     awaiting = {c.assumption_id for c in st.agent_fails}
+    opposed = _opposed(st)
     rows = []
     for a in sorted(st.assumptions, key=lambda a: not a.is_core):
         cv = coverage.get(a.id) if current else None
@@ -1873,6 +1930,10 @@ def _must_be_true(
             tier = cv.tier.value if cv.tier else "?"
             mark, said_ = "ok", f"Records found ({tier.replace('_', ' ')})"
             tier_attr = f" data-tier='{e(tier)}'"  # an ai_reviewed tier never tags as confirmed
+            # the support green is opt-in here too (ui/css/claim.py): only a covered assumption
+            # nothing stands against carries the class its rule hangs on
+            if a.id not in opposed:
+                mark = "ok unopposed"
         elif a.id in failed:
             mark, said_ = "con", "Contradicted by the records"
         elif a.id in awaiting:

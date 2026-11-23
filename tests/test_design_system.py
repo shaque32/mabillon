@@ -1,13 +1,17 @@
 """The app's design system holds: every rule in ui/theme.py and ui/css/ draws from the tokens.
 
-One spacing scale, one type scale, five colors, one radius, no gradients and no shadows
+One spacing scale, one type scale, eleven colors, one radius, no gradients and no shadows
 (TOKENS_CSS in ui/theme.py). This test reads the stylesheet the app puts on every page and fails
-on any value from outside those tokens, so a new off-scale margin or a sixth color cannot land
-quietly. It checks the CSS text only: no case, no model, no server.
+on any value from outside those tokens, so a new off-scale margin or a twelfth color cannot land
+quietly. It also holds the colors to their jobs: every text and fill pair the stylesheet sets
+passes WCAG AA, and the support green reaches only the marks it was signed off for, never a
+model's label or the AI reviewer's acceptance. It checks the CSS text only: no case, no model, no
+server.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -21,8 +25,59 @@ COLORS = {
     "--muted": "#5f5a51",
     "--paper": "#f7f5f0",
     "--line": "#dedad0",
+    "--accent": "#1d3557",
+    "--accent-wash": "#e4eaf2",
+    "--support": "#2f5d43",
+    "--support-wash": "#e6eee8",
     "--signal": "#9a3a2c",
+    "--signal-wash": "#f4e5e1",
+    "--quote": "#f3e3a6",
 }
+# Colors that carry text, and the fills text sits on. Every pair must pass WCAG AA for body text.
+TEXT_COLORS = ("--ink", "--muted", "--accent", "--support", "--signal")
+FILLS = ("--paper", "--line", "--accent-wash", "--support-wash", "--signal-wash", "--quote")
+AA = 4.5
+# The only elements the support green may color, matched at the END of a selector (its
+# ::before or ::after set aside), so the hook is the element the rule colors: a condition on an
+# ancestor or inside :has() can narrow a rule but never make another element green.
+# - a Supported verdict that has earned it (v-earned, which only _vcls in ui/pages.py writes: an
+#   expert, counsel or the code checks stand behind the verdict and nothing changed after the run)
+# - the Supported group's count tile (t-sup, its name mark and its number) and heading mark (#sup)
+# - "Records found" on an assumption the records cover, at a named tier, that nothing stands
+#   against (li.ok.unopposed .said)
+# - the Timeline's code-compared matches, inside the Timeline list (.tl) only, so a chip another
+#   page writes takes no green: the Matches chip (chip.ok) and, only inside a row with that
+#   chip, a record inside the stated time or within the examiner's own tolerance of it (d-ok;
+#   core/report/timeline.py writes d-ok on the records around a moment no record is tied to as
+#   well, and those stay ink)
+# A new use is a decision about what may look supported: add it here on purpose.
+SUPPORT_HOOKS = re.compile(
+    r"(?:\.v-earned"
+    r"|\.t-sup(?: \.name| \.n)?"
+    r"|#sup \.ghead h2"
+    r"|li\.ok\.unopposed\[data-tier=[a-z_]+\] \.said"
+    r"|\.tl \.chip\.ok"
+    r"|\.tl > li:has\(\.chip\.ok\) \.d-ok)$"
+)
+PSEUDO_ELEMENT = re.compile(r"::(before|after)$")
+# Marks that must never take it: support resting on the AI reviewer, support that still waits on
+# the expert, unproven, not tested, and a model's own stance label or AI-reviewed tier.
+NEVER_SUPPORT = re.compile(r"v-supai|v-await|v-unp|v-nt|b-ai|b-open|ai_reviewed|inferred")
+# The green is opt-in everywhere it stands for a verdict. A verdict class alone (v-sup,
+# v-supchk, v-supcou) never carries it: the rule must hang on v-earned.
+VERDICT = re.compile(r"\.v-sup(chk|cou)?(?![a-z])")
+# The Supported count and heading stand for a whole group, which can hold a claim whose support
+# rests on the AI reviewer or is not current. Their green rules must hang on a class that
+# ui/pages.py (_support_mark) sets only when every supported claim earned it, so a page that
+# sets none stays ink.
+AGGREGATE = re.compile(r"\.t-sup(?![a-z])|#sup(?![a-z])")
+EARNED = (".sup-earned", ".sup-confirmed")
+# The classes the green rules hang on. Each is written in one place, a single string in
+# ui/pages.py (_vcls, _support_mark, _must_be_true), so no other page or report fragment can
+# hand an element the green.
+OPT_IN = ("v-earned", "sup-earned", "sup-confirmed", "unopposed")
+# "Records found" is green only at these tiers: the records, counsel's review, an expert.
+GREEN_TIERS = {"observed", "derived", "counsel_reviewed", "confirmed"}
 SPACING = {f"--s{i + 1}": f"{px}px" for i, px in enumerate((4, 8, 12, 16, 24, 32, 48, 64))}
 TYPE = {
     "--t1": "12px",
@@ -60,18 +115,43 @@ _NAMED = re.compile(
 )
 
 
-def _blocks(css: str) -> list[list[tuple[str, str]]]:
-    """Each rule's `property: value` pairs, one list per rule, comments removed."""
+def _rules(css: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Each rule as (selector, its `property: value` pairs), comments removed. A rule inside an
+    @media block is listed like any other; the block itself has no declarations of its own."""
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    out: list[list[tuple[str, str]]] = []
-    for body in re.findall(r"\{([^{}]*)\}", css):
+    out: list[tuple[str, list[tuple[str, str]]]] = []
+    for selector, body in re.findall(r"([^{}]*)\{([^{}]*)\}", css):
         block: list[tuple[str, str]] = []
         for decl in body.split(";"):
             if ":" in decl:
                 prop, value = decl.split(":", 1)
                 block.append((prop.strip(), " ".join(value.split())))
-        out.append(block)
+        out.append((" ".join(selector.split()), block))
     return out
+
+
+def _strings(path: Path) -> list[str]:
+    """Every string a module holds outside its docstrings, the pieces of an f-string included.
+    Comments are not strings."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+
+def _blocks(css: str) -> list[list[tuple[str, str]]]:
+    """Each rule's `property: value` pairs, one list per rule, comments removed."""
+    return [block for _, block in _rules(css)]
 
 
 def _declarations(css: str) -> list[tuple[str, str]]:
@@ -96,7 +176,27 @@ def _parts(value: str) -> list[str]:
 
 
 def _tokens() -> dict[str, str]:
-    return dict(re.findall(r"(--[a-z0-9]+):\s*([^;]+);", TOKENS_CSS))
+    css = re.sub(r"/\*.*?\*/", "", TOKENS_CSS, flags=re.S)
+    return dict(re.findall(r"(--[a-z0-9-]+):\s*([^;]+);", css))
+
+
+def _luminance(color: str) -> float:
+    """WCAG relative luminance of a #rrggbb color."""
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two token names."""
+    hi, lo = sorted((_luminance(COLORS[a]), _luminance(COLORS[b])), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _token(value: str) -> str | None:
+    """The color token a value is, when it is exactly one."""
+    m = re.fullmatch(r"var\((--[a-z-]+)\)", value)
+    return m.group(1) if m and m.group(1) in COLORS else None
 
 
 def _app_css() -> str:
@@ -112,7 +212,7 @@ def _app_declarations() -> list[tuple[str, str]]:
     return _declarations(_app_css())
 
 
-def test_the_token_block_is_the_agreed_scales_and_five_colors() -> None:
+def test_the_token_block_is_the_agreed_scales_and_colors() -> None:
     tokens = _tokens()
     for name, value in {**COLORS, **SPACING, **TYPE}.items():
         assert tokens.get(name) == value, name
@@ -122,7 +222,7 @@ def test_the_token_block_is_the_agreed_scales_and_five_colors() -> None:
     assert tokens["--radius"] == "4px"
 
 
-def test_no_color_outside_the_five_tokens() -> None:
+def test_no_color_outside_the_tokens() -> None:
     bad = [
         (prop, value)
         for prop, value in _app_declarations()
@@ -131,6 +231,76 @@ def test_no_color_outside_the_five_tokens() -> None:
     assert bad == []
     # the inline mark takes its two colors from CSS classes, not from fills of its own
     assert not _COLOR_LITERAL.search(MARK)
+
+
+def test_text_passes_aa_on_every_fill_it_sits_on() -> None:
+    """Every text color on every fill text can sit on: the page, the quiet fill, each wash and
+    the highlighter. A page puts one rule's text on another rule's fill (a red verdict in the
+    open ledger row, a green match on a targeted Timeline row), so every pair is held, not only
+    the ones a single rule sets. Then every rule that sets a text color and a fill together,
+    which also covers light text on a dark fill."""
+    pairs = {(text, fill) for text in TEXT_COLORS for fill in FILLS}
+    for _, block in _rules(_app_css()):
+        rule = dict(block)
+        text = _token(rule.get("color", ""))
+        fill = _token(rule.get("background", "")) or _token(rule.get("background-color", ""))
+        if text and fill:
+            pairs.add((text, fill))
+    bad = {pair: round(_contrast(*pair), 2) for pair in sorted(pairs) if _contrast(*pair) < AA}
+    assert bad == {}
+
+
+def test_support_green_reaches_only_what_earned_it() -> None:
+    """Green says "for the claim as stated, and someone or the code checks stand behind it". A
+    model's stance label, the AI reviewer's acceptance, support that waits on the expert,
+    unproven and not tested never take it, so an unconfirmed item cannot look confirmed. Where
+    green stands for a verdict it is opt-in: the rule hangs on a class the page writes only
+    when the verdict earned it, so markup that says nothing stays ink."""
+    rules = _rules(_app_css())
+    bad: list[str] = []
+    for selector, block in rules:
+        if not any("--support" in value for _, value in block):
+            continue
+        for part in selector.split(","):
+            subject = PSEUDO_ELEMENT.sub("", part.strip())
+            if not SUPPORT_HOOKS.search(subject) or NEVER_SUPPORT.search(part):
+                bad.append(part.strip())
+            elif ":not(" in part:  # the checks below read class names, so none may be negated
+                bad.append(f"negation in a green rule: {part.strip()}")
+            elif AGGREGATE.search(part) and not any(cls in part for cls in EARNED):
+                bad.append(f"aggregate without an earned class: {part.strip()}")
+            elif VERDICT.search(part) and ".v-earned" not in part:
+                bad.append(f"verdict green without v-earned: {part.strip()}")
+            elif (
+                "li.ok" in part and not set(re.findall(r"data-tier=([a-z_]+)", part)) <= GREEN_TIERS
+            ):
+                bad.append(f"records-found green at another tier: {part.strip()}")
+    assert bad == []
+    # the solid green marks, the expert-confirmed marks: a verdict's only on v-sup with v-earned,
+    # a group's only on sup-confirmed
+    for selector, block in rules:
+        rule = dict(block)
+        if "var(--support)" not in rule.get("background", "") + rule.get("background-color", ""):
+            continue
+        for part in selector.split(","):
+            if AGGREGATE.search(part):
+                assert ".sup-confirmed" in part and ".sup-earned" not in part, part
+            else:
+                assert ".v-sup.v-earned" in part, part
+    # the AI-reviewed Supported mark keeps the base ring: no rule gives v-supai a color at all
+    assert not any("v-supai" in s for s, _ in rules)
+    # one string in ui/pages.py writes each class a green rule hangs on, whatever quotes the
+    # markup around it uses; the stylesheets (ui/css, ui/theme.py) only read them
+    written: dict[str, list[str]] = {name: [] for name in OPT_IN}
+    for folder in ("ui", "core", "cli"):
+        for path in sorted((ROOT / folder).rglob("*.py")):
+            if path.parent.name == "css" or path.name == "theme.py":
+                continue
+            for text in _strings(path):
+                for name in OPT_IN:
+                    if name in text:
+                        written[name].append(path.relative_to(ROOT).as_posix())
+    assert written == {name: ["ui/pages.py"] for name in OPT_IN}
 
 
 def test_no_gradient_shadow_or_opacity_shade() -> None:

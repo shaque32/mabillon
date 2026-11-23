@@ -80,7 +80,7 @@ ul.ready li::before { content: ""; display: inline-block; width: var(--dot);
   border: 2px solid var(--muted); }
 ul.ready li.ok::before { background: var(--muted); }
 ul.ready li.todo { color: var(--ink); }
-ul.ready li.todo::before { border-color: var(--ink); }
+ul.ready li.todo::before { border-color: var(--accent); }
 .checks { display: grid; gap: var(--s2); margin: 0 0 var(--s3); }
 .checks label { display: flex; align-items: flex-start; gap: var(--s2); margin: 0;
   max-width: 88ch; cursor: pointer; }

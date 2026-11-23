@@ -22,7 +22,7 @@ CSS = """
   list-style: none; padding: 0; margin: 0; }
 .pg-overview .casestatus .findings li { margin: 0; }
 .pg-overview .casestatus .findings a { display: inline-flex; align-items: center;
-  gap: var(--s2); text-decoration: none; }
+  gap: var(--s2); color: var(--ink); text-decoration: none; }
 .pg-overview .casestatus .findings .name { display: inline-flex; align-items: center;
   gap: var(--s2); color: var(--muted); }
 .pg-overview .casestatus .findings a:hover .name { color: var(--ink); }
@@ -30,8 +30,14 @@ CSS = """
   height: var(--dot); border-radius: 50%; border: 2px solid var(--muted); }
 .pg-overview .casestatus .findings .t-con::before { background: var(--signal);
   border-color: var(--signal); }
-.pg-overview .casestatus .findings .t-sup::before { background: var(--ink);
-  border-color: var(--ink); }
+.pg-overview .casestatus .findings .t-sup::before { border-color: var(--ink); }
+/* the Supported mark follows the weakest supported claim, as on Claims (ui/css/claims.py):
+   an ink ring unless _case_status marks the list sup-earned (green ring) or sup-confirmed
+   (solid green, an expert confirmed every one). The counts on this page stay ink for every
+   finding, Contradicted included: only the marks carry color here. */
+.pg-overview .casestatus .findings.sup-earned .t-sup::before { border-color: var(--support); }
+.pg-overview .casestatus .findings.sup-confirmed .t-sup::before {
+  background: var(--support); border-color: var(--support); }
 .pg-overview .casestatus .findings b { font-variant-numeric: tabular-nums; }
 .pg-overview .casestatus .verdict { margin: 0; }
 .pg-overview #withheld { margin: 0 0 var(--s4); }

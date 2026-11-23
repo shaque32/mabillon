@@ -188,6 +188,13 @@ def _assert_agree(app: App, conn: sqlite3.Connection) -> Counter:
     for cid, r in report.items():
         s = screen[cid]
         assert s["ledger"] == (s["label"], s["css"]), f"{cid}: queue and claim page differ"
+        # the screen adds one class of its own to a verdict's: v-earned, which lets a Supported
+        # verdict take the support green (ui/pages.py, _vcls). It is never on a verdict the
+        # report does not also show as supported on an expert's, counsel's or the checks' word.
+        shown = s["css"].split()
+        if "v-earned" in shown:
+            assert r["css"] in ("v-sup", "v-supchk", "v-supcou"), f"{cid}: green on {r['css']}"
+        s = {**s, "css": " ".join(c for c in shown if c != "v-earned")}
         for key in ("status", "label", "css"):
             assert s[key] == r[key], f"{cid}: {key} {s[key]!r} on screen, {r[key]!r} in report"
         # the same items, in any order (the screen groups them by what the expert should do)
