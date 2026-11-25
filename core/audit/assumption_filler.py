@@ -1952,6 +1952,7 @@ class CallForm:
     length: str | None
     one_account: bool = False  # the clause names b by a name and its id: one account
     from_phone: str | None = None  # "placed a call from <PHONE> to": the phone a used
+    ordinal: bool = False  # "placed a second call": an earlier call no check reads
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -5749,6 +5750,12 @@ class LocalAssumptionFiller:
             return out
         if "event" not in allowed_ids:
             raise Reject(f"the claim states more than its checks read ({', '.join(words)})")
+        return [*out, self._unread_event(out)]
+
+    @staticmethod
+    def _unread_event(out: list[Proposal]) -> Proposal:
+        """The core event code adds for words no check reads: the first core assumption's
+        parties, phones, window and apps."""
         allowed = TEMPLATES["event"].allowed
         base = next(p for p in out if p.is_core and isinstance(p.params, Mapping))
         event = {
@@ -5756,7 +5763,7 @@ class LocalAssumptionFiller:
             for k, v in base.params.items()
             if k in allowed and k in (*PARTY_FIELDS, "device_ids", "window", "channels")
         }
-        return [*out, Proposal("event", event, is_core=True, code_made=True, unread=True)]
+        return Proposal("event", event, is_core=True, code_made=True, unread=True)
 
     def _add_meaning(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None
@@ -6836,6 +6843,7 @@ class LocalAssumptionFiller:
             ):
                 return None
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
+        noun = _words(np).split()
         return CallForm(
             a=tokens[m.start("a")],
             b=b,
@@ -6844,6 +6852,7 @@ class LocalAssumptionFiller:
             length=length,
             one_account=one_account,
             from_phone=from_phone,
+            ordinal=len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS,
         )
 
     @staticmethod
@@ -6939,12 +6948,20 @@ class LocalAssumptionFiller:
             return out
         if made is None:
             return out
-        params, missed = made
+        params, missed, ordinal = made
+        if ordinal and not missed and "event" not in allowed_ids:
+            return out  # "a second call": no caller row without the event an expert carries
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
             out.append(Proposal("event", event, is_core=True, code_made=True))
+        elif ordinal:
+            # "a second call": the ordinal states an earlier call no check reads, so the claim
+            # keeps a core event an expert carries whatever `unread_words` makes of the
+            # wording (CodeRabbit on #279: "a second Talk and Text call" with a tested
+            # length); the same event `_add_unread_event` would add
+            out.append(self._unread_event(out))
         return out
 
     def _one_party(self, accounts: list[str]) -> bool:
@@ -6963,8 +6980,9 @@ class LocalAssumptionFiller:
 
     def _caller_params(
         self, claim: Claim, rt: dict[str, Any]
-    ) -> tuple[dict[str, Any], bool] | None:
-        """The caller assumption's parameters and whether the call was missed, from the claim's
+    ) -> tuple[dict[str, Any], bool, bool] | None:
+        """The caller assumption's parameters, whether the call was missed and whether the
+        clause writes it with an ordinal ("a second call"), from the claim's
         plain form and its call's time range `rt`; None when the claim says no caller. Raises
         Reject where the form's sides are not the time range's parties."""
         handles = list(rt.get("handles", []))
@@ -7047,7 +7065,7 @@ class LocalAssumptionFiller:
             params["device_ids"] = device_ids
         if rt.get("duration_s"):
             params["duration_s"] = rt["duration_s"]
-        return params, form.missed
+        return params, form.missed, form.ordinal
 
     def _absence_parties(
         self,

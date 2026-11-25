@@ -8,8 +8,9 @@
     hold an ordinal right after its article ("placed a second Signal call to", "received a
     third call from"), and the caller row is read for that call. Filler 13 refused it because
     the ordinal states an earlier call no check reads; that word now keeps the claim's core
-    event (the unread-words guard also reads "second" before an app and "call"), so the claim
-    still never rests on its checks alone.
+    event, so the claim still never rests on its checks alone. The caller row itself adds that
+    event (the one the unread-words guard would add), so it never depends on how the guard
+    reads the wording; with no event allowed, the ordinal gets no caller row.
   - The other side may be named by what the log shows for it: "to the party displayed as
     "X"", also "contact", "caller", "number", "user" or "account", "displayed" or "shown as".
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
@@ -31,8 +32,9 @@
   as" read for an account side, refused for a person, for a handle that placed the call and
   for other descriptors; an ordinal beside a tested length keeps the event however many of the
   call's words stand between, or a hyphen, which fails without the fix; the ordinal guards
-  stop at another phrase and stay fast on a run of hyphens). `tests/test_fill*.py`,
-  `tests/*filler*.py`, `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,220
+  stop at another phrase and stay fast on a run of hyphens; a caller read through an ordinal
+  keeps its event even when the guard reads nothing, which fails without the fix). `tests/test_fill*.py`,
+  `tests/*filler*.py`, `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,222
   passed. Free replay of stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106): one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
   the window), so it is held open by a check, not only by the event. Bars 1 to 3 unchanged on

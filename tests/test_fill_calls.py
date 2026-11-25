@@ -16,7 +16,14 @@ from core.audit.assumption_filler import (
     Reject,
     _Account,
 )
-from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, instantiate
+from core.audit.assumptions import (
+    CODE_MADE_NOTE,
+    TEMPLATES,
+    UNREAD_EVENT_NOTE,
+    Proposal,
+    TemplateAssumptionBuilder,
+    instantiate,
+)
 from core.audit.checks import CHECKS, run_checks
 from core.audit.checks._common import calls_for_accounts
 from core.audit.rules import decide_verdict
@@ -299,6 +306,28 @@ def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn, noun, length):
                    window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
     assert list(made["caller"].params.sent_by) == [REYES]
     assert bool(made["caller"].params.duration_s) == length and made["event"].is_core
+
+
+@pytest.mark.parametrize("unread", [True, False])
+def test_a_caller_read_through_an_ordinal_always_keeps_its_event(conn, monkeypatch, unread):
+    # the caller row itself carries the ordinal's event, whatever the unread-words guard
+    # makes of the wording: an app named "Talk and Text" stops its run (CodeRabbit on #279)
+    if not unread:
+        monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    text = f"{AT} Item 1 placed a second call to (212) 555-0199."
+    made, _ = fill(conn, text)
+    assert list(made["caller"].params.sent_by) == [PETROV]
+    assert made["event"].is_core and made["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+    # with no event allowed, the ordinal gets no caller row
+    answer = proposal(people=[], quoted_text="", channels=["call"],
+                      window=W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09"))  # fmt: skip
+    f = LocalAssumptionFiller(FakeModel(json.dumps({"assumptions": [answer.model_dump()]})), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    text = f"{AT} PETROV placed a second call to (212) 555-0199."
+    out = f(
+        claim(text, ClaimType.COMMUNICATION), [t for t in TEMPLATES.values() if t.id != "event"]
+    )
+    assert "caller" not in {p.template_id for p in out}
 
 
 def test_the_ordinal_guards_read_only_the_call_s_own_words_and_stay_fast():
