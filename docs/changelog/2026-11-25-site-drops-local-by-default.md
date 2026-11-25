@@ -1,4 +1,4 @@
-## 2026-11-25: Site drops "local by default"; new data headline (#PR)
+## 2026-11-25: Site drops "local by default"; new data headline (#278)
 - Changed: the site still said "Local by default. Cloud AI only when your case allows it and you
   opt in", untrue since #254 (cloud AI, Claude Opus through Anthropic, is the recommended choice
   at setup for an ordinary case). Arsh asked for it dropped and a new line (2026-11-25), and
@@ -10,7 +10,7 @@
   offline"; the re-check bundle line says "on their own computer" instead of "offline". The site
   avoids the app's label "Fast", which visitors do not know. `site/privacy.html` (Arsh-signed):
   new intro sentence and "The software, in short" paragraph, effective date 25 November 2026.
-- Where: branch claude/project-thread-j4v7t7
+- Where: PR #278
 - Verified: wording checked against `core/casework/cloud.py` (FAST_EXPLAINED, ATTESTATION,
   CSAM_NOTE), `docs/SECURITY_PRIVACY.md` sections 3 and 5, and the hash-chained request log
   (`cloud.sent` before each send). The site claims no Mabillon zero-retention agreement (none is
