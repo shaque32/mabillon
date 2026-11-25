@@ -1799,12 +1799,12 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         one = n == 1
         tier = e(same.tier.value).capitalize() if same.tier else ""
         of = (q(same.app) if same.app else "") + (
-            f" thread {q(same.thread)}" if same.thread else ""
+            f" thread {screen_records.titled(same.thread)}" if same.thread else ""
         )
         if same.app and only_messages:
             kind = f"{q(same.app)} message{'' if one else 's'}"
             what = (f"{tier} {kind}" if tier else kind) + (
-                f" in thread {q(same.thread)}" if same.thread else ""
+                f" in thread {screen_records.titled(same.thread)}" if same.thread else ""
             )
         else:
             kind = f"record{'' if one else 's'}"

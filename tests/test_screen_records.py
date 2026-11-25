@@ -201,6 +201,10 @@ def test_an_attachment_takes_its_messages_time(conn) -> None:
     sources = records.Sources(conn)
     table = records.table([a], sources)
     assert "no date" not in table and records.CARRIED_TIME_NOTE in table
+    # with no time on its message, the row shows none and does not say whose it is
+    bare = replace(a, local="time unknown")
+    assert records.CARRIED_TIME_NOTE not in records.table([bare, m], sources)
+    assert "attached to" not in records.line(conn, att, sources, row=bare)
     assert records.CARRIED_TIME_NOTE not in records.table([m], sources)
     assert "(the time of the message it is attached to)" in records.line(conn, att, sources)
 
@@ -246,6 +250,20 @@ def test_a_call_whose_stored_time_cannot_be_read_says_so(conn) -> None:
         assert row.local.startswith("time unknown")
     finally:
         conn.rollback()
+
+
+def test_the_row_a_page_was_opened_for_always_shows_its_date(conn) -> None:
+    rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"])  # both on Mar 12
+    sources = records.Sources(conn)
+    plain = records.table(rows, sources)
+    assert plain.count("<td class='d'>Mar 12, 2026</td>") == 1
+    marked = records.table([rows[0], replace(rows[1], target=True)], sources)
+    assert marked.count("<td class='d'>Mar 12, 2026</td>") == 2
+
+
+def test_a_thread_with_no_title_is_not_cited_as_one() -> None:
+    assert records.titled("@northstar") == '<span class="q">@northstar</span>'
+    assert records.titled(None) == records.titled("(untitled)") == "(untitled)"
 
 
 def test_a_table_of_utc_times_is_not_headed_local_time(conn) -> None:
@@ -551,6 +569,8 @@ def test_a_cited_id_that_is_not_a_record_is_not_described_with_the_others(
     assert "1 of the 2 is not among the case's records." in above
     assert "in thread" not in above and "item1.xlsx" not in above and "Observed" not in above
     assert "record not found" in table and "<th>Tier</th>" in table
+    # nothing was read for that id, so its row claims nothing about a date either
+    assert "no date" not in table
 
 
 def test_one_message_in_a_conversation_table_is_said_in_the_singular(conn) -> None:

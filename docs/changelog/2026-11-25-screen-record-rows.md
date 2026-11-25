@@ -20,8 +20,10 @@
     "Time (UTC)" and the note says UTC. A value the source printed that was not read as a time
     prints as stored, with "date not read" in the date cell so it does not read as the day of
     the row above; "no date" is for a record the source gives no time for at all (a contact, a
-    message with no time). An attachment has no time of its own: its row shows its message's
-    time and says so, and the fold gives that message's exported line (UTC and as printed). A
+    message with no time). The row a page was opened for always shows its own date. A thread the
+    source gives no title reads "(untitled)" as the tool's own word, not as cited text. An
+    attachment has no time of its own: its row shows its message's time, when that message has
+    one, and says so, and the fold gives that message's exported line (UTC and as printed). A
     message whose stored time is not a time, or is too near year 1 or 9999 to move into the
     phone's zone, keeps its row, sender and direction and reads "time unknown"; a case made
     before messages kept the sender text as printed still gets its rows.
@@ -69,7 +71,7 @@
     later message (a changed handle); a table row says only what the message's own row gives.
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (49 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (51 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; times said as UTC, and headed so, where the
   phone's zone is unknown; the note naming only the zones of the phones its rows are from, and
   left out when no row has a time or an Excel row; an attachment's time, said to be its

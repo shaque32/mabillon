@@ -100,7 +100,7 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
     sources = screen_records.Sources(conn)
     note, table = _table(conn, view.lines, t.app, sources, span)
     out = [
-        f"<p class='conv-head'>{q(t.app)} thread {q(t.title or '(untitled)')} on {q(t.device)} "
+        f"<p class='conv-head'>{q(t.app)} thread {screen_records.titled(t.title)} on {q(t.device)} "
         f"in {q(t.file_name)}. {t.messages:,} message{'' if t.messages == 1 else 's'}"
         + _span(conn, t, sources)
         + f". Showing {len(view.lines)}"
@@ -123,7 +123,7 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
     for r in view.related:
         rt = r.thread
         out.append(
-            f"<p><strong>{q(rt.app)} thread {q(rt.title or '(untitled)')}</strong> on "
+            f"<p><strong>{q(rt.app)} thread {screen_records.titled(rt.title)}</strong> on "
             f"{q(rt.device)} in {q(rt.file_name)} ({rt.messages:,} "
             f"message{'' if rt.messages == 1 else 's'}). Shares "
             + ", ".join(q(s.split(":", 1)[1]) for s in r.shared)

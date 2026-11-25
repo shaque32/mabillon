@@ -42,6 +42,7 @@ LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
 CARRIED_TIME_NOTE = "The time is that of the message it is attached to."
 # a message with no sender account, as core/restore/view.py and core/audit/context.py name it
 UNKNOWN_SENDERS = frozenset({"unknown", "unknown sender"})
+UNTITLED = "(untitled)"  # a thread the source gives no title: the tool's own word, never cited
 # what reading a stored time can raise: not an ISO time (ValueError), or a date so near year 1
 # or 9999 that moving it into the phone's zone leaves the calendar (OverflowError)
 UNREAD = (ValueError, OverflowError)
@@ -214,6 +215,13 @@ def follows(sender: str, direction: str) -> bool:
     return direction == ("outgoing" if own else "incoming")
 
 
+def titled(title: str | None) -> str:
+    """A thread's title as HTML: cited as the source's text, or the tool's own "(untitled)"
+    for a thread the source gives no title, so the placeholder never reads as a title the
+    source printed."""
+    return q(title) if title and title != UNTITLED else e(UNTITLED)
+
+
 def way_words(direction: str) -> str:
     """A direction that has to be said, in words: "incoming", "outgoing", or "direction
     unknown" for any other value, as the bubbles say it (core/report/selection.py
@@ -286,7 +294,7 @@ def _of_messages(
             f" LEFT JOIN accounts a ON a.id = m.sender_account_id WHERE m.id IN ({marks})",
             part,
         ):
-            out[r[0]] = (r[1], r[2] or "", r[3] or "(untitled)", r[4] or "", r[5] or "")
+            out[r[0]] = (r[1], r[2] or "", r[3] or UNTITLED, r[4] or "", r[5] or "")
     return out
 
 
@@ -558,10 +566,13 @@ def table(
                 # is: no time in the source at all (a contact, a message the source gives no
                 # time for), or a value the source printed that was not read as a time
                 date = "no date" if r.local in ("", "time unknown") else "date not read"
+                if not r.source_id:  # no record was read: nothing is known of its time
+                    date = ""
                 cells.append(f"<td class='d'>{date}</td><td class='t'>{e(r.local)}</td>")
                 last_date = None
             else:
-                date = "" if rd.date == last_date else e(rd.date)
+                # the row the page was opened for always shows its own date
+                date = "" if rd.date == last_date and not r.target else e(rd.date)
                 cells.append(f"<td class='d'>{date}</td><td class='t'>{when(r.local, False)}</td>")
                 last_date = rd.date
         if named:
@@ -569,9 +580,11 @@ def table(
         # the line above names no one thread: each message says its own (its counterparty),
         # under the message, where the row has room
         where = (
-            f"<br><span class='muted'>in thread {q(r.title)}</span>" if split and r.thread else ""
+            f"<br><span class='muted'>in thread {titled(r.title)}</span>"
+            if split and r.thread
+            else ""
         )
-        if r.carrier and r.local:  # an attachment: the time in its row is not its own
+        if r.carrier and reading(r.local):  # an attachment: the time in its row is not its own
             where += f"<br><span class='muted'>{CARRIED_TIME_NOTE}</span>"
         cells.append(f"<td class='what'>{r.what}{where}</td>")
         if not same.tier:
@@ -624,10 +637,10 @@ def line(
     if r.thread:
         # " · " parts the line, so a direction that has to be said goes in brackets here
         sender = r.who.removesuffix(f" · {e(r.way)}") + (f" ({e(r.way)})" if r.way else "")
-        head = f"{sender} in {q(r.app)} thread {q(r.title)}"
+        head = f"{sender} in {q(r.app)} thread {titled(r.title)}"
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     what = "" if quoted is not None and r.what == q(quoted) else r.what
     at = when(r.local) if r.local else ""
-    if at and r.carrier:  # an attachment: the time is its message's, and says so
+    if r.carrier and reading(r.local):  # an attachment: the time is its message's
         at += " (the time of the message it is attached to)"
     return " · ".join(x for x in (what, at, where) if x)
