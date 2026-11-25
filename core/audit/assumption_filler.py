@@ -3401,16 +3401,16 @@ _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as
 # A side written as a saved contact or a phone number by name, which no check reads: 'the
 # contact "Marc Garage"', "the contact named Marc", "his contact saved as Marc", 'the phone
 # number "Marc Garage"', "the number Marc Garage", "contact Marc Garage" (Claude review on
-# #279; filler 15). Up to two words may stand before the noun ("his saved contact", "the
+# #279; filler 15). Up to three words may stand before the noun ("his saved contact", "the
 # WhatsApp number"). A bare "contact" ("made contact with") stays plain, and so does a phone
 # written as a number ("the number (212) 555-0199"), the side a check reads. The quote is
 # looked for in the text before quotes are blanked.
 _SIDE_ART = r"(?:the|a|an|his|her|their|its|my|your|our)"
-_SIDE_WORDS = r"(?:(?:saved|phone|cell|cellphone|mobile|telephone|(?-i:[A-Z][\w-]*))\s+){0,2}"
+_SIDE_WORDS = r"(?:(?:saved|phone|cell|cellphone|mobile|telephone|(?-i:[A-Z][\w-]*))\s+){0,3}"
 _SIDE_NAMED_RE = re.compile(
     rf"\b(?:(?P<art>{_SIDE_ART})\s+)?{_SIDE_WORDS}(?P<noun>contact|number)\b"
     r"(?:\s+(?:entry|card|name)\b)?"
-    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as"
+    r"(?:\s+(?P<how>named|called|(?:saved|listed|stored)\s+(?:as|for|under)|belonging\s+to"
     r"|(?:with|by|under)\s+the\s+name)\b)?"
     r"(?:\s+(?:for|under)\b)?",  # 'the contact for "Marc Garage"' (Claude review on #279)
     re.I,
@@ -3423,20 +3423,35 @@ _NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w
 # What names a side right after "the number": a name or a handle, never the phone itself
 # ("the number (212) 555-0199") or "a number of calls" (filler 15)
 _NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|[\w.%+-]+@)", re.I)
-# A bare "contact" before a capitalised name: "called contact Marc Garage" (filler 15)
+# A bare "contact" before a capitalised name, right after a call's word: "called contact Marc
+# Garage", "a call to contact Marc Garage", never the verb ("told him to contact Marc Garage",
+# "Contact PETROV later") (filler 15)
 _CAP_AFTER_RE = re.compile(r"\s+(?-i:[A-Z])", re.I)
+_CALL_BEFORE_CONTACT_RE = re.compile(
+    r"(?:\b(?:called|phoned|rang|dial(?:l)?ed|from|with)|\bcalls?\s+(?:to|from|with))\s+$", re.I
+)
 # A saved contact or a number written after the name: '"Marc Garage" (a contact of REYES)',
 # '"Marc Garage", his contact,', '"Marc Garage" on WhatsApp, his contact', '"Marc Garage" —
 # his contact —', '"Marc Garage", who is his contact', '"Marc Garage", a number' (Claude
-# review on #279; filler 15). Never "a contact that lasted", "a contact for two minutes", ",
-# the number (212) 555-0199" (the phone itself) or ", the number of calls".
-_SIDE_AFTER_RE = re.compile(
-    rf"(?:\(\s*(?:{_SIDE_ART}\s+)?"
-    rf"|(?:[,\u2013\u2014]\s*|\s-\s+|\b(?:who|which|that)\s+(?:is|was)\s+){_SIDE_ART}\s+)"
-    rf"{_SIDE_WORDS}(?P<noun>contact|number)\b"
-    r"(?!\s*[\d(+])"
-    r"(?!\s+(?:that|which|lasting|lasted|between|with|for|of\s+(?-i:[a-z0-9])))",
-    re.I,
+# review on #279; filler 15). Each names its separator `sep`, which must stand outside every
+# quote. Right after a quoted name ('"Marc Garage", a contact of his') any words may follow,
+# as in filler 14; after a capitalised word, or in brackets, never "a contact that lasted", "a
+# contact for two minutes" or "the number of calls", and nothing after a lower-case word ("12
+# messages, a number the log confirms"). Never the phone itself (", the number (212) ...").
+_SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
+_SIDE_NOUN = rf"{_SIDE_WORDS}(?P<noun>contact|number)\b(?!\s*[\d(+])"
+_SIDE_NOT_A_SIDE = r"(?!\s+(?:that|which|lasting|lasted|between|with|for|of\s+(?-i:[a-z0-9])))"
+_SIDE_AFTER_RES = (
+    re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}{_SIDE_NOT_A_SIDE}", re.I),
+    re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}", re.I),
+    re.compile(
+        rf"\b(?-i:[A-Z])[\w-]*(?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_NOT_A_SIDE}",
+        re.I,
+    ),
+    re.compile(
+        rf"(?P<sep>\b(?:who|which|that)(?:\s+(?:is|was)|['’]s))\s+{_SIDE_ART}\s+{_SIDE_NOUN}",
+        re.I,
+    ),
 )
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
@@ -4046,23 +4061,34 @@ class LocalAssumptionFiller:
             # "the contact Marc Garage": an article or possessive before the noun and a name
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
             # (Claude review on #279; filler 15)
-            after = whole, named.end()
-            if named.group("noun").casefold() == "number":
+            how = named.group("how")
+            number = named.group("noun").casefold() == "number"
+            if number and how and how.casefold() == "called":
+                # "a number called PETROV" is the call's verb, never a name (Claude review on #282)
+                how, end = None, named.end("noun")
+            else:
+                end = named.end()
+            after = whole, end
+            if number:
                 by_name = named.group("art") and _NUMBER_NAME_AFTER_RE.match(*after)
             elif named.group("art"):
                 by_name = _NAME_AFTER_RE.match(*after)
             else:
-                by_name = _CAP_AFTER_RE.match(*after)
-            if named.group("how") or _OPEN_QUOTE_RE.match(*after) or by_name:
-                extra.append(" ".join(named.group(0).casefold().split()))
+                by_name = _CAP_AFTER_RE.match(*after) and _CALL_BEFORE_CONTACT_RE.search(
+                    whole, 0, named.start()
+                )
+            if how or _OPEN_QUOTE_RE.match(*after) or by_name:
+                extra.append(" ".join(whole[named.start() : end].casefold().split()))
         # Searched on the text with its quotes, which '"Marc Garage", his contact' needs, but
         # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
-        # bracket, comma or word the match starts with must stand outside every quote
+        # bracket, comma or word that sets it apart must stand outside every quote
         # (CodeRabbit on #279)
-        for m in _SIDE_AFTER_RE.finditer(whole):
-            at = m.start() + len(m.group(0)) - len(m.group(0).lstrip())
-            if not unquoted_whole[at].isspace():
-                extra.append(m.group("noun").casefold())
+        for rx in _SIDE_AFTER_RES:
+            for m in rx.finditer(whole):
+                sep = m.group("sep")
+                at = m.start("sep") + len(sep) - len(sep.lstrip())
+                if not unquoted_whole[at].isspace():
+                    extra.append(m.group("noun").casefold())
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(

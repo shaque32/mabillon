@@ -862,6 +862,18 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
         'PETROV called "Marc Garage" \u2014 his contact \u2014 on WhatsApp.',
         'PETROV called "Marc Garage" (a contact of REYES) on WhatsApp.',
         'PETROV called "Marc Garage", his WhatsApp contact.',
+        # right after a quoted name any words may follow, as in filler 14 (Claude review on
+        # #282: these regressed)
+        'PETROV called "Marc Garage", a contact of his, on WhatsApp.',
+        'PETROV called "Marc Garage", his contact for years, on WhatsApp.',
+        'PETROV called "Marc Garage", a contact that he saved, on WhatsApp.',
+        'PETROV called "Marc Garage", his contact between 2024 and 2026, on WhatsApp.',
+        # more separators, naming words and words before the noun (Claude review on #282)
+        'PETROV called the number saved for "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage", who\'s his contact, on WhatsApp.',
+        'PETROV called "Marc Garage" -- his contact -- on WhatsApp.',
+        'PETROV called "Marc Garage"; his contact, on WhatsApp.',
+        'PETROV called "Marc Garage", his saved WhatsApp Business contact.',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -886,6 +898,14 @@ def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind)
         "Item 1 placed a call to (212) 555-0199, a contact for two minutes.",
         "the contact between PETROV and REYES",
         "Item 1 called (212) 555-0199, the number of calls being one.",
+        # "called" after "number" is the call's verb; "contact" as a verb; a count's "number"
+        # (Claude review on #282)
+        "An unknown number called PETROV on WhatsApp.",
+        "On June 1, the number called Item 1 twice.",
+        "REYES told PETROV to contact Marc Garage.",
+        "On June 1, Item 1 called REYES. Contact PETROV later.",
+        "PETROV sent REYES 12 messages, a number the log confirms.",
+        "Item 1 called REYES 4 times, a number the call log shows.",
     ],
 )
 def test_a_phone_number_or_a_contact_as_a_communication_stays_plain(conn, text):
@@ -1075,7 +1095,7 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called "Marc Garage" (a contact) on WhatsApp.', "contact"),
         ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
     ):
-        assert any(word in w for w in f.unread_words(text, (), set())), text
+        assert any(word in w.split() for w in f.unread_words(text, (), set())), text
 
 
 def test_unread_words_name_each_word_once(conn):
