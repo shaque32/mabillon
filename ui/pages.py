@@ -2237,6 +2237,7 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
     out.append("<h2>Context</h2>")
     lines = build_context(conn, item.record_id, CONTEXT_WINDOW)
     if lines:
+        out.append(f"<p class='muted cited-note'>{e(screen_records.times_note(conn))}</p>")
         out.append("<div class='thread'>")
         out.append(_msgs(lines))
         out.append("</div>")

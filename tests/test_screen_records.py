@@ -352,6 +352,9 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     item = next(x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant")
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
+    # the item's own page says how to read the times of the messages around it
+    context = page.split("<h2>Context</h2>", 1)[1]
+    assert records.times_note(conn) in context.replace("&#x27;", "'")
 
 
 def test_bubble_times_use_the_same_reading_format(app) -> None:
