@@ -5,8 +5,10 @@ every number, name and wording is invented."""
 import copy
 import json
 import sqlite3
-import time
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -508,14 +510,21 @@ def test_a_stated_length_is_read_only_where_a_row_tests_it(text, tested, read, u
 
 
 def test_the_ordinal_guards_stay_fast():
-    from core.audit.assumption_filler import _UNPLAIN_PHRASES_RE
-
     # a run of hyphens or dashes after "second" is read in one way only: 13 "--" took 7 s
     # before, each more one about four times as long (Claude review on #279)
-    started = time.perf_counter()
-    for text in ("PETROV sent a second " + " ".join(["--"] * 40) + " x", "a second" + "-" * 200):
-        _UNPLAIN_PHRASES_RE.findall(text)
-    assert time.perf_counter() - started < 5
+    # run apart under a hard timeout, so a regression fails instead of hanging the suite
+    code = (
+        "from core.audit.assumption_filler import _UNPLAIN_PHRASES_RE as r\n"
+        "for t in ('PETROV sent a second ' + ' '.join(['--'] * 40) + ' x',"
+        " 'a second' + '-' * 200):\n"
+        "    r.findall(t)\n"
+    )
+    subprocess.run(  # noqa: S603 (the test's own code, run apart)
+        [sys.executable, "-c", code],
+        check=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[1],
+    )
 
 
 @pytest.mark.parametrize(
@@ -809,6 +818,8 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         'PETROV called the contact "Marc Garage" on WhatsApp.',
         "PETROV called the contact named Marc Garage on WhatsApp.",
         'PETROV called his contact saved as "Marc Garage" on WhatsApp.',
+        'PETROV called the contact entry "Marc Garage" on WhatsApp.',
+        'PETROV called Contact "Marc Garage" on WhatsApp.',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -839,6 +850,41 @@ def test_a_side_named_by_unread_words_keeps_its_event_without_the_guard(conn, mo
                     ' "Marc Garage".', people=["PETROV"], handles=["Marc Garage"],
                     channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
     assert "event" not in plain
+
+
+def test_a_saved_contact_a_row_reads_is_no_unread_word(conn):
+    # a kept contact_entry row reads the saved contact, so its words are plain beside one;
+    # "the number displayed as" still is not (Claude review on #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = 'Item 1 holds the contact "Marc Garage" saved with the number (212) 555-0199.'
+    assert "the contact" not in f.unread_words(text, (), {"contact"})
+    assert "the contact" in f.unread_words(text, (), set())
+    shown = 'PETROV called the number displayed as "Marc Garage".'
+    assert "number displayed as" in f.unread_words(shown, (), {"contact"})
+
+
+def test_an_ordinal_keeps_its_event_beside_a_model_event(conn):
+    # a model's event about something else says nothing of the earlier call the ordinal
+    # states, so code's unread event still stands beside it (Claude review on #279)
+    window = W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09")
+    answer = proposal(people=[], quoted_text="", channels=["call"], window=window)
+    event = {**answer.model_dump(), "template_id": "event"}
+    model = FakeModel(json.dumps({"assumptions": [answer.model_dump(), event]}))
+    f = LocalAssumptionFiller(model, conn, template="{claim} {paragraph} {templates} {channels}")
+    text = f"{AT} Item 1 placed a second call to (212) 555-0199."
+    made = TemplateAssumptionBuilder(f).build(claim(text, ClaimType.COMMUNICATION))
+    assert any(a.template_id == "caller" for a in made)
+    assert any(is_unread_event(a.template_id, a.text) for a in made)
+
+
+def test_unread_words_name_each_word_once(conn):
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words("Item 1 placed a call that lasted a second, and a second.", (), set())
+    assert len(out) == len(set(out))
 
 
 def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):

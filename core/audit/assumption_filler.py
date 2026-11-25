@@ -3383,7 +3383,8 @@ _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as
 # Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
 # with") stays plain; the quote is looked for in the text before quotes are blanked.
 _CONTACT_NAMED_RE = re.compile(
-    r"\b(?:the|a|an|his|her|their|its|my|your|our)\s+(?:saved\s+)?contact"
+    r"\b(?:(?:the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact"
+    r"(?:\s+(?:entry|card|name)\b)?"
     r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?",
     re.I,
 )
@@ -3948,10 +3949,14 @@ class LocalAssumptionFiller:
         # "the contact displayed as", "the number shown as": a saved contact, or a phone number,
         # that no check reads; read before "displayed as" (plain naming) is blanked (Claude
         # review on #279)
+        # A kept contact_entry row reads the saved contact ("contact" in tests), so only
+        # "the number displayed as" stays unread beside one.
         whole = _flat(_nfc(text))  # `flat` has "displayed as" blanked by now
-        if shown := _CONTACT_SHOWN_RE.search(_unquoted(whole)):
+        if (shown := _CONTACT_SHOWN_RE.search(_unquoted(whole))) and (
+            "contact" not in tests or shown.group(0).casefold().startswith("number")
+        ):
             extra.append(" ".join(shown.group(0).casefold().split()))
-        for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
+        for named in () if "contact" in tests else _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
             if named.group("how") or _OPEN_QUOTE_RE.match(whole, named.end()):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
@@ -4102,11 +4107,16 @@ class LocalAssumptionFiller:
         out = plain_tokens(words, phrases, tests)
         if "connected" not in out and connected_with_object(bare):
             out.append("connected")
-        return [
-            *out,
-            *(w for w in lengths if not set(w.split()) & set(out)),
-            *(w for w in extra if w not in out),
-        ]
+        # each word once, in order: the list is the drop reason an expert reads
+        return list(
+            dict.fromkeys(
+                [
+                    *out,
+                    *(w for w in lengths if not set(w.split()) & set(out)),
+                    *(w for w in extra if w not in out),
+                ]
+            )
+        )
 
     @staticmethod
     def _count_mentions(words: str) -> list[int | None]:
@@ -7110,7 +7120,9 @@ class LocalAssumptionFiller:
         params, missed, unread = made
         if unread and "event" not in allowed_ids:
             return out  # "a second call": no caller row without the event an expert carries
-        had_event = any(p.is_core and p.template_id == "event" for p in out)
+        # only code's own unread event already says what an ordinal leaves unread; a model's
+        # event about something else does not (Claude review on #279)
+        had_event = any(p.is_core and p.template_id == "event" and p.unread for p in out)
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
