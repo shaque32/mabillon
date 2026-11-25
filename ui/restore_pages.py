@@ -16,7 +16,7 @@ import html
 import sqlite3
 
 from core.report.letter import needs_request, request_letter
-from core.report.restore import exhibit_section, match_notes, view_block
+from core.report.restore import context_table, exhibit_section, match_notes
 from core.restore.store import (
     MAX_EXHIBIT_CHARS,
     load_excerpt,
@@ -26,24 +26,95 @@ from core.restore.store import (
     load_match,
     stale_reason,
 )
-from core.restore.view import ContextView, match_view
+from core.restore.view import ContextView, Line, match_view
+from ui import records as screen_records
 from ui.pages import Page, e, link, q
 
-RELATED_HEAD = "<h4>Related threads between the same participants</h4>"
 
-
-def conversation(view: ContextView) -> str:
-    """view_block (the conversation and its related threads, as the report prints them), with
-    the related threads folded under one disclosure so the conversation itself leads. Every row
-    stays on the page."""
-    block = view_block(view)
-    head, sep, rest = block.partition(RELATED_HEAD)
-    if not sep:
-        return block
-    return (
-        f"{head}<details class='related'><summary>Related threads between the same "
-        f"participants ({len(view.related):,})</summary>{rest}</details>"
+def _table(conn: sqlite3.Connection, lines: tuple[Line, ...], app: str) -> tuple[str, str]:
+    """Messages as the screen's table (date, the phone's local time, sender, message, row in
+    the file), with the report's own table (core/report/restore.py context_table: UTC, the
+    time as printed, direction, tier and source id for every row) folded under it. Returns
+    (what to say once above the rows: their tier and how to read the time, the table)."""
+    sources = screen_records.Sources(conn)
+    rows = screen_records.message_rows(conn, lines, app)
+    same = screen_records.shared(rows, sources)
+    n = len(lines)
+    note = (
+        (f"Tier: {e(same.tier.value)}, for every message" if same.tier else "Tier in each row")
+        + (f"; all in {same.words}" if same.sheet else "")
+        + f". Times are the phone's local time, {screen_records.LOCAL_TIME_NOTE}."
     )
+    excel = (
+        f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
+        if sources.excel(ln.source_id for ln in lines)
+        else ""
+    )
+    return (
+        f"<p class='muted conv-note'>{note}</p>",
+        screen_records.table(rows, sources)
+        + f"<details class='exported'><summary>Exported values for {'this' if n == 1 else 'these'}"
+        f" {n:,} message{'' if n == 1 else 's'} (UTC, as printed, direction, tier, source)"
+        f"</summary>{excel}{context_table(lines)}</details>",
+    )
+
+
+def _span(first_utc: str | None, last_utc: str | None) -> str:
+    """A thread's first and last day, in words, by the UTC date."""
+    first, last = screen_records.day(first_utc), screen_records.day(last_utc)
+    if not first or not last:
+        return ""
+    return f", {first} (UTC)" if first == last else f", {first} to {last} (UTC)"
+
+
+def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
+    """A message in its conversation, for the screen: what core/report/restore.py view_block
+    prints in the report, with each row in reading words and the exported values of every row
+    one fold away. The related threads fold under one disclosure so the conversation itself
+    leads. Every row stays on the page."""
+    t = view.thread
+    note, table = _table(conn, view.lines, t.app)
+    out = [
+        f"<p class='conv-head'>{q(t.app)} thread {q(t.title or '(untitled)')} on {q(t.device)} "
+        f"in {q(t.file_name)}. {t.messages:,} message{'' if t.messages == 1 else 's'}"
+        + _span(t.first_utc, t.last_utc)
+        + f". Showing {len(view.lines)}"
+        + (
+            f"; {view.before:,} earlier and {view.after:,} later not shown"
+            if view.before or view.after
+            else ""
+        )
+        + f".</p>{note}{table}"
+    ]
+    if not view.related:
+        out.append("<p class='muted'>No other thread shares these participants' identifiers.</p>")
+        return "".join(out)
+    out.append(
+        f"<details class='related'><summary>Related threads between the same participants "
+        f"({len(view.related):,})</summary><p class='muted'>Matched by identifier as the "
+        "sources show it (phone numbers by their digits), plus identity links an expert "
+        "confirmed. Messages from the same period as the conversation above.</p>"
+    )
+    for r in view.related:
+        rt = r.thread
+        out.append(
+            f"<p><strong>{q(rt.app)} thread {q(rt.title or '(untitled)')}</strong> on "
+            f"{q(rt.device)} in {q(rt.file_name)} ({rt.messages:,} messages). Shares "
+            + ", ".join(q(s.split(":", 1)[1]) for s in r.shared)
+            + ".</p>"
+        )
+        if r.nearest:
+            out.append(
+                "<p class='muted'>No message in this thread falls in the same period. "
+                + ("The nearest before and after:" if r.lines else "")
+                + "</p>"
+            )
+        if r.lines:
+            out.append("".join(_table(conn, r.lines, rt.app)))
+        if r.more:
+            out.append(f"<p class='muted'>{r.more:,} more messages in the period.</p>")
+    out.append("</details>")
+    return "".join(out)
 
 
 def _found_counts(conn: sqlite3.Connection, ex_id: str) -> tuple[int, int]:
@@ -200,7 +271,7 @@ def match_page(conn: sqlite3.Connection, page: Page, match_id: str) -> str | Non
         f"<p class='muted tiers'>Match tier derived: found and verified by code (matcher "
         f"{e(m.matcher_version)}). Messages are observed; the phone's local time is derived "
         "from UTC and the phone's time zone.</p>",
-        conversation(match_view(conn, m)),
+        conversation(conn, match_view(conn, m)),
         "</div>",
     ]
     return page.wrap(f"{ex.label}, message {excerpt.seq}", "".join(out), wide=True)

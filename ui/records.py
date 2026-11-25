@@ -1,0 +1,364 @@
+"""A record in reading words, for the review screen only: who, when, what and where it sits in
+the file, short enough to read as one row.
+
+The report prints each record with its exported values (core/report/html.py record_line: the
+UTC time and the time as the source printed it). The screen says the same record in words and
+keeps those values one click away, in a fold beside the row. Nothing here changes what is
+stored, what the report prints or what a model is sent: the time is the same phone-local time
+the screen already showed (core/enrich/local_time.py format_local), written for reading, with
+the full value and its UTC offset in the hover title.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+
+from core.contracts import ProvenanceTier
+from core.enrich.local_time import device_zone, format_local, parse_utc
+from core.enrich.records import get_record
+from core.ingest import forwarded
+from core.report.fmt import e, q
+from core.report.selection import sender_words
+from core.restore.view import Line, message_lines
+
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# format_local's two timed forms: "2026-02-20 19:02:11 EST (UTC-05:00)" and
+# "2026-02-20 19:02:11 UTC (device zone unknown)".
+_LOCAL = re.compile(
+    r"^(?P<y>\d{4})-(?P<mo>\d\d)-(?P<d>\d\d) (?P<h>\d\d):(?P<mi>\d\d):(?P<s>\d\d) "
+    r"(?P<zone>\S+) \((?P<note>[^()]+)\)$"
+)
+_SHEET_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
+EXCEL = "cellebrite_excel"
+EXCEL_ROW_NOTE = "An Excel row is the spreadsheet's own row number, not the report's # column."
+LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A phone-local time in reading words."""
+
+    date: str  # "Mar 10, 2026"
+    clock: str  # "11:16:44 AM EDT"
+    caveat: str  # "device zone unknown" when the time shown is UTC, else ""
+
+
+def reading(local: str) -> Reading | None:
+    """format_local's string in reading words. None for any other text (a time the source did
+    not give), which the caller then prints as it is."""
+    m = _LOCAL.match(local or "")
+    if m is None or not 1 <= int(m["mo"]) <= 12:
+        return None
+    hour = int(m["h"])
+    clock = f"{hour % 12 or 12}:{m['mi']}:{m['s']} {'AM' if hour < 12 else 'PM'} {m['zone']}"
+    caveat = "" if m["note"].startswith("UTC") else m["note"]
+    return Reading(f"{MONTHS[int(m['mo']) - 1]} {int(m['d'])}, {m['y']}", clock, caveat)
+
+
+def when(local: str, date: bool = True) -> str:
+    """A time as HTML: "Mar 10, 2026, 11:16:44 AM EDT", the full value with its UTC offset in
+    the hover title. date=False leaves the date to the row's date cell."""
+    r = reading(local)
+    if r is None:
+        return e(local)
+    words = f"{r.date}, {r.clock}" if date else r.clock
+    return f"<span class='lt' title='{e(local)}'>{e(words)}</span>" + (
+        f" ({e(r.caveat)})" if r.caveat else ""
+    )
+
+
+def day(ts_utc: str | None) -> str:
+    """A stored UTC time's date in words, "Feb 21, 2026"; "" when it cannot be read."""
+    try:
+        dt = parse_utc(ts_utc)
+    except ValueError:
+        return ""
+    return f"{MONTHS[dt.month - 1]} {dt.day}, {dt.year}" if dt else ""
+
+
+class Sources:
+    """The case's files by source id, read once a page: (file name, kind)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        self._seen: dict[str, tuple[str, str]] = {}
+
+    def get(self, source_id: str) -> tuple[str, str]:
+        if source_id not in self._seen:
+            row = self._conn.execute(
+                "SELECT file_name, kind FROM sources WHERE id = ?", (source_id,)
+            ).fetchone()
+            self._seen[source_id] = (row[0], row[1]) if row else (source_id, "")
+        return self._seen[source_id]
+
+    def row(self, source_id: str, locator: str) -> str:
+        """Where in its file, as HTML: "Chats sheet, Excel row 947" for an Excel report, else
+        the locator as the importer wrote it."""
+        m = _SHEET_ROW.match(locator)
+        if self.get(source_id)[1] == EXCEL and m:
+            return f"{q(m['sheet'])} sheet, Excel row {e(m['row'])}"
+        return f"at <span class='mono'>{e(locator)}</span>"
+
+    def sheet(self, source_id: str, locator: str) -> str | None:
+        """The sheet an Excel report's row is on; None for any other record."""
+        m = _SHEET_ROW.match(locator)
+        return m["sheet"] if self.get(source_id)[1] == EXCEL and m else None
+
+    def place(self, source_id: str, locator: str) -> str:
+        """The file and the place in it: "item1.xlsx, Chats sheet, Excel row 947"."""
+        return f"{q(self.get(source_id)[0])}, {self.row(source_id, locator)}"
+
+    def excel(self, source_ids: Iterable[str]) -> bool:
+        return any(self.get(s)[1] == EXCEL for s in source_ids)
+
+
+def follows(sender: str, direction: str) -> bool:
+    """The direction is what the sender already says: the phone's own account sent it, or
+    another account's message came in."""
+    own = sender.endswith(" (this phone)")
+    return direction == ("outgoing" if own else "incoming")
+
+
+def who(ln: Line, app: str | None = None, name: str | None = None) -> str:
+    """A message's sender as HTML (core/report/selection.py sender_words), with the direction in
+    words only when it does not follow from whose account sent it, so no direction is lost.
+    name: the account's display name in the source, as the report's record line gives it:
+    "5551234 (@alex92)", "7001001 (Dan P, this phone)". A name printed on the message's own
+    row (shown_as) leads instead, as sender_words puts it."""
+    if ln.shown_as or not name:
+        words = sender_words(ln.sender, ln.shown_as, app)
+    else:
+        own = ln.sender.endswith(" (this phone)")
+        ident = sender_words(ln.sender.removesuffix(" (this phone)"), None, app)
+        words = f"{ident} ({q(name)}{', this phone' if own else ''})"
+    return words if follows(ln.sender, ln.direction) else f"{words} · {e(ln.direction)}"
+
+
+def warning(conn: sqlite3.Connection, record_id: str, found: dict[str, str] | None) -> str:
+    """The forwarded-or-quoted-copy note for a record, as record_line prints it; "" for none."""
+    note = (found or {}).get(record_id)
+    if not note:
+        return ""
+    parts = forwarded.record_note(conn, record_id, note)
+    return "".join(q(t) if cited else e(t) for t, cited in parts)
+
+
+@dataclass(frozen=True)
+class Row:
+    """One record as a table row."""
+
+    record_id: str
+    source_id: str
+    locator: str
+    local: str  # format_local's string; "" for a record with no time (a contact)
+    who: str  # HTML; "" when the record's text names its parties (a call)
+    what: str  # HTML: the message, or the record's text
+    tier: ProvenanceTier
+    target: bool = False
+    app: str = ""  # a message's app
+    thread: str = ""  # a message's thread id
+
+
+def _of_messages(conn: sqlite3.Connection, ids: list[str]) -> dict[str, tuple[str, str, str, str]]:
+    """message id: (thread id, app, thread title, the sender account's display name)."""
+    out: dict[str, tuple[str, str, str, str]] = {}
+    for at in range(0, len(ids), 500):
+        part = ids[at : at + 500]
+        marks = ",".join("?" * len(part))
+        for r in conn.execute(
+            "SELECT m.id, t.id, t.app, t.title, a.display_name FROM messages m"  # noqa: S608
+            " JOIN threads t ON t.id = m.thread_id"
+            f" LEFT JOIN accounts a ON a.id = m.sender_account_id WHERE m.id IN ({marks})",
+            part,
+        ):
+            out[r[0]] = (r[1], r[2] or "", r[3] or "(untitled)", r[4] or "")
+    return out
+
+
+def message_rows(
+    conn: sqlite3.Connection, lines: Iterable[Line], app: str | None = None
+) -> list[Row]:
+    """Rows for messages already read as conversation lines. app: the conversation's app, left
+    off each sender because the conversation's header gives it."""
+    lines = list(lines)
+    known = _of_messages(conn, [ln.record_id for ln in lines])
+    out = []
+    for ln in lines:
+        thread, _, _, name = known.get(ln.record_id, ("", "", "", ""))
+        label = forwarded.copy_label(ln.locator)
+        body = q(ln.body) + (f"<br><strong class='warn'>{e(label)}</strong>" if label else "")
+        out.append(
+            Row(
+                record_id=ln.record_id,
+                source_id=ln.source_id,
+                locator=ln.locator,
+                local=ln.local,
+                who=who(ln, app, name),
+                what=body,
+                tier=ln.tier,
+                target=ln.is_target,
+                app=app or "",
+                thread=thread,
+            )
+        )
+    return out
+
+
+def _call_local(conn: sqlite3.Connection, record_id: str) -> str:
+    r = conn.execute(
+        "SELECT ts_utc, ts_raw, device_id FROM calls WHERE id = ?", (record_id,)
+    ).fetchone()
+    if r is None:
+        return ""
+    return format_local(parse_utc(r[0]), device_zone(conn, r[2]), r[1])
+
+
+def record_rows(conn: sqlite3.Connection, record_ids: Iterable[str]) -> list[Row]:
+    """Rows for records of any kind, in the order given. A record that is no longer in the
+    case keeps its row and says so. Every record is as its source holds it: tier observed.
+    When every message among them is from one app, the senders leave the app's name off (the
+    caller's heading or the row's thread gives it)."""
+    ids = list(record_ids)
+    known = _of_messages(conn, [r for r in ids if r.startswith("msg:")])
+    apps = {v[1] for v in known.values()}
+    app = next(iter(apps)) if len(apps) == 1 else None
+    rows = message_rows(conn, message_lines(conn, [r for r in ids if r in known], None), app)
+    by_id = {r.record_id: r for r in rows}
+    out = []
+    for rid in ids:
+        if rid in by_id:
+            out.append(by_id[rid])
+            continue
+        rec = get_record(conn, rid)
+        if rec is None:
+            out.append(Row(rid, "", "", "", "", "record not found", ProvenanceTier.OBSERVED))
+            continue
+        out.append(
+            Row(
+                record_id=rid,
+                source_id=rec.ref.source_id,
+                locator=rec.ref.locator,
+                local=_call_local(conn, rid) if rid.startswith("call:") else "",
+                who="",
+                what=q(rec.text),
+                tier=ProvenanceTier.OBSERVED,
+            )
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class Shared:
+    """What every row of a table has in common, said once above it instead of in each row."""
+
+    file: str | None  # the one file every row is in
+    sheet: str | None  # the one Excel sheet of that file every row is on
+    tier: ProvenanceTier | None  # the one tier every row carries
+
+    @property
+    def words(self) -> str:
+        """HTML: "item1.xlsx, Chats sheet", "item1.xlsx", or "" when the rows differ."""
+        if self.file is None:
+            return ""
+        return q(self.file) + (f", {q(self.sheet)} sheet" if self.sheet else "")
+
+
+def shared(rows: list[Row], sources: Sources) -> Shared:
+    ids = {r.source_id for r in rows if r.source_id}
+    file = sources.get(next(iter(ids)))[0] if len(ids) == 1 else None
+    sheets = {sources.sheet(r.source_id, r.locator) for r in rows if r.source_id}
+    sheet = next(iter(sheets)) if file is not None and len(sheets) == 1 else None
+    tiers = {r.tier for r in rows}
+    return Shared(file, sheet, next(iter(tiers)) if len(tiers) == 1 else None)
+
+
+def table(
+    rows: list[Row],
+    sources: Sources,
+    href: Callable[[Row], str | None] | None = None,
+) -> str:
+    """Records as one table: date, the phone's local time, sender, the message or record, and
+    the row in the file. A date prints once per run of rows that share it. A column every row
+    would leave empty is left out. What the rows share is left to the caller to say once above
+    the table (shared(rows).words, and the tier): a row then gives only its Excel row number,
+    and a tier column appears only when the rows differ in tier. href: a link for a row's
+    place in the file, such as its conversation."""
+    same = shared(rows, sources)
+    timed = any(r.local for r in rows)
+    named = any(r.who for r in rows)
+    what = "Message" if rows and all(r.record_id.startswith("msg:") for r in rows) else "Record"
+    head = (
+        ("<th>Date</th><th>Phone's local time</th>" if timed else "")
+        + ("<th>From</th>" if named else "")
+        + f"<th>{what}</th>"
+        + ("" if same.tier else "<th>Tier</th>")
+        + f"<th>{'Excel row' if same.sheet else 'Row in the file'}</th>"
+    )
+    out = [f"<table class='recs'><thead><tr>{head}</tr></thead>"]
+    last_date = None
+    for r in rows:
+        cells = []
+        if timed:
+            rd = reading(r.local)
+            if rd is None:
+                cells.append(f"<td class='d'></td><td class='t'>{e(r.local)}</td>")
+                last_date = None
+            else:
+                date = "" if rd.date == last_date else e(rd.date)
+                cells.append(f"<td class='d'>{date}</td><td class='t'>{when(r.local, False)}</td>")
+                last_date = rd.date
+        if named:
+            cells.append(f"<td class='from'>{r.who}</td>")
+        cells.append(f"<td class='what'>{r.what}</td>")
+        if not same.tier:
+            cells.append(f"<td class='tier'>{e(r.tier.value)}</td>")
+        if not r.source_id:
+            place = ""
+        else:
+            m = _SHEET_ROW.match(r.locator)
+            if same.sheet and m:
+                place = e(m["row"])
+            else:
+                place = (sources.row if same.file else sources.place)(r.source_id, r.locator)
+            url = href(r) if href else None
+            place = f"<a href='{e(url)}'>{place}</a>" if url else place
+        cells.append(f"<td class='src'>{place}</td>")
+        cls = " class='target'" if r.target else ""
+        out.append(f"<tr{cls}>{''.join(cells)}</tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
+def line(
+    conn: sqlite3.Connection,
+    record_id: str,
+    sources: Sources,
+    place: tuple[str, str] | None = None,
+    shown: bool = False,
+    quoted: str | None = None,
+) -> str:
+    """One record as a short line of HTML: who, when and where it sits in the file.
+    place: the (source id, locator) to print, when the caller holds its own reference to the
+    record (an evidence item's); the default is the record's own. shown: the messages drawn
+    above already give the sender and the time, so the line gives the thread and the place.
+    quoted: the words the caller prints beside the line; a record whose whole text they are (a
+    contact, a call) is not printed twice."""
+    rows = record_rows(conn, [record_id])
+    r = rows[0]
+    if not r.source_id:
+        return r.what
+    src, loc = place or (r.source_id, r.locator)
+    where = sources.place(src, loc)
+    known = _of_messages(conn, [record_id]) if record_id.startswith("msg:") else {}
+    if record_id in known:
+        _, app, title, _ = known[record_id]
+        thread = f"{q(app)} thread {q(title)}"
+        if shown:
+            return f"{thread} · {where}"
+        return f"{r.who} in {thread} · {when(r.local)} · {where}"
+    rec = get_record(conn, record_id)
+    what = "" if rec is not None and quoted is not None and rec.text == quoted else r.what
+    return " · ".join(x for x in (what, when(r.local) if r.local else "", where) if x)

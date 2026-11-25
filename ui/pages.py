@@ -89,6 +89,7 @@ from core.review.status import (
 from core.selection.audit import selection_audit
 from core.selection.paired import paired_check
 from core.zones import given_zones
+from ui import records as screen_records
 from ui.css import PAGE_CSS
 from ui.theme import FONT_CSS, MARK, THEME_CSS
 
@@ -1071,6 +1072,19 @@ def evidence_card(
             f"<p class='ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a>, "
             "judged here for this assumption.</p>"
         )
+    # one line for the record: who, when and where it sits in the file. The messages drawn
+    # above it already give the sender and the time. A forwarded copy's caution stays in view.
+    rec = screen_records.line(
+        conn,
+        item.record_id,
+        screen_records.Sources(conn),
+        place=(item.ref.source_id, item.ref.locator),
+        shown=shown.startswith("<div class='thread"),
+        quoted=item.quote,
+    )
+    caution = screen_records.warning(conn, item.record_id, found)
+    if caution:
+        rec += f"<br><strong class='warn'>{caution}</strong>"
     folds = ""  # a settled item's disclosures open on the card's last line
     if settled:
         folds = (
@@ -1097,10 +1111,7 @@ def evidence_card(
         )
         + "</div>"
         + shown
-        # the time above is the case's zone; this line keeps the export's own values
-        + "<p class='ev-rec'><span class='ev-asx'>As exported:</span> "
-        + f"{record_line(conn, item.record_id, found)}</p>"
-        + f"<p class='ev-src muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
+        + f"<p class='ev-rec'>{rec}</p>"
         + (
             f"<p>{rationale_html(item, withheld)}</p>"
             + ("" if withheld.acknowledged else _acknowledge_form(page, item, back))
@@ -1110,7 +1121,12 @@ def evidence_card(
         + f"<p class='ev-review'><strong>Review:</strong> {review_label(conn, item)}</p>"
         + form
         + f"<div class='ev-foot'>{folds}"
-        "<details class='more'><summary>Source and model note</summary>"
+        "<details class='more'><summary>Exported values and model note</summary>"
+        # the card's time is the phone's local time; this keeps the export's own values, as
+        # the report prints them
+        f"<p><span class='ev-asx'>As exported:</span> "
+        f"{record_line(conn, item.record_id, found)}</p>"
+        f"<p class='muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
         f"<p><span class='mono'>{e(item.ref.source_id)} {e(item.ref.locator)} · "
         f"{e(item.record_id)}</span></p>"
         f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
@@ -1149,9 +1165,10 @@ _EXCEL_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
 
 
 def source_line(conn: sqlite3.Connection, source_id: str, locator: str) -> str:
-    """Where a record is in the original file, unfolded on every card: the file, then the sheet
-    and spreadsheet row for an Excel report. The row is the spreadsheet's own row number, which
-    is not the report's "#" column (a header row and title rows come before the first record)."""
+    """Where a record is in the original file, in full, in each card's fold (the card's own line
+    says it shortly: ui/records.py): the file, then the sheet and spreadsheet row for an Excel
+    report. The row is the spreadsheet's own row number, which is not the report's "#" column
+    (a header row and title rows come before the first record)."""
     row = conn.execute("SELECT file_name, kind FROM sources WHERE id = ?", (source_id,)).fetchone()
     name, kind = (row[0], row[1]) if row else (source_id, "")
     m = _EXCEL_ROW.match(locator)
@@ -1229,7 +1246,7 @@ def _msg(ln: ContextLine, to: str, same: bool = False) -> str:
         f"<div class='msg{side}{' target' if ln.is_target else ''}{' cont' if same else ''}'>"
         + who
         + f"<div class='body'>{q(ln.body)}</div>"
-        f"<div class='t'>{tag}{e(ln.local_time)}</div></div>"
+        f"<div class='t'>{tag}{screen_records.when(ln.local_time)}</div></div>"
     )
 
 
@@ -1336,8 +1353,11 @@ def _irrelevant_list(
     """Records the model labeled irrelevant, folded away; each opens on its own page, where a
     wrong 'irrelevant' can be flagged and a withheld rationale acknowledged. The list opens by
     itself while one of its rationales is withheld."""
+    sources = screen_records.Sources(conn)
+    # in short: the exported values are on the item's own page, one click away
     rows = "".join(
-        f"<li>{q(x.quote)} · {record_line(conn, x.record_id)} · "
+        f"<li>{q(x.quote)} · "
+        f"{screen_records.line(conn, x.record_id, sources, quoted=x.quote)} · "
         f"<a href='{e(link('/evidence', id=x.id))}'>Open, or flag this label</a>"
         + (" <span class='badge b-flag'>flagged by you</span>" if x.id in flagged else "")
         + (" <span class='badge b-withheld'>needs expert review</span>" if x.id in withheld else "")
@@ -1667,31 +1687,65 @@ FAILED_CITED_SHOWN = 12  # records listed per failed check; the rest are counted
 def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
     """The records each failed check cites, as the evidence of a claim the rules contradict on
     that check, so the page never says "no evidence" beside a contradiction. Display only: the
-    check, its records and the verdict are as stored."""
+    check, its records and the verdict are as stored. One row a record, in reading words; the
+    values as exported (UTC, the time as printed, the record id) fold under the table."""
     by_assumption = {a.id: a for a in st.assumptions}
+    sources = screen_records.Sources(conn)
     out = []
     for ch in st.checks:
         if ch.outcome is not CheckOutcome.FAIL or not ch.record_ids:
             continue
         a = by_assumption.get(ch.assumption_id)
         n = len(ch.record_ids)
-        head = f"Records the failed check cites ({n})" + (
-            f" · Assumption: {plain_ids(conn, a.text)}" if a is not None else ""
+        shown = ch.record_ids[:FAILED_CITED_SHOWN]
+        rows = screen_records.record_rows(conn, shown)
+        assumed = (
+            f"<p class='muted cited-note'>Assumption: {plain_ids(conn, a.text)}</p>"
+            if a is not None
+            else ""
         )
-        items = []
-        for rid in ch.record_ids[:FAILED_CITED_SHOWN]:
-            href = e(link("/selection/context", id=rid))
-            ctx = (
-                f" · <a href='{href}'>See it in its conversation</a>"
-                if rid.startswith("msg:")
+        same = screen_records.shared(rows, sources)
+        note = (
+            (f"{e(same.tier.value).capitalize()} records" if same.tier else "Records")
+            + (f" in {same.words}" if same.words else "")
+            + (
+                f". Times are the phone's local time, {screen_records.LOCAL_TIME_NOTE}."
+                if any(r.local for r in rows)
+                else "."
+            )
+        )
+        exported = "".join(
+            f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
+            "</li>"
+            for r in rows
+        )
+        excel = (
+            f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
+            if sources.excel(r.source_id for r in rows if r.source_id)
+            else ""
+        )
+        more = n - FAILED_CITED_SHOWN
+        out.append(
+            f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
+            f"{assumed}<p class='muted cited-note'>{note}</p>"
+            + screen_records.table(rows, sources, href=_conversation_link)
+            + (
+                f"<p class='muted cited-more'>and {more} more, listed under Rules' working</p>"
+                if more > 0
                 else ""
             )
-            items.append(f"<li>{record_line(conn, rid)}{ctx}</li>")
-        more = n - FAILED_CITED_SHOWN
-        if more > 0:
-            items.append(f"<li class='muted'>and {more} more, listed under Rules' working</li>")
-        out.append(f"<h3 class='ev-group'>{head}</h3><ul class='cited'>{''.join(items)}</ul>")
+            + f"<details class='exported'><summary>Exported values for these {len(rows)} "
+            f"record{'' if len(rows) == 1 else 's'} (UTC, as printed, record id)</summary>"
+            f"{excel}<ol class='cited'>{exported}</ol></details>"
+        )
     return "".join(out)
+
+
+def _conversation_link(row: screen_records.Row) -> str | None:
+    """A message row's place in the file opens the message in its conversation."""
+    if not row.record_id.startswith("msg:"):
+        return None
+    return link("/selection/context", id=row.record_id)
 
 
 def _why(conn: sqlite3.Connection, st: ClaimState, d: VerdictDecision) -> str:

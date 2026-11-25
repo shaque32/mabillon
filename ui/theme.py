@@ -222,6 +222,35 @@ td p { margin: 0; }
 td:has(> form.inline):not(:has(input[type=text])) { white-space: nowrap; }
 td:has(> form.inline) details { white-space: normal; margin-top: var(--s1); }
 
+/* ---- records as rows (ui/records.py): the date once per run of rows, the phone's local time,
+   the sender, the message, then its row in the file, small and muted at the right edge. The
+   row asked about is filled, so every row is inset by the same step and the fill does not
+   touch its text. The values as exported fold under the table. */
+table.recs { margin: var(--s2) 0; }
+table.recs th:first-child, table.recs td:first-child { padding-left: var(--s2); }
+table.recs td { overflow-wrap: break-word; word-break: normal; }
+table.recs td.d { white-space: nowrap; color: var(--muted); }
+table.recs td.t { white-space: nowrap; }
+table.recs td.what { min-width: 26ch; }
+table.recs td.src, table.recs td.tier { color: var(--muted); font-size: var(--t1);
+  line-height: var(--l1); }
+table.recs th:last-child, table.recs td.src { text-align: right; padding-right: var(--s2); }
+table.recs td.src { white-space: nowrap; }
+table.recs td.src .mono { white-space: normal; }
+table.recs tr.target td { font-weight: 400; }
+table.recs tr.target td.what { font-weight: 600; }
+table.recs strong.warn { display: inline-block; margin-top: var(--s1); font-size: var(--t1);
+  line-height: var(--l1); }
+details.exported { margin: 0 0 var(--s5); }
+details.exported > summary { color: var(--muted); font-size: var(--t1); line-height: var(--l1); }
+details.exported > summary:hover { color: var(--ink); }
+details.exported ol, details.exported > p { font-size: var(--t1); line-height: var(--l1);
+  color: var(--muted); }
+p.conv-head { margin: 0 0 var(--s1); }
+p.conv-note, p.cited-note { margin: 0 0 var(--s1); max-width: none; font-size: var(--t1);
+  line-height: var(--l1); }
+p.cited-more { margin: 0 0 var(--s2); font-size: var(--t1); line-height: var(--l1); }
+
 /* ---- forms: the label above its field, 32px controls, one focus ring */
 form { margin: 0; }
 form.inline { display: inline; }

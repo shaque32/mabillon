@@ -94,6 +94,9 @@ def context_page(conn: sqlite3.Connection, page: Page, record_id: str) -> str | 
     )
     body = (
         "<div class='pg-context'><p class='back'><a href='/selection'>Back to the selection "
-        "audit</a></p><h1>Message in its conversation</h1>" + picked + conversation(view) + "</div>"
+        "audit</a></p><h1>Message in its conversation</h1>"
+        + picked
+        + conversation(conn, view)
+        + "</div>"
     )
     return page.wrap("Message in its conversation", body, wide=True)
