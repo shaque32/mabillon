@@ -131,19 +131,70 @@ def test_the_note_on_times_says_utc_where_the_phones_zone_is_unknown() -> None:
 
 def test_the_note_names_the_phones_zone_in_full(conn) -> None:
     # a time in view ends in the zone's short name; the full name settles which zone it is
-    assert records.zone_names(conn) == "America/New_York"
+    sources = records.Sources(conn)
+    assert records.zone_names(sources) == "America/New_York"
     assert records.time_note([ZONED], "America/New_York") == (
         "Times are the phone's local time (America/New_York), derived from UTC and the phone's "
         "time zone."
     )
-    assert "(America/New_York)" in records.times_note(conn)
+    assert "(America/New_York)" in records.note(records.record_rows(conn, [M948]), sources)
+
+
+def test_the_note_names_only_the_zones_of_the_phones_the_rows_are_from(conn) -> None:
+    conn.execute("UPDATE devices SET timezone = 'America/Chicago' WHERE id = 'dev:item2'")
+    try:
+        sources = records.Sources(conn)
+        both = records.zone_names(sources)
+        assert "America/New_York" in both and "America/Chicago" in both
+        assert records.zone_names(sources, {"dev:item1"}) == "America/New_York"
+        assert records.zone_names(sources, ()) == ""
+        note = records.note(records.record_rows(conn, [M948], sources=sources), sources)
+        assert "(America/New_York)" in note and "Chicago" not in note
+    finally:
+        conn.rollback()
+
+
+def test_the_note_is_left_out_when_no_row_has_a_time_or_an_excel_row(conn) -> None:
+    sources = records.Sources(conn)
+    (row,) = records.record_rows(conn, [M948], sources=sources)
+    assert records.note([replace(row, local="", source_id="")], sources) == ""
+    # a row in an Excel report says, in view, what its row number is
+    assert records.note([replace(row, local="")], sources) == records.EXCEL_ROW_NOTE
+    assert records.note([row], sources).endswith(records.EXCEL_ROW_NOTE)
 
 
 def test_a_row_with_no_time_does_not_read_as_the_day_above(conn) -> None:
     rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"])
-    untimed = [rows[0], replace(rows[1], local="time unknown (source shows '3/12')")]
+    untimed = [
+        rows[0],
+        replace(rows[1], local="time unknown (source shows '3/12')"),
+        replace(rows[1], local=""),
+    ]
     out = records.table(untimed, records.Sources(conn))
-    assert "<td class='d'>no date</td><td class='t'>time unknown" in out
+    # a time that was not read is not "no date": only a record with no time at all is
+    assert "<td class='d'>date not read</td><td class='t'>time unknown" in out
+    assert "<td class='d'>no date</td><td class='t'></td>" in out
+
+
+def test_an_attachment_takes_its_messages_time(conn) -> None:
+    att, msg = conn.execute("SELECT id, message_id FROM attachments LIMIT 1").fetchone()
+    (a, m) = records.record_rows(conn, [att, msg])
+    assert a.local == m.local and records.reading(a.local) is not None
+    assert a.device == m.device == "dev:item1"
+    assert "no date" not in records.table([a], records.Sources(conn))
+
+
+def test_a_message_whose_stored_time_is_not_a_time_keeps_its_row(conn) -> None:
+    conn.execute("UPDATE messages SET ts_utc = 'not a time' WHERE id = ?", (M948,))
+    try:
+        sources = records.Sources(conn)
+        bad, good = records.record_rows(conn, [M948, "msg:item1:Chats!949"], sources=sources)
+        assert bad.local.startswith("time unknown") and bad.thread and bad.title
+        assert records.reading(good.local) is not None and good.who
+        assert "date not read" in records.table([bad, good], sources)
+        assert "thread" in records.line(conn, M948, sources)
+    finally:
+        conn.rollback()
 
 
 def test_a_call_whose_stored_time_cannot_be_read_says_so(conn) -> None:
@@ -168,9 +219,10 @@ def test_a_table_of_utc_times_is_not_headed_local_time(conn) -> None:
 def test_a_day_is_on_the_phones_calendar_or_says_it_is_utc(conn) -> None:
     # the demo phone is on New York time: 02:30 UTC on Mar 11 is still Mar 10 there
     late = "2026-03-11T02:30:00Z"
-    assert records.local_day(conn, late, "dev:item1") == "Mar 10, 2026"
-    assert records.local_day(conn, late, None) == "Mar 11, 2026 (UTC)"
-    assert records.local_day(conn, None, "dev:item1") == ""
+    sources = records.Sources(conn)
+    assert records.local_day(sources, late, "dev:item1") == "Mar 10, 2026"
+    assert records.local_day(sources, late, None) == "Mar 11, 2026 (UTC)"
+    assert records.local_day(sources, None, "dev:item1") == ""
 
 
 # ---------------------------------------------------------------- sender and direction
@@ -310,7 +362,9 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
     table = block.split("</table>", 1)[0]
     assert "<table class='recs'>" in table and "UTC 20" not in table
     assert "messages in" in block.split("<table", 1)[0]
-    assert "derived from UTC and the phone's time zone" in block.split("<table", 1)[0]
+    above = html.unescape(block.split("<table", 1)[0])
+    assert "derived from UTC and the phone's time zone" in above
+    assert records.EXCEL_ROW_NOTE in above  # in view, not only in the fold
     assert table.count("<tr") == len(cited) + 1
     assert "/selection/context?id=msg%3Aitem1%3AChats%21938" in table
     (fold,) = _folds(block.split("Rules' working", 1)[0], "exported")
@@ -338,7 +392,10 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
         assert "spreadsheet row" in fold and "not the report's # column" in fold
         assert item.record_id in fold
     evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
-    assert records.times_note(conn) in evidence.replace("&#x27;", "'")
+    sources = records.Sources(conn)
+    how = records.note(records.record_rows(conn, [x.record_id for x in items]), sources)
+    assert "(America/New_York)" in how and how.endswith(records.EXCEL_ROW_NOTE)
+    assert how in html.unescape(evidence)
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
 
@@ -348,13 +405,49 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     rows = body.split("<details id='irrelevant'", 1)[1].split("</details>", 1)[0]
     assert "labeled irrelevant</summary>" in rows and "Open, or flag this label" in rows
     assert "as printed" not in rows and "Excel row" in rows
-    assert records.times_note(conn) in rows.replace("&#x27;", "'")
-    item = next(x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant")
+    hidden = [x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant"]
+    sources = records.Sources(conn)
+    how = records.note(records.record_rows(conn, [x.record_id for x in hidden]), sources)
+    assert how.endswith(records.EXCEL_ROW_NOTE) and how in html.unescape(rows)
+    item = hidden[0]
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
-    # the item's own page says how to read the times of the messages around it
-    context = page.split("<h2>Context</h2>", 1)[1]
-    assert records.times_note(conn) in context.replace("&#x27;", "'")
+    # the item's own page says how to read its time and the times of the messages around it
+    card = html.unescape(page.split("<h2>Context</h2>", 1)[0])
+    assert records.note(records.record_rows(conn, [item.record_id]), sources) in card
+
+
+def test_a_page_with_no_time_in_view_prints_no_note_on_times(app, conn) -> None:
+    item = next(x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant")
+    # the screen reads the case through its own connection, so the change is committed and
+    # then put back
+    kept = conn.execute("SELECT ts_utc, ts_raw, id FROM messages").fetchall()
+    conn.execute("UPDATE messages SET ts_utc = NULL, ts_raw = NULL")
+    conn.commit()
+    try:
+        page = html.unescape(_get(app, "/evidence", id=item.id))
+        assert "Times are" not in page and records.EXCEL_ROW_NOTE in page
+        rows = _get(app, "/claim", id="C16").split("<details id='irrelevant'", 1)[1]
+        assert "Times are" not in rows.split("</details>", 1)[0]
+    finally:
+        conn.executemany("UPDATE messages SET ts_utc = ?, ts_raw = ? WHERE id = ?", kept)
+        conn.commit()
+
+
+def test_a_long_cited_list_is_described_over_every_record_it_counts(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    # C14's failed check cites twelve records from three threads on two phones; its first
+    # three are from one thread in one file. Drawing only three must not say "in thread ..."
+    # or name one file for all twelve.
+    monkeypatch.setattr(pages, "FAILED_CITED_SHOWN", 3)
+    block = _get(app, "/claim", id="C14").split("Records the failed check cites (12)", 1)[1]
+    above, table = block.split("<table class='recs'>", 1)
+    table = table.split("</table>", 1)[0]
+    assert table.count("<tr") == 4 and "and 9 more" in block
+    assert "in thread" not in above and "item1.xlsx" not in above
+    assert table.count('in thread <span class="q">Marc Garage</span>') == 3
+    assert table.count("item1.xlsx") == 3  # each row names its own file
 
 
 def test_bubble_times_use_the_same_reading_format(app) -> None:
@@ -386,7 +479,8 @@ def test_the_conversation_is_five_columns_and_the_reports_table_folds_under_it(a
     assert "Tier: observed, for every message" in note
     head = note.split("<p class='conv-head'>", 1)[1].split("</p>", 1)[0]
     assert "(UTC)" not in head  # the span is on the phone's calendar, as the date cells are
-    assert "derived from UTC and the phone's time zone" in note
+    assert "derived from UTC and the phone's time zone" in html.unescape(note)
+    assert records.EXCEL_ROW_NOTE in html.unescape(note)  # in view, and still in the fold
     fold = _folds(body, "exported")[0]
     assert context_table(view.lines) in fold  # the report's own table, every column
     t = view.thread  # and the thread's first and last message in UTC, as the report's header

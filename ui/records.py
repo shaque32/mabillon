@@ -15,15 +15,16 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core.contracts import ProvenanceTier
-from core.enrich.local_time import device_zone, format_local, parse_utc
+from core.enrich.local_time import format_local, parse_utc
 from core.enrich.records import get_record
 from core.ingest import forwarded
 from core.report.fmt import e, q
 from core.report.selection import sender_words
 from core.restore.view import Line, message_lines
-from core.zones import device_zones
+from core.zones import device_zones, resolve_zone
 
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 # format_local's two timed forms: "2026-02-20 19:02:11 EST (UTC-05:00)" and
@@ -73,43 +74,40 @@ def when(local: str, date: bool = True) -> str:
     )
 
 
-def zone_names(conn: sqlite3.Connection) -> str:
-    """The time zones the case's phones are read in, by their full names: "America/New_York",
-    or "America/New_York or Asia/Kolkata, by phone"; "" when no phone's zone is known. A time
-    in view ends in the zone's short name ("EDT", "CST"), which more than one zone can share;
-    the full name beside the note on times settles which, and with it the UTC offset."""
-    names = sorted(
-        {z.key for z in (device_zone(conn, d) for d in device_zones(conn)) if z is not None}
-    )
-    return " or ".join(names) + (", by phone" if len(names) > 1 else "")
-
-
-def _local_words(zones: str) -> str:
-    return f"Times are the phone's local time{f' ({zones})' if zones else ''}, {LOCAL_TIME_NOTE}"
+def zone_names(sources: Sources, devices: Iterable[str] | None = None) -> str:
+    """The time zones the phones are read in, by their full names, for the note on times:
+    "America/New_York", or each phone with its zone when they differ ("Apple iPhone 13:
+    America/New_York; Pixel 7: America/Chicago"); "" when no zone is known. devices: the
+    phones the rows are from; None means every phone in the case. A time in view ends in the
+    zone's short name ("EDT", "CST"), which more than one zone can share; the full name settles
+    which, and with it the UTC offset."""
+    wanted = None if devices is None else set(devices)
+    zones = {
+        d: z for d, z in sources.zones.items() if z is not None and (wanted is None or d in wanted)
+    }
+    names = sorted({z.key for z in zones.values()})
+    if len(names) < 2:
+        return "".join(names)
+    return "; ".join(f"{sources.labels.get(d, d)}: {zones[d].key}" for d in sorted(zones))
 
 
 def time_note(locals_: Iterable[str], zones: str = "") -> str:
     """How to read the times of a set of rows, said once above them: the phone's local time,
     UTC where the phone's zone is unknown, or both; "" when no row has a time in either form.
-    zones: zone_names(conn), named once so a short zone name in a row is not ambiguous."""
+    zones: zone_names(...), named once so a short zone name in a row is not ambiguous."""
     readings = [r for r in (reading(x) for x in locals_ if x) if r is not None]
     if not readings:
         return ""
     zoned = sum(1 for r in readings if not r.caveat)
+    local = f"Times are the phone's local time{f' ({zones})' if zones else ''}, {LOCAL_TIME_NOTE}"
     if zoned == len(readings):
-        return f"{_local_words(zones)}."
+        return f"{local}."
     if zoned == 0:
         return "Times are UTC: the phone's time zone is unknown."
-    return f"{_local_words(zones)}, except those marked device zone unknown, which are UTC."
+    return f"{local}, except those marked device zone unknown, which are UTC."
 
 
-def times_note(conn: sqlite3.Connection) -> str:
-    """The same note for lines whose times are not gathered in one table (evidence cards, the
-    labeled-irrelevant list): true whether each phone's zone is known or not."""
-    return f"{_local_words(zone_names(conn))}, or UTC where the zone is unknown."
-
-
-def local_day(conn: sqlite3.Connection, ts_utc: str | None, device_id: str | None) -> str:
+def local_day(sources: Sources, ts_utc: str | None, device_id: str | None) -> str:
     """A stored UTC time's date on the phone's calendar, "Feb 21, 2026", as the rows' date
     cells give it; the UTC date with " (UTC)" when the phone's zone is unknown; "" when the
     time cannot be read."""
@@ -119,18 +117,40 @@ def local_day(conn: sqlite3.Connection, ts_utc: str | None, device_id: str | Non
         return ""
     if dt is None:
         return ""
-    r = reading(format_local(dt, device_zone(conn, device_id), None))
+    r = reading(format_local(dt, sources.zones.get(device_id or ""), None))
     if r is None:
         return ""
     return r.date + (" (UTC)" if r.caveat else "")
 
 
 class Sources:
-    """The case's files by source id, read once a page: (file name, kind)."""
+    """The case's files by source id, read once a page: (file name, kind). Also each phone's
+    time zone and label, read once, because finding a zone the expert gave reads the audit
+    log."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._seen: dict[str, tuple[str, str]] = {}
+        self._zones: dict[str, ZoneInfo | None] | None = None
+        self._labels: dict[str, str] | None = None
+
+    @property
+    def zones(self) -> dict[str, ZoneInfo | None]:
+        """Device id -> its zone, as core/enrich/local_time.py device_zone resolves it."""
+        if self._zones is None:
+            self._zones = {}
+            for did, tz in device_zones(self._conn).items():
+                try:
+                    self._zones[did] = ZoneInfo(resolve_zone(tz)) if tz else None  # type: ignore[arg-type]
+                except (ZoneInfoNotFoundError, ValueError):
+                    self._zones[did] = None
+        return self._zones
+
+    @property
+    def labels(self) -> dict[str, str]:
+        if self._labels is None:
+            self._labels = dict(self._conn.execute("SELECT id, label FROM devices"))
+        return self._labels
 
     def get(self, source_id: str) -> tuple[str, str]:
         if source_id not in self._seen:
@@ -211,34 +231,42 @@ class Row:
     app: str = ""  # a message's app
     thread: str = ""  # a message's thread id
     title: str = ""  # a message's thread title
+    device: str = ""  # the phone a timed record is from, for the note on its time zone
 
 
-def _of_messages(conn: sqlite3.Connection, ids: list[str]) -> dict[str, tuple[str, str, str, str]]:
-    """message id: (thread id, app, thread title, the sender account's display name)."""
-    out: dict[str, tuple[str, str, str, str]] = {}
-    for at in range(0, len(ids), 500):
-        part = ids[at : at + 500]
+CHUNK = 500  # ids per query, under SQLite's limit on bound values
+
+
+def _of_messages(
+    conn: sqlite3.Connection, ids: list[str]
+) -> dict[str, tuple[str, str, str, str, str]]:
+    """message id: (thread id, app, thread title, the sender account's display name, the
+    thread's phone)."""
+    out: dict[str, tuple[str, str, str, str, str]] = {}
+    for at in range(0, len(ids), CHUNK):
+        part = ids[at : at + CHUNK]
         marks = ",".join("?" * len(part))
         for r in conn.execute(
-            "SELECT m.id, t.id, t.app, t.title, a.display_name FROM messages m"  # noqa: S608
+            "SELECT m.id, t.id, t.app, t.title, a.display_name, t.device_id FROM messages m"  # noqa: S608
             " JOIN threads t ON t.id = m.thread_id"
             f" LEFT JOIN accounts a ON a.id = m.sender_account_id WHERE m.id IN ({marks})",
             part,
         ):
-            out[r[0]] = (r[1], r[2] or "", r[3] or "(untitled)", r[4] or "")
+            out[r[0]] = (r[1], r[2] or "", r[3] or "(untitled)", r[4] or "", r[5] or "")
     return out
 
 
 def message_rows(
-    conn: sqlite3.Connection, lines: Iterable[Line], app: str | None = None
+    conn: sqlite3.Connection, lines: Iterable[Line], app: str | None = None, strip: bool = False
 ) -> list[Row]:
     """Rows for messages already read as conversation lines. app: the conversation's app, left
-    off each sender because the conversation's header gives it."""
+    off each sender because the conversation's header gives it. strip: leave each sender's own
+    app off, for a caller that names the app beside each row (a one-line record)."""
     lines = list(lines)
     known = _of_messages(conn, [ln.record_id for ln in lines])
     out = []
     for ln in lines:
-        thread, own_app, title, name = known.get(ln.record_id, ("", "", "", ""))
+        thread, own_app, title, name, device = known.get(ln.record_id, ("", "", "", "", ""))
         label = forwarded.copy_label(ln.locator)
         body = q(ln.body) + (f"<br><strong class='warn'>{e(label)}</strong>" if label else "")
         out.append(
@@ -247,7 +275,7 @@ def message_rows(
                 source_id=ln.source_id,
                 locator=ln.locator,
                 local=ln.local,
-                who=who(ln, app, name),
+                who=who(ln, app or (own_app if strip else None), name),
                 what=body,
                 tier=ln.tier,
                 target=ln.is_target,
@@ -255,35 +283,78 @@ def message_rows(
                 app=app or own_app,
                 thread=thread,
                 title=title,
+                device=device,
             )
         )
     return out
 
 
-def _call_local(conn: sqlite3.Connection, record_id: str) -> str:
-    r = conn.execute(
-        "SELECT ts_utc, ts_raw, device_id FROM calls WHERE id = ?", (record_id,)
-    ).fetchone()
+def _lines(conn: sqlite3.Connection, ids: list[str]) -> tuple[list[Line], list[str]]:
+    """Messages as conversation lines, and the ids whose stored time is not a time at all
+    (core/restore/view.py message_lines raises on those; the caller still gives them a row)."""
+    lines: list[Line] = []
+    unread: list[str] = []
+    for at in range(0, len(ids), CHUNK):
+        part = ids[at : at + CHUNK]
+        try:
+            lines.extend(message_lines(conn, part, None))
+        except ValueError:
+            for rid in part:
+                try:
+                    lines.extend(message_lines(conn, [rid], None))
+                except ValueError:
+                    unread.append(rid)
+    return lines, unread
+
+
+def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[str, str]:
+    """(the phone-local time, the phone) of a call, an attachment (its message's time) or a
+    message whose stored time message_lines could not read; ("", "") for a record with no time
+    (a contact)."""
+    if record_id.startswith("call:"):
+        sql = "SELECT ts_utc, ts_raw, device_id FROM calls WHERE id = ?"
+    elif record_id.startswith("att:"):
+        sql = (
+            "SELECT m.ts_utc, m.ts_raw, t.device_id FROM attachments a"
+            " JOIN messages m ON m.id = a.message_id JOIN threads t ON t.id = m.thread_id"
+            " WHERE a.id = ?"
+        )
+    elif record_id.startswith("msg:"):
+        sql = (
+            "SELECT m.ts_utc, m.ts_raw, t.device_id FROM messages m"
+            " JOIN threads t ON t.id = m.thread_id WHERE m.id = ?"
+        )
+    else:
+        return "", ""
+    r = conn.execute(sql, (record_id,)).fetchone()
     if r is None:
-        return ""
+        return "", ""
     try:
         utc = parse_utc(r[0])
     except ValueError:  # not a time: say so with the source's own value, as a NULL time does
         utc = None
-    return format_local(utc, device_zone(conn, r[2]), r[1])
+    return format_local(utc, sources.zones.get(r[2]), r[1]), r[2] or ""
 
 
-def record_rows(conn: sqlite3.Connection, record_ids: Iterable[str]) -> list[Row]:
+def record_rows(
+    conn: sqlite3.Connection,
+    record_ids: Iterable[str],
+    strip: bool = False,
+    sources: Sources | None = None,
+) -> list[Row]:
     """Rows for records of any kind, in the order given. A record that is no longer in the
     case keeps its row and says so. Every record is as its source holds it: tier observed.
     When every message among them is from one app, the senders leave the app's name off (the
-    caller's heading or the row's thread gives it)."""
+    caller's heading or the row's thread gives it); strip leaves each sender's own app off
+    whatever the others are (see message_rows). sources: the page's cache, for the phones'
+    zones."""
     ids = list(record_ids)
-    known = _of_messages(conn, [r for r in ids if r.startswith("msg:")])
+    sources = sources or Sources(conn)
+    known = _of_messages(conn, [r for r in dict.fromkeys(ids) if r.startswith("msg:")])
     apps = {v[1] for v in known.values()}
     app = next(iter(apps)) if len(apps) == 1 else None
-    rows = message_rows(conn, message_lines(conn, [r for r in ids if r in known], None), app)
-    by_id = {r.record_id: r for r in rows}
+    lines, _ = _lines(conn, list(known))
+    by_id = {r.record_id: r for r in message_rows(conn, lines, app, strip)}
     out = []
     for rid in ids:
         if rid in by_id:
@@ -293,15 +364,21 @@ def record_rows(conn: sqlite3.Connection, record_ids: Iterable[str]) -> list[Row
         if rec is None:
             out.append(Row(rid, "", "", "", "", "record not found", None))
             continue
+        local, device = _timed(conn, rid, sources)
+        thread, own_app, title, _, _ = known.get(rid, ("", "", "", "", ""))
         out.append(
             Row(
                 record_id=rid,
                 source_id=rec.ref.source_id,
                 locator=rec.ref.locator,
-                local=_call_local(conn, rid) if rid.startswith("call:") else "",
+                local=local,
                 who="",
                 what=q(rec.text),
                 tier=ProvenanceTier.OBSERVED,
+                app=own_app,
+                thread=thread,
+                title=title,
+                device=device,
             )
         )
     return out
@@ -340,10 +417,24 @@ def shared(rows: list[Row], sources: Sources) -> Shared:
     return Shared(file, sheet, tier, app or None, thread)
 
 
+def note(rows: Iterable[Row], sources: Sources, also: Iterable[str] = ()) -> str:
+    """How to read a set of rows, said once in view above them: their times (time_note, naming
+    only the zones of the phones the rows are from) and, when any row sits in an Excel report,
+    that its row number is the spreadsheet's own. "" when the rows give neither a time nor an
+    Excel row. also: source ids the caller prints a place in besides the rows' own (an
+    evidence item's own reference)."""
+    rows = list(rows)
+    zones = zone_names(sources, {r.device for r in rows if r.device})
+    times = time_note((r.local for r in rows), zones)
+    ids = {r.source_id for r in rows if r.source_id} | set(also)
+    return " ".join(x for x in (times, EXCEL_ROW_NOTE if sources.excel(ids) else "") if x)
+
+
 def table(
     rows: list[Row],
     sources: Sources,
     href: Callable[[Row], str | None] | None = None,
+    same: Shared | None = None,
 ) -> str:
     """Records as one table: date, the phone's local time, sender, the message or record, and
     the row in the file. A date prints once per run of rows that share it. A column every row
@@ -353,12 +444,14 @@ def table(
     differ in tier; a message says its thread only when the messages are from more than one.
     The time column says the phone's local time when any row's zone is known
     (a row whose zone is not says so). href: a link for a row's place in the file, such as its
-    conversation."""
-    same = shared(rows, sources)
+    conversation. same: what the caller's line above the table says the records share, when
+    that line speaks for more records than the rows drawn (a long list cut short); a row then
+    keeps whatever that line does not say for it."""
+    same = same or shared(rows, sources)
     timed = any(r.local for r in rows)
     read = [rd for rd in (reading(r.local) for r in rows) if rd is not None]
     named = any(r.who for r in rows)
-    split = len({r.thread for r in rows if r.thread}) > 1
+    split = same.thread is None and any(r.thread for r in rows)
     what = "Message" if rows and all(r.record_id.startswith("msg:") for r in rows) else "Record"
     if any(not rd.caveat for rd in read):
         clock = "Phone's local time"
@@ -378,8 +471,10 @@ def table(
         if timed:
             rd = reading(r.local)
             if rd is None:
-                # an empty date cell means "the same day as the row above": say there is none
-                cells.append(f"<td class='d'>no date</td><td class='t'>{e(r.local)}</td>")
+                # an empty date cell means "the same day as the row above", so say which it
+                # is: a record with no time at all (a contact), or a time that was not read
+                date = "date not read" if r.local else "no date"
+                cells.append(f"<td class='d'>{date}</td><td class='t'>{e(r.local)}</td>")
                 last_date = None
             else:
                 date = "" if rd.date == last_date else e(rd.date)
@@ -387,8 +482,8 @@ def table(
                 last_date = rd.date
         if named:
             cells.append(f"<td class='from'>{r.who}</td>")
-        # messages from more than one thread: each says its own (its counterparty), under the
-        # message, where the row has room
+        # the line above names no one thread: each message says its own (its counterparty),
+        # under the message, where the row has room
         where = (
             f"<br><span class='muted'>in thread {q(r.title)}</span>" if split and r.thread else ""
         )
@@ -419,6 +514,7 @@ def line(
     place: tuple[str, str] | None = None,
     shown: bool = False,
     quoted: str | None = None,
+    row: Row | None = None,
 ) -> str:
     """One record as a short line of HTML: who, when and where it sits in the file.
     place: the (source id, locator) to print, when the caller holds its own reference to the
@@ -426,8 +522,9 @@ def line(
     above already give the time, so the line leaves it out; the sender stays, because only
     this line gives the account's display name from the source.
     quoted: the words the caller prints beside the line; a record whose whole text they are (a
-    contact, a call) is not printed twice."""
-    r = record_rows(conn, [record_id])[0]
+    contact, a call) is not printed twice. row: the record's row from one
+    record_rows(..., strip=True) call for the whole page, so a long list reads the case once."""
+    r = row or record_rows(conn, [record_id], strip=True, sources=sources)[0]
     src, loc = place or (r.source_id, r.locator)
     if not src:
         return r.what
@@ -437,8 +534,8 @@ def line(
     if r.thread:
         # " · " parts the line, so a direction that has to be said goes in brackets here
         sender = r.who.removesuffix(f" · {e(r.way)}") + (f" ({e(r.way)})" if r.way else "")
-        head = f"{sender} in {q(r.app)} thread {q(r.title)}"
+        # a message whose stored time could not be read has no sender words: its text leads
+        head = f"{sender or r.what} in {q(r.app)} thread {q(r.title)}"
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
-    rec = get_record(conn, record_id)
-    what = "" if rec is not None and quoted is not None and rec.text == quoted else r.what
+    what = "" if quoted is not None and r.what == q(quoted) else r.what
     return " · ".join(x for x in (what, when(r.local) if r.local else "", where) if x)

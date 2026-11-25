@@ -1045,6 +1045,8 @@ def evidence_card(
     challenged: frozenset[str] = frozenset(),
     around_link: bool = True,
     same_as: str | None = None,
+    sources: screen_records.Sources | None = None,
+    row: screen_records.Row | None = None,
 ) -> str:
     """claim_id: the claim page shows the card; it then carries the optional label flag.
     same_as: the card above on the page for the same record (another assumption's item); this
@@ -1054,6 +1056,8 @@ def evidence_card(
     threads: the page's cache of thread orders, so many cards read each thread once.
     challenged: the items the challenge step stored in the audit on screen, read once a page.
     around_link: the link to the item's own page (that page leaves it out).
+    sources, row: the page's cache of files and zones and the record's row, when the page read
+    every card's record in one call.
     Once the expert has decided an item, its conversation and its decision form fold."""
     stance_cls = "b-against" if item.stance in AGAINST else "b-open"
     flag = ""
@@ -1079,10 +1083,11 @@ def evidence_card(
     rec = screen_records.line(
         conn,
         item.record_id,
-        screen_records.Sources(conn),
+        sources or screen_records.Sources(conn),
         place=(item.ref.source_id, item.ref.locator),
         shown=drawn,
         quoted=item.quote,
+        row=row,
     )
     caution = screen_records.warning(conn, item.record_id, found)
     if caution:
@@ -1353,16 +1358,21 @@ def _flag_missed_form(page: Page, st: ClaimState, back: str) -> str:
 
 
 def _irrelevant_list(
-    conn: sqlite3.Connection, items: list[EvidenceItem], flagged: set, withheld: set
+    conn: sqlite3.Connection,
+    items: list[EvidenceItem],
+    flagged: set,
+    withheld: set,
+    sources: screen_records.Sources,
+    of: dict[str, screen_records.Row],
 ) -> str:
     """Records the model labeled irrelevant, folded away; each opens on its own page, where a
     wrong 'irrelevant' can be flagged and a withheld rationale acknowledged. The list opens by
-    itself while one of its rationales is withheld."""
-    sources = screen_records.Sources(conn)
+    itself while one of its rationales is withheld. of: each record's row, read once a page."""
     # in short: the exported values are on the item's own page, one click away
     rows = "".join(
         f"<li>{q(x.quote)} · "
-        f"{screen_records.line(conn, x.record_id, sources, quoted=x.quote)} · "
+        + screen_records.line(conn, x.record_id, sources, quoted=x.quote, row=of.get(x.record_id))
+        + " · "
         f"<a href='{e(link('/evidence', id=x.id))}'>Open, or flag this label</a>"
         + (" <span class='badge b-flag'>flagged by you</span>" if x.id in flagged else "")
         + (" <span class='badge b-withheld'>needs expert review</span>" if x.id in withheld else "")
@@ -1370,10 +1380,13 @@ def _irrelevant_list(
         for x in items
     )
     shown = " open" if any(x.id in withheld for x in items) else ""
+    # how to read the lines' times and Excel rows; left out when no line gives either
+    how = screen_records.note((of[x.record_id] for x in items if x.record_id in of), sources)
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
-        f"irrelevant</summary><p class='muted cited-note'>{e(screen_records.times_note(conn))}</p>"
-        f"<ul>{rows}</ul></details>"
+        "irrelevant</summary>"
+        + (f"<p class='muted cited-note'>{e(how)}</p>" if how else "")
+        + f"<ul>{rows}</ul></details>"
     )
 
 
@@ -1584,10 +1597,25 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         # an untested claim searched nothing, as it says above; a failed check's records show
         # above as that check's evidence
         out.append("<p class='muted'>No relevant evidence items.</p>")
-    if groups:  # the cards' one-line records give times in reading words: say how to read them
+    # every card's and irrelevant line's record, read in one call for the page
+    sources = screen_records.Sources(conn)
+    of = {
+        r.record_id: r
+        for r in screen_records.record_rows(
+            conn, dict.fromkeys(x.record_id for x in st.evidence), strip=True, sources=sources
+        )
+    }
+    if groups:
+        # the cards give times and Excel rows in reading words: say once how to read them
+        carded = [x for _, group in groups for x in group]
+        how = screen_records.note(
+            (of[x.record_id] for x in carded if x.record_id in of),
+            sources,
+            also=(x.ref.source_id for x in carded),
+        )
         out.append(
-            f"<p class='muted cited-note'>{e(screen_records.times_note(conn))} Each card's fold "
-            "gives the values as exported.</p>"
+            f"<p class='muted cited-note'>{e(how)}{' ' if how else ''}Each card's fold gives the "
+            "values as exported.</p>"
         )
     by_assumption = {a.id: a for a in st.assumptions}
     found = forwarded.affected(conn)
@@ -1619,13 +1647,19 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
                     threads=threads,
                     challenged=challenged,
                     same_as=drawn.get(x.record_id),
+                    sources=sources,
+                    row=of.get(x.record_id),
                 )
             )
             drawn.setdefault(x.record_id, x.id)
     hidden = [x for x in st.evidence if x.stance == Stance.IRRELEVANT]
     out.append("<div class='claim-more'>")
     if hidden:
-        out.append(_irrelevant_list(conn, hidden, flagged, {w.evidence_id for w in st.withheld}))
+        out.append(
+            _irrelevant_list(
+                conn, hidden, flagged, {w.evidence_id for w in st.withheld}, sources, of
+            )
+        )
     out.append(_working(st, Names(conn).for_claim(st.claim.text)))
     if d is not None:  # a flag is about an audited claim
         out.append(_flag_missed_form(page, st, back))
@@ -1702,25 +1736,26 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
     values as exported (UTC, the time as printed, the record id) fold under the table."""
     by_assumption = {a.id: a for a in st.assumptions}
     sources = screen_records.Sources(conn)
-    zones = screen_records.zone_names(conn)
     out = []
     for ch in st.checks:
         if ch.outcome is not CheckOutcome.FAIL or not ch.record_ids:
             continue
         a = by_assumption.get(ch.assumption_id)
         n = len(ch.record_ids)
-        shown = ch.record_ids[:FAILED_CITED_SHOWN]
-        rows = screen_records.record_rows(conn, shown)
+        # the line above the table speaks for every record the heading counts, so it is taken
+        # over all of them; the table draws the first few
+        cited = screen_records.record_rows(conn, ch.record_ids, sources=sources)
+        rows = cited[:FAILED_CITED_SHOWN]
         assumed = (
             f"<p class='muted cited-note'>Assumption: {plain_ids(conn, a.text)}</p>"
             if a is not None
             else ""
         )
-        same = screen_records.shared(rows, sources)
+        same = screen_records.shared(cited, sources)
         # the senders leave their app off when every message is from one app, and the rows
         # leave the thread off when every message is from one thread: name both here
-        only_messages = all(r.record_id.startswith("msg:") for r in rows)
-        one = len(rows) == 1
+        only_messages = all(r.record_id.startswith("msg:") for r in cited)
+        one = n == 1
         tier = e(same.tier.value).capitalize() if same.tier else ""
         of = (q(same.app) if same.app else "") + (
             f" thread {q(same.thread)}" if same.thread else ""
@@ -1739,13 +1774,13 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             place = f", {same.words}"  # "... in thread @northstar, item1.xlsx, Chats sheet"
         else:
             place = f" in {same.words}"
-        times = screen_records.time_note((r.local for r in rows), zones)
+        how = screen_records.note(cited, sources)  # the times, and what an Excel row is
         note = (
             what
             + place
             + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
             + "."
-            + (f" {times}" if times else "")
+            + (f" {e(how)}" if how else "")
         )
         exported = "".join(
             f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
@@ -1761,14 +1796,14 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         out.append(
             f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
             f"{assumed}<p class='muted cited-note'>{note}</p>"
-            + screen_records.table(rows, sources, href=_conversation_link)
+            + screen_records.table(rows, sources, href=_conversation_link, same=same)
             + (
                 f"<p class='muted cited-more'>and {more} more, listed under Rules' working</p>"
                 if more > 0
                 else ""
             )
             + "<details class='exported'><summary>Exported values for "
-            + ("this record" if one else f"these {len(rows)} records")
+            + ("this record" if len(rows) == 1 else f"these {len(rows)} records")
             + " (UTC, as printed, record id)</summary>"
             f"{excel}<ol class='cited'>{exported}</ol></details>"
         )
@@ -2218,6 +2253,8 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
     on_screen = (
         st is not None and st.decision is not None and item.id in {x.id for x in st.evidence}
     )
+    sources = screen_records.Sources(conn)
+    row = screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
     out.append(
         evidence_card(
             conn,
@@ -2232,12 +2269,21 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
                 challenge.found_items(conn, pipeline.view_run(conn)) if on_screen else frozenset()
             ),
             around_link=False,
+            sources=sources,
+            row=row,
         )
     )
-    out.append("<h2>Context</h2>")
     lines = build_context(conn, item.record_id, CONTEXT_WINDOW)
+    # how to read the times of the card and of the messages around it (one thread, one phone)
+    # and the card's Excel row; left out when the page shows neither
+    zones = screen_records.zone_names(sources, {row.device} if row.device else ())
+    times = screen_records.time_note([row.local, *(ln.local_time for ln in lines)], zones)
+    excel = screen_records.EXCEL_ROW_NOTE if sources.excel([item.ref.source_id]) else ""
+    how = " ".join(x for x in (times, excel) if x)
+    if how:
+        out.append(f"<p class='muted cited-note'>{e(how)}</p>")
+    out.append("<h2>Context</h2>")
     if lines:
-        out.append(f"<p class='muted cited-note'>{e(screen_records.times_note(conn))}</p>")
         out.append("<div class='thread'>")
         out.append(_msgs(lines))
         out.append("</div>")

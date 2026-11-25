@@ -32,23 +32,27 @@ from ui.pages import Page, e, link, q
 
 
 def _table(
-    conn: sqlite3.Connection, lines: tuple[Line, ...], app: str, exported: str = ""
+    conn: sqlite3.Connection,
+    lines: tuple[Line, ...],
+    app: str,
+    sources: screen_records.Sources,
+    exported: str = "",
 ) -> tuple[str, str]:
     """Messages as the screen's table (date, the phone's local time, sender, message, row in
     the file), with the report's own table (core/report/restore.py context_table: UTC, the
     time as printed, direction, tier and source id for every row) folded under it. Returns
-    (what to say once above the rows: their tier and how to read the time, the table).
+    (what to say once above the rows: their tier, how to read the time and what an Excel row
+    number is, the table). sources: the page's cache of files and zones.
     exported: HTML that leads the fold, for a value the rows themselves do not carry."""
-    sources = screen_records.Sources(conn)
     rows = screen_records.message_rows(conn, lines, app)
     same = screen_records.shared(rows, sources)
     n = len(lines)
-    times = screen_records.time_note((ln.local for ln in lines), screen_records.zone_names(conn))
+    how = screen_records.note(rows, sources)
     note = (
         (f"Tier: {e(same.tier.value)}, for every message" if same.tier else "Tier in each row")
         + (f"; all in {same.words}" if same.sheet else "")
         + "."
-        + (f" {times}" if times else "")
+        + (f" {e(how)}" if how else "")
     )
     excel = (
         f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
@@ -64,13 +68,13 @@ def _table(
     )
 
 
-def _span(conn: sqlite3.Connection, t: ThreadInfo) -> str:
+def _span(conn: sqlite3.Connection, t: ThreadInfo, sources: screen_records.Sources) -> str:
     """A thread's first and last day, in words, on the phone's calendar as the rows' date cells
     give it (by the UTC date, and saying so, when the phone's zone is unknown)."""
     row = conn.execute("SELECT device_id FROM threads WHERE id = ?", (t.id,)).fetchone()
     device = row[0] if row else None
-    first = screen_records.local_day(conn, t.first_utc, device)
-    last = screen_records.local_day(conn, t.last_utc, device)
+    first = screen_records.local_day(sources, t.first_utc, device)
+    last = screen_records.local_day(sources, t.last_utc, device)
     if not first or not last:
         return ""
     utc = " (UTC)" if first.endswith(" (UTC)") else ""
@@ -92,11 +96,12 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
         if t.first_utc
         else ""
     )
-    note, table = _table(conn, view.lines, t.app, span)
+    sources = screen_records.Sources(conn)
+    note, table = _table(conn, view.lines, t.app, sources, span)
     out = [
         f"<p class='conv-head'>{q(t.app)} thread {q(t.title or '(untitled)')} on {q(t.device)} "
         f"in {q(t.file_name)}. {t.messages:,} message{'' if t.messages == 1 else 's'}"
-        + _span(conn, t)
+        + _span(conn, t, sources)
         + f". Showing {len(view.lines)}"
         + (
             f"; {view.before:,} earlier and {view.after:,} later not shown"
@@ -129,7 +134,7 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
                 + "</p>"
             )
         if r.lines:
-            out.append("".join(_table(conn, r.lines, rt.app)))
+            out.append("".join(_table(conn, r.lines, rt.app, sources)))
         if r.more:
             out.append(f"<p class='muted'>{r.more:,} more messages in the period.</p>")
     out.append("</details>")
