@@ -878,6 +878,13 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
         'PETROV called "Marc Garage" on WhatsApp, a contact of his.',
         # a quoted name after "the number called" (CodeRabbit on #282)
         'PETROV had a WhatsApp call with the number called "Marc Garage".',
+        # later in the sentence, in brackets after a quote, a bare "number", a plural (Claude
+        # review on #282)
+        'PETROV called "Marc Garage" on WhatsApp at that time, his contact.',
+        'PETROV called "Marc Garage" (a contact with whom he spoke) on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact of item 1) on WhatsApp.',
+        "PETROV called number Marc Garage on WhatsApp.",
+        'PETROV called the numbers "Marc Garage" on WhatsApp.',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -910,6 +917,16 @@ def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind)
         "On June 1, Item 1 called REYES. Contact PETROV later.",
         "PETROV sent REYES 12 messages, a number the log confirms.",
         "Item 1 called REYES 4 times, a number the call log shows.",
+        # a count's "number" after a relative word, a capitalised word or in brackets, and
+        # "number called" in capitals (Claude review on #282)
+        "Item 1 called REYES 4 times, which was the number of calls.",
+        "Item 1 called REYES 4 times, which is the number the log shows.",
+        "Item 1 called REYES 4 times, which is the contact the log shows.",
+        "Item 1 called REYES, which was the number of calls.",
+        "Item 1 called REYES 4 times on WhatsApp, a number the log shows.",
+        "Item 1 called REYES 4 times (a number the log shows).",
+        "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
+        "THE NUMBER CALLED ITEM 1 TWICE.",
     ],
 )
 def test_a_phone_number_or_a_contact_as_a_communication_stays_plain(conn, text):
@@ -1106,6 +1123,11 @@ def test_contact_as_a_communication_is_plain(conn):
         ("PETROV CALLED CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
         ("PETROV PLACED A CALL TO CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
         ("PETROV called contact Marc Garage on WhatsApp.", "contact"),
+        # a message's word before a bare "contact", and a plural (Claude review on #282)
+        ('PETROV called "Marc Garage" on WhatsApp at 9:14 p.m., his contact.', "contact"),
+        ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
+        ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
+        ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),
     ):
         assert any(word in w.split() for w in f.unread_words(text, (), set())), text
 

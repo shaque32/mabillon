@@ -8,31 +8,38 @@
   - a number side: 'the phone number "X"', 'the WhatsApp number "X"' (up to three words
     before the noun), 'the number: "X"', 'the number, "X",', 'the number for "X"', 'the number
     saved for "X"' (also listed or stored as, for or under, and "belonging to"), 'the number
-    called "X"', "the number Marc Garage", "the number @handle", '"X" (a number)', '"X", a number,';
+    called "X"', "the number Marc Garage", "the number @handle", '"X" (a number)', '"X", a number,',
+    'the numbers "X" and "Y"', "called number Marc Garage";
   - a saved contact: "called contact Marc Garage" (a bare "contact" before a capitalised name,
-    right after a call's word, also in capitals: "PETROV CALLED CONTACT MARC GARAGE"), 'the contact with the name "X"' (also "by the name", "under the
-    name"), '"X", who is (or who's) his contact', '"X" on WhatsApp, his contact', '"X" on
-    WhatsApp, a contact of REYES', '"X" (a contact of REYES)', '"X" — his contact —' (also "--"
-    and ";"), '"X", his saved WhatsApp Business contact'.
+    right after a call's or a message's word, as in "texted contact" or "a message to contact",
+    also in capitals: "PETROV CALLED CONTACT MARC GARAGE"), 'the contact with the name "X"'
+    (also "by the name", "under the name"), '"X", who is (or who's) his contact', '"X" on
+    WhatsApp, his contact', '"X" on WhatsApp at 9:14 p.m., his contact', '"X" on WhatsApp, a
+    contact of REYES', '"X" (a contact of REYES)', '"X" (a contact with whom he spoke)', '"X" —
+    his contact —' (also "--" and ";"), '"X", his saved WhatsApp Business contact'.
   Right after a quoted name any words may follow ('"X", a contact of his', '"X", his contact
-  for years'), as filler 14 read them. After a capitalised word or in brackets, "a contact
-  that lasted", "a contact for two minutes" and "the number of calls" stay plain, and after a
-  lower-case word nothing is read as a side ("12 messages, a number the log confirms"). A
+  for years', '"X" (a contact with whom he spoke)'), as filler 14 read them. Anywhere else, "a
+  contact that lasted", "a contact for two minutes" and "the contact between" stay plain, and a
+  "number" must end its phrase, so a count's "number" stays plain ("4 times on WhatsApp, a number
+  the log shows", "which was the number of calls", "(a number the log shows)"). After a
+  lower-case word in a sentence with no quoted name nothing is read as a side ("12 messages, a
+  number the log confirms"). A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
   number called PETROV" is the call's verb, and so is "to contact Marc Garage". Written inside
   a quoted message, these words stay the message's, as in filler 14. The words found are named
   in the drop reason; each kind is now listed, where filler 14 stopped at the first.
 - Where: PR #282
 - Verified: `tests/test_fill_calls.py`: `test_more_ways_to_name_a_contact_or_number_keep_the_event`
-  (27 wordings, communication and timing; the 16 new forms fail without the fix, and the 11
+  (32 wordings, communication and timing; the 16 new forms fail without the fix, and the 16
   added in review, 4 of which filler 14 already caught, guard the reviews' findings; claims
-  in capitals get no rows from the builder, so their wordings are tested at word level) and
-  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (14 wordings).
+  in capitals or with a second time get no rows from the builder, so those wordings are
+  tested at word level, in `test_contact_as_a_communication_is_plain`) and
+  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (22 wordings).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,438 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,456 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
-  Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: see the PR description. Cloud
+  Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: CI on the PR's final head, numbers in the PR description. Cloud
   container, Linux x86_64, 2026-11-25.
 - Open: development phones only. Still older and not in this PR: where the model's answer holds
   its own core event, code adds no unread event of its own, so words no check reads are not
