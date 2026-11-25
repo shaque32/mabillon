@@ -3478,8 +3478,9 @@ _SIDE_AFTER_RES = (
 # same stretch of words, before any other quote, never a quoted message ('wrote "ok" to
 # REYES, his contact') (Claude review on #282). After an unquoted name ("REYES, a contact on
 # WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
+# The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282).
 _SIDE_LATER_RE = re.compile(
-    rf"(?P<close>[\"”])[^\"“”]{{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
+    rf"[^\"“”‘’']{{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
     rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )
@@ -4138,10 +4139,9 @@ class LocalAssumptionFiller:
             *(m for rx in _SIDE_AFTER_RES for m in rx.finditer(whole)),
             *(
                 m
-                for m in _SIDE_LATER_RE.finditer(whole)
-                if _quote_is_a_party(
-                    whole, max(whole.rfind(q, 0, m.start()) for q in '"“'), m.end("close")
-                )
+                for q in _QUOTE_SPAN_RE.finditer(whole)
+                if _quote_is_a_party(whole, q.start(), q.end())
+                and (m := _SIDE_LATER_RE.match(whole, q.end())) is not None
             ),
         ):
             sep = m.group("sep")

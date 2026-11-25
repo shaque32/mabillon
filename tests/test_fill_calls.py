@@ -881,6 +881,9 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
         # later in the sentence, in brackets after a quote, a bare "number", a plural (Claude
         # review on #282)
         'PETROV called "Marc Garage" on WhatsApp at that time, his contact.',
+        # a party's name in single quotes, straight or curly (CodeRabbit on #282)
+        "PETROV called 'Marc Garage' on WhatsApp, his contact.",
+        "PETROV called \u2018Marc Garage\u2019 on WhatsApp, his contact.",
         'PETROV called "Marc Garage" (a contact with whom he spoke) on WhatsApp.',
         'PETROV called "Marc Garage" (a contact of item 1) on WhatsApp.',
         "PETROV called number Marc Garage on WhatsApp.",
