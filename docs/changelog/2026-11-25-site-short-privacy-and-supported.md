@@ -6,7 +6,7 @@
   "cloud AI provider" or "AI provider" instead of Claude Opus and Anthropic; "On this computer"
   says the audit runs locally and nothing is sent. The Supported column no longer says "Only
   after you accept the evidence behind it" (untrue since rules 0.5.0 added the "checked" basis);
-  it now says supported comes from your acceptance, that for a message, timing or count claim
+  it now says supported comes from your acceptance when no core check fails, that for a message, timing or count claim
   code checks against the phone records can also be enough, and that an AI label alone never
   is. (Arsh approved a broader line at 19:58Z; review showed it overstated rule 3c', so the
   scoped line awaits his pick before merge.) The one-pager's Supported sentence is scoped the
@@ -17,7 +17,7 @@
   docs/install-mac.md now say files and the case database stay on the computer, the place the AI
   runs is chosen per case at setup, and cloud AI is recommended for an ordinary case. They keep
   naming Claude Opus and Anthropic, since examiners set up an Anthropic key. The one-pager and onboarding now say the case's AI proposes claims (not "a local
-  model"), and both install guides say a cloud case needs internet while it proposes claims or is audited. The "Offline
+  model"), and both install guides and the onboarding table say a cloud case needs internet while it proposes claims or is audited. The "Offline
   computer" sections describe a machine without internet and stay. Arsh approved the rest of this
   wording 2026-11-25 19:58Z in the project thread.
 - Where: PR #281
@@ -31,7 +31,8 @@
   Mabillon's organization waits on its zero-retention agreement, which is not signed.
 - Affects: customer-facing claims (public site, README, pilot and install docs)
 - Status doc: pending: section 12, row 2, replace the safe-wording cell "Do not use.
-  Replacement wording is Arsh's call (customer-facing)" with "When you accept the evidence. For
+  Replacement wording is Arsh's call (customer-facing)" with "When you accept the evidence and
+  no core check fails. For
   a message, timing or count claim, code checks against the phone records can also be enough.
   An AI label alone never makes it supported." (site, 2026-11-25). Row 6, after the #278 edit,
   replace the safe-wording cell with ""Nothing goes out the door unlogged": your files stay on
