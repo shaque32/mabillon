@@ -2,7 +2,8 @@
 - Changed: the site still said "Local by default. Cloud AI only when your case allows it and you
   opt in", untrue since #254 (cloud AI, Claude Opus through Anthropic, is the recommended choice
   at setup for an ordinary case). Arsh asked for it dropped and a new line (2026-11-25), and
-  approved the exact wording 08:07Z in the project thread. `site/index.html`: the "Your data"
+  approved the wording 08:07Z in the project thread, and the review-fix wording 08:42Z
+  (keeping "Mabillon runs no server" on the privacy page). `site/index.html`: the "Your data"
   section's headline is now "Nothing goes out the door unlogged" with a subline on what leaves
   (text one question at a time, each request logged first) and what stays (extraction files, case database); the
   diagram, its screen-reader label and the columns (Your files / Cloud AI, recommended / On this
@@ -20,13 +21,17 @@
   after you accept the evidence behind it" (untrue since rules 0.5.0) were offered and left out
   (not approved in this round). README.md, docs/ONE_PAGER.md, docs/PILOT_ONBOARDING.md,
   docs/install.md and docs/install-mac.md still say local by default or offline by default.
+  `core/casework/cloud.py` FAST_EXPLAINED says a member list goes out "for a group chat", but
+  `core/audit/context.py` sends one for any chat (the site says "each chat's member list");
+  FAST_EXPLAINED is Arsh-approved app text, so that fix needs his sign-off.
 - Affects: customer-facing claims (public site and privacy page)
 - Status doc: pending: in the safe-claims table, row 6, replace the status cell's last sentence
   "Cloud stays off until the expert attests per case, so "local by default" stays true." with
   "Since #254 cloud AI is the recommended choice at setup, so "local by default" is no longer
   true." and replace the safe-wording cell with ""Nothing goes out the door unlogged": with cloud
   AI, text goes out one question at a time (the government's document paragraph by paragraph,
-  the records each claim is tested against and the messages around them), each request logged first, and the extraction
+  the records each claim is tested against, the messages around them, the case's app names and
+  each chat's member list), each request logged first, and the extraction
   files and case database stay on the computer (site, 2026-11-25)". In the paragraph after the
   table, replace ""files never leave your machine" or any hosted-model wording, because plan C is
   not built (section 5) and its customer wording still needs Arsh's sign-off;" with "any
