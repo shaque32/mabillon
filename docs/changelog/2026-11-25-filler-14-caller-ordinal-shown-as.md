@@ -19,15 +19,16 @@
     handle is.
   - "a second" before a call is an ordinal, not a tested length ("a second WhatsApp call that
     lasted two minutes" kept no event because its "a second" was read as a length). Any run of
-    words up to "call" counts, since an app's name may be several words.
+    words up to "call" counts, split by spaces or hyphens, since an app's name may be several
+    words.
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
   as" read for an account side, refused for a person, for a handle that placed the call and
   for other descriptors; an ordinal beside a tested length keeps the event however many of the
-  call's words stand between, which fails without the fix). `tests/test_fill*.py`,
-  `tests/*filler*.py`, `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,217 passed. Free replay of stored answers
-  (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106): one claim changes, iOS 15 C07
+  call's words stand between, or a hyphen, which fails without the fix). `tests/test_fill*.py`,
+  `tests/*filler*.py`, `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,219
+  passed. Free replay of stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106): one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
   the window), so it is held open by a check, not only by the event. Bars 1 to 3 unchanged on
   both: 0 false Supported, 0 false Contradicted. v5 bar 4 as replayed 0 of 50 and 0 of 37;

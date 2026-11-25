@@ -280,7 +280,12 @@ def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
 
 
 @pytest.mark.parametrize(
-    "noun", ["a second WhatsApp call", "a second outgoing WhatsApp telephone call"]
+    "noun",
+    [
+        "a second WhatsApp call",
+        "a second outgoing WhatsApp telephone call",
+        "a second-WhatsApp call",
+    ],
 )
 @pytest.mark.parametrize("length", [True, False])
 def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn, noun, length):
