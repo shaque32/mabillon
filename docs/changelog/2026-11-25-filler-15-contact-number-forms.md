@@ -26,7 +26,9 @@
   these words are the communication or the count, as in filler 14: "REYES, a contact on
   WhatsApp" (the checks read REYES), "4 times on WhatsApp, a number the log shows", "which was
   the number of calls", "12 messages, a number the log confirms". A quoted message is not a
-  name ('wrote "ok" to REYES, his contact'). "his contact called REYES" is the call's verb, but
+  name ('wrote "ok" to REYES, his contact'), a count's "number" right after a quoted name stays
+  plain ('"X", a number of times'), and a later side must stand in the quote's sentence. A saved
+  contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
   number called PETROV" is the call's verb, and so is "to contact Marc Garage". Written inside
@@ -34,14 +36,14 @@
   in the drop reason; each kind is now listed, where filler 14 stopped at the first.
 - Where: PR #282
 - Verified: `tests/test_fill_calls.py`: `test_more_ways_to_name_a_contact_or_number_keep_the_event`
-  (34 wordings, communication and timing; 27 fail on filler 14, and the other 7, which filler
+  (35 wordings, communication and timing; 27 fail on filler 14, and the other 8, which filler
   14 already caught, guard against regressions the reviews found; claims
   in capitals or with a second time get no rows from the builder, so those wordings are
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
-  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (30 wordings), and
+  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (31 wordings), and
   `test_a_side_named_two_ways_is_named_once`.
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,469 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,472 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
   Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: CI on the PR's final head, numbers in the PR description. Cloud

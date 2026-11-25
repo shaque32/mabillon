@@ -887,6 +887,9 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
         'PETROV called "Marc Garage" (a contact with whom he spoke) on WhatsApp.',
         'PETROV called "Marc Garage" (a contact of item 1) on WhatsApp.',
         "PETROV called number Marc Garage on WhatsApp.",
+        # a saved contact as the caller, and "called" as "named" after another verb (Claude
+        # review on #282)
+        "PETROV spoke to his contact called Marc Garage on WhatsApp.",
         'PETROV called the numbers "Marc Garage" on WhatsApp.',
     ],
 )
@@ -931,15 +934,16 @@ def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind)
         "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
         "THE NUMBER CALLED ITEM 1 TWICE.",
         # "contact" as the communication after a person the checks read, after a quoted
-        # message, "contact called" as the call's verb, and "between" in capitals (Claude
-        # review on #282)
+        # message, "between" in capitals, a count's "number" after a quote, and a contact in
+        # the next sentence (Claude review on #282)
+        'PETROV called "Marc Garage", a number of times, on WhatsApp.',
+        'PETROV called "Marc Garage" (the number of times shown) on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp. REYES later called PETROV, his contact.',
         "On June 8, PETROV called REYES, a contact on WhatsApp.",
         "PETROV called REYES on WhatsApp, the contact.",
         "PETROV called REYES, which was the contact.",
         "PETROV called REYES on WhatsApp, a WhatsApp contact.",
         'PETROV wrote "ok" to REYES, his contact.',
-        "On June 1, a contact called Item 1.",
-        "His contact called REYES on June 1.",
         "THE CONTACT BETWEEN PETROV AND REYES.",
     ],
 )
@@ -1144,6 +1148,9 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),
         # "called" after a call's word names the number (Claude review on #282)
         ("PETROV called the number called Marc Garage on WhatsApp.", "number"),
+        # a saved contact as the caller (Claude review on #282)
+        ("His contact called PETROV on WhatsApp.", "contact"),
+        ("On June 1, a contact called Item 1.", "contact"),
     ):
         assert any(word in w.split() for w in f.unread_words(text, (), set())), text
 

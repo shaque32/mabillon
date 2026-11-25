@@ -3458,7 +3458,10 @@ _CALL_BEFORE_CONTACT_RE = re.compile(
 # "REYES, which was the number of calls"), and never the phone itself (", the number (212)
 # ...").
 _SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
-_SIDE_NOUN = rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
+_SIDE_NOUN = (  # never "a number of times" (Claude review on #282)
+    rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
+    r"(?!(?:(?<=number)|(?<=numbers))\s+of\b)"
+)
 _SIDE_NOT_A_SIDE = (  # "a contact of his" is an owner, never a length (CodeRabbit on #282)
     r"(?!\s+(?:that|which|lasting|lasted|between|with|for"
     r"|of\s+(?!(?:his|her|hers|their|theirs|mine|yours|ours)\b)(?-i:[a-z0-9])))"
@@ -3478,9 +3481,10 @@ _SIDE_AFTER_RES = (
 # same stretch of words, before any other quote, never a quoted message ('wrote "ok" to
 # REYES, his contact') (Claude review on #282). After an unquoted name ("REYES, a contact on
 # WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
-# The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282).
+# The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282),
+# within its sentence (Claude review on #282).
 _SIDE_LATER_RE = re.compile(
-    rf"[^\"“”‘’']{{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
+    rf"(?:(?![.!?]\s+(?-i:[A-Z]))[^\"“”‘’']){{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
     rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )
@@ -4106,14 +4110,17 @@ class LocalAssumptionFiller:
             number = named.group("noun").casefold().startswith("number")
             verb = False
             if (
-                how
+                number
+                and how
                 and how.casefold() == "called"
                 and not _OPEN_QUOTE_RE.match(whole, named.end())
                 and not _CALL_BEFORE_CONTACT_RE.search(whole, 0, named.start())
             ):
-                # "a number called PETROV", "his contact called REYES" are the call's verb,
-                # never a name (Claude review on #282); 'the number called "Marc Garage"' and
-                # "called the number called Marc Garage" name it (CodeRabbit, Claude review on
+                # "a number called PETROV" is the call's verb, never a name (Claude review on
+                # #282); 'the number called "Marc Garage"' and "called the number called Marc
+                # Garage" name it (CodeRabbit, Claude review on #282). A saved contact stays
+                # unread either way: "his contact called PETROV" names the caller as one, and
+                # "spoke to his contact called Marc Garage" names the side (Claude review on
                 # #282)
                 how, end, verb = None, named.end("noun"), True
             else:
