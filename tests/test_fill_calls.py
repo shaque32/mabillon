@@ -980,6 +980,21 @@ def test_contact_as_a_communication_is_plain(conn):
     # a lower-case address after "the contact" is still a saved contact (CodeRabbit on #279)
     out = f.unread_words("Item 1 called the contact marc@example.org on Skype.", (), set())
     assert any("contact" in w for w in out)
+    # a contact or a number written inside a quoted message is the message's words, never the
+    # claim's; written after a quoted name, it is the claim's (CodeRabbit on #279)
+    for text in (
+        'PETROV wrote "Alex (a contact) will call." on Telegram.',
+        'PETROV wrote "Ask Alex, his contact, to call." on Telegram.',
+        "PETROV wrote \"call the number 'Alex' gave you\" on Telegram.",
+    ):
+        out = f.unread_words(text, (), set())
+        assert not any("contact" in w or "number" in w for w in out), (text, out)
+    for text, word in (
+        ('PETROV called "Marc Garage", his contact, on WhatsApp.', "contact"),
+        ('PETROV called "Marc Garage" (a contact) on WhatsApp.', "contact"),
+        ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
+    ):
+        assert word in f.unread_words(text, (), set()), text
 
 
 def test_unread_words_name_each_word_once(conn):

@@ -4032,9 +4032,20 @@ class LocalAssumptionFiller:
             ):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
-        if _CONTACT_AFTER_RE.search(whole) is not None:
+        # Searched on the text with its quotes, which '"Marc Garage", his contact' needs, but
+        # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
+        # bracket or comma the match starts with must stand outside every quote (CodeRabbit
+        # on #279)
+        unquoted_whole = _unquoted(whole)
+
+        def outside_quotes(m: re.Match[str]) -> bool:
+            # '"Marc Garage", his contact' starts with the name's closing quote: read the comma
+            at = m.start() + (1 if m.group(0)[0] in "\"”’'" else 0)
+            return not unquoted_whole[at].isspace()
+
+        if any(outside_quotes(m) for m in _CONTACT_AFTER_RE.finditer(whole)):
             extra.append("contact")
-        if _NUMBER_QUOTED_RE.search(whole) is not None:
+        if any(outside_quotes(m) for m in _NUMBER_QUOTED_RE.finditer(whole)):
             extra.append("number")
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
