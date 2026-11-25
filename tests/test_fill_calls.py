@@ -416,12 +416,24 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
     assert made["record_time"].params.duration_s and made["event"].is_core
 
 
-@pytest.mark.parametrize("after", ["on Item 1", "in the evening", "to (212) 555-0199"])
+@pytest.mark.parametrize(
+    "after",
+    [
+        " on Item 1",
+        " in the evening",
+        " to (212) 555-0199",
+        # punctuation before more words still leaves a second call (Claude review on #279)
+        ", on Item 1",
+        ", from (212) 555-0199",
+        "; on Item 1",
+        " \u2014 on Item 1",
+    ],
+)
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
 def test_and_a_second_before_more_words_is_no_part_of_the_length(conn, after, kind):
     # ", and a second on Item 1" may be a second call by ellipsis, even where the model reads
     # "one minute, and a second" as the length (Claude review on #279)
-    text = f"Item 1 placed a call to (212) 555-0199 that lasted one minute, and a second {after}."
+    text = f"Item 1 placed a call to (212) 555-0199 that lasted one minute, and a second{after}."
     made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "one minute, and a second"})
     assert made["event"].is_core
 
@@ -793,6 +805,10 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         'PETROV received a WhatsApp call from the contact displayed as "Marc Garage".',
         # "caller" is a word no check reads, as "shown" is (Claude review on #279)
         'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
+        # a saved contact written by name, with no "displayed as" (Claude review on #279)
+        'PETROV called the contact "Marc Garage" on WhatsApp.',
+        "PETROV called the contact named Marc Garage on WhatsApp.",
+        'PETROV called his contact saved as "Marc Garage" on WhatsApp.',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -802,6 +818,27 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
     made, _ = fill(conn, f"{WA_AT} {words}", kind, people=["PETROV"], handles=["Marc Garage"],
                    channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
     assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV placed a WhatsApp call to the party shown as "Marc Garage".',
+        'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
+        'PETROV placed a WhatsApp call to the contact displayed as "Marc Garage".',
+    ],
+)
+def test_a_side_named_by_unread_words_keeps_its_event_without_the_guard(conn, monkeypatch, words):
+    # the caller row itself carries the event for "shown", "caller" or "contact", whatever the
+    # unread-words guard makes of the wording (Claude review on #279)
+    monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    made, _ = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["caller"] and made["event"].is_core
+    plain, _ = fill(conn, f'{WA_AT} PETROV placed a WhatsApp call to the party displayed as'
+                    ' "Marc Garage".', people=["PETROV"], handles=["Marc Garage"],
+                    channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert "event" not in plain
 
 
 def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):

@@ -3307,7 +3307,7 @@ _DIGIT_LENGTH_RE = re.compile(
 _LENGTH_JOIN_RE = re.compile(r"\s*,?\s*(?:and\s+)?", re.IGNORECASE)
 _HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
 _ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
-_SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.,;:!?)\]\u2014\u2013])")
+_SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.!?](?:\s|$))")
 _SECOND_LENGTH_END_RE = re.compile(
     r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
     re.IGNORECASE,
@@ -3322,8 +3322,8 @@ def _may_be_a_length(text: str, m: re.Match[str]) -> bool:
     if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
         return True
     if words.startswith("and"):
-        # ", and a second on Item 1" may be a second call by ellipsis: only punctuation or the
-        # text's end closes this form (Claude review on #279)
+        # ", and a second on Item 1" (or ", and a second, on Item 1") may be a second call by
+        # ellipsis: only a sentence's end closes this form (Claude review on #279)
         return bool(_SECOND_CLAUSE_END_RE.match(text, m.end()))
     if not _SECOND_LENGTH_END_RE.match(text, m.end()):
         return False
@@ -3379,6 +3379,15 @@ def _tested_lengths_in(
 
 # A side named as a saved contact or a phone number by what the log shows (`unread_words`)
 _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as\b", re.I)
+# A side written as a saved contact by name: 'the contact "Marc Garage"', "the contact named
+# Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
+# with") stays plain; the quote is looked for in the text before quotes are blanked.
+_CONTACT_NAMED_RE = re.compile(
+    r"\b(?:the|a|an|his|her|their|its|my|your|our)\s+(?:saved\s+)?contact"
+    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?",
+    re.I,
+)
+_OPEN_QUOTE_RE = re.compile(r"\s*[\"“‘']")
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3939,8 +3948,13 @@ class LocalAssumptionFiller:
         # "the contact displayed as", "the number shown as": a saved contact, or a phone number,
         # that no check reads; read before "displayed as" (plain naming) is blanked (Claude
         # review on #279)
-        if shown := _CONTACT_SHOWN_RE.search(_unquoted(_flat(_nfc(text)))):
+        whole = _flat(_nfc(text))  # `flat` has "displayed as" blanked by now
+        if shown := _CONTACT_SHOWN_RE.search(_unquoted(whole)):
             extra.append(" ".join(shown.group(0).casefold().split()))
+        for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
+            if named.group("how") or _OPEN_QUOTE_RE.match(whole, named.end()):
+                extra.append(" ".join(named.group(0).casefold().split()))
+                break
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -6985,7 +6999,16 @@ class LocalAssumptionFiller:
             length=length,
             one_account=one_account,
             from_phone=from_phone,
-            unread=ordinal or (bool(shown) and shown[0].casefold() in {"contact", "number"}),
+            # "the contact", "the number", "the caller" or "shown as": words no check reads,
+            # so the caller row carries its own event (Claude review on #279)
+            unread=ordinal
+            or (
+                bool(shown)
+                and (
+                    shown[0].casefold() in {"contact", "number", "caller"}
+                    or "shown" in {w.casefold() for w in shown}
+                )
+            ),
         )
 
     @staticmethod

@@ -16,7 +16,9 @@
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
     is plain naming, as it already was everywhere else, so the clause reads as 'to "X"' does;
     "shown" and "caller" are words no check reads and keep the core event, and so do "the
-    contact" (a saved contact) and "the number displayed as" (a phone number), on every path: the unread
+    contact" (a saved contact, also 'the contact "X"', "the contact named X" or "saved as X"
+    with no "displayed as", which filler 13 read as plain) and "the number displayed as" (a
+    phone number), on every path: the unread
     guard reads them, and the caller row also adds the event itself and with no event allowed
     gets no caller row. So do other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
     that placed the call still gets no caller: a caller row names persons or accounts, and
@@ -29,8 +31,9 @@
     and a second", "one minute, and a second" or "1 minute and a second" beside one testing 61
     seconds), and its clause
     ends right after it (a full stop, a comma, a dash, a bracket, or a word such as "and" or
-    "on"; for "and a second", only punctuation or the text's end, so ", and a second on Item
-    1" or "in the evening" is a second call by ellipsis, which filler 13 read as a length). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
+    "on"; for "and a second", only a sentence's end, so ", and a second on Item 1", ", and a
+    second, from (212) 555-0199" or "in the evening" is a second call by ellipsis, which filler
+    13 read as a length). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
     event: "a second, telephone call", "for a second time", "over a second line", "two
     minutes, and a second call", "about two minutes, and a second to (212) 555-0199" (a second
     call written by ellipsis, which filler 13 also read as a length). Filler 13 read "a second
@@ -62,7 +65,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,293 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,310 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of
