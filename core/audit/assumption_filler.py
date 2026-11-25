@@ -208,7 +208,11 @@ MAX_PROPOSALS = 8
 #      their caller row; a person written right before their number ("SUBJECT-2's number,
 #      ...", "SUBJECT-2 at ...") comes off the call's time range when a core identity row ties
 #      them, with a core event row holding the rest (coverage recount, 2026-11-21).
-FILLER_VERSION = "13"
+#  14: a call's clause may hold an ordinal after its article ("placed a second Signal call
+#      to"), whose word still keeps the core event, and may name the other side by what the
+#      log shows ("from the party displayed as "X""); both get their caller row (v5 pre-run
+#      replay on development phones, 2026-11-25).
+FILLER_VERSION = "14"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1886,6 +1890,7 @@ _CALL_FORM_RE = re.compile(
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
     rf")\s+(?:the\s+)?(?:(?P<desc>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*)*?)\s+(?:user|account)\s+)?"
+    rf"(?P<shown>(?:party|contact|caller|number|user|account)\s+(?:displayed|shown)\s+as\s+)?"
     rf"(?P<b>{_TOKEN})(?P<tail>[^\x01]*(?:{_TOKEN}[^\x01]*)?)$",
     re.IGNORECASE,
 )
@@ -1912,6 +1917,10 @@ _CALL_ID_TAIL_RE = re.compile(
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
 # direction word its verb allows, and a word for a phone call.
 _CALL_ARTICLES = frozenset({"a", "an", "another"})
+# An ordinal after the article: "placed a second Signal call to". Who placed this call is still
+# read; the earlier call the ordinal states is not, so its word keeps the expert-only event
+# (`unread_words`, `_UNPLAIN_PHRASES_RE`) and the claim never rests on the checks alone.
+_CALL_ORDINALS = frozenset({"first", "second", "third", "fourth", "fifth"})
 _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # The app a call was on, right after the clause: "called X on Telegram", "via WhatsApp". Only
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
@@ -1943,6 +1952,9 @@ class CallForm:
     length: str | None
     one_account: bool = False  # the clause names b by a name and its id: one account
     from_phone: str | None = None  # "placed a call from <PHONE> to": the phone a used
+    # the clause states a part no check reads, which keeps the claim's expert-only event:
+    # "placed a second call" (an earlier call), "the contact displayed as" (a saved contact)
+    unread: bool = False
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -3258,6 +3270,155 @@ _SPOKEN_LENGTH_RE = re.compile(
     r"secs?|mins?|hrs?)\b",
     re.IGNORECASE,
 )
+# What follows an ordinal "second" before a call: "a second call", "a second outgoing
+# WhatsApp telephone call", "a second-WhatsApp call". Any run of the call's own words up to
+# "call", split by spaces or hyphens as `_words` splits them, never a word count: an app's
+# name may be several words (CodeRabbit on #279). The run stops at a word that starts another
+# phrase. A word and its separators never share a character, so a run of hyphens is read in
+# one way only (Claude review on #279: "--" after "second" took seconds).
+_CALL_NOUN_RUN = (
+    r"[\s-]+(?:(?!(?:and|or|but|then|that|which|who|to|from|with|the|a|an|before|after|when|"
+    r"while)\b)\w+[\s-]+)*?calls?\b"
+)
+# A length that ends in "second" may be an ordinal: "a second", "and a second", "the
+# thirty-second". It is read as a tested length only where it is part of the length a row
+# tests: "lasted a second" when the row tests one second, "one minute and a second" (or "one
+# minute, and a second") when it tests 61 seconds, and its clause ends right after it. Anywhere
+# else it is an ordinal and stays a word no check reads: "placed a second, telephone call", "for
+# a second time", "over a second line", "two minutes, and a second call", "about two minutes,
+# and a second to (212) 555-0199" (a second call; Claude review on #279).
+_SECOND_ORDINAL_FORM_RE = re.compile(
+    r"(?:and\s+)?(?:a|an|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+second",
+    re.IGNORECASE,
+)
+_SECOND_LENGTH_LEAD_RE = re.compile(
+    r"\b(?:lasted|lasting|lasts|last|for|of|about|approximately|roughly|nearly|almost|around|"
+    r"just|only|over|under|exactly|some)\s+$",
+    re.IGNORECASE,
+)
+# A length written in digits: "90 seconds", "1 minute", "a 30-second call" (CodeRabbit and
+# Claude review on #279)
+_DIGIT_LENGTH_RE = re.compile(
+    r"(?<![\w.,:/])\d+(?:\.\d+)?(?:(?:\s*-\s*|\s*)(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)"
+    r"|[smh])\b",  # "a 30s call" (Claude review on #279)
+    re.IGNORECASE,
+)
+# What may part two pieces of one length: "two minutes and 30 seconds", "one minute, and a
+# second" (whose "and" the second piece holds)
+# ("1 min. 40 sec.": a full stop only after an abbreviated unit, never a sentence break)
+_LENGTH_JOIN_RE = re.compile(
+    r"(?:(?:(?<=min)|(?<=mins)|(?<=sec)|(?<=secs)|(?<=hr)|(?<=hrs))\.)?\s*,?\s*(?:and\s+)?",
+    re.IGNORECASE,
+)
+_HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
+_ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
+_SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.!?](?:\s|$))")
+_SECOND_LENGTH_END_RE = re.compile(
+    r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
+    re.IGNORECASE,
+)
+
+
+def _may_be_a_length(text: str, m: re.Match[str]) -> bool:
+    """Whether a stated length `m` may be read as a length at all. One whose words could be an
+    ordinal ("a second", "and a second") may be only where its clause ends right after it, and
+    a lone "a second" only where a length word leads into it ("lasted a second")."""
+    words = m.group(0).casefold()
+    if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
+        return True
+    if words.startswith("and"):
+        # ", and a second on Item 1" (or ", and a second, on Item 1") may be a second call by
+        # ellipsis: only a sentence's end closes this form, and never after a comma ("one
+        # minute, and a second." may be a second call too; Claude review on #279)
+        if text[: m.start()].rstrip().endswith(","):
+            return False
+        return bool(_SECOND_CLAUSE_END_RE.match(text, m.end()))
+    if not _SECOND_LENGTH_END_RE.match(text, m.end()):
+        return False
+    return bool(_SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()))
+
+
+def _tested_lengths_in(
+    text: str, lengths: Collection[tuple[int, int]]
+) -> tuple[list[tuple[int, int]], list[str]]:
+    """The spans of the lengths `text` states that a row tests (`lengths`, each as
+    `duration_range` reads it), and the words of every other length it states. A length may
+    be written in parts ("two minutes and 30 seconds", "one minute, and a second", "a minute
+    and a half"): each run of parts is read whole and in every shorter run, and a part is
+    tested only where a run holding it gives a tested length. "a 30 second call that lasted
+    about two minutes" beside a row testing about two minutes leaves "30 second" a length no
+    row tests (Claude review on #279)."""
+    tested = {tuple(x) for x in lengths}
+    found = sorted(
+        [*_SPOKEN_LENGTH_RE.finditer(text), *_DIGIT_LENGTH_RE.finditer(text)],
+        key=lambda m: m.start(),
+    )
+    runs: list[list[re.Match[str]]] = []
+    for m in found:
+        if not _may_be_a_length(text, m):
+            runs.append([])  # an ordinal parts the runs around it
+        elif runs and runs[-1] and _LENGTH_JOIN_RE.fullmatch(text, runs[-1][-1].end(), m.start()):
+            runs[-1].append(m)
+        else:
+            runs.append([m])
+    spans: list[tuple[int, int]] = []
+    covered: set[int] = set()
+    # a tested length covers one stated length only: "lasted 100 seconds and a call of 100
+    # seconds" states a second call no row tests (Claude review on #279)
+    used: set[tuple[int, int]] = set()
+    for run in runs:
+        hits: set[tuple[int, int]] = set()
+        for i, first in enumerate(run):
+            for j in range(i, len(run)):
+                ends = [run[j].end()]
+                if (half := _HALF_AFTER_RE.match(text, run[j].end())) is not None:
+                    ends.append(half.end())
+                # "a ninety second call": the article before a length is no part of it
+                starts = [first.start()]
+                if (art := _ARTICLE_BEFORE_RE.match(text, first.start())) is not None:
+                    starts.append(art.end())
+                for start, end in ((a, b) for a in starts for b in ends):
+                    try:
+                        got = duration_range(text[start:end], text)
+                    except Reject:
+                        continue
+                    if got not in tested or got in used:
+                        continue
+                    hits.add(got)
+                    spans.append((start, end))
+                    covered.update(m.start() for m in run[i : j + 1])
+        used |= hits
+    untested = [" ".join(m.group(0).casefold().split()) for m in found if m.start() not in covered]
+    return spans, untested
+
+
+# A side named as a saved contact or a phone number by what the log shows (`unread_words`)
+_CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as\b", re.I)
+# 'the number "Marc Garage"': a side named as a phone number by a quoted name, read before
+# quotes are blanked (Claude review on #279)
+_NUMBER_QUOTED_RE = re.compile(r"\b(?:the|a|his|her|their)\s+number\s*[\"“‘']", re.I)
+# A side written as a saved contact by name: 'the contact "Marc Garage"', "the contact named
+# Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
+# with") stays plain; the quote is looked for in the text before quotes are blanked.
+_CONTACT_NAMED_RE = re.compile(
+    r"\b(?:(?P<art>the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact\b"
+    r"(?:\s+(?:entry|card|name)\b)?"
+    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?"
+    r"(?:\s+(?:for|under)\b)?",  # "the contact for "Marc Garage"" (Claude review on #279)
+    re.I,
+)
+_OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact, "Marc"'
+# '"Marc Garage" (a contact)': a saved contact written after the name (Claude review on #279)
+_CONTACT_AFTER_RE = re.compile(
+    r"\(\s*(?:(?:a|the|his|her|their|my|your|our)\s+)?(?:saved\s+)?contact\s*\)"
+    # '"Marc Garage", his contact,' (Claude review on #279)
+    r"|[\"”’'],\s*(?:a|the|his|her|their|my|your|our)\s+(?:saved\s+)?contact\b",
+    re.I,
+)
+# What names a saved contact right after "the contact": a name, a number or a handle ("the
+# contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
+# contact between PETROV and REYES" (Claude review on #279)
+_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)")
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3268,6 +3429,14 @@ def _phone_kind(word: str) -> str:
     "RCS", "iMessage"), each kind apart: "i-Messages" is "imessage", "MMS" is no "sms"."""
     return re.sub(r"[-\s]", "", word.casefold()).replace("imessages", "imessage")
 
+
+# Where a reply's sentence ends, for the quotes read after a reply word: never the dot of an
+# abbreviation such as "p.m." ("replied to "X" at 9:14 p.m. EDT, "Lol."")
+_SENTENCE_END_RE = re.compile(r"(?<!\.[A-Za-z])[.!?](?=\s+[A-Z]|\s*$)")
+# A call "back": the other side called first, which no check reads (Claude review on #279)
+_CALL_BEFORE_BACK_RE = re.compile(
+    r"\b(?:call(?:ed|s|ing)?|rang|phoned|dial(?:l)?ed|ring(?:s|ing)?)\s+$", re.IGNORECASE
+)
 
 # A length no row tests, read as words no check reads: the spoken lengths, and "a quarter
 # hour" (CodeRabbit on #265). Only `_SPOKEN_LENGTH_RE` is ever blanked as a tested length.
@@ -3284,7 +3453,12 @@ _UNTESTED_LENGTH_RE = re.compile(
 _UNPLAIN_PHRASES_RE = re.compile(
     r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
-    r"second(?=\s+(?:phone|call|message|text|number|account|line|device|time|handset|sim)s?\b)|"
+    r"second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
+    rf"device|time|handset|sim)s?\b)|second(?={_CALL_NOUN_RUN})|"
+    # "a second, telephone call", "their second (WhatsApp) call": an ordinal after an article or
+    # a possessive states an earlier one, whatever follows it (a tested length "lasted a
+    # second" is blanked before this is read; Claude review on #279)
+    r"(?:a|the|his|her|their|its|my|your|our)[\s-]+second\b|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)
@@ -3523,12 +3697,21 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     if "direction" in tests:
         never.remove(_PASSIVE_TO_RE)
     rest = words
+    # `phrases` blanks at its own offsets only when it is `words` before blanking (same
+    # length); otherwise its phrases are still reported, and only `words`' own are blanked
+    same = phrases is not None and len(phrases) == len(words)
     for rx in never:
-        for m in rx.finditer(words if phrases is None else phrases):
-            w = " ".join(m.group(0).casefold().split())
-            if w not in out:
-                out.append(w)
-        rest = rx.sub(" ", rest)
+        # blank only what is reported, where it is read: "his last WhatsApp call" is a phrase
+        # only once the app is blanked, so its words stay for the word check ("last") and are
+        # never dropped unreported (Claude review on #279)
+        texts = [phrases] if same else [words] if phrases is None else [phrases, words]
+        for text in texts:
+            for m in rx.finditer(text):
+                w = " ".join(m.group(0).casefold().split())
+                if w not in out:
+                    out.append(w)
+                if same or text is words:
+                    rest = rest[: m.start()] + " " * (m.end() - m.start()) + rest[m.end() :]
     for m in _NUMERAL_RE.finditer(rest):
         gate = "length" if _UNIT_AFTER_RE.match(rest, m.end()) else "count"
         if gate not in tests and m.group(0) not in out:
@@ -3755,6 +3938,7 @@ class LocalAssumptionFiller:
         counts: int = 1,
         expected: Collection[int] | None = None,
         devices: Collection[str] | None = None,
+        tested_lengths: Collection[tuple[int, int]] = (),
     ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
@@ -3766,7 +3950,9 @@ class LocalAssumptionFiller:
         numbers than counting rows, or a number no counting row counts, is a part no row tests.
         With `devices` (the phones the kept rows search), a phone the claim writes that no row
         searches is a part no row tests: "on Item 2, PETROV wrote ..." passed on a message on
-        Item 1 (Claude review on #265).
+        Item 1 (Claude review on #265). `tested_lengths` are the lengths the kept rows test, as
+        `duration_range` reads them: a length that could be an ordinal ("a second") is read
+        only as part of one of them (Claude review on #279).
         Empty when the claim states only what its checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
@@ -3784,6 +3970,27 @@ class LocalAssumptionFiller:
                     and said[m.start() : m.end()] == m.group(0)
                     and not any(a <= m.start() and m.end() <= b for a, b in owned)
                 ]
+            if rx is _REPLY_QUOTED_RE:
+                # "a call back to "Marc Garage"": the quote is a party's name, not the reply's
+                # words, so "back" stays a word no check reads (Claude review on #279)
+                # A quoted message after the party ('replied to "DFIR Two" on LINE, "Lol."')
+                # is still the reply's words.
+                # A call "back" ("called back "X"", "a call back to the party displayed as
+                # "X"") is never a reply's quoted words. Parties are read on the text before
+                # "displayed as" was blanked (same length).
+                kept, outside, whole = flat, _unquoted(flat), _flat(_nfc(text))
+                for m in rx.finditer(kept):
+                    if m.group(0).casefold() == "back" and _CALL_BEFORE_BACK_RE.search(
+                        kept, 0, m.start()
+                    ):
+                        continue
+                    end = _SENTENCE_END_RE.search(outside, m.end())
+                    quotes = _QUOTE_SPAN_RE.finditer(
+                        whole, m.end(), end.start() if end else len(whole)
+                    )
+                    if not all(_quote_is_a_party(whole, q.start(), q.end()) for q in quotes):
+                        flat = flat[: m.start()] + " " * (m.end() - m.start()) + flat[m.end() :]
+                continue
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
@@ -3798,10 +4005,48 @@ class LocalAssumptionFiller:
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
             if not self.unread_words(
-                raw, tests=tests, counts=counts, expected=expected, devices=devices
+                raw,
+                tests=tests,
+                counts=counts,
+                expected=expected,
+                devices=devices,
+                tested_lengths=tested_lengths,
             ):
                 cut += found
         extra: list[str] = []
+        # "the contact displayed as", "the number shown as": a saved contact, or a phone number,
+        # that no check reads; read before "displayed as" (plain naming) is blanked (Claude
+        # review on #279)
+        # Read on every path, beside a contact_entry row too: a row names one saved contact,
+        # and the words may name another (CodeRabbit on #279).
+        whole = _flat(_nfc(text))  # `flat` has "displayed as" blanked by now
+        for shown in _CONTACT_SHOWN_RE.finditer(_unquoted(whole)):
+            extra.append(" ".join(shown.group(0).casefold().split()))
+        for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
+            # "the contact Marc Garage": an article or possessive before "contact" and a name
+            # after it; a bare "Contact" only before a quote or "named" (Claude review on #279)
+            if (
+                named.group("how")
+                or _OPEN_QUOTE_RE.match(whole, named.end())
+                or (named.group("art") and _NAME_AFTER_RE.match(whole, named.end()))
+            ):
+                extra.append(" ".join(named.group(0).casefold().split()))
+                break
+        # Searched on the text with its quotes, which '"Marc Garage", his contact' needs, but
+        # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
+        # bracket or comma the match starts with must stand outside every quote (CodeRabbit
+        # on #279)
+        unquoted_whole = _unquoted(whole)
+
+        def outside_quotes(m: re.Match[str]) -> bool:
+            # '"Marc Garage", his contact' starts with the name's closing quote: read the comma
+            at = m.start() + (1 if m.group(0)[0] in "\"”’'" else 0)
+            return not unquoted_whole[at].isspace()
+
+        if any(outside_quotes(m) for m in _CONTACT_AFTER_RE.finditer(whole)):
+            extra.append("contact")
+        if any(outside_quotes(m) for m in _NUMBER_QUOTED_RE.finditer(whole)):
+            extra.append("number")
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -3856,8 +4101,22 @@ class LocalAssumptionFiller:
             if (h := _BARE_HOUR_RE.search(bare[: m.start()])) is not None:
                 cut.append((h.start(1), h.end(2) if h.group(2) else h.end(1)))
         lengths: list[str] = []
-        if "length" in tests:
-            cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
+        if "length" in tests and tested_lengths:
+            # a length the claim states is read only where it is the length a row tests: "a
+            # second WhatsApp call that lasted two minutes" keeps "a second" (an ordinal), and
+            # "a 30 second call that lasted about two minutes" keeps "30 second", words no
+            # check reads (CodeRabbit and Claude review on #279)
+            spans, untested = _tested_lengths_in(bare, tested_lengths)
+            cut += spans
+            extra += [w for w in untested if w not in extra]
+        elif "length" in tests:
+            # no tested length given (direct callers only; the filler always gives them): every
+            # spoken length but an ordinal-like one, as before filler 14
+            cut += [
+                m.span()
+                for m in _SPOKEN_LENGTH_RE.finditer(bare)
+                if not _SECOND_ORDINAL_FORM_RE.fullmatch(m.group(0).casefold())
+            ]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a
         # quarter hour", where the row tests "one minute") (CodeRabbit on #265)
@@ -3892,10 +4151,13 @@ class LocalAssumptionFiller:
             ]
         words = _blank(bare, cut)
         # "sent a video": a kind of message no check reads, not an app (CodeRabbit on #265)
+        # every blanking here keeps the text's length: `plain_tokens` blanks the phrases it
+        # finds in `phrases` at the same offsets in `words` (Claude review on #279)
         words = _OTHER_CALL_APPS_RE.sub(
-            lambda m: m.group(0) if m.group(0).casefold() == "video" else " ", words
+            lambda m: m.group(0) if m.group(0).casefold() == "video" else " " * len(m.group(0)),
+            words,
         )
-        words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
+        words = _OTHER_CALL_APPS_CAP_RE.sub(lambda m: " " * len(m.group(0)), words)
         # acts: each verb, or each set of verbs leading to one quoted message, read on the
         # claim's words with kept ranges, names, numbers and addresses blanked
         acts = set()
@@ -3932,15 +4194,24 @@ class LocalAssumptionFiller:
                 extra.append("a second count")
         # a message's own kind, one record: "messages" stays, plain only beside a count
         # (Claude review on #265)
-        words = re.sub(r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
+        words = re.sub(
+            r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b",
+            lambda m: " " * len(m.group(0)),
+            words,
+        )
         out = plain_tokens(words, phrases, tests)
         if "connected" not in out and connected_with_object(bare):
             out.append("connected")
-        return [
-            *out,
-            *(w for w in lengths if not set(w.split()) & set(out)),
-            *(w for w in extra if w not in out),
-        ]
+        # each word once, in order: the list is the drop reason an expert reads
+        return list(
+            dict.fromkeys(
+                [
+                    *out,
+                    *(w for w in lengths if not set(w.split()) & set(out)),
+                    *(w for w in extra if w not in out),
+                ]
+            )
+        )
 
     @staticmethod
     def _count_mentions(words: str) -> list[int | None]:
@@ -5669,8 +5940,17 @@ class LocalAssumptionFiller:
             if checked
             else set()
         )
+        # the lengths the rows test, as `duration_range` read them: "a second" is a length
+        # only where it is part of one (Claude review on #279)
+        lengths = {tuple(d) for p in core if (d := p.params.get("duration_s"))}
         words = self.unread_words(
-            claim.text, raws, tests, counts=len(distinct), expected=expected, devices=devices
+            claim.text,
+            raws,
+            tests,
+            counts=len(distinct),
+            expected=expected,
+            devices=devices,
+            tested_lengths=lengths,
         )
         if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on
@@ -5718,6 +5998,12 @@ class LocalAssumptionFiller:
             return out
         if "event" not in allowed_ids:
             raise Reject(f"the claim states more than its checks read ({', '.join(words)})")
+        return [*out, self._unread_event(out)]
+
+    @staticmethod
+    def _unread_event(out: list[Proposal]) -> Proposal:
+        """The core event code adds for words no check reads: the first core assumption's
+        parties, phones, window and apps."""
         allowed = TEMPLATES["event"].allowed
         base = next(p for p in out if p.is_core and isinstance(p.params, Mapping))
         event = {
@@ -5725,7 +6011,7 @@ class LocalAssumptionFiller:
             for k, v in base.params.items()
             if k in allowed and k in (*PARTY_FIELDS, "device_ids", "window", "channels")
         }
-        return [*out, Proposal("event", event, is_core=True, code_made=True, unread=True)]
+        return Proposal("event", event, is_core=True, code_made=True, unread=True)
 
     def _add_meaning(
         self, claim: Claim, out: list[Proposal], allowed_ids: set[str], call_id: str | None
@@ -6773,6 +7059,11 @@ class LocalAssumptionFiller:
             # (`_plain_call_noun`), and only for an account side, never a person.
             if b[0] != "acct" or not self._is_app_name(m.group("desc"), app):
                 return None
+        if m.group("shown") is not None and b[0] != "acct":
+            # "from the party displayed as "iOS 15 Group"": the name the call log shows for an
+            # account side, never a person or a phone. "displayed as" is plain naming, as
+            # everywhere (`_RECORDS_SAY_RE`), so the clause reads as 'to "iOS 15 Group"' does
+            return None
         tail = m.group("tail")
         one_account = False
         at_id = _CALL_ID_TAIL_RE.match(tail)
@@ -6800,6 +7091,16 @@ class LocalAssumptionFiller:
             ):
                 return None
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
+        noun = _words(np).split()
+        # "another call" states an earlier call as "a second call" does (Claude review on #279)
+        ordinal = (
+            bool(noun)
+            and noun[0] == "another"
+            or (len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS)
+        )
+        # "the contact displayed as" states a saved contact, "the number displayed as" that
+        # the side is a phone number: no check reads either (Claude review on #279)
+        shown = (m.group("shown") or "").split()
         return CallForm(
             a=tokens[m.start("a")],
             b=b,
@@ -6808,6 +7109,16 @@ class LocalAssumptionFiller:
             length=length,
             one_account=one_account,
             from_phone=from_phone,
+            # "the contact", "the number", "the caller" or "shown as": words no check reads,
+            # so the caller row carries its own event (Claude review on #279)
+            unread=ordinal
+            or (
+                bool(shown)
+                and (
+                    shown[0].casefold() in {"contact", "number", "caller"}
+                    or "shown" in {w.casefold() for w in shown}
+                )
+            ),
         )
 
     @staticmethod
@@ -6828,9 +7139,11 @@ class LocalAssumptionFiller:
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
-        """True when the words before "call" are only an article (or, for "had", a number), the
-        direction word the verb allows, the app's name and a phone word. An ordinal ("a second
-        call") is refused: it states an earlier call that no check reads."""
+        """True when the words before "call" are only an article (or, for "had", a number), an
+        ordinal after the article, the direction word the verb allows, the app's name and a
+        phone word. An ordinal ("a second call") states an earlier call that no check reads:
+        the caller is read for this call, and the ordinal's word keeps the claim's expert-only
+        event (`_CALL_ORDINALS`)."""
         words = _words(np).split()
         if verb == "called":
             return not words
@@ -6842,6 +7155,8 @@ class LocalAssumptionFiller:
                 return False
         elif head not in _CALL_ARTICLES:
             return False
+        elif words and words[0] in _CALL_ORDINALS:
+            words.pop(0)
         allowed = {"placed": "outgoing", "made": "outgoing", "received": "incoming"}
         allowed["missed"] = "incoming"
         if words and words[0] in ("outgoing", "incoming"):
@@ -6878,8 +7193,11 @@ class LocalAssumptionFiller:
         of the time range's parties (the phone written as a side is its exact owner by
         confirmed stipulation, `_exact_owner`), and both sides must be named. "missed" adds a
         core event assumption beside it: the call log does not reliably record whether an
-        incoming call was answered, so only an expert can carry that part. Anything else
-        keeps no caller, and rule 3e keeps a communication claim unproven."""
+        incoming call was answered, so only an expert can carry that part. A clause that states
+        a part no check reads (an ordinal, "a second call"; "the contact displayed as") adds
+        the unread event beside it, and gets no caller row when the event template is not
+        allowed. Anything else keeps no caller, and rule 3e keeps a communication claim
+        unproven."""
         if "caller" not in allowed_ids or any(p.template_id == "caller" for p in out):
             return out
         times = [
@@ -6899,12 +7217,24 @@ class LocalAssumptionFiller:
             return out
         if made is None:
             return out
-        params, missed = made
+        params, missed, unread = made
+        if unread and "event" not in allowed_ids:
+            return out  # "a second call": no caller row without the event an expert carries
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
             out.append(Proposal("event", event, is_core=True, code_made=True))
+        if unread:  # beside a model's event too: that event carries only its own part
+            # "a second call" states an earlier call no check reads ("the contact displayed
+            # as", a saved contact), so the claim keeps a core event an expert carries whatever
+            # `unread_words` makes of the wording (CodeRabbit on #279: "a second Talk and Text
+            # call" with a tested length); the same event `_add_unread_event` would add. A
+            # missed call keeps its own event beside it: whether the call was answered is no
+            # unread part, so the testability sheet check still counts it (Claude review on
+            # #279). Built from this call's own time row, never a model's event or another
+            # assumption that comes first (Claude review on #279)
+            out.append(self._unread_event([Proposal("record_time", rt)]))
         return out
 
     def _one_party(self, accounts: list[str]) -> bool:
@@ -6923,8 +7253,9 @@ class LocalAssumptionFiller:
 
     def _caller_params(
         self, claim: Claim, rt: dict[str, Any]
-    ) -> tuple[dict[str, Any], bool] | None:
-        """The caller assumption's parameters and whether the call was missed, from the claim's
+    ) -> tuple[dict[str, Any], bool, bool] | None:
+        """The caller assumption's parameters, whether the call was missed and whether the
+        clause states a part no check reads ("a second call"), from the claim's
         plain form and its call's time range `rt`; None when the claim says no caller. Raises
         Reject where the form's sides are not the time range's parties."""
         handles = list(rt.get("handles", []))
@@ -7007,7 +7338,7 @@ class LocalAssumptionFiller:
             params["device_ids"] = device_ids
         if rt.get("duration_s"):
             params["duration_s"] = rt["duration_s"]
-        return params, form.missed
+        return params, form.missed, form.unread
 
     def _absence_parties(
         self,

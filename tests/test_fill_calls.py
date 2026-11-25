@@ -5,7 +5,10 @@ every number, name and wording is invented."""
 import copy
 import json
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -15,7 +18,15 @@ from core.audit.assumption_filler import (
     Reject,
     _Account,
 )
-from core.audit.assumptions import TEMPLATES, Proposal, TemplateAssumptionBuilder, instantiate
+from core.audit.assumptions import (
+    CODE_MADE_NOTE,
+    TEMPLATES,
+    UNREAD_EVENT_NOTE,
+    Proposal,
+    TemplateAssumptionBuilder,
+    instantiate,
+    is_unread_event,
+)
 from core.audit.checks import CHECKS, run_checks
 from core.audit.checks._common import calls_for_accounts
 from core.audit.rules import decide_verdict
@@ -251,6 +262,286 @@ def test_a_plain_form_names_the_caller(conn, words, by):
     assert "event" not in made
 
 
+@pytest.mark.parametrize(
+    ("words", "by"),
+    [
+        ("Item 1 received a second telephone call from (212) 555-0199.", "num"),
+        ("Item 1 placed a third call to (212) 555-0199.", PETROV),
+        ("(212) 555-0199 placed a second call to Item 1.", "num"),
+        ("Item 1 received a first incoming call from (212) 555-0199.", "num"),
+    ],
+)
+def test_an_ordinal_names_the_caller_and_keeps_the_expert_only_event(conn, words, by):
+    # Who placed this call is read; the earlier call the ordinal states is not, so a core
+    # event only an expert carries stays beside the checks (v5 pre-run replay, iOS 15 C07).
+    made, _ = fill(conn, f"{AT} {words}")
+    assert list(made["caller"].params.sent_by) == ([PETROV] if by == PETROV else sorted(NUM))
+    assert made["event"].is_core and is_unread_event("event", made["event"].text)
+
+
+def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a second WhatsApp call"
+        " to PETROV."
+    )
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "noun",
+    [
+        "a second WhatsApp call",
+        "a second outgoing WhatsApp telephone call",
+        "a second-WhatsApp call",
+    ],
+)
+@pytest.mark.parametrize("length", [True, False])
+def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn, noun, length):
+    # "a second" before a call is an ordinal, not a length the row tests, however many of the
+    # call's words stand between (CodeRabbit on #279)
+    tail = " that lasted two minutes." if length else "."
+    text = f"On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed {noun} to PETROV{tail}"
+    tested = {"duration": {"as_written": "two minutes"}} if length else {}
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"], **tested,
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assert bool(made["caller"].params.duration_s) == length and made["event"].is_core
+
+
+@pytest.mark.parametrize("unread", [True, False])
+def test_a_caller_read_through_an_ordinal_always_keeps_its_event(conn, monkeypatch, unread):
+    # the caller row itself carries the ordinal's event, whatever the unread-words guard
+    # makes of the wording: an app named "Talk and Text" stops its run (CodeRabbit on #279)
+    if not unread:
+        monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    text = f"{AT} Item 1 placed a second call to (212) 555-0199."
+    made, _ = fill(conn, text)
+    assert list(made["caller"].params.sent_by) == [PETROV]
+    assert made["event"].is_core and made["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+    # with no event allowed, the ordinal gets no caller row
+    answer = proposal(people=[], quoted_text="", channels=["call"],
+                      window=W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09"))  # fmt: skip
+    f = LocalAssumptionFiller(FakeModel(json.dumps({"assumptions": [answer.model_dump()]})), conn,
+                              template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
+    every = list(TEMPLATES.values())
+    no_event = [t for t in every if t.id != "event"]
+    for words in (
+        "Item 1 placed a second call to (212) 555-0199.",
+        # a missed call written with an ordinal too (CodeRabbit on #279)
+        "Item 1 missed a second incoming call from (212) 555-0199.",
+    ):
+        text = f"{AT} {words}"
+        # the same claim reads a caller when the event is allowed, none when it is not
+        assert "caller" in {p.template_id for p in f(claim(text, ClaimType.COMMUNICATION), every)}
+        out = f(claim(text, ClaimType.COMMUNICATION), no_event)
+        assert "caller" not in {p.template_id for p in out}
+
+
+@pytest.mark.parametrize(
+    "noun",
+    [
+        "a second, telephone call",
+        "a second\u2014call",
+        "a second (telephone) call",
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind):
+    # "a second" is cut as a tested length only after "lasted", "for" and the like; anywhere
+    # else it is an ordinal and keeps the event, whatever stands between it and "call" (Claude
+    # review on #279: these were SUPPORTED on the time row alone)
+    text = f"{AT} Item 1 placed {noun} to (212) 555-0199 that lasted about two minutes."
+    made, _ = fill(conn, text, kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+def test_a_missed_call_with_an_ordinal_tells_the_expert_of_the_unread_part(conn):
+    # the missed event also carries the earlier call the ordinal states (Claude review on #279)
+    # beside its own missed event, which the testability sheet check still counts
+    def events(text):
+        window = W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09")
+        answer = proposal(people=[], quoted_text="", channels=["call"], window=window)
+        model = FakeModel(json.dumps({"assumptions": [answer.model_dump()]}))
+        f = LocalAssumptionFiller(
+            model, conn, template="{claim} {paragraph} {templates} {channels}"
+        )
+        made = TemplateAssumptionBuilder(f).build(claim(f"{AT} {text}", ClaimType.COMMUNICATION))
+        assert any(a.template_id == "caller" for a in made)
+        return [is_unread_event(a.template_id, a.text) for a in made if a.template_id == "event"]
+
+    assert sorted(events("Item 1 missed a second incoming call from (212) 555-0199.")) == [
+        False,
+        True,
+    ]
+    assert events("Item 1 missed an incoming call from (212) 555-0199.") == [False]
+
+
+@pytest.mark.parametrize("length", ["90 second", "ninety second"])
+def test_a_second_after_digits_is_a_length(conn, length):
+    # "a 90 second WhatsApp call": a length the row tests, never an ordinal, as "a ninety
+    # second WhatsApp call" reads (Claude review on #279)
+    text = (
+        f"On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a {length} WhatsApp call"
+        " to PETROV."
+    )
+    made, f = fill(conn, text, ClaimType.TIMING, channels=["call", "WhatsApp"],
+                   duration={"as_written": length},
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert made["record_time"].params.duration_s, [d.reason for d in f.drops]
+    assert "event" not in made
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Item 1 called (212) 555-0199 for a second time, and the call lasted about two minutes.",
+        "Item 1 placed a call that lasted about two minutes to (212) 555-0199 over a second line.",
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes, and a second call.",
+        "Item 1 placed a call to (212) 555-0199 for about two minutes and a second time.",
+        # a second call by ellipsis: "and a second" is no part of the tested "about two minutes"
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes, and a second to"
+        " (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199 for about two minutes, and a second from"
+        " (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes and a second.",
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
+    # a length lead before "a second" is not enough: its clause must end there, so "for a
+    # second time" and "minutes, and a second call" state an earlier or another call no check
+    # reads (Claude review on #279: these were SUPPORTED on the time row alone)
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        " on Item 1",
+        " in the evening",
+        " to (212) 555-0199",
+        "",  # ", and a second." may be a second call too (Claude review on #279)
+        # punctuation before more words still leaves a second call (Claude review on #279)
+        ", on Item 1",
+        ", from (212) 555-0199",
+        "; on Item 1",
+        " \u2014 on Item 1",
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_and_a_second_before_more_words_is_no_part_of_the_length(conn, after, kind):
+    # ", and a second on Item 1" may be a second call by ellipsis, even where the model reads
+    # "one minute, and a second" as the length (Claude review on #279)
+    text = f"Item 1 placed a call to (212) 555-0199 that lasted one minute, and a second{after}."
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "one minute, and a second"})
+    assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Item 1 placed a 30 second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a thirty second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a 30-second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a 30s call to (212) 555-0199 that lasted about two minutes.",
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_length_no_row_tests_keeps_the_event(conn, text, kind):
+    # the row tests "about two minutes"; "30 second" is a length no check reads, so the claim
+    # never rests on the time row alone (Claude review on #279)
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    ("text", "tested", "read", "unread"),
+    [
+        ("lasted one minute and a second.", (61, 61), ["one minute and a second"], []),
+        # after a comma, "and a second" may be a second call (Claude review on #279)
+        ("lasted one minute, and a second.", (61, 61), [], ["one minute", "and a second"]),
+        # ", and a second on Item 1" may be a second call by ellipsis (Claude review on #279)
+        ("lasted one minute, and a second on Item 1", (61, 61), [], ["one minute", "and a second"]),
+        ("lasted a second.", (1, 1), ["a second"], []),
+        ("for 1 minute and a second.", (61, 61), ["1 minute and a second"], []),
+        ("for 1 minute, and a second.", (61, 61), [], ["1 minute", "and a second"]),
+        ("lasted two minutes and 30 seconds.", (150, 150), ["two minutes and 30 seconds"], []),
+        ("lasted a minute and a half.", (90, 119), ["a minute and a half"], []),
+        ("placed a ninety second call", (90, 90), ["ninety second"], []),
+        ("placed a 90 second call", (90, 90), ["90 second"], []),
+        ("lasted thirty seconds", (30, 30), ["thirty seconds"], []),
+        # a length is read only where it is the length a row tests (Claude review on #279):
+        # "and a second" after the tested "one minute" is a second call
+        ("lasted one minute, and a second.", (60, 119), ["one minute"], ["and a second"]),
+        ("lasted one minute, and a second to Item 2.", (61, 61), [], ["one minute"]),
+        ("for 1 minute, and a second to Item 2.", (61, 61), [], ["1 minute"]),
+        ("for 1 minute and a second call.", (61, 61), [], ["1 minute"]),
+        ("lasted a second.", (60, 60), [], ["a second"]),
+        (
+            "a 30 second call that lasted about two minutes",
+            (90, 150),
+            ["two minutes"],
+            ["30 second"],
+        ),
+        (
+            "a thirty second call that lasted two minutes",
+            (120, 179),
+            ["two minutes"],
+            ["a thirty second"],
+        ),  # fmt: skip
+        # a comma after a unit never leads into a bare "a second" (CodeRabbit on #279)
+        ("after one minute, a second call", (60, 119), ["one minute"], []),
+        ("placed a second, telephone call", (1, 1), [], []),
+        ("for a second time", (1, 1), [], []),
+        ("over a second line", (1, 1), [], []),
+        ("lasted two minutes, and a second call", (120, 179), ["two minutes"], []),
+        ("the thirty-second call", (32, 32), [], []),
+    ],
+)
+def test_a_stated_length_is_read_only_where_a_row_tests_it(text, tested, read, unread):
+    from core.audit.assumption_filler import _tested_lengths_in
+
+    spans, untested = _tested_lengths_in(text, {tested})
+    assert sorted({text[a:b] for a, b in spans}) == sorted(read)
+    # an ordinal-like "second" that may not be a length is no length at all: the unread-words
+    # guard reads it as an ordinal
+    assert [w for w in untested if not w.endswith("second") or w in unread] == unread
+
+
+def test_the_ordinal_guards_stay_fast():
+    # a run of hyphens or dashes after "second" is read in one way only: 13 "--" took 7 s
+    # before, each more one about four times as long (Claude review on #279)
+    # run apart under a hard timeout, so a regression fails instead of hanging the suite
+    code = (
+        "from core.audit.assumption_filler import _UNPLAIN_PHRASES_RE as r\n"
+        "for t in ('PETROV sent a second ' + ' '.join(['--'] * 40) + ' x',"
+        " 'a second' + '-' * 200):\n"
+        "    r.findall(t)\n"
+    )
+    subprocess.run(  # noqa: S603 (the test's own code, run apart)
+        [sys.executable, "-c", code],
+        check=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+
+
+@pytest.mark.parametrize("length", ["one minute and a second", "1 minute and a second"])
+def test_a_length_written_a_second_is_still_read_as_one(conn, length):
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"
+        f" that lasted {length}."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   duration={"as_written": length},
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert "caller" in made and "event" not in made, [d.reason for d in f.drops]
+
+
 def test_missed_adds_an_event_only_an_expert_carries(conn):
     made, _ = fill(conn, f"{AT} Item 1 missed an incoming call from (212) 555-0199.")
     assert list(made["caller"].params.sent_by) == sorted(NUM)
@@ -289,9 +580,10 @@ def test_a_stated_length_must_be_the_time_range_s(conn):
         "Item 1 placed two calls to (212) 555-0199.",
         "Item 1 placed a video call to (212) 555-0199.",
         "Item 1 placed a call to (212) 555-0199, who did not answer.",
-        # an ordinal states an earlier call no check reads
-        "Item 1 received a second telephone call from (212) 555-0199.",
-        "Item 1 placed a third call to (212) 555-0199.",
+        # an ordinal anywhere but right after the article
+        "Item 1 placed a telephone second call to (212) 555-0199.",
+        "Item 1 placed second call to (212) 555-0199.",
+        "Item 1 called a second time (212) 555-0199.",
         # no direction at all
         "Item 1 had a call with (212) 555-0199.",
         "Item 1 and (212) 555-0199 spoke by phone.",
@@ -473,6 +765,288 @@ def test_a_caller_row_keeps_the_clause_s_own_handle(conn):
     a = made["caller"]
     assert list(a.params.sent_by) == [PETROV] and list(a.params.handles) == ["Marc Garage"]
     assert not a.params.account_ids
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the party displayed as "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the contact shown as "Marc Garage".',
+        'PETROV placed an outgoing call to the account displayed as "Marc Garage" on WhatsApp.',
+        # a saved contact, or a phone number, is a part no check reads (Claude review on #279)
+        'PETROV called the contact displayed as "Marc Garage" on WhatsApp.',
+        'PETROV called the number displayed as "Marc Garage" on WhatsApp.',
+    ],
+)
+def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
+    # "the party displayed as "X"": the name the log shows for the other side, read as that
+    # side (v5 pre-run replay, iOS 15 D14 and D27)
+    made, f = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.handles) == ["Marc Garage"]
+    # "displayed as" is plain naming (`_RECORDS_SAY_RE`): the claim reads as it does with the
+    # name alone, 'called "Marc Garage"'; "shown" is a word no check reads (CodeRabbit on #279)
+    bare, _ = fill(conn, GARAGE, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    unread = any(w in words for w in ("shown", "contact", "number"))
+    assert ("event" in made) == unread
+    assert "event" not in bare
+    if unread:
+        assert made["event"].is_core
+        # no caller row without the event an expert carries
+        answer = proposal(people=["PETROV"], handles=["Marc Garage"], quoted_text="",
+                          channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+        model = FakeModel(json.dumps({"assumptions": [answer.model_dump()]}))
+        f = LocalAssumptionFiller(
+            model, conn, template="{claim} {paragraph} {templates} {channels}"
+        )
+        no_event = [t for t in TEMPLATES.values() if t.id != "event"]
+        out = f(claim(f"{WA_AT} {words}", ClaimType.COMMUNICATION), no_event)
+        assert "caller" not in {p.template_id for p in out}
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV had a WhatsApp call with the contact displayed as "Marc Garage".',
+        'PETROV had a WhatsApp call with the number shown as "Marc Garage".',
+        'PETROV received a WhatsApp call from the contact displayed as "Marc Garage".',
+        # "caller" is a word no check reads, as "shown" is (Claude review on #279)
+        'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
+        # a saved contact written by name, with no "displayed as" (Claude review on #279)
+        'PETROV called the contact "Marc Garage" on WhatsApp.',
+        "PETROV called the contact named Marc Garage on WhatsApp.",
+        'PETROV called his contact saved as "Marc Garage" on WhatsApp.',
+        'PETROV called the contact entry "Marc Garage" on WhatsApp.',
+        'PETROV called Contact "Marc Garage" on WhatsApp.',
+        # with no quote, an article or possessive before "contact" is enough
+        "PETROV called the contact Marc Garage on WhatsApp.",
+        "PETROV called his contact Marc Garage on WhatsApp.",
+        # punctuation between "contact" and the name, or the contact written after it
+        'PETROV called his contact, "Marc Garage", on WhatsApp.',
+        'PETROV called the contact: "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact) on WhatsApp.',
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path(conn, words, kind):
+    # a saved contact, or a phone number, is a part no check reads, whether or not a caller row
+    # is made (Claude review on #279: "had a call with the contact displayed as" kept none)
+    made, _ = fill(conn, f"{WA_AT} {words}", kind, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV placed a WhatsApp call to the party shown as "Marc Garage".',
+        'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
+        'PETROV placed a WhatsApp call to the contact displayed as "Marc Garage".',
+    ],
+)
+def test_a_side_named_by_unread_words_keeps_its_event_without_the_guard(conn, monkeypatch, words):
+    # the caller row itself carries the event for "shown", "caller" or "contact", whatever the
+    # unread-words guard makes of the wording (Claude review on #279)
+    monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    made, _ = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["caller"] and made["event"].is_core
+    plain, _ = fill(conn, f'{WA_AT} PETROV placed a WhatsApp call to the party displayed as'
+                    ' "Marc Garage".', people=["PETROV"], handles=["Marc Garage"],
+                    channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert "event" not in plain
+
+
+def test_a_saved_contact_stays_unread_beside_a_contact_row(conn):
+    # a contact_entry row names one saved contact, and the words may name another, so every
+    # saved-contact or shown-number phrase stays unread beside one (CodeRabbit on #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = 'Item 1 holds the contact "Alice", and Item 1 called the contact "Marc Garage".'
+    assert "the contact" in f.unread_words(text, (), {"contact"})
+    both = 'Item 1 holds the contact displayed as "Marc" with the number displayed as "garage".'
+    out = f.unread_words(both, (), {"contact"})
+    assert "contact displayed as" in out and "number displayed as" in out
+
+
+def test_an_ordinal_keeps_its_event_beside_a_model_event(conn):
+    # a model's event about something else says nothing of the earlier call the ordinal
+    # states, so code's unread event still stands beside it (Claude review on #279)
+    window = W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09")
+    answer = proposal(people=[], quoted_text="", channels=["call"], window=window)
+    event = {**answer.model_dump(), "template_id": "event"}
+    model = FakeModel(json.dumps({"assumptions": [answer.model_dump(), event]}))
+    f = LocalAssumptionFiller(model, conn, template="{claim} {paragraph} {templates} {channels}")
+    text = f"{AT} Item 1 placed a second call to (212) 555-0199."
+    made = TemplateAssumptionBuilder(f).build(claim(text, ClaimType.COMMUNICATION))
+    assert any(a.template_id == "caller" for a in made)
+    assert any(is_unread_event(a.template_id, a.text) for a in made)
+
+
+def test_the_ordinal_event_copies_the_call_it_reads(conn, monkeypatch):
+    # the unread event names this call's time row's parties and window, never those of
+    # another core row that comes first in the list, such as a model's event (Claude review
+    # on #279)
+    seen: list[list[Proposal]] = []
+    real = LocalAssumptionFiller._add_caller
+
+    def first_another_row(self, claim_, out, allowed_ids):
+        rt = next(p for p in out if p.template_id == "record_time")
+        other = Proposal("event", {**rt.params, "person_ids": [REYES], "account_ids": []},
+                         is_core=True)  # fmt: skip
+        made = real(self, claim_, [other, *out], allowed_ids)
+        seen.append(made)
+        return made
+
+    monkeypatch.setattr(LocalAssumptionFiller, "_add_caller", first_another_row)
+    fill(conn, f"{AT} Item 1 placed a second call to (212) 555-0199.")
+    (made,) = seen
+    rt = next(p for p in made if p.template_id == "record_time")
+    (event,) = [p for p in made if p.unread]
+    for key in ("person_ids", "account_ids", "window"):
+        assert event.params.get(key) == rt.params.get(key), key
+
+
+def test_another_call_keeps_its_event_without_the_guard(conn, monkeypatch):
+    # "another call" states an earlier call as "a second call" does (Claude review on #279)
+    monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    made, _ = fill(conn, f"{AT} Item 1 placed another call to (212) 555-0199.")
+    assert made["caller"] and is_unread_event("event", made["event"].text)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        # a phrase only once the app's name is blanked is still read (Claude review on #279)
+        'PETROV placed his last WhatsApp call to "Marc Garage".',
+        # the quote after "back" is a party's name, not a reply's words
+        'PETROV placed a WhatsApp call back to "Marc Garage".',
+        'PETROV placed a WhatsApp call back to the party displayed as "Marc Garage".',
+        'PETROV called back the party displayed as "Marc Garage" on WhatsApp.',
+        'PETROV called back "Marc Garage" on WhatsApp.',
+        # a saved contact after the name, or "for" before it; a side named as a number
+        'PETROV called "Marc Garage", his contact, on WhatsApp.',
+        'PETROV called "Marc Garage", a contact, on WhatsApp.',
+        'PETROV called the contact for "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the number "Marc Garage".',
+    ],
+)
+def test_words_beside_an_app_or_a_quoted_party_stay_unread(conn, words):
+    made, _ = fill(conn, f"{WA_AT} {words}", ClaimType.TIMING, people=["PETROV"],
+                   handles=["Marc Garage"], channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
+
+
+def test_a_reply_to_a_quoted_party_with_its_message_quoted_is_plain(conn):
+    # the quoted message after the party is still the reply's words (Android 13 D093 form)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = 'SUBJECT-1 replied to "DFIR Two" on LINE, "Lol. Good luck with that."'
+    assert "replied" not in f.unread_words(text, (), set())
+    assert "back" in f.unread_words('PETROV placed a call back to "Marc Garage".', (), set())
+
+
+def test_unread_words_are_whole_words(conn):
+    # the words `plain_tokens` reads keep their offsets after app and message words are
+    # blanked (Claude review on #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = "Item 1 placed a Skype call and sent a video message, the first, reading back later."
+    out = f.unread_words(text, (), {"call"})
+    assert "reading" in out and "rea" not in out
+    reply = 'SUBJECT-1 replied to "DFIR Two" at 9:14 p.m. EDT, "Lol."'
+    assert "replied" not in f.unread_words(reply, (), set())
+    # a reply's own "back" before its quoted words stays plain
+    assert "back" not in f.unread_words('REYES texted back "ok".', (), set())
+    assert not any(
+        "contact" in w for w in f.unread_words("PETROV had a contact for two minutes.", (), set())
+    )
+
+
+def test_one_length_stated_for_two_calls_keeps_the_event(conn):
+    # a tested length covers one stated length only (Claude review on #279)
+    text = (
+        f"{AT} Item 1 placed a call to (212) 555-0199 that lasted 100 seconds and a call of 100"
+        " seconds."
+    )
+    made, _ = fill(conn, text, ClaimType.TIMING, duration={"as_written": "100 seconds"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "length",
+    ["1 min. 40 sec.", "1 min., 40 sec.", "one min. and a second.", "1 min. and a second."],
+)
+def test_an_abbreviated_length_is_read_whole(conn, length):
+    text = f"{AT} Item 1 placed a call to (212) 555-0199 that lasted {length}"
+    made, f = fill(conn, text, ClaimType.TIMING, duration={"as_written": length.rstrip(".")})
+    assert made["record_time"].params.duration_s, [d.reason for d in f.drops]
+    assert "event" not in made, [d.reason for d in f.drops]
+
+
+def test_contact_as_a_communication_is_plain(conn):
+    # "a contact that lasted" or "the contact between" is no saved contact (Claude review on
+    # #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text in (
+        "Item 1 placed a call to (212) 555-0199, a contact that lasted about two minutes.",
+        "the contact between PETROV and REYES",
+    ):
+        assert not any("contact" in w for w in f.unread_words(text, (), set())), text
+    # a lower-case address after "the contact" is still a saved contact (CodeRabbit on #279)
+    out = f.unread_words("Item 1 called the contact marc@example.org on Skype.", (), set())
+    assert any("contact" in w for w in out)
+    # a contact or a number written inside a quoted message is the message's words, never the
+    # claim's; written after a quoted name, it is the claim's (CodeRabbit on #279)
+    for text in (
+        'PETROV wrote "Alex (a contact) will call." on Telegram.',
+        'PETROV wrote "Ask Alex, his contact, to call." on Telegram.',
+        "PETROV wrote \"call the number 'Alex' gave you\" on Telegram.",
+    ):
+        out = f.unread_words(text, (), set())
+        assert not any("contact" in w or "number" in w for w in out), (text, out)
+    for text, word in (
+        ('PETROV called "Marc Garage", his contact, on WhatsApp.', "contact"),
+        ('PETROV called "Marc Garage" (a contact) on WhatsApp.', "contact"),
+        ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
+    ):
+        assert word in f.unread_words(text, (), set()), text
+
+
+def test_unread_words_name_each_word_once(conn):
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words("Item 1 placed a call that lasted a second, and a second.", (), set())
+    assert len(out) == len(set(out))
+
+
+def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):
+    # the descriptor names an account side only, never a person
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, PETROV called the party displayed as REYES."
+    made, _ = fill(conn, text, people=["PETROV", "REYES"], channels=["call", "WhatsApp"],
+                   window=WA_W)  # fmt: skip
+    assert "caller" not in made
+    # the handle side placed the call: a caller row names persons or accounts only, and code
+    # never decides which account a handle is (the checks resolve it), so no caller is made
+    text = f'{WA_AT} PETROV received a WhatsApp call from the party displayed as "Marc Garage".'
+    made, _ = fill(conn, text, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert "caller" not in made
+    # a descriptor the form does not hold
+    for words in ('PETROV called the party known as "Marc Garage" on WhatsApp.',
+                  'PETROV called the party displayed "Marc Garage" on WhatsApp.'):  # fmt: skip
+        made, _ = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                       channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+        assert "caller" not in made, words
 
 
 def test_a_handle_that_is_not_the_clause_s_side_names_no_caller(conn):
