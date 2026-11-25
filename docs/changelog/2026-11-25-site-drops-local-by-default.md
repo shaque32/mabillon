@@ -26,7 +26,7 @@
   "Since #254 cloud AI is the recommended choice at setup, so "local by default" is no longer
   true." and replace the safe-wording cell with ""Nothing goes out the door unlogged": with cloud
   AI, text goes out one question at a time (the government's document paragraph by paragraph,
-  and the records each claim is tested against), each request logged first, and the extraction
+  the records each claim is tested against and the messages around them), each request logged first, and the extraction
   files and case database stay on the computer (site, 2026-11-25)". In the paragraph after the
   table, replace ""files never leave your machine" or any hosted-model wording, because plan C is
   not built (section 5) and its customer wording still needs Arsh's sign-off;" with "any
