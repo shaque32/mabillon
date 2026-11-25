@@ -3304,7 +3304,7 @@ _DIGIT_LENGTH_RE = re.compile(
 )
 # What may part two pieces of one length: "two minutes and 30 seconds", "one minute, and a
 # second" (whose "and" the second piece holds)
-_LENGTH_JOIN_RE = re.compile(r"\s*,?\s*(?:and\s+)?", re.IGNORECASE)
+_LENGTH_JOIN_RE = re.compile(r"\.?\s*,?\s*(?:and\s+)?", re.IGNORECASE)  # "1 min. 40 sec."
 _HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
 _ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
 _SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.!?](?:\s|$))")
@@ -3358,7 +3358,11 @@ def _tested_lengths_in(
             runs.append([m])
     spans: list[tuple[int, int]] = []
     covered: set[int] = set()
+    # a tested length covers one stated length only: "lasted 100 seconds and a call of 100
+    # seconds" states a second call no row tests (Claude review on #279)
+    used: set[tuple[int, int]] = set()
     for run in runs:
+        hits: set[tuple[int, int]] = set()
         for i, first in enumerate(run):
             for j in range(i, len(run)):
                 ends = [run[j].end()]
@@ -3370,12 +3374,15 @@ def _tested_lengths_in(
                     starts.append(art.end())
                 for start, end in ((a, b) for a in starts for b in ends):
                     try:
-                        if duration_range(text[start:end], text) not in tested:
-                            continue
+                        got = duration_range(text[start:end], text)
                     except Reject:
                         continue
+                    if got not in tested or got in used:
+                        continue
+                    hits.add(got)
                     spans.append((start, end))
                     covered.update(m.start() for m in run[i : j + 1])
+        used |= hits
     untested = [" ".join(m.group(0).casefold().split()) for m in found if m.start() not in covered]
     return spans, untested
 
@@ -3392,6 +3399,10 @@ _CONTACT_NAMED_RE = re.compile(
     re.I,
 )
 _OPEN_QUOTE_RE = re.compile(r"\s*[\"“‘']")
+# What names a saved contact right after "the contact": a name, a number or a handle ("the
+# contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
+# contact between PETROV and REYES" (Claude review on #279)
+_NAME_AFTER_RE = re.compile(r"\s+(?:[A-Z0-9(+@]|[\"“‘'])")
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3476,6 +3487,7 @@ _READ_QUOTE_RE = re.compile(
 # A reply is a message the checks read only when the claim quotes it: 'REYES replied "ok"',
 # 'REYES replied to PETROV's message: "ok"'. ', and REYES replied' after the one quoted
 # message states a second message no row tests, so its words stay unread (CodeRabbit on #265).
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s+[A-Z]|\s*$)")
 _REPLY_QUOTED_RE = re.compile(
     r"\b(?:replied|reply|replies|replying|responded|respond|responds|answered|answers?|back)\b"
     r"(?=(?:(?!,\s*(?:and|but|then)\b|[.!?]\s+(?-i:[A-Z]))[^\"“”;])*?[\"“])",
@@ -3663,11 +3675,14 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
         never.remove(_PASSIVE_TO_RE)
     rest = words
     for rx in never:
+        # blank only what is reported, where it is read: "his last WhatsApp call" is a phrase
+        # only once the app is blanked, so its words stay for the word check ("last") and are
+        # never dropped unreported (Claude review on #279)
         for m in rx.finditer(words if phrases is None else phrases):
             w = " ".join(m.group(0).casefold().split())
             if w not in out:
                 out.append(w)
-        rest = rx.sub(" ", rest)
+            rest = rest[: m.start()] + " " * (m.end() - m.start()) + rest[m.end() :]
     for m in _NUMERAL_RE.finditer(rest):
         gate = "length" if _UNIT_AFTER_RE.match(rest, m.end()) else "count"
         if gate not in tests and m.group(0) not in out:
@@ -3926,6 +3941,20 @@ class LocalAssumptionFiller:
                     and said[m.start() : m.end()] == m.group(0)
                     and not any(a <= m.start() and m.end() <= b for a, b in owned)
                 ]
+            if rx is _REPLY_QUOTED_RE:
+                # "a call back to "Marc Garage"": the quote is a party's name, not the reply's
+                # words, so "back" stays a word no check reads (Claude review on #279)
+                # A quoted message after the party ('replied to "DFIR Two" on LINE, "Lol."')
+                # is still the reply's words.
+                kept, outside = flat, _unquoted(flat)
+                for m in rx.finditer(kept):
+                    end = _SENTENCE_END_RE.search(outside, m.end())
+                    quotes = _QUOTE_SPAN_RE.finditer(
+                        kept, m.end(), end.start() if end else len(kept)
+                    )
+                    if not all(_quote_is_a_party(kept, q.start(), q.end()) for q in quotes):
+                        flat = flat[: m.start()] + " " * (m.end() - m.start()) + flat[m.end() :]
+                continue
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
         bare = _unquoted(flat)
         cut: list[tuple[int, int]] = []
@@ -3958,10 +3987,13 @@ class LocalAssumptionFiller:
         for shown in _CONTACT_SHOWN_RE.finditer(_unquoted(whole)):
             extra.append(" ".join(shown.group(0).casefold().split()))
         for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
-            # "the contact Marc Garage": an article or possessive before "contact" makes it a
-            # saved contact by itself; a bare "Contact" only before a quote or "named"
-            # (Claude review on #279)
-            if named.group("art") or named.group("how") or _OPEN_QUOTE_RE.match(whole, named.end()):
+            # "the contact Marc Garage": an article or possessive before "contact" and a name
+            # after it; a bare "Contact" only before a quote or "named" (Claude review on #279)
+            if (
+                named.group("how")
+                or _OPEN_QUOTE_RE.match(whole, named.end())
+                or (named.group("art") and _NAME_AFTER_RE.match(whole, named.end()))
+            ):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row

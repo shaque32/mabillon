@@ -889,6 +889,62 @@ def test_another_call_keeps_its_event_without_the_guard(conn, monkeypatch):
     assert made["caller"] and is_unread_event("event", made["event"].text)
 
 
+@pytest.mark.parametrize(
+    "words",
+    [
+        # a phrase only once the app's name is blanked is still read (Claude review on #279)
+        'PETROV placed his last WhatsApp call to "Marc Garage".',
+        # the quote after "back" is a party's name, not a reply's words
+        'PETROV placed a WhatsApp call back to "Marc Garage".',
+    ],
+)
+def test_words_beside_an_app_or_a_quoted_party_stay_unread(conn, words):
+    made, _ = fill(conn, f"{WA_AT} {words}", ClaimType.TIMING, people=["PETROV"],
+                   handles=["Marc Garage"], channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
+
+
+def test_a_reply_to_a_quoted_party_with_its_message_quoted_is_plain(conn):
+    # the quoted message after the party is still the reply's words (Android 13 D093 form)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = 'SUBJECT-1 replied to "DFIR Two" on LINE, "Lol. Good luck with that."'
+    assert "replied" not in f.unread_words(text, (), set())
+    assert "back" in f.unread_words('PETROV placed a call back to "Marc Garage".', (), set())
+
+
+def test_one_length_stated_for_two_calls_keeps_the_event(conn):
+    # a tested length covers one stated length only (Claude review on #279)
+    text = (
+        f"{AT} Item 1 placed a call to (212) 555-0199 that lasted 100 seconds and a call of 100"
+        " seconds."
+    )
+    made, _ = fill(conn, text, ClaimType.TIMING, duration={"as_written": "100 seconds"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize("length", ["1 min. 40 sec.", "1 min., 40 sec."])
+def test_an_abbreviated_length_is_read_whole(conn, length):
+    text = f"{AT} Item 1 placed a call to (212) 555-0199 that lasted {length}"
+    made, f = fill(conn, text, ClaimType.TIMING, duration={"as_written": length.rstrip(".")})
+    assert made["record_time"].params.duration_s, [d.reason for d in f.drops]
+    assert "event" not in made, [d.reason for d in f.drops]
+
+
+def test_contact_as_a_communication_is_plain(conn):
+    # "a contact that lasted" or "the contact between" is no saved contact (Claude review on
+    # #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text in (
+        "Item 1 placed a call to (212) 555-0199, a contact that lasted about two minutes.",
+        "the contact between PETROV and REYES",
+    ):
+        assert not any("contact" in w for w in f.unread_words(text, (), set())), text
+
+
 def test_unread_words_name_each_word_once(conn):
     f = LocalAssumptionFiller(
         FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"

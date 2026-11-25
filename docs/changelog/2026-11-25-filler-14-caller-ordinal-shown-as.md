@@ -57,7 +57,15 @@
     second call ...") beside a row testing about two minutes could rest on its time row
     alone (filler 13 too, for the spoken form). A word and its separators in the call-noun guard never share a
     character, so a run of hyphens is read in one way only. The caller row adds no second event
-    when the claim already holds one.
+    when code's own unread event is already there.
+  - Three older gaps in the unread-words guard, each of which let a timing claim rest on its
+    checks alone, now keep the core event: a phrase that is never plain once an app's name is
+    blanked ("his last WhatsApp call") is no longer dropped unreported; "back" before a quoted
+    party's name ('a call back to "Marc Garage"') stays a word no check reads, while a reply
+    whose message is quoted after the party ('replied to "X" on LINE, "..."') stays plain; and
+    a tested length covers one stated length only ("lasted 100 seconds and a call of 100
+    seconds"). "the contact" followed by no name ("a contact that lasted", "the contact
+    between") stays plain, and an abbreviated length ("1 min. 40 sec.") is read whole.
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
@@ -70,7 +78,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,323 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,330 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of
