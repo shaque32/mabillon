@@ -3,8 +3,7 @@
   covers the details, and asked that the site not name the AI provider or talk about keys.
   `site/index.html`: the "Nothing goes out the door unlogged" subline and its three columns are
   cut to a line or two each; the diagram box, its screen-reader label and the example window say
-  "cloud AI provider" or "AI provider" instead of Claude Opus and Anthropic; the cloud column says
-  Mabillon provides the cloud AI (Arsh 19:56Z: "we run it for them"); "On this computer"
+  "cloud AI provider" or "AI provider" instead of Claude Opus and Anthropic; "On this computer"
   says the audit runs locally and nothing is sent. The Supported column no longer says "Only
   after you accept the evidence behind it" (untrue since rules 0.5.0 added the "checked" basis);
   it now names acceptance or, for some claims, every code check passing, and never an AI label
@@ -17,8 +16,6 @@
 - Open: `site/privacy.html` and the docs (README.md, docs/ONE_PAGER.md,
   docs/PILOT_ONBOARDING.md, docs/install.md, docs/install-mac.md) still name Claude Opus and
   Anthropic; the docs still say local or offline by default. Their wording is drafted and
-  waiting on Arsh. The cloud column is ahead of the app: today cloud AI needs the
-  examiner's own Anthropic key (`core/llm/cloud.py`), and Mabillon may hand out a key from its
-  own organization only once its zero-retention agreement is signed (CLAUDE.md, not yet signed).
+  waiting on Arsh. Cloud AI still needs the examiner's own Anthropic key (`core/llm/cloud.py`).
 - Affects: customer-facing claims (public site)
 - Status doc: no change
