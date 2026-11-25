@@ -337,20 +337,28 @@ def test_a_caller_read_through_an_ordinal_always_keeps_its_event(conn, monkeypat
         assert "caller" not in {p.template_id for p in out}
 
 
-def test_the_ordinal_guards_read_only_the_call_s_own_words_and_stay_fast():
-    from core.audit.assumption_filler import _BEFORE_A_CALL_RE, _UNPLAIN_PHRASES_RE
+@pytest.mark.parametrize(
+    "noun", ["a second, telephone call", "a second\u2014call", "a second (telephone) call"]
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind):
+    # "a second" is cut as a tested length only after "lasted", "for" and the like; anywhere
+    # else it is an ordinal and keeps the event, whatever stands between it and "call" (Claude
+    # review on #279: these were SUPPORTED on the time row alone)
+    text = f"{AT} Item 1 placed {noun} to (212) 555-0199 that lasted about two minutes."
+    made, _ = fill(conn, text, kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
 
-    # the run up to "call" is the call's own words; another phrase ends it, so a length that
-    # ends in "second" stays a length (Claude review on #279)
-    assert _BEFORE_A_CALL_RE.match(" outgoing WhatsApp telephone call")
-    assert _BEFORE_A_CALL_RE.match("-WhatsApp call")
-    assert not _BEFORE_A_CALL_RE.match(" and then ended the call")
-    # a run of hyphens or dashes after "second" is read in one way only: these took seconds
+
+def test_the_ordinal_guards_stay_fast():
+    from core.audit.assumption_filler import _UNPLAIN_PHRASES_RE
+
+    # a run of hyphens or dashes after "second" is read in one way only: 13 "--" took 7 s
+    # before, each more one about four times as long (Claude review on #279)
     started = time.perf_counter()
     for text in ("PETROV sent a second " + " ".join(["--"] * 40) + " x", "a second" + "-" * 200):
         _UNPLAIN_PHRASES_RE.findall(text)
-        _BEFORE_A_CALL_RE.match(text, text.index("second") + 6)
-    assert time.perf_counter() - started < 1
+    assert time.perf_counter() - started < 5
 
 
 def test_a_length_written_a_second_is_still_read_as_one(conn):

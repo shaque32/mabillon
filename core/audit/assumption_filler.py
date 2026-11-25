@@ -3272,14 +3272,21 @@ _SPOKEN_LENGTH_RE = re.compile(
 # WhatsApp telephone call", "a second-WhatsApp call". Any run of the call's own words up to
 # "call", split by spaces or hyphens as `_words` splits them, never a word count: an app's
 # name may be several words (CodeRabbit on #279). The run stops at a word that starts another
-# phrase, so "lasted one second and then ended the call" is still a length. A word and its
-# separators never share a character, so a run of hyphens is read in one way only (Claude
-# review on #279: "--" after "second" took seconds).
+# phrase. A word and its separators never share a character, so a run of hyphens is read in
+# one way only (Claude review on #279: "--" after "second" took seconds).
 _CALL_NOUN_RUN = (
     r"[\s-]+(?:(?!(?:and|or|but|then|that|which|who|to|from|with|the|a|an|before|after|when|"
     r"while)\b)\w+[\s-]+)*?calls?\b"
 )
-_BEFORE_A_CALL_RE = re.compile(_CALL_NOUN_RUN, re.IGNORECASE)
+# What leads into a length that ends in a lone "second": "lasted a second", "for one minute and
+# a second" (whose "and a second" follows a unit). "a second" anywhere else is an ordinal,
+# never a tested length, whatever follows it ("placed a second, telephone call"; Claude review
+# on #279), and stays a word no check reads.
+_SECOND_LENGTH_LEAD_RE = re.compile(
+    r"\b(?:lasted|lasting|lasts|last|for|of|about|approximately|roughly|nearly|almost|around|"
+    r"just|only|over|under|exactly|some|minutes?|hours?|mins?|hrs?)\s+$",
+    re.IGNORECASE,
+)
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3308,6 +3315,10 @@ _UNPLAIN_PHRASES_RE = re.compile(
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
     r"second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
     rf"device|time|handset|sim)s?\b)|second(?={_CALL_NOUN_RUN})|"
+    # "a second, telephone call", "their second (WhatsApp) call": an ordinal after an article or
+    # a possessive states an earlier one, whatever follows it (a tested length "lasted a
+    # second" is blanked before this is read; Claude review on #279)
+    r"(?:a|the|his|her|their|its|my|your|our)[\s-]+second\b|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)
@@ -3885,10 +3896,8 @@ class LocalAssumptionFiller:
             cut += [
                 m.span()
                 for m in _SPOKEN_LENGTH_RE.finditer(bare)
-                if not (
-                    m.group(0).casefold().endswith("second")
-                    and _BEFORE_A_CALL_RE.match(bare, m.end())
-                )
+                if not m.group(0).casefold().endswith("second")
+                or _SECOND_LENGTH_LEAD_RE.search(bare, 0, m.start())
             ]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a
@@ -6956,7 +6965,7 @@ class LocalAssumptionFiller:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
             out.append(Proposal("event", event, is_core=True, code_made=True))
-        elif ordinal:
+        elif ordinal and not any(p.is_core and p.template_id == "event" for p in out):
             # "a second call": the ordinal states an earlier call no check reads, so the claim
             # keeps a core event an expert carries whatever `unread_words` makes of the
             # wording (CodeRabbit on #279: "a second Talk and Text call" with a tested

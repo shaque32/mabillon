@@ -21,21 +21,27 @@
     code never decides which account a handle is. The same forms also count as a plain call
     clause where a phone is one side (`_phone_is_a_side`), which sets the time range's
     parties.
-  - "a second" before a call is an ordinal, not a tested length ("a second WhatsApp call that
-    lasted two minutes" kept no event because its "a second" was read as a length). Any run of
-    the call's own words up to "call" counts, split by spaces or hyphens, since an app's name
-    may be several words; a word that starts another phrase ("and then ended the call") ends
-    the run, so a length ending in "second" is still a length.
+  - "a second" is a tested length only after a word that leads into a length ("lasted a
+    second", "for one minute and a second"). Anywhere else, and always after an article or a
+    possessive ("a second, telephone call", "their second (WhatsApp) call"), it is an ordinal
+    and a word no check reads, so it keeps the core event. Filler 13 read "a second WhatsApp
+    call that lasted two minutes" with "a second" as a length, so the claim could rest on its
+    time row alone. A word and its separators in the call-noun guard never share a character,
+    so a run of hyphens is read in one way only. The caller row adds no second event when the
+    claim already holds one.
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
   as" read for an account side, refused for a person, for a handle that placed the call and
   for other descriptors; an ordinal beside a tested length keeps the event however many of the
   call's words stand between, or a hyphen, which fails without the fix; the ordinal guards
-  stop at another phrase and stay fast on a run of hyphens; a caller read through an ordinal
-  keeps its event even when the guard reads nothing, which fails without the fix). `tests/test_fill*.py`,
-  `tests/*filler*.py`, `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,222
-  passed. Free replay of stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106): one claim changes, iOS 15 C07
+  stay fast on a run of hyphens; a caller read through an ordinal
+  keeps its event even when the guard reads nothing, which fails without the fix; "a second"
+  read as a length only after a length word, with a comma, a dash or brackets before "call",
+  which fails without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,228 passed. Free replay of
+  stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
+  final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
   the window), so it is held open by a check, not only by the event. Bars 1 to 3 unchanged on
   both: 0 false Supported, 0 false Contradicted. v5 bar 4 as replayed 0 of 50 and 0 of 37;
