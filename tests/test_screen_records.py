@@ -11,13 +11,14 @@ from dataclasses import replace
 
 import pytest
 
+from core.audit.context import ContextLine
 from core.casework import cases
 from core.contracts import ProvenanceTier
 from core.db import connect
 from core.report.html import record_line
 from core.report.restore import context_table
 from core.restore.view import Line, context_view
-from core.review.status import claim_state
+from core.review.status import ClaimState, claim_state
 from eval import demo
 from ui import records
 from ui.app import App, Request
@@ -491,7 +492,7 @@ def _card(body: str, item_id: str) -> str:
     return body.split(f"<div class='item' id='{item_id}'>", 1)[1].split("<div class='item'", 1)[0]
 
 
-def _decided(st) -> set[str]:  # noqa: ANN001
+def _decided(st: ClaimState) -> set[str]:
     return {
         x.id
         for x in st.evidence
@@ -558,11 +559,32 @@ def test_a_decided_row_marks_a_quote_that_is_part_of_its_message(app, conn, monk
     assert all("Quoted:" not in r for r in rows())
     real = pages.build_context
 
-    def longer(*args, **kw):  # noqa: ANN002, ANN003, ANN202
+    def longer(*args: object, **kw: object) -> list[ContextLine]:
         return [replace(ln, body=ln.body + " and more") for ln in real(*args, **kw)]
 
     monkeypatch.setattr(pages, "build_context", longer)
     assert all("<p class='ev-q'><span class='muted'>Quoted:</span> " in r for r in rows())
+
+    # a message alone in its thread is judged the same way: one line is enough
+    def alone(*args: object, **kw: object) -> list[ContextLine]:
+        return [ln for ln in longer(*args, **kw) if ln.is_target]
+
+    monkeypatch.setattr(pages, "build_context", alone)
+    assert all("<p class='ev-q'><span class='muted'>Quoted:</span> " in r for r in rows())
+
+
+def test_a_call_or_an_attachment_whose_quote_is_its_whole_text_is_not_marked_quoted(
+    app, conn
+) -> None:
+    seen = set()
+    for claim in ("C09", "C20"):
+        st = claim_state(conn, claim)
+        body = _get(app, "/claim", id=claim)
+        for x in st.evidence:
+            if x.id in _decided(st) and not x.record_id.startswith("msg:"):
+                assert "Quoted:" not in _card(body, x.id).split("<details", 1)[0]
+                seen.add(x.record_id.split(":", 1)[0])
+    assert {"call", "att"} <= seen
 
 
 def test_a_review_every_decided_row_shares_is_said_once(app, conn) -> None:
@@ -728,7 +750,7 @@ def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, mon
     above, table = block.split("<table class='recs'>", 1)
     above = html.unescape(above)
     assert "2 of the 3 are an account or a thread, not a record." in above
-    assert "; the message is from" in above and "the messages are" not in above  # one record
+    assert "; the message is from" in above and "the messages are" not in above  # one message
     assert "not among the case's records" not in above
     table = table.split("</table>", 1)[0]
     assert "record not found" not in table

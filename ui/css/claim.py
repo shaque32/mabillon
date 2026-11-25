@@ -153,7 +153,7 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 p.ev-same, p.ev-rec { margin: var(--s1) 0 0; max-width: 80ch; font-size: var(--t1);
   line-height: var(--l1); color: var(--muted); overflow-wrap: anywhere; }
 p.ev-rec { max-width: none; }
-.ev-foot .ev-asx { font-weight: 600; }
+.ev-foot .ev-asx, .ev-row .ev-asx { font-weight: 600; }
 p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .ev-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s5);
   margin: var(--s2) 0 0; font-size: var(--t1); line-height: var(--l1); }
@@ -161,7 +161,7 @@ p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .ev-foot > details[open] { flex-basis: 100%; }
 .ev-foot summary { color: var(--muted); }
 .ev-foot summary:hover { color: var(--ink); }
-.ev-foot details p { margin: var(--s1) 0; }
+.ev-foot details p, .ev-row details.ev-detail p { margin: var(--s1) 0; }
 .ev-foot .ev-around { margin-left: auto; }
 
 /* a decided item as one row: its stance and tier on the left, the quote and the record line

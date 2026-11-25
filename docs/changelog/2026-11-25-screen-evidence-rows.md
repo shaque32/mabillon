@@ -13,8 +13,9 @@
     side. Nothing is dropped; the row is the card's content, folded.
   - A row the expert dismissed says "dismissed by an expert" under its stance and tier, so a
     dismissed "supports" never reads as standing support once the review line is out of view.
-    An accepted row's tier already says "confirmed: accepted by an expert". A quote that is
-    part of its message keeps its "Quoted:" mark on the row, as the folded card had it.
+    An accepted row's tier already says "confirmed: accepted by an expert". A message's
+    quote that is part of that message is marked "Quoted:" on the row, also when the message is
+    alone in its thread; a call's or an attachment's quote that is its whole text is not.
   - When every item of the decided group carries the same review, the group says it once above
     the rows ("Review, all 12: ...") and each row keeps it in its fold. A group whose reviews
     differ keeps the review in view on every row (and then not a second time in the fold).
@@ -36,18 +37,21 @@
     is headed "Accounts or threads the failed check cites", its column "Cited id", it has no
     empty Tier or place column, and it gets no "Exported values" fold; in a mixed list the fold
     counts only the records and says what an account's or thread's id is in place of the
-    report's "record not found", and the line above says "the message is from ..." for one. An
+    report's "record not found", the line above says "the message is from ..." for one message,
+    and the paragraph over the block says "What that check cites is the evidence" when no cited
+    id is a record. An
     attachment whose message's printed time was not read still says the value shown is that
     message's.
   - `docs/review-screen.md` and `docs/flags.md` name the claim page's links as it prints them
     ("Messages around it"; "Flag this label" is in Details on a decided item).
 - Where: PR #280 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (58 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (59 tests, synthetic demo case, cloud container,
   2026-11-25; main has 51 after #277). New: every decided item on C03 is one row with stance,
   tier and Excel row in view and the review, the reopen form, the report's record line, the
   spreadsheet-row sentence, the record id, the model note and the own-page link inside its fold;
   a review all 12 rows share is said once and not on the rows; each row prints its review
-  exactly once; a quote that is part of its message is marked "Quoted:"; on C16 the three
+  exactly once; a quote that is part of its message is marked "Quoted:" and a call's or
+  attachment's whole text is not (C09, C20); on C16 the three
   dismissed rows say "dismissed by an expert"; a message decided
   under several assumptions is drawn once with its conversation, the other rows point up to it
   and each keeps its exported values; a source that is not an Excel report; a list of accounts

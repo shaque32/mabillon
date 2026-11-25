@@ -1142,7 +1142,7 @@ def evidence_card(
     )
 
 
-def _tags(item: EvidenceItem, last_kind: str | None, flagged: bool, withheld: object,
+def _tags(item: EvidenceItem, last_kind: str | None, flagged: bool, withheld: W.Withheld | None,
           challenged: frozenset[str], decision: bool = False) -> str:  # fmt: skip
     """The item's stance and tier, and the marks that ask for attention. decision (a decided
     row): an item the expert dismissed says so beside its stance, since its tier does not and
@@ -1225,10 +1225,13 @@ def decided_row(
         row=row,
     )
     caution = screen_records.warning(conn, item.record_id, found)
-    # a quote that is part of its message says so, as the folded card did: beside the sender
-    # and the time it would otherwise read as the whole message
-    whole = any(ln.is_target and ln.body.strip() == item.quote.strip() for ln in lines)
-    mark = "<span class='muted'>Quoted:</span> " if len(lines) >= 2 and not whole else ""
+    # a quote that is part of its message says so: beside the sender and the time it would
+    # otherwise read as the whole message. Only a message is judged: a call's line here is its
+    # text with "[call]" before it, and an attachment's is the message that carries it.
+    body = next((ln.body for ln in lines if ln.is_target), None)
+    part = item.record_id.startswith("msg:") and body is not None
+    part = part and body.strip() != item.quote.strip()
+    mark = "<span class='muted'>Quoted:</span> " if part else ""
     # the same message, drawn above for another assumption: said once, pointed to here
     head = (
         f"<p class='ev-q ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a> "
@@ -1702,10 +1705,16 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
     if st.unlabeled and d0 is not None and d0.verdict is Verdict.CONTRADICTED and not st.stale:
         # The run's own note (pipeline.unlabeled_reason) stays in the report; here, plainly,
         # and only while the verdict the rules gave is the contradiction that note leads to.
+        cited_ids = [
+            rid for ch in st.checks if ch.outcome is CheckOutcome.FAIL for rid in ch.record_ids
+        ]
+        # a check can cite accounts or threads alone (same_account): those are not records
+        ids_only = bool(cited_ids) and all(screen_records.not_a_record(r) for r in cited_ids)
         out.append(
             "<p class='muted'>A check on the phone records failed on a core part of this claim, "
-            "so the verdict rules contradict it whatever the evidence says. The records that "
-            "check cites are the evidence; the model was not asked to label any.</p>"
+            "so the verdict rules contradict it whatever the evidence says. "
+            + ("What that check cites is" if ids_only else "The records that check cites are")
+            + " the evidence; the model was not asked to label any.</p>"
         )
         out.append(_failed_check_records(conn, st))
     elif st.unlabeled:
@@ -1932,6 +1941,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         # leave the thread off when every message is from one thread: name both here
         only_messages = all(r.record_id.startswith("msg:") for r in cited)
         one = len(cited) - others == 1  # the records among them; an account is not one
+        n_msgs = sum(1 for r in cited if r.record_id.startswith("msg:") and r.source_id)
         tier = e(same.tier.value).capitalize() if same.tier else ""
         of = (q(same.app) if same.app else "") + (
             f" thread {screen_records.titled(same.thread)}" if same.thread else ""
@@ -1964,7 +1974,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             what
             + place
             + (
-                f"; the message{' is' if one else 's are'} from {of.strip()}"
+                f"; the message{' is' if n_msgs == 1 else 's are'} from {of.strip()}"
                 if same.app and not only_messages
                 else ""
             )
