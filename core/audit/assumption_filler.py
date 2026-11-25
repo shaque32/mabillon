@@ -3485,13 +3485,14 @@ _SIDE_AFTER_RES = (
 # within its sentence (Claude review on #282). The dot of a title or a company's short form
 # ("Mr. Reyes", "Prof. Reyes", "Det. Reyes", "Acme Inc.") never ends the sentence; a letter-dot
 # abbreviation's dot ("p.m.") ends it only before a word written like a sentence's first word
-# ("p.m. On WhatsApp", not "p.m. EDT") (CodeRabbit on #282). Python's look-behinds are fixed
-# width, so the short forms are grouped by length.
+# ("p.m. On WhatsApp", not "p.m. EDT"); "!" and "?" always end it (CodeRabbit on #282).
+# Python's look-behinds are fixed width, so the short forms are grouped by length.
 _SENTENCE_END = (
-    r"(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft))"
+    r"(?:[!?]\s+(?-i:[A-Z])"
+    r"|(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft))"
     r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd))"
     r"(?<!\b(?:prof|capt|insp|atty|supt|corp))"
-    r"(?:(?<!\.[a-z])[.!?]\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+(?-i:[A-Z][a-z]))"
+    r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+(?-i:[A-Z][a-z])))"
 )
 _SIDE_LATER_RE = re.compile(
     rf"(?:(?!{_SENTENCE_END})[^\"“”‘’']){{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"

@@ -941,6 +941,8 @@ def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind)
         'PETROV called "Marc Garage" on WhatsApp. REYES later called PETROV, his contact.',
         # a sentence that ends on an abbreviation's dot (CodeRabbit on #282)
         'PETROV called "Marc Garage" at 9:14 p.m. On WhatsApp, his contact was brief.',
+        'PETROV called "Marc Garage" at Acme Inc! On WhatsApp, his contact was brief.',
+        'PETROV called "Marc Garage" at Acme Inc? On WhatsApp, his contact was brief.',
         "On June 8, PETROV called REYES, a contact on WhatsApp.",
         "PETROV called REYES on WhatsApp, the contact.",
         "PETROV called REYES, which was the contact.",

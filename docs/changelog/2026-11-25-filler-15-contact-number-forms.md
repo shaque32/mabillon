@@ -29,7 +29,7 @@
   name ('wrote "ok" to REYES, his contact'), a count's "number" right after a quoted name stays
   plain ('"X", a number of times'), and a later side must stand in the quote's sentence (a dot
   after a title or a company's short form ("Mr.", "Prof.", "Det.", "Inc.") never ends it; one after "p.m." ends it only before a word written like a
-  sentence's first word, so "p.m. EDT" goes on and "p.m. On WhatsApp" starts a new sentence). A saved
+  sentence's first word, so "p.m. EDT" goes on and "p.m. On WhatsApp" starts a new sentence; "!" and "?" always end it). A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
@@ -42,10 +42,10 @@
   14 already caught, guard against regressions the reviews found; claims
   in capitals or with a second time get no rows from the builder, so those wordings are
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
-  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (32 wordings), and
+  `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`.
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,473 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,475 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
   Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: CI on the PR's final head, numbers in the PR description. Cloud
