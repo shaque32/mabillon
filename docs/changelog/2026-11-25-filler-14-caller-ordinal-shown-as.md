@@ -21,15 +21,17 @@
     code never decides which account a handle is. The same forms also count as a plain call
     clause where a phone is one side (`_phone_is_a_side`), which sets the time range's
     parties.
-  - "a second" is a tested length only after a word that leads into a length ("lasted a
-    second", "for one minute and a second", "one minute, and a second"; a comma after a unit
-    leads only into "and a second"). Anywhere else, and always after an article or a
-    possessive ("a second, telephone call", "their second (WhatsApp) call"), it is an ordinal
-    and a word no check reads, so it keeps the core event. Filler 13 read "a second WhatsApp
-    call that lasted two minutes" with "a second" as a length, so the claim could rest on its
-    time row alone. A word and its separators in the call-noun guard never share a character,
-    so a run of hyphens is read in one way only. The caller row adds no second event when the
-    claim already holds one.
+  - A length whose words could be an ordinal ("a second", "and a second", "thirty-second")
+    is a tested length only where a length word leads into it ("lasted", "for", "about", a unit
+    as in "one minute and a second" or "one minute, and a second") and its clause ends right
+    after it (a full stop, a comma, a dash, a bracket, or a word such as "and", "on" or "at").
+    Anywhere else it is an ordinal and a word no check reads, so it keeps the core event:
+    "a second, telephone call", "for a second time", "over a second line", "two minutes, and
+    a second call". Filler 13 read "a second WhatsApp call that lasted two minutes" with
+    "a second" as a length, so the claim could rest on its time row alone. A length with no
+    ordinal reading ("a one second call", "thirty seconds") reads as before. A word and its
+    separators in the call-noun guard never share a character, so a run of hyphens is read in
+    one way only. The caller row adds no second event when the claim already holds one.
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
@@ -38,9 +40,10 @@
   call's words stand between, or a hyphen, which fails without the fix; the ordinal guards
   stay fast on a run of hyphens; a caller read through an ordinal
   keeps its event even when the guard reads nothing, which fails without the fix; "a second"
-  read as a length only after a length word, with a comma, a dash or brackets before "call",
-  and after a unit and a comma only as "and a second", which fails without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,235 passed. Free replay of
+  read as a length only after a length word and where its clause ends, with a comma, a dash
+  or brackets before "call", "for a second time", "over a second line" and "minutes, and a
+  second call", which fail without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,250 passed. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in

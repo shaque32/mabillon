@@ -3278,10 +3278,16 @@ _CALL_NOUN_RUN = (
     r"[\s-]+(?:(?!(?:and|or|but|then|that|which|who|to|from|with|the|a|an|before|after|when|"
     r"while)\b)\w+[\s-]+)*?calls?\b"
 )
-# What leads into a length that ends in a lone "second": "lasted a second", "for one minute and
-# a second" (whose "and a second" follows a unit). "a second" anywhere else is an ordinal,
-# never a tested length, whatever follows it ("placed a second, telephone call"; Claude review
-# on #279), and stays a word no check reads.
+# A length that ends in "second" may be an ordinal: "a second", "and a second", "the
+# thirty-second". It is read as a tested length only where a length leads into it ("lasted a
+# second", "for one minute and a second", "one minute, and a second") and its clause ends right
+# after it ("lasted a second.", "... and a second on Item 1"). Anywhere else it is an ordinal and
+# stays a word no check reads: "placed a second, telephone call", "for a second time", "over a
+# second line", "two minutes, and a second call" (Claude review on #279).
+_SECOND_ORDINAL_FORM_RE = re.compile(
+    r"(?:and\s+)?(?:a|an|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+second",
+    re.IGNORECASE,
+)
 _SECOND_LENGTH_LEAD_RE = re.compile(
     r"\b(?:lasted|lasting|lasts|last|for|of|about|approximately|roughly|nearly|almost|around|"
     r"just|only|over|under|exactly|some|minutes?|hours?|mins?|hrs?)\s+$",
@@ -3290,17 +3296,23 @@ _SECOND_LENGTH_LEAD_RE = re.compile(
 # "one minute, and a second": a comma after the unit leads only into "and a second", never into
 # a bare "a second" ("after one minute, a second call" is an ordinal) (CodeRabbit on #279)
 _SECOND_AFTER_A_UNIT_RE = re.compile(r"\b(?:minutes?|hours?|mins?|hrs?),\s*$", re.IGNORECASE)
+_SECOND_LENGTH_END_RE = re.compile(
+    r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|at|with|to|from|before|"
+    r"after|when|while|until|according|per|by)\b",
+    re.IGNORECASE,
+)
 
 
 def _a_tested_length(text: str, m: re.Match[str]) -> bool:
-    """Whether a spoken length in `text` is one: a lone "a second" only where a length leads in."""
+    """Whether a spoken length `m` in `text` is read as one. A length whose words could be an
+    ordinal ("a second") is one only where a length leads into it and its clause ends there."""
     words = m.group(0).casefold()
-    if not words.endswith("second"):
+    if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
         return True
-    return bool(
-        _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start())
-        or (words.startswith("and") and _SECOND_AFTER_A_UNIT_RE.search(text, 0, m.start()))
+    led = _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()) or (
+        words.startswith("and") and _SECOND_AFTER_A_UNIT_RE.search(text, 0, m.start())
     )
+    return bool(led and _SECOND_LENGTH_END_RE.match(text, m.end()))
 
 
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):

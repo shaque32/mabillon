@@ -356,6 +356,24 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Item 1 called (212) 555-0199 for a second time, and the call lasted about two minutes.",
+        "Item 1 placed a call that lasted about two minutes to (212) 555-0199 over a second line.",
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes, and a second call.",
+        "Item 1 placed a call to (212) 555-0199 for about two minutes and a second time.",
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
+    # a length lead before "a second" is not enough: its clause must end there, so "for a
+    # second time" and "minutes, and a second call" state an earlier or another call no check
+    # reads (Claude review on #279: these were SUPPORTED on the time row alone)
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize(
     ("text", "lengths"),
     [
         ("lasted one minute and a second", ["one minute", "and a second"]),
@@ -365,6 +383,14 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
         ("lasted one minute, a second call", ["one minute"]),
         ("placed a second, telephone call", []),
         ("lasted a second", ["a second"]),
+        ("lasted one minute, and a second on Item 1", ["one minute", "and a second"]),
+        ("for a second time", []),
+        ("over a second line", []),
+        ("lasted two minutes, and a second call", ["two minutes"]),
+        # a length that is no ordinal reads as it did in filler 13 (Claude review on #279)
+        ("placed a one second call", ["a one second"]),
+        ("lasted thirty seconds", ["thirty seconds"]),
+        ("the thirty-second call", []),
     ],
 )
 def test_a_lone_second_is_a_length_only_after_a_length_word(text, lengths):
