@@ -23,6 +23,7 @@ from core.audit.assumptions import (
     Proposal,
     TemplateAssumptionBuilder,
     instantiate,
+    is_unread_event,
 )
 from core.audit.checks import CHECKS, run_checks
 from core.audit.checks._common import calls_for_accounts
@@ -273,7 +274,7 @@ def test_an_ordinal_names_the_caller_and_keeps_the_expert_only_event(conn, words
     # event only an expert carries stays beside the checks (v5 pre-run replay, iOS 15 C07).
     made, _ = fill(conn, f"{AT} {words}")
     assert list(made["caller"].params.sent_by) == ([PETROV] if by == PETROV else sorted(NUM))
-    assert made["event"].is_core and TEMPLATES["event"].checks == ()
+    assert made["event"].is_core and is_unread_event("event", made["event"].text)
 
 
 def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
@@ -357,11 +358,23 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
 
 def test_a_missed_call_with_an_ordinal_tells_the_expert_of_the_unread_part(conn):
     # the missed event also carries the earlier call the ordinal states (Claude review on #279)
-    made, _ = fill(conn, f"{AT} Item 1 missed a second incoming call from (212) 555-0199.")
-    assert made["caller"] and made["event"].is_core
-    assert made["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
-    plain, _ = fill(conn, f"{AT} Item 1 missed an incoming call from (212) 555-0199.")
-    assert not plain["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+    # beside its own missed event, which the testability sheet check still counts
+    def events(text):
+        window = W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09")
+        answer = proposal(people=[], quoted_text="", channels=["call"], window=window)
+        model = FakeModel(json.dumps({"assumptions": [answer.model_dump()]}))
+        f = LocalAssumptionFiller(
+            model, conn, template="{claim} {paragraph} {templates} {channels}"
+        )
+        made = TemplateAssumptionBuilder(f).build(claim(f"{AT} {text}", ClaimType.COMMUNICATION))
+        assert any(a.template_id == "caller" for a in made)
+        return [is_unread_event(a.template_id, a.text) for a in made if a.template_id == "event"]
+
+    assert sorted(events("Item 1 missed a second incoming call from (212) 555-0199.")) == [
+        False,
+        True,
+    ]
+    assert events("Item 1 missed an incoming call from (212) 555-0199.") == [False]
 
 
 @pytest.mark.parametrize("length", ["90 second", "ninety second"])
@@ -403,6 +416,16 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
     assert made["record_time"].params.duration_s and made["event"].is_core
 
 
+@pytest.mark.parametrize("after", ["on Item 1", "in the evening", "to (212) 555-0199"])
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_and_a_second_before_more_words_is_no_part_of_the_length(conn, after, kind):
+    # ", and a second on Item 1" may be a second call by ellipsis, even where the model reads
+    # "one minute, and a second" as the length (Claude review on #279)
+    text = f"Item 1 placed a call to (212) 555-0199 that lasted one minute, and a second {after}."
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "one minute, and a second"})
+    assert made["event"].is_core
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -424,7 +447,8 @@ def test_a_length_no_row_tests_keeps_the_event(conn, text, kind):
     [
         ("lasted one minute and a second.", (61, 61), ["one minute and a second"], []),
         ("lasted one minute, and a second.", (61, 61), ["one minute, and a second"], []),
-        ("lasted one minute, and a second on Item 1", (61, 61), ["one minute, and a second"], []),
+        # ", and a second on Item 1" may be a second call by ellipsis (Claude review on #279)
+        ("lasted one minute, and a second on Item 1", (61, 61), [], ["one minute", "and a second"]),
         ("lasted a second.", (1, 1), ["a second"], []),
         ("for 1 minute and a second.", (61, 61), ["1 minute and a second"], []),
         ("for 1 minute, and a second.", (61, 61), ["1 minute, and a second"], []),

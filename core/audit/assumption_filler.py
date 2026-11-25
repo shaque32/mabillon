@@ -3307,6 +3307,7 @@ _DIGIT_LENGTH_RE = re.compile(
 _LENGTH_JOIN_RE = re.compile(r"\s*,?\s*(?:and\s+)?", re.IGNORECASE)
 _HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
 _ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
+_SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.,;:!?)\]\u2014\u2013])")
 _SECOND_LENGTH_END_RE = re.compile(
     r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
     re.IGNORECASE,
@@ -3320,9 +3321,13 @@ def _may_be_a_length(text: str, m: re.Match[str]) -> bool:
     words = m.group(0).casefold()
     if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
         return True
+    if words.startswith("and"):
+        # ", and a second on Item 1" may be a second call by ellipsis: only punctuation or the
+        # text's end closes this form (Claude review on #279)
+        return bool(_SECOND_CLAUSE_END_RE.match(text, m.end()))
     if not _SECOND_LENGTH_END_RE.match(text, m.end()):
         return False
-    return words.startswith("and") or bool(_SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()))
+    return bool(_SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()))
 
 
 def _tested_lengths_in(
@@ -7082,18 +7087,20 @@ class LocalAssumptionFiller:
         params, missed, unread = made
         if unread and "event" not in allowed_ids:
             return out  # "a second call": no caller row without the event an expert carries
+        had_event = any(p.is_core and p.template_id == "event" for p in out)
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
-            # "missed a second call": the missed event also carries the part no check reads
-            out.append(Proposal("event", event, is_core=True, code_made=True, unread=unread))
-        elif unread and not any(p.is_core and p.template_id == "event" for p in out):
+            out.append(Proposal("event", event, is_core=True, code_made=True))
+        if unread and not had_event:
             # "a second call" states an earlier call no check reads ("the contact displayed
             # as", a saved contact), so the claim keeps a core event an expert carries whatever
-            # `unread_words` makes of the
-            # wording (CodeRabbit on #279: "a second Talk and Text call" with a tested
-            # length); the same event `_add_unread_event` would add
+            # `unread_words` makes of the wording (CodeRabbit on #279: "a second Talk and Text
+            # call" with a tested length); the same event `_add_unread_event` would add. A
+            # missed call keeps its own event beside it: whether the call was answered is no
+            # unread part, so the testability sheet check still counts it (Claude review on
+            # #279)
             out.append(self._unread_event(out))
         return out
 

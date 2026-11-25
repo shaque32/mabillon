@@ -29,15 +29,17 @@
     and a second", "one minute, and a second" or "1 minute and a second" beside one testing 61
     seconds), and its clause
     ends right after it (a full stop, a comma, a dash, a bracket, or a word such as "and" or
-    "on"). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
+    "on"; for "and a second", only punctuation or the text's end, so ", and a second on Item
+    1" or "in the evening" is a second call by ellipsis, which filler 13 read as a length). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
     event: "a second, telephone call", "for a second time", "over a second line", "two
     minutes, and a second call", "about two minutes, and a second to (212) 555-0199" (a second
     call written by ellipsis, which filler 13 also read as a length). Filler 13 read "a second
     WhatsApp call that lasted two minutes" with "a second" as a length, so the claim could rest
     on its time row alone. A length with no ordinal reading ("a one second call", "thirty
     seconds", "a 90 second WhatsApp call") reads as before, or now as a length where filler 13
-    read "second" after digits as an ordinal. A missed call written with an ordinal gets one
-    event that carries both parts.
+    read "second" after digits as an ordinal. A missed call written with an ordinal keeps its
+    missed event and gets the unread event beside it, so the testability sheet check still
+    counts the missed event.
   - A stated length, spoken or in digits, is read as tested only where it is the length a
     row tests, as `duration_range` reads it, whole or in parts ("two minutes and 30 seconds",
     "a minute and a half"). Any other stated length is a part no check reads and keeps the
@@ -60,7 +62,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,287 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,293 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of
@@ -80,4 +82,6 @@
 - Status doc: pending: section 2 table, step 5 (Assumptions): add "Filler 14 reads who placed
   a call written with an ordinal ('a second Signal call', the ordinal keeping a core event) or
   with the other side named by what the log shows ('the party displayed as "X"', an account
-  side only) (#279)." Header "Other versions": assumption filler 14.
+  side only), and reads a stated length as tested only where it is the length a row tests,
+  so any other stated length ('a 30 second call that lasted about two minutes') keeps a core
+  event and the claim stays Unproven (#279)." Header "Other versions": assumption filler 14.
