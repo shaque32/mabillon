@@ -26,7 +26,7 @@ from core.restore.store import (
     load_match,
     stale_reason,
 )
-from core.restore.view import ContextView, Line, match_view
+from core.restore.view import ContextView, Line, ThreadInfo, match_view
 from ui import records as screen_records
 from ui.pages import Page, e, link, q
 
@@ -40,10 +40,12 @@ def _table(conn: sqlite3.Connection, lines: tuple[Line, ...], app: str) -> tuple
     rows = screen_records.message_rows(conn, lines, app)
     same = screen_records.shared(rows, sources)
     n = len(lines)
+    times = screen_records.time_note(ln.local for ln in lines)
     note = (
         (f"Tier: {e(same.tier.value)}, for every message" if same.tier else "Tier in each row")
         + (f"; all in {same.words}" if same.sheet else "")
-        + f". Times are the phone's local time, {screen_records.LOCAL_TIME_NOTE}."
+        + "."
+        + (f" {times}" if times else "")
     )
     excel = (
         f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
@@ -59,12 +61,18 @@ def _table(conn: sqlite3.Connection, lines: tuple[Line, ...], app: str) -> tuple
     )
 
 
-def _span(first_utc: str | None, last_utc: str | None) -> str:
-    """A thread's first and last day, in words, by the UTC date."""
-    first, last = screen_records.day(first_utc), screen_records.day(last_utc)
+def _span(conn: sqlite3.Connection, t: ThreadInfo) -> str:
+    """A thread's first and last day, in words, on the phone's calendar as the rows' date cells
+    give it (by the UTC date, and saying so, when the phone's zone is unknown)."""
+    row = conn.execute("SELECT device_id FROM threads WHERE id = ?", (t.id,)).fetchone()
+    device = row[0] if row else None
+    first = screen_records.local_day(conn, t.first_utc, device)
+    last = screen_records.local_day(conn, t.last_utc, device)
     if not first or not last:
         return ""
-    return f", {first} (UTC)" if first == last else f", {first} to {last} (UTC)"
+    utc = " (UTC)" if first.endswith(" (UTC)") else ""
+    first, last = first.removesuffix(" (UTC)"), last.removesuffix(" (UTC)")
+    return f", {first}{utc}" if first == last else f", {first} to {last}{utc}"
 
 
 def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
@@ -77,7 +85,7 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
     out = [
         f"<p class='conv-head'>{q(t.app)} thread {q(t.title or '(untitled)')} on {q(t.device)} "
         f"in {q(t.file_name)}. {t.messages:,} message{'' if t.messages == 1 else 's'}"
-        + _span(t.first_utc, t.last_utc)
+        + _span(conn, t)
         + f". Showing {len(view.lines)}"
         + (
             f"; {view.before:,} earlier and {view.after:,} later not shown"

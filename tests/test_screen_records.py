@@ -114,6 +114,38 @@ def test_a_time_that_cannot_be_read_prints_as_stored(text) -> None:
     assert records.when(text) == text.replace("'", "&#x27;")
 
 
+ZONED = "2026-03-10 11:16:44 EDT (UTC-04:00)"
+UTC_ONLY = "2026-03-10 15:16:44 UTC (device zone unknown)"
+
+
+def test_the_note_on_times_says_utc_where_the_phones_zone_is_unknown() -> None:
+    assert records.time_note([ZONED, ZONED]) == (
+        "Times are the phone's local time, derived from UTC and the phone's time zone."
+    )
+    assert records.time_note([UTC_ONLY, ""]) == "Times are UTC: the phone's time zone is unknown."
+    assert "except those marked device zone unknown, which are UTC" in records.time_note(
+        [ZONED, UTC_ONLY]
+    )
+    assert records.time_note(["", "time unknown"]) == ""
+
+
+def test_a_table_of_utc_times_is_not_headed_local_time(conn) -> None:
+    rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"])
+    utc = [replace(r, local=UTC_ONLY) for r in rows]
+    out = records.table(utc, records.Sources(conn))
+    assert "<th>Time (UTC)</th>" in out and "Phone's local time" not in out
+    assert "(device zone unknown)" in out
+    assert "<th>Phone's local time</th>" in records.table(rows, records.Sources(conn))
+
+
+def test_a_day_is_on_the_phones_calendar_or_says_it_is_utc(conn) -> None:
+    # the demo phone is on New York time: 02:30 UTC on Mar 11 is still Mar 10 there
+    late = "2026-03-11T02:30:00Z"
+    assert records.local_day(conn, late, "dev:item1") == "Mar 10, 2026"
+    assert records.local_day(conn, late, None) == "Mar 11, 2026 (UTC)"
+    assert records.local_day(conn, None, "dev:item1") == ""
+
+
 # ---------------------------------------------------------------- sender and direction
 
 
@@ -176,9 +208,17 @@ def test_rows_that_differ_in_tier_or_file_say_so_in_each_row(conn) -> None:
 
 
 def test_a_record_that_is_gone_keeps_its_row(conn) -> None:
-    (row,) = records.record_rows(conn, ["msg:item1:Chats!999999"])
+    gone = "msg:item1:Chats!999999"
+    (row,) = records.record_rows(conn, [gone])
     assert row.what == "record not found"
     assert "record not found" in records.table([row], records.Sources(conn))
+    # nothing was observed, so it carries no tier and does not count toward the shared one
+    assert row.tier is None
+    rows = records.record_rows(conn, [M948, gone])
+    assert records.shared(rows, records.Sources(conn)).tier is ProvenanceTier.OBSERVED
+    # a caller that holds its own reference to the record still places it
+    line = records.line(conn, gone, records.Sources(conn), place=("item1", "Chats!999999"))
+    assert line.startswith("record not found · ") and "Excel row 999999" in line
 
 
 # ---------------------------------------------------------------- the claim page
@@ -220,6 +260,8 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
         assert record_line(conn, item.record_id) in fold
         assert "spreadsheet row" in fold and "not the report's # column" in fold
         assert item.record_id in fold
+    evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
+    assert records.TIMES_NOTE in evidence.replace("&#x27;", "'")
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
 
@@ -229,6 +271,7 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     rows = body.split("<details id='irrelevant'", 1)[1].split("</details>", 1)[0]
     assert "labeled irrelevant</summary>" in rows and "Open, or flag this label" in rows
     assert "as printed" not in rows and "Excel row" in rows
+    assert records.TIMES_NOTE in rows.replace("&#x27;", "'")
     item = next(x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant")
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
@@ -261,6 +304,8 @@ def test_the_conversation_is_five_columns_and_the_reports_table_folds_under_it(a
     assert "<tr class='target'>" in table and "need 2 more by friday" in table
     note = body.split("<table class='recs'>", 1)[0]
     assert "Tier: observed, for every message" in note
+    head = note.split("<p class='conv-head'>", 1)[1].split("</p>", 1)[0]
+    assert "(UTC)" not in head  # the span is on the phone's calendar, as the date cells are
     assert "derived from UTC and the phone's time zone" in note
     fold = _folds(body, "exported")[0]
     assert context_table(view.lines) in fold  # the report's own table, every column

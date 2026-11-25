@@ -1066,7 +1066,9 @@ def evidence_card(
         if confirm
         else _decide_form(page, item, last_kind == "expert", back)
     )
-    shown, thread = _conversation(conn, item, 0 if same_as else around, threads, folded=settled)
+    shown, thread, drawn = _conversation(
+        conn, item, 0 if same_as else around, threads, folded=settled
+    )
     if same_as:
         shown += (
             f"<p class='ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a>, "
@@ -1079,7 +1081,7 @@ def evidence_card(
         item.record_id,
         screen_records.Sources(conn),
         place=(item.ref.source_id, item.ref.locator),
-        shown=shown.startswith("<div class='thread"),
+        shown=drawn,
         quoted=item.quote,
     )
     caution = screen_records.warning(conn, item.record_id, found)
@@ -1186,14 +1188,15 @@ def _conversation(
     around: int,
     threads: dict[str, list[str]] | None = None,
     folded: bool = False,
-) -> tuple[str, str]:
-    """The verified quote, and with around > 0 the record among its neighbours: (shown, fold).
+) -> tuple[str, str, bool]:
+    """The verified quote, and with around > 0 the record among its neighbours: (shown, fold,
+    drawn), drawn being True when the neighbours are in view (they give the sender and time).
     folded: the expert has decided the item, so the neighbours come back as a disclosure (fold)
     for the card's last line, and only the quote shows."""
     quote = f"<blockquote>{q(item.quote)}</blockquote>"
     lines = build_context(conn, item.record_id, around, threads=threads) if around else []
     if len(lines) < 2:  # no neighbours (a contact, a call): the quote says it all
-        return quote, ""
+        return quote, "", False
     thread = f"<div class='thread mini'>{_msgs(lines)}</div>"
     whole = any(ln.is_target and ln.body.strip() == item.quote.strip() for ln in lines)
     # the quote is the whole highlighted message: the bubble already shows it, word for word
@@ -1202,11 +1205,13 @@ def _conversation(
     )
     if folded:
         quoted = quoted or quote  # the neighbours fold away; the quote itself stays in view
-        return quoted, (
+        return (
+            quoted,
             f"<details class='ev-thread'><summary>The messages around it ({len(lines)})"
-            f"</summary>{thread}</details>"
+            f"</summary>{thread}</details>",
+            False,
         )
-    return thread + quoted, ""
+    return thread + quoted, "", True
 
 
 def _msgs(lines: list[ContextLine]) -> str:
@@ -1367,7 +1372,8 @@ def _irrelevant_list(
     shown = " open" if any(x.id in withheld for x in items) else ""
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
-        f"irrelevant</summary><ul>{rows}</ul></details>"
+        f"irrelevant</summary><p class='muted'>{e(screen_records.TIMES_NOTE)}</p>"
+        f"<ul>{rows}</ul></details>"
     )
 
 
@@ -1578,6 +1584,11 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         # an untested claim searched nothing, as it says above; a failed check's records show
         # above as that check's evidence
         out.append("<p class='muted'>No relevant evidence items.</p>")
+    if groups:  # the cards' one-line records give times in reading words: say how to read them
+        out.append(
+            f"<p class='muted'>{e(screen_records.TIMES_NOTE)} Each card's fold gives the values "
+            "as exported.</p>"
+        )
     by_assumption = {a.id: a for a in st.assumptions}
     found = forwarded.affected(conn)
     threads: dict[str, list[str]] = {}  # each thread read once for the page's cards
@@ -1712,15 +1723,13 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             what = f"{tier} {q(same.app)} messages" if tier else f"{q(same.app)} messages"
         else:
             what = f"{tier} records" if tier else "Records"
+        times = screen_records.time_note(r.local for r in rows)
         note = (
             what
             + (f" in {same.words}" if same.words else "")
             + (f"; the messages are from {q(same.app)}" if same.app and not only_messages else "")
-            + (
-                f". Times are the phone's local time, {screen_records.LOCAL_TIME_NOTE}."
-                if any(r.local for r in rows)
-                else "."
-            )
+            + "."
+            + (f" {times}" if times else "")
         )
         exported = "".join(
             f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
