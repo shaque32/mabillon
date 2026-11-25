@@ -99,7 +99,9 @@ eval or re-decided.
    it" shows the conversation around the record in the phone's local time. A record reads as
    one row: sender, time (written "Mar 10, 2026, 11:16:44 AM EDT"; hover for the full value with
    its UTC offset) and its place in the file. The values as exported (UTC, the time as printed,
-   the record id) are in the fold beside it, as the report prints them.
+   the record id) are in the fold beside it, as the report prints them. An item the expert has
+   decided is one row (stance, tier, quote, record); its "Details" fold holds the messages
+   around it, the review, the form to change the decision and the exported values.
 4. **Re-run verdicts.** Decisions do not change a verdict by themselves. "Re-run verdicts" runs
    `core/audit/rules.py` and the invariants again on the stored evidence with the current review
    statuses (`core/review/redecide.py`, also `mabillon redecide`). No model is called, so it takes

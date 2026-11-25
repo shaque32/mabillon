@@ -480,17 +480,26 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
         assert f"<span class='mono'>{rid}</span>" in fold
 
 
-def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_fold(
-    app, conn
-) -> None:
-    body = _get(app, "/claim", id="C03")
-    items = [x for x in claim_state(conn, "C03").evidence if x.stance.value != "irrelevant"]
+def _card(body: str, item_id: str) -> str:
+    return body.split(f"<div class='item' id='{item_id}'>", 1)[1].split("<div class='item'", 1)[0]
+
+
+def _decided(st) -> set[str]:  # noqa: ANN001
+    return {
+        x.id
+        for x in st.evidence
+        if st.last_reviewer.get(x.id) == "expert" and x.status.value != "open"
+    }
+
+
+def test_an_open_card_says_the_record_once_and_keeps_the_report_line_in_its_fold(app, conn) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    decided = _decided(st)
+    items = [x for x in st.evidence if x.stance.value != "irrelevant" and x.id not in decided]
     assert items
     for item in items:
-        card = body.split(f"<div class='item' id='{item.id}'>", 1)[1].split("<div class='item'", 1)[
-            0
-        ]
-        visible, fold = card.split("<details class='more'>", 1)
+        visible, fold = _card(body, item.id).split("<details class='more'>", 1)
         assert "<p class='ev-rec'>" in visible and "Excel row" in visible
         assert "UTC 20" not in visible and "as printed" not in visible
         assert "<summary>Exported values and model note</summary>" in fold
@@ -499,11 +508,59 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
         assert item.record_id in fold
     evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
     sources = records.Sources(conn)
-    how = records.note(records.record_rows(conn, [x.record_id for x in items]), sources)
+    carded = [x.record_id for x in st.evidence if x.stance.value != "irrelevant"]
+    how = records.note(records.record_rows(conn, carded), sources)
     assert "(America/New_York)" in how and _text(how).endswith(records.EXCEL_ROW_NOTE)
     assert how in evidence
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
+
+
+def test_a_decided_item_is_one_row_and_its_details_keep_everything_the_card_had(app, conn) -> None:
+    body = _get(app, "/claim", id="C03")
+    st = claim_state(conn, "C03")
+    items = [x for x in st.evidence if x.id in _decided(st)]
+    assert len(items) == 12
+    for item in items:
+        card = _card(body, item.id)
+        assert card.startswith("<div class='ev-row'>")
+        visible, fold = card.split("<details class='ev-detail'><summary>Details</summary>", 1)
+        # in view: stance, tier, the quote and the record in short
+        assert "<div class='ev-tags'>" in visible and "confirmed: accepted by an expert" in visible
+        assert "Excel row" in visible and "UTC 20" not in visible
+        # folded: the review, the decision form, the values as exported, the ids, the model note
+        assert "<strong>Review:</strong>" in fold and "name='status' value='open'" in fold
+        assert record_line(conn, item.record_id) in fold
+        assert "spreadsheet row" in fold and "not the report's # column" in fold
+        assert item.record_id in fold and "Labeled " in fold
+        assert "Open this item on its own page" in fold
+
+
+def test_a_review_every_decided_row_shares_is_said_once(app, conn) -> None:
+    body = _get(app, "/claim", id="C03")
+    group = body.split("Evidence the expert already decided", 1)[1]
+    assert "<strong>Review, all 12:</strong> Accepted by" in group.split("<div class='item'", 1)[0]
+    for i in _decided(claim_state(conn, "C03")):
+        visible = _card(body, i).split("<details class='ev-detail'>", 1)[0]
+        assert "<strong>Review:</strong>" not in visible
+
+
+def test_the_same_message_under_another_assumption_points_up_instead_of_repeating(
+    app, conn
+) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    by_record: dict[str, list[str]] = {}
+    for x in st.evidence:
+        if x.id in _decided(st):
+            by_record.setdefault(x.record_id, []).append(x.id)
+    repeats = {rid: ids for rid, ids in by_record.items() if len(ids) > 1}
+    assert repeats
+    for rid, ids in repeats.items():
+        drawn = [i for i in ids if "The same message as" not in _card(body, i)]
+        assert len(drawn) == 1  # drawn once; every other row points up to it
+        for i in ids:
+            assert record_line(conn, rid) in _card(body, i)  # each keeps its exported values
 
 
 def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(app, conn) -> None:

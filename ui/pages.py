@@ -1045,6 +1045,8 @@ def evidence_card(
     challenged: frozenset[str] = frozenset(),
     around_link: bool = True,
     same_as: str | None = None,
+    compact: bool = False,
+    review_said: bool = False,
     sources: screen_records.Sources | None = None,
     row: screen_records.Row | None = None,
     times: list[str] | None = None,
@@ -1060,8 +1062,15 @@ def evidence_card(
     sources, row: the page's cache of files and zones and the record's row, when the page read
     every card's record in one call. times: gathers the times of the messages the card draws
     around the record, for the page's one note on how to read times.
-    Once the expert has decided an item, its conversation and its decision form fold."""
-    stance_cls = "b-against" if item.stance in AGAINST else "b-open"
+    Once the expert has decided an item, its conversation and its decision form fold.
+    compact (the claim page): a decided item is one row, its stance, tier, quote and record,
+    with everything else in one Details fold (decided_row). review_said: the group above the
+    row already says this item's review, word for word, so the row leaves it to the fold."""
+    if compact and last_kind == "expert" and item.status != EvidenceStatus.OPEN and not confirm:
+        return decided_row(
+            conn, page, item, back, found, claim_id, flagged, run_id, around, threads,
+            challenged, same_as, review_said, sources, row, times,
+        )  # fmt: skip
     flag = ""
     if claim_id is not None:
         flag = _flag_label_form(page, claim_id, item, back, run_id)
@@ -1110,17 +1119,7 @@ def evidence_card(
     )
     return (
         f"<div class='item' id='{e(item.id)}'>"
-        "<div class='ev-tags'>"
-        f"<span class='badge {stance_cls}'>{e(STANCE_LABEL[item.stance])}</span>"
-        f"{_tier_badge(item, last_kind)}"
-        + ("<span class='badge b-flag'>flagged by you</span>" if flagged else "")
-        + ("<span class='badge b-withheld'>needs expert review</span>" if withheld else "")
-        + (
-            f"<span class='badge b-challenge'>{e(challenge.FOUND_MARK)}</span>"
-            if item.id in challenged
-            else ""
-        )
-        + "</div>"
+        f"<div class='ev-tags'>{_tags(item, last_kind, flagged, withheld, challenged)}</div>"
         + shown
         + f"<p class='ev-rec'>{rec}</p>"
         + (
@@ -1135,15 +1134,123 @@ def evidence_card(
         "<details class='more'><summary>Exported values and model note</summary>"
         # the card's time is the phone's local time; this keeps the export's own values, as
         # the report prints them
+        + _exported(conn, item, found, row)
+        + f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
+        + ("" if withheld else f" {rationale_html(item, None)}")
+        + "</p></details>"
+        + f"{flag}{around_a}</div></div>"
+    )
+
+
+def _tags(item: EvidenceItem, last_kind: str | None, flagged: bool, withheld: object,
+          challenged: frozenset[str]) -> str:  # fmt: skip
+    """The item's stance and tier, and the marks that ask for attention."""
+    stance_cls = "b-against" if item.stance in AGAINST else "b-open"
+    return (
+        f"<span class='badge {stance_cls}'>{e(STANCE_LABEL[item.stance])}</span>"
+        f"{_tier_badge(item, last_kind)}"
+        + ("<span class='badge b-flag'>flagged by you</span>" if flagged else "")
+        + ("<span class='badge b-withheld'>needs expert review</span>" if withheld else "")
+        + (
+            f"<span class='badge b-challenge'>{e(challenge.FOUND_MARK)}</span>"
+            if item.id in challenged
+            else ""
+        )
+    )
+
+
+def _exported(
+    conn: sqlite3.Connection,
+    item: EvidenceItem,
+    found: dict[str, str] | None,
+    row: screen_records.Row | None = None,
+) -> str:
+    """The record's values as exported, as the report prints them, its place in the file in
+    full and its ids: what the card's short line leaves out. row: the record's row, so an
+    attachment's fold gives its message's exported line too."""
+    return (
         f"<p><span class='ev-asx'>As exported:</span> "
         f"{record_line(conn, item.record_id, found)}{_carrier_line(conn, row)}</p>"
         f"<p class='muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
         f"<p><span class='mono'>{e(item.ref.source_id)} {e(item.ref.locator)} · "
         f"{e(item.record_id)}</span></p>"
-        f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
+    )
+
+
+def decided_row(
+    conn: sqlite3.Connection,
+    page: Page,
+    item: EvidenceItem,
+    back: str,
+    found: dict[str, str] | None,
+    claim_id: str | None,
+    flagged: bool,
+    run_id: str | None,
+    around: int,
+    threads: dict[str, list[str]] | None,
+    challenged: frozenset[str],
+    same_as: str | None,
+    review_said: bool,
+    sources: screen_records.Sources | None = None,
+    row: screen_records.Row | None = None,
+    times: list[str] | None = None,
+) -> str:
+    """An item the expert has decided, as one row of the claim page: its stance and tier, the
+    quote and who sent it when, and where it sits in the file. Its review shows unless the
+    group above says it for every row. One Details fold holds the rest: the messages around
+    it, the review, the form to change the decision, the values as exported, the model's note
+    and the label flag. Nothing is dropped: it is the card's content, folded. A withheld
+    rationale or a forwarded copy's caution stays in view. times: gathers the times of the
+    messages the fold draws around the record, for the page's one note on how to read times."""
+    withheld = W.for_item(conn, item)
+    lines = build_context(conn, item.record_id, around, threads=threads) if around else []
+    if times is not None:
+        times.extend(ln.local_time for ln in lines)
+    thread = f"<div class='thread mini'>{_msgs(lines)}</div>" if len(lines) >= 2 else ""
+    sources = sources or screen_records.Sources(conn)
+    row = row or screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
+    rec = screen_records.line(
+        conn,
+        item.record_id,
+        sources,
+        place=(item.ref.source_id, item.ref.locator),
+        quoted=item.quote,
+        row=row,
+    )
+    caution = screen_records.warning(conn, item.record_id, found)
+    # the same message, drawn above for another assumption: said once, pointed to here
+    head = (
+        f"<p class='ev-q ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a> "
+        f"({q(item.quote)}), judged here for this assumption.</p>"
+        if same_as
+        else f"<p class='ev-q'>{q(item.quote)}</p><p class='ev-rec'>{rec}</p>"
+    )
+    review = f"<p class='ev-review'><strong>Review:</strong> {review_label(conn, item)}</p>"
+    flag = _flag_label_form(page, claim_id, item, back, run_id) if claim_id is not None else ""
+    return (
+        f"<div class='item' id='{e(item.id)}'><div class='ev-row'>"
+        f"<div class='ev-tags'>{_tags(item, 'expert', flagged, withheld, challenged)}</div>"
+        f"<div class='ev-body'>{head}"
+        + (f"<p class='ev-rec'><strong class='warn'>{caution}</strong></p>" if caution else "")
+        + (
+            f"<p>{rationale_html(item, withheld)}</p>"
+            + ("" if withheld.acknowledged else _acknowledge_form(page, item, back))
+            if withheld
+            else ""
+        )
+        + ("" if review_said else review)
+        + "<details class='ev-detail'><summary>Details</summary>"
+        + (f"<p class='ev-sub'>The messages around it ({len(lines)})</p>{thread}" if thread else "")
+        + review
+        + f"<p class='ev-sub'>Change your decision</p>{_decide_form(page, item, True, back)}"
+        + "<p class='ev-sub'>Exported values and model note</p>"
+        + (f"<p>{rec}</p>" if same_as else "")
+        + _exported(conn, item, found, row)
+        + f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
         + ("" if withheld else f" {rationale_html(item, None)}")
-        + "</p></details>"
-        + f"{flag}{around_a}</div></div>"
+        + "</p>"
+        + f"<p><a href='{e(link('/evidence', id=item.id))}'>Open this item on its own page, "
+        "with more of the conversation</a></p>" + f"{flag}</details></div></div></div>"
     )
 
 
@@ -1628,6 +1735,15 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
     drawn: dict[str, str] = {}  # record id -> the first card on the page that draws it
     for title, group in groups:
         out.append(f"<h3 class='ev-group'>{e(title)} <span>({len(group)})</span></h3>")
+        # a decided group whose items all carry the same review says it once, above the rows
+        reviews = {review_label(conn, x) for x in group}
+        said_once = title == "Evidence the expert already decided" and len(group) > 1
+        said_once = said_once and len(reviews) == 1
+        if said_once:
+            out.append(
+                f"<p class='ev-review ev-said'><strong>Review, all {len(group)}:</strong> "
+                f"{next(iter(reviews))}</p>"
+            )
         shown_on = None
         order = {a.id: i for i, a in enumerate(st.assumptions)}
         for x in sorted(group, key=lambda x: order.get(x.assumption_id, len(order))):
@@ -1651,6 +1767,8 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
                     threads=threads,
                     challenged=challenged,
                     same_as=drawn.get(x.record_id),
+                    compact=True,
+                    review_said=said_once,
                     sources=sources,
                     row=of.get(x.record_id),
                     times=around,
