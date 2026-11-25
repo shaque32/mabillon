@@ -7209,15 +7209,12 @@ class LocalAssumptionFiller:
         params, missed, unread = made
         if unread and "event" not in allowed_ids:
             return out  # "a second call": no caller row without the event an expert carries
-        # only code's own unread event already says what an ordinal leaves unread; a model's
-        # event about something else does not (Claude review on #279)
-        had_event = any(p.is_core and p.template_id == "event" and p.unread for p in out)
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
             out.append(Proposal("event", event, is_core=True, code_made=True))
-        if unread and not had_event:
+        if unread:  # beside a model's event too: that event carries only its own part
             # "a second call" states an earlier call no check reads ("the contact displayed
             # as", a saved contact), so the claim keeps a core event an expert carries whatever
             # `unread_words` makes of the wording (CodeRabbit on #279: "a second Talk and Text
