@@ -12,24 +12,28 @@
     (`core/enrich/local_time.py` format_local), written "Mar 10, 2026, 11:16:44 AM EDT"; the
     full value with its UTC offset is the hover title, and the note said once above the rows
     names in full the zone of the phones those rows are from ("America/New_York"), so a short
-    zone name is not ambiguous. The same note says, in view, that an Excel row is the
-    spreadsheet's own row number, not the report's # column, and it is left out where no row
-    gives a time or an Excel row. A time shown in UTC still says "device zone unknown" in view,
-    its table's time column is headed "Time (UTC)" and the note says UTC. A value the source
-    printed that was not read as a time prints as stored, with "date not read" in the date cell
-    so it does not read as the day of the row above; "no date" is for a record the source gives
-    no time for at all (a contact, a message with no time). An attachment takes its message's
-    time. A message whose stored time is not a time keeps its row, sender and direction.
+    zone name is not ambiguous; when the phones differ in zone, each is named with its file, as
+    the rows name files. The same note says, in view, that an Excel row is the spreadsheet's own
+    row number, not the report's # column, and it is left out where no row gives a time or an
+    Excel row. A time shown in UTC still says "device zone unknown" in view, its table's time
+    column is headed "Time (UTC)" and the note says UTC. A value the source printed that was not
+    read as a time prints as stored, with "date not read" in the date cell so it does not read
+    as the day of the row above; "no date" is for a record the source gives no time for at all
+    (a contact, a message with no time). An attachment has no time of its own: its row shows its
+    message's time and says so, and the fold gives that message's exported line (UTC and as
+    printed). A message whose stored time is not a time keeps its row, sender and direction.
   - Claim page, the records a failed check cites: a table (date once per run of rows, the
     phone's local time, sender, the message or record text, the Excel row linked to the message
     in its conversation) in place of the list of full citations. Above it, once: the assumption,
     the tier, the app and the thread when every message shares them ("Observed Telegram messages
     in thread @northstar"), the file and sheet, and that the time is derived from UTC and the
     phone's time zone. That line is taken over every record the heading counts, also when the
-    table draws only the first 12. Messages from more than one thread each say their thread
-    under the message. Under it, one fold, "Exported values for these N records": each record's
-    line exactly as the report prints it (`record_line`: UTC and the time as printed) with its
-    record id, and the note on what an Excel row number is.
+    table draws only the first 12; when a cited id is not among the case's records, the line
+    says how many and claims no shared tier, file or thread. Each Excel row link carries a title
+    saying it opens the message in its conversation. Messages from more than one thread each say
+    their thread under the message. Under it, one fold, "Exported values for these N records":
+    each record's line exactly as the report prints it (`record_line`: UTC and the time as
+    printed) with its record id, and the note on what an Excel row number is.
   - Evidence card: one line (sender, thread, time, file, sheet and Excel row) in place of the
     "As exported" line and the "From ..." line. When the messages are drawn above it, the line
     leaves the time out. The Evidence section, the labeled-irrelevant list and the evidence
@@ -40,7 +44,8 @@
     sentence from #223 ("spreadsheet row N (Excel's row number, not the report's # column)"),
     the ids and the model note. A forwarded or quoted copy's caution stays in view on the card.
   - "Labeled irrelevant" rows: the quote, the short record line and the link to the item's own
-    page, where the exported values are.
+    page, where the exported values are. The list now says the items' tier, once above the rows
+    when they share it (it showed none before this PR).
   - Message in its conversation (`/selection/context`, `/exhibit/match`), and each related
     thread: five columns (Date, Phone's local time, From, Message, Excel row) in place of eight.
     The tier is said once above the rows; a table whose rows differ in tier or file gets the
@@ -56,28 +61,33 @@
     none, as the report's record line does: "5551234 (@alex92)", "7001001 (Dan P, this phone)".
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (42 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (45 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; times said as UTC, and headed so, where the
   phone's zone is unknown; the note naming only the zones of the phones its rows are from, and
-  left out when no row has a time or an Excel row; an attachment's time, and a message or call
-  whose stored time is not a time (it keeps its sender); the Evidence note speaking for the
-  messages drawn around a record; a forwarded copy's caution on the item's own page; the
-  direction and display-name rules (a message with no sender account always says its direction);
-  a tier or file column returning when rows differ; the app and thread named above a cited table
-  whose rows leave them off; a cited list longer than the table described over every record it
-  counts; and, on the claim, evidence and conversation pages, that every record's report line,
-  record id, spreadsheet-row sentence and the report's conversation table are still on the same
-  page inside a fold. The pinned strings in `tests/test_start_case.py`, `tests/test_flags.py`,
+  left out when no row has a time or an Excel row; an attachment's time, said to be its
+  message's, with that message's exported line in the fold, and a message or call whose stored
+  time is not a time (it keeps its sender); the Evidence note speaking for the messages drawn
+  around a record; a forwarded copy's caution on the item's own page; the direction and
+  display-name rules (a message with no sender account always says its direction); a tier or
+  file column returning when rows differ; the app and thread named above a cited table whose
+  rows leave them off; a cited list longer than the table described over every record it counts;
+  and, on the claim, evidence and conversation pages, that every record's report line, record
+  id, spreadsheet-row sentence and the report's conversation table are still on the same page
+  inside a fold. The pinned strings in `tests/test_start_case.py`, `tests/test_flags.py`,
   `tests/test_first_read_fixes.py`, `tests/test_restore_case01.py` and both
   screen-against-report tests in `tests/test_report_consistency.py` pass unchanged. Checked by
   eye in the running demo at 1440 px and 390 px. On the demo case the cited-records block of C04
   goes from 20 lines of citation to a 10-row table, and each decided evidence card loses two
   wrapped lines.
-- Open: three more screen PRs (evidence as table rows, Timeline and Gaps, the Case page record
-  block with the Audit log and Activity). The Selection page's own bubbles and its "nearby"
-  table are report fragments and keep the long format until the report is decided. The report
-  itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's go-ahead. Not tested on a
-  real export: sender and place wording was only seen on the synthetic Excel reports.
+- Open: a failed check that cites an account or a thread (`acct:`, `thr:` ids, the same_account
+  check) still lists it as "record not found", on the screen and in the report alike
+  (`record_line` in `core/`); wording those needs a decision on the tier an account row carries
+  and a report change. Three more screen PRs (evidence as table rows, Timeline and Gaps, the
+  Case page record block with the Audit log and Activity). The Selection page's own bubbles and
+  its "nearby" table are report fragments and keep the long format until the report is decided.
+  The report itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's go-ahead. Not
+  tested on a real export: sender and place wording was only seen on the synthetic Excel
+  reports.
 - Affects: the review screen's wording and layout only. No capability, verdict path, model,
   privacy or customer-facing claim.
 - Status doc: no change

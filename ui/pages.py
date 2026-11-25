@@ -1082,10 +1082,12 @@ def evidence_card(
         )
     # one line for the record: who, when and where it sits in the file. The messages drawn
     # above it already give the sender and the time. A forwarded copy's caution stays in view.
+    sources = sources or screen_records.Sources(conn)
+    row = row or screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
     rec = screen_records.line(
         conn,
         item.record_id,
-        sources or screen_records.Sources(conn),
+        sources,
         place=(item.ref.source_id, item.ref.locator),
         shown=drawn,
         quoted=item.quote,
@@ -1134,7 +1136,7 @@ def evidence_card(
         # the card's time is the phone's local time; this keeps the export's own values, as
         # the report prints them
         f"<p><span class='ev-asx'>As exported:</span> "
-        f"{record_line(conn, item.record_id, found)}</p>"
+        f"{record_line(conn, item.record_id, found)}{_carrier_line(conn, row)}</p>"
         f"<p class='muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
         f"<p><span class='mono'>{e(item.ref.source_id)} {e(item.ref.locator)} · "
         f"{e(item.record_id)}</span></p>"
@@ -1375,9 +1377,13 @@ def _irrelevant_list(
     wrong 'irrelevant' can be flagged and a withheld rationale acknowledged. The list opens by
     itself while one of its rationales is withheld. of: each record's row, read once a page."""
     # in short: the exported values are on the item's own page, one click away
+    # every item shows its tier: once above the list when they share it, else on each row
+    tiers = {display_tier(x) for x in items}
+    one = next(iter(tiers)) if len(tiers) == 1 else None
     rows = "".join(
         f"<li>{q(x.quote)} · "
         + screen_records.line(conn, x.record_id, sources, quoted=x.quote, row=of.get(x.record_id))
+        + ("" if one else f" · tier {e(display_tier(x).value)}")
         + " · "
         f"<a href='{e(link('/evidence', id=x.id))}'>Open, or flag this label</a>"
         + (" <span class='badge b-flag'>flagged by you</span>" if x.id in flagged else "")
@@ -1388,6 +1394,7 @@ def _irrelevant_list(
     shown = " open" if any(x.id in withheld for x in items) else ""
     # how to read the lines' times and Excel rows; left out when no line gives either
     how = screen_records.note((of[x.record_id] for x in items if x.record_id in of), sources)
+    how = " ".join(x for x in (f"Tier: {one.value}, for every record." if one else "", how) if x)
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
         "irrelevant</summary>"
@@ -1741,6 +1748,18 @@ def _not_tested_block(conn: sqlite3.Connection, st: ClaimState) -> str:
 FAILED_CITED_SHOWN = 12  # records listed per failed check; the rest are counted
 
 
+def _carrier_line(conn: sqlite3.Connection, row: screen_records.Row | None) -> str:
+    """For an attachment, whose row shows its message's time: that message as exported (UTC and
+    the time as printed), so the time in view can be checked; "" for any other record."""
+    if row is None or not row.carrier:
+        return ""
+    return (
+        f"<br><span class='muted'>{e(screen_records.CARRIED_TIME_NOTE)} That message, as "
+        f"exported:</span> {record_line(conn, row.carrier)} · "
+        f"<span class='mono'>{e(row.carrier)}</span>"
+    )
+
+
 def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
     """The records each failed check cites, as the evidence of a claim the rules contradict on
     that check, so the page never says "no evidence" beside a contradiction. Display only: the
@@ -1764,6 +1783,11 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             else ""
         )
         same = screen_records.shared(cited, sources)
+        # a cited id that is not among the case's records has no file, tier or thread: the
+        # line then claims none of them for the list, and each row found gives its own
+        gone = sum(1 for r in cited if not r.source_id)
+        if gone:
+            same = screen_records.Shared(None, None, None, same.app, None)
         # the senders leave their app off when every message is from one app, and the rows
         # leave the thread off when every message is from one thread: name both here
         only_messages = all(r.record_id.startswith("msg:") for r in cited)
@@ -1792,11 +1816,18 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             + place
             + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
             + "."
+            + (
+                f" {gone} of the {len(cited)} {'is' if gone == 1 else 'are'} not among the case's "
+                "records."
+                if gone
+                else ""
+            )
             + (f" {e(how)}" if how else "")
         )
         exported = "".join(
             f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
-            "</li>"
+            + _carrier_line(conn, r)
+            + "</li>"
             for r in rows
         )
         excel = (
@@ -1808,7 +1839,13 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         out.append(
             f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
             f"{assumed}<p class='muted cited-note'>{note}</p>"
-            + screen_records.table(rows, sources, href=_conversation_link, same=same)
+            + screen_records.table(
+                rows,
+                sources,
+                href=_conversation_link,
+                same=same,
+                href_title="Open this message in its conversation",
+            )
             + (
                 f"<p class='muted cited-more'>and {more} more, listed under Rules' working</p>"
                 if more > 0

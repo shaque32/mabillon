@@ -62,8 +62,9 @@ def _table(
     return (
         f"<p class='muted conv-note'>{note}</p>",
         screen_records.table(rows, sources)
-        + f"<details class='exported'><summary>Exported values for {'this' if n == 1 else 'these'}"
-        f" {n:,} message{'' if n == 1 else 's'} (UTC, as printed, direction, tier, source)"
+        + "<details class='exported'><summary>Exported values for "
+        + ("this message" if n == 1 else f"these {n:,} messages")
+        + " (UTC, as printed, direction, tier, source)"
         f"</summary>{exported}{excel}{context_table(lines)}</details>",
     )
 

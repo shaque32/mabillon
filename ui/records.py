@@ -37,6 +37,8 @@ _SHEET_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
 EXCEL = "cellebrite_excel"
 EXCEL_ROW_NOTE = "An Excel row is the spreadsheet's own row number, not the report's # column."
 LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
+# an attachment carries no time of its own in the sources; the tool's own words, no quotes in it
+CARRIED_TIME_NOTE = "The time is that of the message it is attached to."
 # a message with no sender account, as core/restore/view.py and core/audit/context.py name it
 UNKNOWN_SENDERS = frozenset({"unknown", "unknown sender"})
 
@@ -76,8 +78,9 @@ def when(local: str, date: bool = True) -> str:
 
 def zone_names(sources: Sources, devices: Iterable[str] | None = None) -> str:
     """The time zones the phones are read in, by their full names, for the note on times:
-    "America/New_York", or each phone with its zone when they differ ("Apple iPhone 13:
-    America/New_York; Pixel 7: America/Chicago"); "" when no zone is known. devices: the
+    "America/New_York", or each phone and its file with its zone when they differ ("Apple
+    iPhone 13, in item1.xlsx: America/New_York; Pixel 7, in item2.xlsx: America/Chicago"); ""
+    when no zone is known. devices: the
     phones the rows are from; None means every phone in the case. A time in view ends in the
     zone's short name ("EDT", "CST"), which more than one zone can share; the full name settles
     which, and with it the UTC offset."""
@@ -88,6 +91,7 @@ def zone_names(sources: Sources, devices: Iterable[str] | None = None) -> str:
     names = sorted({z.key for z in zones.values()})
     if len(names) < 2:
         return "".join(names)
+    # a row names its file, not its phone: name both, so a row's zone can be told
     return "; ".join(f"{sources.labels.get(d, d)}: {zones[d].key}" for d in sorted(zones))
 
 
@@ -148,8 +152,14 @@ class Sources:
 
     @property
     def labels(self) -> dict[str, str]:
+        """Device id -> the phone's label and its file: "Apple iPhone 13, in item1.xlsx"."""
         if self._labels is None:
-            self._labels = dict(self._conn.execute("SELECT id, label FROM devices"))
+            self._labels = {
+                did: f"{label}, in {self.get(src)[0]}"
+                for did, label, src in self._conn.execute(
+                    "SELECT id, label, source_id FROM devices"
+                )
+            }
         return self._labels
 
     def get(self, source_id: str) -> tuple[str, str]:
@@ -239,6 +249,7 @@ class Row:
     thread: str = ""  # a message's thread id
     title: str = ""  # a message's thread title
     device: str = ""  # the phone a timed record is from, for the note on its time zone
+    carrier: str = ""  # an attachment's message, whose time the row shows (it has none itself)
 
 
 CHUNK = 500  # ids per query, under SQLite's limit on bound values
@@ -346,27 +357,28 @@ def _lines(conn: sqlite3.Connection, ids: list[str]) -> list[Line]:
     return lines
 
 
-def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[str, str]:
-    """(the phone-local time, the phone) of a call or an attachment (its message's time);
-    ("", "") for a record with no time (a contact)."""
+def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[str, str, str]:
+    """(the phone-local time, the phone, the carrying message) of a call or an attachment. An
+    attachment has no time of its own: it shows its message's, and names that message so the
+    row and the fold can say so. ("", "", "") for a record with no time (a contact)."""
     if record_id.startswith("call:"):
-        sql = "SELECT ts_utc, ts_raw, device_id FROM calls WHERE id = ?"
+        sql = "SELECT ts_utc, ts_raw, device_id, '' FROM calls WHERE id = ?"
     elif record_id.startswith("att:"):
         sql = (
-            "SELECT m.ts_utc, m.ts_raw, t.device_id FROM attachments a"
+            "SELECT m.ts_utc, m.ts_raw, t.device_id, m.id FROM attachments a"
             " JOIN messages m ON m.id = a.message_id JOIN threads t ON t.id = m.thread_id"
             " WHERE a.id = ?"
         )
     else:
-        return "", ""
+        return "", "", ""
     r = conn.execute(sql, (record_id,)).fetchone()
     if r is None:
-        return "", ""
+        return "", "", ""
     try:
         utc = parse_utc(r[0])
     except ValueError:  # not a time: say so with the source's own value, as a NULL time does
         utc = None
-    return format_local(utc, sources.zones.get(r[2]), r[1]), r[2] or ""
+    return format_local(utc, sources.zones.get(r[2]), r[1]), r[2] or "", r[3]
 
 
 def record_rows(
@@ -396,7 +408,7 @@ def record_rows(
         if rec is None:
             out.append(Row(rid, "", "", "", "", "record not found", None))
             continue
-        local, device = _timed(conn, rid, sources)
+        local, device, carrier = _timed(conn, rid, sources)
         out.append(
             Row(
                 record_id=rid,
@@ -407,6 +419,7 @@ def record_rows(
                 what=q(rec.text),
                 tier=ProvenanceTier.OBSERVED,
                 device=device,
+                carrier=carrier,
             )
         )
     return out
@@ -469,6 +482,7 @@ def table(
     sources: Sources,
     href: Callable[[Row], str | None] | None = None,
     same: Shared | None = None,
+    href_title: str = "",
 ) -> str:
     """Records as one table: date, the phone's local time, sender, the message or record, and
     the row in the file. A date prints once per run of rows that share it. A column every row
@@ -478,7 +492,8 @@ def table(
     differ in tier; a message says its thread only when the messages are from more than one.
     The time column says the phone's local time when any row's zone is known
     (a row whose zone is not says so). href: a link for a row's place in the file, such as its
-    conversation. same: what the caller's line above the table says the records share, when
+    conversation; href_title says what the link opens, since the cell shows only a place.
+    same: what the caller's line above the table says the records share, when
     that line speaks for more records than the rows drawn (a long list cut short); a row then
     keeps whatever that line does not say for it."""
     same = same or shared(rows, sources)
@@ -522,6 +537,8 @@ def table(
         where = (
             f"<br><span class='muted'>in thread {q(r.title)}</span>" if split and r.thread else ""
         )
+        if r.carrier and r.local:  # an attachment: the time in its row is not its own
+            where += f"<br><span class='muted'>{CARRIED_TIME_NOTE}</span>"
         cells.append(f"<td class='what'>{r.what}{where}</td>")
         if not same.tier:
             cells.append(f"<td class='tier'>{e(r.tier.value) if r.tier else ''}</td>")
@@ -534,7 +551,11 @@ def table(
             else:
                 place = (sources.row if same.file else sources.place)(r.source_id, r.locator)
             url = href(r) if href else None
-            place = f"<a href='{e(url)}'>{place}</a>" if url else place
+            if url:
+                title = (
+                    f" title='{e(href_title)}' aria-label='{e(href_title)}'" if href_title else ""
+                )
+                place = f"<a href='{e(url)}'{title}>{place}</a>"
         cells.append(f"<td class='src'>{place}</td>")
         cls = " class='target'" if r.target else ""
         out.append(f"<tr{cls}>{''.join(cells)}</tr>")
@@ -572,4 +593,7 @@ def line(
         head = f"{sender} in {q(r.app)} thread {q(r.title)}"
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     what = "" if quoted is not None and r.what == q(quoted) else r.what
-    return " · ".join(x for x in (what, when(r.local) if r.local else "", where) if x)
+    at = when(r.local) if r.local else ""
+    if at and r.carrier:  # an attachment: the time is its message's, and says so
+        at += " (the time of the message it is attached to)"
+    return " · ".join(x for x in (what, at, where) if x)

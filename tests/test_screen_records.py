@@ -150,6 +150,9 @@ def test_the_note_names_only_the_zones_of_the_phones_the_rows_are_from(conn) -> 
         assert records.zone_names(sources, ()) == ""
         note = records.note(records.record_rows(conn, [M948], sources=sources), sources)
         assert "(America/New_York)" in note and "Chicago" not in note
+        # with both phones' rows, each zone is named with its phone and its file
+        assert "in item1.xlsx: America/New_York" in both
+        assert "in item2.xlsx: America/Chicago" in both
     finally:
         conn.rollback()
 
@@ -183,8 +186,30 @@ def test_an_attachment_takes_its_messages_time(conn) -> None:
     att, msg = conn.execute("SELECT id, message_id FROM attachments LIMIT 1").fetchone()
     (a, m) = records.record_rows(conn, [att, msg])
     assert a.local == m.local and records.reading(a.local) is not None
-    assert a.device == m.device == "dev:item1"
-    assert "no date" not in records.table([a], records.Sources(conn))
+    assert a.device == m.device == "dev:item1" and a.carrier == msg and not m.carrier
+    # the time is not the attachment's own, and the row and the one-line form both say so
+    sources = records.Sources(conn)
+    table = records.table([a], sources)
+    assert "no date" not in table and records.CARRIED_TIME_NOTE in table
+    assert records.CARRIED_TIME_NOTE not in records.table([m], sources)
+    assert "(the time of the message it is attached to)" in records.line(conn, att, sources)
+
+
+def test_an_attachments_fold_gives_its_messages_exported_time(app, conn) -> None:
+    from ui import pages
+
+    att, msg = conn.execute("SELECT id, message_id FROM attachments LIMIT 1").fetchone()
+    (row,) = records.record_rows(conn, [att])
+    fold = pages._carrier_line(conn, row)
+    assert record_line(conn, msg) in fold and f"<span class='mono'>{msg}</span>" in fold
+    assert pages._carrier_line(conn, records.record_rows(conn, [msg])[0]) == ""
+    # on its evidence card, the fold under the attachment's own line carries it
+    item = conn.execute("SELECT id FROM evidence_items WHERE record_id = ? LIMIT 1", (att,))
+    item = item.fetchone()
+    assert item is not None
+    page = _get(app, "/evidence", id=item[0])
+    more = page.split("<details class='more'>", 1)[1].split("</details>", 1)[0]
+    assert record_line(conn, msg) in more and "UTC 20" in more
 
 
 def test_a_message_whose_stored_time_is_not_a_time_keeps_its_row(conn) -> None:
@@ -376,6 +401,7 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
     assert records.EXCEL_ROW_NOTE in above  # in view, not only in the fold
     assert table.count("<tr") == len(cited) + 1
     assert "/selection/context?id=msg%3Aitem1%3AChats%21938" in table
+    assert table.count("title='Open this message in its conversation'") == len(cited)
     (fold,) = _folds(block.split("Rules' working", 1)[0], "exported")
     assert "not the report's # column" in html.unescape(fold)
     for rid in cited:
@@ -418,6 +444,7 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     sources = records.Sources(conn)
     how = records.note(records.record_rows(conn, [x.record_id for x in hidden]), sources)
     assert how.endswith(records.EXCEL_ROW_NOTE) and how in html.unescape(rows)
+    assert f"Tier: observed, for every record. {how}" in html.unescape(rows)  # the rows' tier
     item = hidden[0]
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
@@ -478,6 +505,34 @@ def test_the_match_page_leaves_the_times_to_the_note_above_the_rows(app, conn) -
     assert "Messages are observed.</p>" in page
     # how to read the times is said once, by the note that knows whether they are local or UTC
     assert page.count("derived from UTC and the phone's time zone") == 1
+
+
+def test_a_cited_id_that_is_not_a_record_is_not_described_with_the_others(
+    app, conn, monkeypatch
+) -> None:
+    from ui import pages
+
+    real = pages.screen_records.record_rows
+
+    def with_one_gone(conn, ids, **kw):  # noqa: ANN001, ANN003, ANN202
+        return real(conn, [*ids, "msg:item1:Chats!999999"], **kw)
+
+    monkeypatch.setattr(pages.screen_records, "record_rows", with_one_gone)
+    block = _get(app, "/claim", id="C11").split("Records the failed check cites", 1)[1]
+    above, table = block.split("<table class='recs'>", 1)
+    above = html.unescape(above)
+    # the line claims no thread, file or tier for the id that is not among the records
+    assert "1 of the 2 is not among the case's records." in above
+    assert "in thread" not in above and "item1.xlsx" not in above and "Observed" not in above
+    assert "record not found" in table and "<th>Tier</th>" in table
+
+
+def test_one_message_in_a_conversation_table_is_said_in_the_singular(conn) -> None:
+    from ui import restore_pages
+
+    view = context_view(conn, M948)
+    _, table = restore_pages._table(conn, view.lines[:1], view.thread.app, records.Sources(conn))
+    assert "<summary>Exported values for this message (UTC" in table
 
 
 def test_a_long_cited_list_is_described_over_every_record_it_counts(app, conn, monkeypatch) -> None:
