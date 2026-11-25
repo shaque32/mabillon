@@ -22,7 +22,8 @@
     clause where a phone is one side (`_phone_is_a_side`), which sets the time range's
     parties.
   - "a second" is a tested length only after a word that leads into a length ("lasted a
-    second", "for one minute and a second"). Anywhere else, and always after an article or a
+    second", "for one minute and a second", "one minute, and a second"; a comma after a unit
+    leads only into "and a second"). Anywhere else, and always after an article or a
     possessive ("a second, telephone call", "their second (WhatsApp) call"), it is an ordinal
     and a word no check reads, so it keeps the core event. Filler 13 read "a second WhatsApp
     call that lasted two minutes" with "a second" as a length, so the claim could rest on its
@@ -38,8 +39,8 @@
   stay fast on a run of hyphens; a caller read through an ordinal
   keeps its event even when the guard reads nothing, which fails without the fix; "a second"
   read as a length only after a length word, with a comma, a dash or brackets before "call",
-  which fails without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,228 passed. Free replay of
+  and after a unit and a comma only as "and a second", which fails without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,235 passed. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in

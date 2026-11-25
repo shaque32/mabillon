@@ -3287,6 +3287,22 @@ _SECOND_LENGTH_LEAD_RE = re.compile(
     r"just|only|over|under|exactly|some|minutes?|hours?|mins?|hrs?)\s+$",
     re.IGNORECASE,
 )
+# "one minute, and a second": a comma after the unit leads only into "and a second", never into
+# a bare "a second" ("after one minute, a second call" is an ordinal) (CodeRabbit on #279)
+_SECOND_AFTER_A_UNIT_RE = re.compile(r"\b(?:minutes?|hours?|mins?|hrs?),\s*$", re.IGNORECASE)
+
+
+def _a_tested_length(text: str, m: re.Match[str]) -> bool:
+    """Whether a spoken length in `text` is one: a lone "a second" only where a length leads in."""
+    words = m.group(0).casefold()
+    if not words.endswith("second"):
+        return True
+    return bool(
+        _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start())
+        or (words.startswith("and") and _SECOND_AFTER_A_UNIT_RE.search(text, 0, m.start()))
+    )
+
+
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3893,12 +3909,7 @@ class LocalAssumptionFiller:
         if "length" in tests:
             # "a second WhatsApp call that lasted two minutes": "a second" before a call is
             # an ordinal, never a length, and stays a word no check reads (CodeRabbit on #279)
-            cut += [
-                m.span()
-                for m in _SPOKEN_LENGTH_RE.finditer(bare)
-                if not m.group(0).casefold().endswith("second")
-                or _SECOND_LENGTH_LEAD_RE.search(bare, 0, m.start())
-            ]
+            cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare) if _a_tested_length(bare, m)]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a
         # quarter hour", where the row tests "one minute") (CodeRabbit on #265)

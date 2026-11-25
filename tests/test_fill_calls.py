@@ -338,7 +338,12 @@ def test_a_caller_read_through_an_ordinal_always_keeps_its_event(conn, monkeypat
 
 
 @pytest.mark.parametrize(
-    "noun", ["a second, telephone call", "a second\u2014call", "a second (telephone) call"]
+    "noun",
+    [
+        "a second, telephone call",
+        "a second\u2014call",
+        "a second (telephone) call",
+    ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
 def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind):
@@ -348,6 +353,25 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
     text = f"{AT} Item 1 placed {noun} to (212) 555-0199 that lasted about two minutes."
     made, _ = fill(conn, text, kind, duration={"as_written": "about two minutes"})
     assert made["record_time"].params.duration_s and made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    ("text", "lengths"),
+    [
+        ("lasted one minute and a second", ["one minute", "and a second"]),
+        ("lasted one minute, and a second", ["one minute", "and a second"]),
+        # a comma after a unit never leads into a bare "a second" (CodeRabbit on #279)
+        ("after one minute, a second call", ["one minute"]),
+        ("lasted one minute, a second call", ["one minute"]),
+        ("placed a second, telephone call", []),
+        ("lasted a second", ["a second"]),
+    ],
+)
+def test_a_lone_second_is_a_length_only_after_a_length_word(text, lengths):
+    from core.audit.assumption_filler import _SPOKEN_LENGTH_RE, _a_tested_length
+
+    found = [m.group(0) for m in _SPOKEN_LENGTH_RE.finditer(text) if _a_tested_length(text, m)]
+    assert found == lengths
 
 
 def test_the_ordinal_guards_stay_fast():
@@ -361,13 +385,14 @@ def test_the_ordinal_guards_stay_fast():
     assert time.perf_counter() - started < 5
 
 
-def test_a_length_written_a_second_is_still_read_as_one(conn):
+@pytest.mark.parametrize("length", ["one minute and a second", "one minute, and a second"])
+def test_a_length_written_a_second_is_still_read_as_one(conn, length):
     text = (
         "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"
-        " that lasted one minute and a second."
+        f" that lasted {length}."
     )
     made, f = fill(conn, text, channels=["call", "WhatsApp"],
-                   duration={"as_written": "one minute and a second"},
+                   duration={"as_written": length},
                    window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
     assert "caller" in made and "event" not in made, [d.reason for d in f.drops]
 
