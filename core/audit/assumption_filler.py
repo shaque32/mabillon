@@ -212,7 +212,11 @@ MAX_PROPOSALS = 8
 #      to"), whose word still keeps the core event, and may name the other side by what the
 #      log shows ("from the party displayed as "X""); both get their caller row (v5 pre-run
 #      replay on development phones, 2026-11-25).
-FILLER_VERSION = "14"
+#  15: more ways to name the other side as a saved contact or a phone number, which no check
+#      reads, keep the core event ('the phone number "X"', '"X" (a number)', "contact Marc
+#      Garage", '"X", who is his contact', '"X" on WhatsApp, his contact'), as filler 14's
+#      'the contact "X"' and 'the number "X"' do (Claude review on #279, 2026-11-25).
+FILLER_VERSION = "15"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -3394,31 +3398,46 @@ def _tested_lengths_in(
 
 # A side named as a saved contact or a phone number by what the log shows (`unread_words`)
 _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as\b", re.I)
-# 'the number "Marc Garage"': a side named as a phone number by a quoted name, read before
-# quotes are blanked (Claude review on #279)
-_NUMBER_QUOTED_RE = re.compile(r"\b(?:the|a|his|her|their)\s+number\s*[\"“‘']", re.I)
-# A side written as a saved contact by name: 'the contact "Marc Garage"', "the contact named
-# Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
-# with") stays plain; the quote is looked for in the text before quotes are blanked.
-_CONTACT_NAMED_RE = re.compile(
-    r"\b(?:(?P<art>the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact\b"
+# A side written as a saved contact or a phone number by name, which no check reads: 'the
+# contact "Marc Garage"', "the contact named Marc", "his contact saved as Marc", 'the phone
+# number "Marc Garage"', "the number Marc Garage", "contact Marc Garage" (Claude review on
+# #279; filler 15). Up to two words may stand before the noun ("his saved contact", "the
+# WhatsApp number"). A bare "contact" ("made contact with") stays plain, and so does a phone
+# written as a number ("the number (212) 555-0199"), the side a check reads. The quote is
+# looked for in the text before quotes are blanked.
+_SIDE_ART = r"(?:the|a|an|his|her|their|its|my|your|our)"
+_SIDE_WORDS = r"(?:(?:saved|phone|cell|cellphone|mobile|telephone|(?-i:[A-Z][\w-]*))\s+){0,2}"
+_SIDE_NAMED_RE = re.compile(
+    rf"\b(?:(?P<art>{_SIDE_ART})\s+)?{_SIDE_WORDS}(?P<noun>contact|number)\b"
     r"(?:\s+(?:entry|card|name)\b)?"
-    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?"
-    r"(?:\s+(?:for|under)\b)?",  # "the contact for "Marc Garage"" (Claude review on #279)
+    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as"
+    r"|(?:with|by|under)\s+the\s+name)\b)?"
+    r"(?:\s+(?:for|under)\b)?",  # 'the contact for "Marc Garage"' (Claude review on #279)
     re.I,
 )
 _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact, "Marc"'
-# '"Marc Garage" (a contact)': a saved contact written after the name (Claude review on #279)
-_CONTACT_AFTER_RE = re.compile(
-    r"\(\s*(?:(?:a|the|his|her|their|my|your|our)\s+)?(?:saved\s+)?contact\s*\)"
-    # '"Marc Garage", his contact,' (Claude review on #279)
-    r"|[\"”’'],\s*(?:a|the|his|her|their|my|your|our)\s+(?:saved\s+)?contact\b",
-    re.I,
-)
 # What names a saved contact right after "the contact": a name, a number or a handle ("the
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
 # contact between PETROV and REYES" (Claude review on #279)
 _NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)")
+# What names a side right after "the number": a name or a handle, never the phone itself
+# ("the number (212) 555-0199") or "a number of calls" (filler 15)
+_NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|[\w.%+-]+@)", re.I)
+# A bare "contact" before a capitalised name: "called contact Marc Garage" (filler 15)
+_CAP_AFTER_RE = re.compile(r"\s+(?-i:[A-Z])", re.I)
+# A saved contact or a number written after the name: '"Marc Garage" (a contact of REYES)',
+# '"Marc Garage", his contact,', '"Marc Garage" on WhatsApp, his contact', '"Marc Garage" —
+# his contact —', '"Marc Garage", who is his contact', '"Marc Garage", a number' (Claude
+# review on #279; filler 15). Never "a contact that lasted", "a contact for two minutes", ",
+# the number (212) 555-0199" (the phone itself) or ", the number of calls".
+_SIDE_AFTER_RE = re.compile(
+    rf"(?:\(\s*(?:{_SIDE_ART}\s+)?"
+    rf"|(?:[,\u2013\u2014]\s*|\s-\s+|\b(?:who|which|that)\s+(?:is|was)\s+){_SIDE_ART}\s+)"
+    rf"{_SIDE_WORDS}(?P<noun>contact|number)\b"
+    r"(?!\s*[\d(+])"
+    r"(?!\s+(?:that|which|lasting|lasted|between|with|for|of\s+(?-i:[a-z0-9])))",
+    re.I,
+)
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -4022,31 +4041,28 @@ class LocalAssumptionFiller:
         whole = _flat(_nfc(text))  # `flat` has "displayed as" blanked by now
         for shown in _CONTACT_SHOWN_RE.finditer(_unquoted(whole)):
             extra.append(" ".join(shown.group(0).casefold().split()))
-        for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
-            # "the contact Marc Garage": an article or possessive before "contact" and a name
-            # after it; a bare "Contact" only before a quote or "named" (Claude review on #279)
-            if (
-                named.group("how")
-                or _OPEN_QUOTE_RE.match(whole, named.end())
-                or (named.group("art") and _NAME_AFTER_RE.match(whole, named.end()))
-            ):
+        unquoted_whole = _unquoted(whole)
+        for named in _SIDE_NAMED_RE.finditer(unquoted_whole):
+            # "the contact Marc Garage": an article or possessive before the noun and a name
+            # after it; a bare "Contact" only before a quote, "named" or a capitalised name
+            # (Claude review on #279; filler 15)
+            after = whole, named.end()
+            if named.group("noun").casefold() == "number":
+                by_name = named.group("art") and _NUMBER_NAME_AFTER_RE.match(*after)
+            elif named.group("art"):
+                by_name = _NAME_AFTER_RE.match(*after)
+            else:
+                by_name = _CAP_AFTER_RE.match(*after)
+            if named.group("how") or _OPEN_QUOTE_RE.match(*after) or by_name:
                 extra.append(" ".join(named.group(0).casefold().split()))
-                break
         # Searched on the text with its quotes, which '"Marc Garage", his contact' needs, but
         # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
-        # bracket or comma the match starts with must stand outside every quote (CodeRabbit
-        # on #279)
-        unquoted_whole = _unquoted(whole)
-
-        def outside_quotes(m: re.Match[str]) -> bool:
-            # '"Marc Garage", his contact' starts with the name's closing quote: read the comma
-            at = m.start() + (1 if m.group(0)[0] in "\"”’'" else 0)
-            return not unquoted_whole[at].isspace()
-
-        if any(outside_quotes(m) for m in _CONTACT_AFTER_RE.finditer(whole)):
-            extra.append("contact")
-        if any(outside_quotes(m) for m in _NUMBER_QUOTED_RE.finditer(whole)):
-            extra.append("number")
+        # bracket, comma or word the match starts with must stand outside every quote
+        # (CodeRabbit on #279)
+        for m in _SIDE_AFTER_RE.finditer(whole):
+            at = m.start() + len(m.group(0)) - len(m.group(0).lstrip())
+            if not unquoted_whole[at].isspace():
+                extra.append(m.group("noun").casefold())
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(

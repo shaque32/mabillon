@@ -842,6 +842,63 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
 @pytest.mark.parametrize(
     "words",
     [
+        # a side named as a phone number, in more ways than 'the number "X"' (Claude review
+        # on #279, left for this follow-up)
+        'PETROV called the phone number "Marc Garage" on WhatsApp.',
+        'PETROV called the WhatsApp number "Marc Garage".',
+        'PETROV called the number: "Marc Garage" on WhatsApp.',
+        'PETROV called the number, "Marc Garage", on WhatsApp.',
+        'PETROV called the number for "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage" (a number) on WhatsApp.',
+        'PETROV called "Marc Garage", a number, on WhatsApp.',
+        "PETROV called the number Marc Garage on WhatsApp.",
+        # a saved contact, in more ways than 'the contact "X"'
+        "PETROV called contact Marc Garage on WhatsApp.",
+        'PETROV called the contact with the name "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the party displayed as "Marc Garage", who is his'
+        " contact.",
+        'PETROV called "Marc Garage" on WhatsApp, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of REYES.',
+        'PETROV called "Marc Garage" \u2014 his contact \u2014 on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact of REYES) on WhatsApp.',
+        'PETROV called "Marc Garage", his WhatsApp contact.',
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind):
+    # each names the other side as a saved contact or a phone number, which no check reads,
+    # so a timing claim can never rest on its time row alone (filler 15)
+    made, _ = fill(conn, f"{WA_AT} {words}", kind, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # a phone written as a number is the side a check reads, never an unread word
+        "On June 1, the number (212) 555-0199 called Item 1.",
+        "Item 1 called (212) 555-0199, the number (212) 555-0199 on the log.",
+        "Item 1 called the phone number +1 212 555 0199.",
+        # a number of calls, or "contact" as a communication, is no side
+        "Item 1 placed a number of calls to (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199, a contact that lasted about two minutes.",
+        "Item 1 placed a call to (212) 555-0199, a contact for two minutes.",
+        "the contact between PETROV and REYES",
+        "Item 1 called (212) 555-0199, the number of calls being one.",
+    ],
+)
+def test_a_phone_number_or_a_contact_as_a_communication_stays_plain(conn, text):
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words(text, (), set())
+    assert not any("contact" in w or "number" in w for w in out), (text, out)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
         'PETROV placed a WhatsApp call to the party shown as "Marc Garage".',
         'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
         'PETROV placed a WhatsApp call to the contact displayed as "Marc Garage".',
@@ -1018,7 +1075,7 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called "Marc Garage" (a contact) on WhatsApp.', "contact"),
         ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
     ):
-        assert word in f.unread_words(text, (), set()), text
+        assert any(word in w for w in f.unread_words(text, (), set())), text
 
 
 def test_unread_words_name_each_word_once(conn):
