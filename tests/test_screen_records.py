@@ -216,6 +216,8 @@ def test_a_record_that_is_gone_keeps_its_row(conn) -> None:
     assert row.tier is None
     rows = records.record_rows(conn, [M948, gone])
     assert records.shared(rows, records.Sources(conn)).tier is ProvenanceTier.OBSERVED
+    # and it does not hide the app the found messages share (CodeRabbit on #277)
+    assert records.shared(rows, records.Sources(conn)).app == "Telegram"
     # a caller that holds its own reference to the record still places it
     line = records.line(conn, gone, records.Sources(conn), place=("item1", "Chats!999999"))
     assert line.startswith("record not found · ") and "Excel row 999999" in line

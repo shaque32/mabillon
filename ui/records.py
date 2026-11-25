@@ -308,7 +308,8 @@ def shared(rows: list[Row], sources: Sources) -> Shared:
     sheets = {sources.sheet(r.source_id, r.locator) for r in rows if r.source_id}
     sheet = next(iter(sheets)) if file is not None and len(sheets) == 1 else None
     tiers = {r.tier for r in rows if r.tier is not None}
-    apps = {r.app for r in rows if r.record_id.startswith("msg:")}
+    # a message no longer in the case has no app to give, and takes none from the others
+    apps = {r.app for r in rows if r.record_id.startswith("msg:") and r.source_id}
     app = next(iter(apps)) if len(apps) == 1 else None
     return Shared(file, sheet, next(iter(tiers)) if len(tiers) == 1 else None, app or None)
 
