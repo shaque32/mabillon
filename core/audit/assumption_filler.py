@@ -1952,7 +1952,9 @@ class CallForm:
     length: str | None
     one_account: bool = False  # the clause names b by a name and its id: one account
     from_phone: str | None = None  # "placed a call from <PHONE> to": the phone a used
-    ordinal: bool = False  # "placed a second call": an earlier call no check reads
+    # the clause states a part no check reads, which keeps the claim's expert-only event:
+    # "placed a second call" (an earlier call), "the contact displayed as" (a saved contact)
+    unread: bool = False
 
 
 # The words a no-contact claim code fills its sides for may use, beside the phone, the party,
@@ -6919,6 +6921,10 @@ class LocalAssumptionFiller:
                 return None
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
         noun = _words(np).split()
+        ordinal = len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS
+        # "the contact displayed as" states a saved contact, "the number displayed as" that
+        # the side is a phone number: no check reads either (Claude review on #279)
+        shown = (m.group("shown") or "").split()
         return CallForm(
             a=tokens[m.start("a")],
             b=b,
@@ -6927,7 +6933,7 @@ class LocalAssumptionFiller:
             length=length,
             one_account=one_account,
             from_phone=from_phone,
-            ordinal=len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS,
+            unread=ordinal or (bool(shown) and shown[0].casefold() in {"contact", "number"}),
         )
 
     @staticmethod
@@ -7002,8 +7008,11 @@ class LocalAssumptionFiller:
         of the time range's parties (the phone written as a side is its exact owner by
         confirmed stipulation, `_exact_owner`), and both sides must be named. "missed" adds a
         core event assumption beside it: the call log does not reliably record whether an
-        incoming call was answered, so only an expert can carry that part. Anything else
-        keeps no caller, and rule 3e keeps a communication claim unproven."""
+        incoming call was answered, so only an expert can carry that part. A clause that states
+        a part no check reads (an ordinal, "a second call"; "the contact displayed as") adds
+        the unread event beside it, and gets no caller row when the event template is not
+        allowed. Anything else keeps no caller, and rule 3e keeps a communication claim
+        unproven."""
         if "caller" not in allowed_ids or any(p.template_id == "caller" for p in out):
             return out
         times = [
@@ -7023,17 +7032,18 @@ class LocalAssumptionFiller:
             return out
         if made is None:
             return out
-        params, missed, ordinal = made
-        if ordinal and "event" not in allowed_ids:
+        params, missed, unread = made
+        if unread and "event" not in allowed_ids:
             return out  # "a second call": no caller row without the event an expert carries
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
             out.append(Proposal("event", event, is_core=True, code_made=True))
-        elif ordinal and not any(p.is_core and p.template_id == "event" for p in out):
-            # "a second call": the ordinal states an earlier call no check reads, so the claim
-            # keeps a core event an expert carries whatever `unread_words` makes of the
+        elif unread and not any(p.is_core and p.template_id == "event" for p in out):
+            # "a second call" states an earlier call no check reads ("the contact displayed
+            # as", a saved contact), so the claim keeps a core event an expert carries whatever
+            # `unread_words` makes of the
             # wording (CodeRabbit on #279: "a second Talk and Text call" with a tested
             # length); the same event `_add_unread_event` would add
             out.append(self._unread_event(out))
@@ -7057,7 +7067,7 @@ class LocalAssumptionFiller:
         self, claim: Claim, rt: dict[str, Any]
     ) -> tuple[dict[str, Any], bool, bool] | None:
         """The caller assumption's parameters, whether the call was missed and whether the
-        clause writes it with an ordinal ("a second call"), from the claim's
+        clause states a part no check reads ("a second call"), from the claim's
         plain form and its call's time range `rt`; None when the claim says no caller. Raises
         Reject where the form's sides are not the time range's parties."""
         handles = list(rt.get("handles", []))
@@ -7140,7 +7150,7 @@ class LocalAssumptionFiller:
             params["device_ids"] = device_ids
         if rt.get("duration_s"):
             params["duration_s"] = rt["duration_s"]
-        return params, form.missed, form.ordinal
+        return params, form.missed, form.unread
 
     def _absence_parties(
         self,

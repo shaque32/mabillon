@@ -677,6 +677,9 @@ def test_a_caller_row_keeps_the_clause_s_own_handle(conn):
         'PETROV called the party displayed as "Marc Garage" on WhatsApp.',
         'PETROV placed a WhatsApp call to the contact shown as "Marc Garage".',
         'PETROV placed an outgoing call to the account displayed as "Marc Garage" on WhatsApp.',
+        # a saved contact, or a phone number, is a part no check reads (Claude review on #279)
+        'PETROV called the contact displayed as "Marc Garage" on WhatsApp.',
+        'PETROV called the number displayed as "Marc Garage" on WhatsApp.',
     ],
 )
 def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
@@ -691,8 +694,21 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
     # name alone, 'called "Marc Garage"'; "shown" is a word no check reads (CodeRabbit on #279)
     bare, _ = fill(conn, GARAGE, people=["PETROV"], handles=["Marc Garage"],
                    channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
-    assert ("event" in made) == ("shown" in words)
+    unread = any(w in words for w in ("shown", "contact", "number"))
+    assert ("event" in made) == unread
     assert "event" not in bare
+    if unread:
+        assert made["event"].is_core
+        # no caller row without the event an expert carries
+        answer = proposal(people=["PETROV"], handles=["Marc Garage"], quoted_text="",
+                          channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+        model = FakeModel(json.dumps({"assumptions": [answer.model_dump()]}))
+        f = LocalAssumptionFiller(
+            model, conn, template="{claim} {paragraph} {templates} {channels}"
+        )
+        no_event = [t for t in TEMPLATES.values() if t.id != "event"]
+        out = f(claim(f"{WA_AT} {words}", ClaimType.COMMUNICATION), no_event)
+        assert "caller" not in {p.template_id for p in out}
 
 
 def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):

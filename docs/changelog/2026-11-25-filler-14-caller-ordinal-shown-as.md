@@ -15,8 +15,9 @@
     "X"", also "contact", "caller", "number", "user" or "account", "displayed" or "shown as".
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
     is plain naming, as it already was everywhere else, so the clause reads as 'to "X"' does;
-    "shown" is a word no check reads and keeps the core event, and so do other words left
-    beside it (a number written after "displayed as" keeps its digits unread). A handle side
+    "shown" is a word no check reads and keeps the core event, and so do "contact" (a saved
+    contact) and "number" (a phone number), for which the caller row adds the event itself and
+    with no event allowed gets no caller row, and other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
     that placed the call still gets no caller: a caller row names persons or accounts, and
     code never decides which account a handle is. The same forms also count as a plain call
     clause where a phone is one side (`_phone_is_a_side`), which sets the time range's
@@ -40,7 +41,7 @@
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
   as" read for an account side, refused for a person, for a handle that placed the call and
-  for other descriptors; an ordinal beside a tested length keeps the event however many of the
+  for other descriptors, "the contact" or "the number displayed as" keeping the event; an ordinal beside a tested length keeps the event however many of the
   call's words stand between, or a hyphen, which fails without the fix; the ordinal guards
   stay fast on a run of hyphens; a caller read through an ordinal
   keeps its event even when the guard reads nothing, which fails without the fix; "a second"
@@ -48,7 +49,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,264 passed. Free replay of
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,266 passed. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
