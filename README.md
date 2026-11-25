@@ -1,6 +1,6 @@
 # Mabillon
 
-Local-first audit of government claims about phone evidence, for the criminal defense.
+Audit of government claims about phone evidence, for the criminal defense. Your files and case database stay on your computer.
 Mabillon reads the government's document, splits it into claims, and marks each one supported,
 contradicted or unproven against the extraction data, with cited evidence.
 

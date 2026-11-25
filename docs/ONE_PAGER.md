@@ -54,11 +54,16 @@ the judgment.
 
 ## Where your data goes
 
-Local by default; cloud AI only when your case allows it and you opt in. Mabillon runs on your own
-computer and its screen answers only that computer. A case uses cloud AI only when you attest at
-setup that its protective order allows it and set up your own key, and never for a case marked
-as possibly containing CSAM. Only a cloud model setup that passed Mabillon's stance test can be
-used; the report says which model labelled the case. Cases can be encrypted with a passphrase.
+Your files and the case database stay on your computer, and the app's screen answers only that
+computer. For each case you choose at setup where the AI runs. Cloud AI (Claude Opus, through
+Anthropic) is recommended for an ordinary case. To use it you attest that the case's protective
+order (or the court's or the government's written consent) allows it, that your client has given
+informed consent, and that your Anthropic key belongs to an organization with zero data retention in
+writing. Text goes out one question at a time, and each request is logged before it is sent. A case
+you mark as concerning sexual material or conduct involving a minor, or someone presented as one, or
+where neither the order nor written consent allows cloud AI, runs its AI on your computer. Only a
+cloud model setup that passed Mabillon's stance test can be used, and the report says which model
+ran. Cases can be encrypted with a passphrase.
 
 ## Getting help
 

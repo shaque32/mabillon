@@ -5,11 +5,14 @@ run the synthetic demo, then open your first case. Mabillon is alpha software an
 pilot-ready for real case data** (`docs/PILOT_GATES.md`). Until it is, use the demo and synthetic
 cases only, unless the Mabillon team has told you in writing that your pilot has started.
 
-Mabillon is local by default; cloud AI only when your case allows it and you opt in. The case setup
-page has a cloud option: for that case only, Claude Opus 5.5 labels the stance questions, under
-your own Anthropic key, after you attest that the case's protective order allows it. A case you
-mark as possibly containing CSAM never uses cloud AI. Every other step, and every case you do
-not opt in, runs on your computer; a cloud case needs internet while it runs.
+Your files and the case database stay on your computer. For each case you choose at setup where the
+AI runs. Cloud AI is recommended for an ordinary case (the setup page calls it "Fast: Opus through
+Anthropic"): Claude Opus 5.5 runs that case's AI steps through Anthropic under your own Anthropic
+key, after you attest that the case's protective order (or the court's or the government's written
+consent) allows it, that your client has given informed consent, and that the key belongs to an
+organization with zero data retention in writing. A case you mark as concerning sexual material or
+conduct involving a minor, or someone presented as one, runs its AI on your computer, as does any
+case you set up that way. A cloud case needs internet while it runs.
 
 ## 1. Check your computer (5 minutes)
 
