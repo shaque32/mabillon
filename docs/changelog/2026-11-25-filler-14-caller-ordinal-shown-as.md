@@ -82,7 +82,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,348 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,349 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of
@@ -101,7 +101,8 @@
   Also older and left for a follow-up PR before the v5 run (Claude review on #279): close
   variants of a number side ('the phone number "X"', 'the number: "X"', '"X" (a number)') and
   of a saved contact ('contact Marc Garage' with no article, 'the contact with the name
-  "X"', '"X", who is his contact') still read as plain. D27 ("received ... from the party displayed as") stays: the
+  "X"', '"X", who is his contact', '"X" on WhatsApp, his contact', '"X" (a contact of
+  REYES)', '"X" — his contact —', '"X", his WhatsApp contact') still read as plain. D27 ("received ... from the party displayed as") stays: the
   caller is a handle side. D023 stays: its key reads "about 2:08" as the failed 2:08 attempt,
   while the signed 8-minute "about" finds the connected 2:14 call. The time range must still
   name both parties for any caller row (iOS 15 D14 reads the form, gets none). This changes

@@ -7232,8 +7232,9 @@ class LocalAssumptionFiller:
             # call" with a tested length); the same event `_add_unread_event` would add. A
             # missed call keeps its own event beside it: whether the call was answered is no
             # unread part, so the testability sheet check still counts it (Claude review on
-            # #279)
-            out.append(self._unread_event(out))
+            # #279). Built from this call's own time row, never a model's event or another
+            # assumption that comes first (Claude review on #279)
+            out.append(self._unread_event([Proposal("record_time", rt)]))
         return out
 
     def _one_party(self, accounts: list[str]) -> bool:

@@ -887,6 +887,30 @@ def test_an_ordinal_keeps_its_event_beside_a_model_event(conn):
     assert any(is_unread_event(a.template_id, a.text) for a in made)
 
 
+def test_the_ordinal_event_copies_the_call_it_reads(conn, monkeypatch):
+    # the unread event names this call's time row's parties and window, never those of
+    # another core row that comes first in the list, such as a model's event (Claude review
+    # on #279)
+    seen: list[list[Proposal]] = []
+    real = LocalAssumptionFiller._add_caller
+
+    def first_another_row(self, claim_, out, allowed_ids):
+        rt = next(p for p in out if p.template_id == "record_time")
+        other = Proposal("event", {**rt.params, "person_ids": [REYES], "account_ids": []},
+                         is_core=True)  # fmt: skip
+        made = real(self, claim_, [other, *out], allowed_ids)
+        seen.append(made)
+        return made
+
+    monkeypatch.setattr(LocalAssumptionFiller, "_add_caller", first_another_row)
+    fill(conn, f"{AT} Item 1 placed a second call to (212) 555-0199.")
+    (made,) = seen
+    rt = next(p for p in made if p.template_id == "record_time")
+    (event,) = [p for p in made if p.unread]
+    for key in ("person_ids", "account_ids", "window"):
+        assert event.params.get(key) == rt.params.get(key), key
+
+
 def test_another_call_keeps_its_event_without_the_guard(conn, monkeypatch):
     # "another call" states an earlier call as "a second call" does (Claude review on #279)
     monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
