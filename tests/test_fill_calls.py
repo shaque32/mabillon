@@ -855,17 +855,17 @@ def test_a_side_named_by_unread_words_keeps_its_event_without_the_guard(conn, mo
     assert "event" not in plain
 
 
-def test_a_saved_contact_a_row_reads_is_no_unread_word(conn):
-    # a kept contact_entry row reads the saved contact, so its words are plain beside one;
-    # "the number displayed as" still is not (Claude review on #279)
+def test_a_saved_contact_stays_unread_beside_a_contact_row(conn):
+    # a contact_entry row names one saved contact, and the words may name another, so every
+    # saved-contact or shown-number phrase stays unread beside one (CodeRabbit on #279)
     f = LocalAssumptionFiller(
         FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
     )
-    text = 'Item 1 holds the contact "Marc Garage" saved with the number (212) 555-0199.'
-    assert "the contact" not in f.unread_words(text, (), {"contact"})
-    assert "the contact" in f.unread_words(text, (), set())
-    shown = 'PETROV called the number displayed as "Marc Garage".'
-    assert "number displayed as" in f.unread_words(shown, (), {"contact"})
+    text = 'Item 1 holds the contact "Alice", and Item 1 called the contact "Marc Garage".'
+    assert "the contact" in f.unread_words(text, (), {"contact"})
+    both = 'Item 1 holds the contact displayed as "Marc" with the number displayed as "garage".'
+    out = f.unread_words(both, (), {"contact"})
+    assert "contact displayed as" in out and "number displayed as" in out
 
 
 def test_an_ordinal_keeps_its_event_beside_a_model_event(conn):

@@ -18,9 +18,8 @@
     "shown" and "caller" are words no check reads and keep the core event, and so do "the
     contact" (a saved contact, also "the contact X", "his contact X", 'the contact entry
     "X"', 'Contact "X"', "the contact named X" or "saved as X" with no "displayed as", which
-    filler 13 read as plain; beside a kept contact_entry row, which reads the saved contact, these words are
-    plain) and "the number displayed as" (a
-    phone number), on every path: the unread
+    filler 13 read as plain; also beside a contact_entry row, which may name another saved
+    contact) and "the number displayed as" (a phone number), on every path: the unread
     guard reads them, and the caller row also adds the event itself and with no event allowed
     gets no caller row. So do other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
     that placed the call still gets no caller: a caller row names persons or accounts, and

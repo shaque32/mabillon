@@ -3952,14 +3952,12 @@ class LocalAssumptionFiller:
         # "the contact displayed as", "the number shown as": a saved contact, or a phone number,
         # that no check reads; read before "displayed as" (plain naming) is blanked (Claude
         # review on #279)
-        # A kept contact_entry row reads the saved contact ("contact" in tests), so only
-        # "the number displayed as" stays unread beside one.
+        # Read on every path, beside a contact_entry row too: a row names one saved contact,
+        # and the words may name another (CodeRabbit on #279).
         whole = _flat(_nfc(text))  # `flat` has "displayed as" blanked by now
-        if (shown := _CONTACT_SHOWN_RE.search(_unquoted(whole))) and (
-            "contact" not in tests or shown.group(0).casefold().startswith("number")
-        ):
+        for shown in _CONTACT_SHOWN_RE.finditer(_unquoted(whole)):
             extra.append(" ".join(shown.group(0).casefold().split()))
-        for named in () if "contact" in tests else _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
+        for named in _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
             # "the contact Marc Garage": an article or possessive before "contact" makes it a
             # saved contact by itself; a bare "Contact" only before a quote or "named"
             # (Claude review on #279)
