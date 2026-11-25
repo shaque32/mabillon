@@ -1029,6 +1029,13 @@ def _acknowledge_form(page: Page, item: EvidenceItem, back: str) -> str:
     )
 
 
+def _kind_word(record_id: str) -> str:
+    """What a row calls its record when it points at another item for the same one: a call or
+    an attachment is never called a message."""
+    kind = record_id.split(":", 1)[0]
+    return {"msg": "message", "call": "call", "att": "attachment"}.get(kind, "record")
+
+
 def evidence_card(
     conn: sqlite3.Connection,
     page: Page,
@@ -1086,7 +1093,8 @@ def evidence_card(
     )
     if same_as:
         shown += (
-            f"<p class='ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a>, "
+            f"<p class='ev-same'>The same {_kind_word(item.record_id)} as "
+            f"<a href='#{e(same_as)}'>the item above</a>, "
             "judged here for this assumption.</p>"
         )
     # one line for the record: who, when and where it sits in the file. The messages drawn
@@ -1232,9 +1240,10 @@ def decided_row(
     part = item.record_id.startswith("msg:") and body is not None
     part = part and body.strip() != item.quote.strip()
     mark = "<span class='muted'>Quoted:</span> " if part else ""
-    # the same message, drawn above for another assumption: said once, pointed to here
+    # the same record, drawn above for another assumption: said once, pointed to here
     head = (
-        f"<p class='ev-q ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a> "
+        f"<p class='ev-q ev-same'>The same {_kind_word(item.record_id)} as "
+        f"<a href='#{e(same_as)}'>the item above</a> "
         f"({q(item.quote)}), judged here for this assumption.</p>"
         if same_as
         else f"<p class='ev-q'>{mark}{q(item.quote)}</p><p class='ev-rec'>{rec}</p>"

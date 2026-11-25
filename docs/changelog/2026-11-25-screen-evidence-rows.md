@@ -19,10 +19,11 @@
   - When every item of the decided group carries the same review, the group says it once above
     the rows ("Review, all 12: ...") and each row keeps it in its fold. A group whose reviews
     differ keeps the review in view on every row (and then not a second time in the fold).
-  - The same message decided under more than one assumption is drawn once. A later row says
-    "The same message as the item above (quote), judged here for this assumption", links up to
-    it, and keeps its own stance, tier, review and fold with the exported values; the messages
-    around it are in the first row's fold only.
+  - The same record decided under more than one assumption is drawn once. A later row says
+    "The same message as the item above (quote), judged here for this assumption" ("call" or
+    "attachment" for those records, on this row and on an open card), links up to it, and keeps
+    its own stance, tier, review and fold with the exported values; the messages around it are
+    in the first row's fold only.
   - Stays in view on a row, never folded: the tier, "flagged by you", "needs expert review" and
     the challenge mark; a withheld rationale with its acknowledge form; a forwarded or quoted
     copy's caution.
@@ -30,8 +31,8 @@
     keeps the full card with its decision form in view, and so does the evidence item's own
     page. At 600 px and under, a row's stance and tier sit above the quote.
   - Also in this PR, three wording fixes from the last review pass on #277, which merged before
-    they were pushed: an attachment whose message has no readable time no longer says its row
-    shows that message's time; a failed check that cites only accounts or threads says they are
+    they were pushed: an attachment whose message the source gives no time at all no longer says
+    its row shows that message's time; a failed check that cites only accounts or threads says they are
     not records (and "The cited id is ..." for one); a source that is not an Excel report heads
     its last column "Place in the file". This PR's own review added to the second: such a list
     is headed "Accounts or threads the failed check cites", its column "Cited id", it has no
@@ -45,7 +46,7 @@
   - `docs/review-screen.md` and `docs/flags.md` name the claim page's links as it prints them
     ("Messages around it"; "Flag this label" is in Details on a decided item).
 - Where: PR #280 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (59 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (60 tests, synthetic demo case, cloud container,
   2026-11-25; main has 51 after #277). New: every decided item on C03 is one row with stance,
   tier and Excel row in view and the review, the reopen form, the report's record line, the
   spreadsheet-row sentence, the record id, the model note and the own-page link inside its fold;
@@ -54,7 +55,7 @@
   attachment's whole text is not (C09, C20); on C16 the three
   dismissed rows say "dismissed by an expert"; a message decided
   under several assumptions is drawn once with its conversation, the other rows point up to it
-  and each keeps its exported values; a source that is not an Excel report; a list of accounts
+  and each keeps its exported values; a call decided twice is called a call (C09); a source that is not an Excel report; a list of accounts
   and threads alone (heading, column, no fold) and a mixed list's fold. The open-card test now
   runs on C16's undecided items. `tests/test_review_screen.py`,
   `tests/test_restore_case01.py`, `tests/test_flags.py`, `tests/test_first_read_fixes.py` and

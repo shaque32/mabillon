@@ -619,7 +619,7 @@ def test_the_same_message_under_another_assumption_points_up_instead_of_repeatin
     repeats = {rid: ids for rid, ids in by_record.items() if len(ids) > 1}
     assert repeats
     for rid, ids in repeats.items():
-        drawn = [i for i in ids if "The same message as" not in _card(body, i)]
+        drawn = [i for i in ids if "The same message as <a" not in _card(body, i)]
         assert len(drawn) == 1  # drawn once; every other row points up to it
         assert "The messages around it" in _card(body, drawn[0])
         for i in ids:
@@ -630,6 +630,15 @@ def test_the_same_message_under_another_assumption_points_up_instead_of_repeatin
             assert "name='status' value='open'" in card
             if i != drawn[0]:  # the conversation is in the first row's fold only
                 assert "The messages around it" not in card and "class='thread mini'" not in card
+
+
+def test_a_repeated_call_is_not_called_a_message(app, conn) -> None:
+    body = _get(app, "/claim", id="C09")
+    st = claim_state(conn, "C09")
+    calls = [x for x in st.evidence if x.id in _decided(st) and x.record_id.startswith("call:")]
+    cards = [_card(body, x.id) for x in calls]
+    assert any("The same call as <a" in c for c in cards)  # the demo decides one call twice
+    assert not any("The same message" in c for c in cards)
 
 
 def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(app, conn) -> None:
