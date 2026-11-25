@@ -61,7 +61,7 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .pg-claim #verdict .gap, .pg-claim #verdict .gap-detail { margin: var(--s2) 0;
   font-size: var(--t1); line-height: var(--l1); color: var(--muted); overflow-wrap: anywhere; }
 .pg-claim #verdict .gap b { color: var(--ink); margin-right: var(--s2); }
-.pg-claim ul.cited { margin: var(--s1) 0 var(--s4); }
+.pg-claim ol.cited { margin: var(--s1) 0 var(--s4); }
 .pg-claim #verdict details.fmt p.format-notice { margin-left: var(--s4); }
 .pg-claim #verdict details.fmt > summary strong { font-weight: 400; }
 .pg-claim #verdict ul.why-lines { margin: var(--s2) 0 0; }
@@ -150,9 +150,10 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 .ev-tags .badge.b-against:first-child { color: var(--signal); }
 .item blockquote { margin: 0 0 var(--s2); }
 .item p.quoted { margin: var(--s2) 0 var(--s1); }
-p.ev-same, p.ev-rec, p.ev-src { margin: var(--s1) 0 0; max-width: 80ch; font-size: var(--t1);
+p.ev-same, p.ev-rec { margin: var(--s1) 0 0; max-width: 80ch; font-size: var(--t1);
   line-height: var(--l1); color: var(--muted); overflow-wrap: anywhere; }
-p.ev-rec .ev-asx { font-weight: 600; }
+p.ev-rec { max-width: none; }
+.ev-foot .ev-asx { font-weight: 600; }
 p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .ev-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s5);
   margin: var(--s2) 0 0; font-size: var(--t1); line-height: var(--l1); }

@@ -89,6 +89,7 @@ from core.review.status import (
 from core.selection.audit import selection_audit
 from core.selection.paired import paired_check
 from core.zones import given_zones
+from ui import records as screen_records
 from ui.css import PAGE_CSS
 from ui.theme import FONT_CSS, MARK, THEME_CSS
 
@@ -1044,6 +1045,9 @@ def evidence_card(
     challenged: frozenset[str] = frozenset(),
     around_link: bool = True,
     same_as: str | None = None,
+    sources: screen_records.Sources | None = None,
+    row: screen_records.Row | None = None,
+    times: list[str] | None = None,
 ) -> str:
     """claim_id: the claim page shows the card; it then carries the optional label flag.
     same_as: the card above on the page for the same record (another assumption's item); this
@@ -1053,6 +1057,9 @@ def evidence_card(
     threads: the page's cache of thread orders, so many cards read each thread once.
     challenged: the items the challenge step stored in the audit on screen, read once a page.
     around_link: the link to the item's own page (that page leaves it out).
+    sources, row: the page's cache of files and zones and the record's row, when the page read
+    every card's record in one call. times: gathers the times of the messages the card draws
+    around the record, for the page's one note on how to read times.
     Once the expert has decided an item, its conversation and its decision form fold."""
     stance_cls = "b-against" if item.stance in AGAINST else "b-open"
     flag = ""
@@ -1065,12 +1072,30 @@ def evidence_card(
         if confirm
         else _decide_form(page, item, last_kind == "expert", back)
     )
-    shown, thread = _conversation(conn, item, 0 if same_as else around, threads, folded=settled)
+    shown, thread, drawn = _conversation(
+        conn, item, 0 if same_as else around, threads, folded=settled, times=times
+    )
     if same_as:
         shown += (
             f"<p class='ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a>, "
             "judged here for this assumption.</p>"
         )
+    # one line for the record: who, when and where it sits in the file. The messages drawn
+    # above it already give the sender and the time. A forwarded copy's caution stays in view.
+    sources = sources or screen_records.Sources(conn)
+    row = row or screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
+    rec = screen_records.line(
+        conn,
+        item.record_id,
+        sources,
+        place=(item.ref.source_id, item.ref.locator),
+        shown=drawn,
+        quoted=item.quote,
+        row=row,
+    )
+    caution = screen_records.warning(conn, item.record_id, found)
+    if caution:
+        rec += f"<br><strong class='warn'>{caution}</strong>"
     folds = ""  # a settled item's disclosures open on the card's last line
     if settled:
         folds = (
@@ -1097,10 +1122,7 @@ def evidence_card(
         )
         + "</div>"
         + shown
-        # the time above is the case's zone; this line keeps the export's own values
-        + "<p class='ev-rec'><span class='ev-asx'>As exported:</span> "
-        + f"{record_line(conn, item.record_id, found)}</p>"
-        + f"<p class='ev-src muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
+        + f"<p class='ev-rec'>{rec}</p>"
         + (
             f"<p>{rationale_html(item, withheld)}</p>"
             + ("" if withheld.acknowledged else _acknowledge_form(page, item, back))
@@ -1110,7 +1132,12 @@ def evidence_card(
         + f"<p class='ev-review'><strong>Review:</strong> {review_label(conn, item)}</p>"
         + form
         + f"<div class='ev-foot'>{folds}"
-        "<details class='more'><summary>Source and model note</summary>"
+        "<details class='more'><summary>Exported values and model note</summary>"
+        # the card's time is the phone's local time; this keeps the export's own values, as
+        # the report prints them
+        f"<p><span class='ev-asx'>As exported:</span> "
+        f"{record_line(conn, item.record_id, found)}{_carrier_line(conn, row)}</p>"
+        f"<p class='muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
         f"<p><span class='mono'>{e(item.ref.source_id)} {e(item.ref.locator)} · "
         f"{e(item.record_id)}</span></p>"
         f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
@@ -1149,9 +1176,10 @@ _EXCEL_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
 
 
 def source_line(conn: sqlite3.Connection, source_id: str, locator: str) -> str:
-    """Where a record is in the original file, unfolded on every card: the file, then the sheet
-    and spreadsheet row for an Excel report. The row is the spreadsheet's own row number, which
-    is not the report's "#" column (a header row and title rows come before the first record)."""
+    """Where a record is in the original file, in full, in each card's fold (the card's own line
+    says it shortly: ui/records.py): the file, then the sheet and spreadsheet row for an Excel
+    report. The row is the spreadsheet's own row number, which is not the report's "#" column
+    (a header row and title rows come before the first record)."""
     row = conn.execute("SELECT file_name, kind FROM sources WHERE id = ?", (source_id,)).fetchone()
     name, kind = (row[0], row[1]) if row else (source_id, "")
     m = _EXCEL_ROW.match(locator)
@@ -1169,14 +1197,19 @@ def _conversation(
     around: int,
     threads: dict[str, list[str]] | None = None,
     folded: bool = False,
-) -> tuple[str, str]:
-    """The verified quote, and with around > 0 the record among its neighbours: (shown, fold).
+    times: list[str] | None = None,
+) -> tuple[str, str, bool]:
+    """The verified quote, and with around > 0 the record among its neighbours: (shown, fold,
+    drawn), drawn being True when the neighbours are in view (they give the sender and time).
     folded: the expert has decided the item, so the neighbours come back as a disclosure (fold)
-    for the card's last line, and only the quote shows."""
+    for the card's last line, and only the quote shows. times: gathers the neighbours' times,
+    in view or folded, for the page's note on how to read them."""
     quote = f"<blockquote>{q(item.quote)}</blockquote>"
     lines = build_context(conn, item.record_id, around, threads=threads) if around else []
     if len(lines) < 2:  # no neighbours (a contact, a call): the quote says it all
-        return quote, ""
+        return quote, "", False
+    if times is not None:
+        times.extend(ln.local_time for ln in lines)
     thread = f"<div class='thread mini'>{_msgs(lines)}</div>"
     whole = any(ln.is_target and ln.body.strip() == item.quote.strip() for ln in lines)
     # the quote is the whole highlighted message: the bubble already shows it, word for word
@@ -1185,11 +1218,13 @@ def _conversation(
     )
     if folded:
         quoted = quoted or quote  # the neighbours fold away; the quote itself stays in view
-        return quoted, (
+        return (
+            quoted,
             f"<details class='ev-thread'><summary>The messages around it ({len(lines)})"
-            f"</summary>{thread}</details>"
+            f"</summary>{thread}</details>",
+            False,
         )
-    return thread + quoted, ""
+    return thread + quoted, "", True
 
 
 def _msgs(lines: list[ContextLine]) -> str:
@@ -1229,7 +1264,7 @@ def _msg(ln: ContextLine, to: str, same: bool = False) -> str:
         f"<div class='msg{side}{' target' if ln.is_target else ''}{' cont' if same else ''}'>"
         + who
         + f"<div class='body'>{q(ln.body)}</div>"
-        f"<div class='t'>{tag}{e(ln.local_time)}</div></div>"
+        f"<div class='t'>{tag}{screen_records.when(ln.local_time)}</div></div>"
     )
 
 
@@ -1331,13 +1366,25 @@ def _flag_missed_form(page: Page, st: ClaimState, back: str) -> str:
 
 
 def _irrelevant_list(
-    conn: sqlite3.Connection, items: list[EvidenceItem], flagged: set, withheld: set
+    conn: sqlite3.Connection,
+    items: list[EvidenceItem],
+    flagged: set,
+    withheld: set,
+    sources: screen_records.Sources,
+    of: dict[str, screen_records.Row],
 ) -> str:
     """Records the model labeled irrelevant, folded away; each opens on its own page, where a
     wrong 'irrelevant' can be flagged and a withheld rationale acknowledged. The list opens by
-    itself while one of its rationales is withheld."""
+    itself while one of its rationales is withheld. of: each record's row, read once a page."""
+    # in short: the exported values are on the item's own page, one click away
+    # every item shows its tier: once above the list when they share it, else on each row
+    tiers = {display_tier(x) for x in items}
+    one = next(iter(tiers)) if len(tiers) == 1 else None
     rows = "".join(
-        f"<li>{q(x.quote)} · {record_line(conn, x.record_id)} · "
+        f"<li>{q(x.quote)} · "
+        + screen_records.line(conn, x.record_id, sources, quoted=x.quote, row=of.get(x.record_id))
+        + ("" if one else f" · tier {e(display_tier(x).value)}")
+        + " · "
         f"<a href='{e(link('/evidence', id=x.id))}'>Open, or flag this label</a>"
         + (" <span class='badge b-flag'>flagged by you</span>" if x.id in flagged else "")
         + (" <span class='badge b-withheld'>needs expert review</span>" if x.id in withheld else "")
@@ -1345,9 +1392,15 @@ def _irrelevant_list(
         for x in items
     )
     shown = " open" if any(x.id in withheld for x in items) else ""
+    # how to read the lines' times and Excel rows; left out when no line gives either
+    how = screen_records.note((of[x.record_id] for x in items if x.record_id in of), sources)
+    tier = f"Tier: {e(one.value)}, for every record." if one else ""
+    how = " ".join(x for x in (tier, how) if x)
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
-        f"irrelevant</summary><ul>{rows}</ul></details>"
+        "irrelevant</summary>"
+        + (f"<p class='muted cited-note'>{how}</p>" if how else "")
+        + f"<ul>{rows}</ul></details>"
     )
 
 
@@ -1558,6 +1611,16 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         # an untested claim searched nothing, as it says above; a failed check's records show
         # above as that check's evidence
         out.append("<p class='muted'>No relevant evidence items.</p>")
+    # every card's and irrelevant line's record, read in one call for the page
+    sources = screen_records.Sources(conn)
+    of = {
+        r.record_id: r
+        for r in screen_records.record_rows(
+            conn, dict.fromkeys(x.record_id for x in st.evidence), strip=True, sources=sources
+        )
+    }
+    note_at = len(out)  # the Evidence note goes here once the cards say which times they draw
+    around: list[str] = []
     by_assumption = {a.id: a for a in st.assumptions}
     found = forwarded.affected(conn)
     threads: dict[str, list[str]] = {}  # each thread read once for the page's cards
@@ -1588,13 +1651,35 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
                     threads=threads,
                     challenged=challenged,
                     same_as=drawn.get(x.record_id),
+                    sources=sources,
+                    row=of.get(x.record_id),
+                    times=around,
                 )
             )
             drawn.setdefault(x.record_id, x.id)
+    if groups:
+        # the cards give times and Excel rows in reading words: say once, above them, how to
+        # read them, the messages drawn around each record included
+        carded = [x for _, group in groups for x in group]
+        how = screen_records.note(
+            (of[x.record_id] for x in carded if x.record_id in of),
+            sources,
+            also=(x.ref.source_id for x in carded),
+            around=around,
+        )
+        out.insert(
+            note_at,
+            f"<p class='muted cited-note'>{how}{' ' if how else ''}Each card's fold gives the "
+            "values as exported.</p>",
+        )
     hidden = [x for x in st.evidence if x.stance == Stance.IRRELEVANT]
     out.append("<div class='claim-more'>")
     if hidden:
-        out.append(_irrelevant_list(conn, hidden, flagged, {w.evidence_id for w in st.withheld}))
+        out.append(
+            _irrelevant_list(
+                conn, hidden, flagged, {w.evidence_id for w in st.withheld}, sources, of
+            )
+        )
     out.append(_working(st, Names(conn).for_claim(st.claim.text)))
     if d is not None:  # a flag is about an audited claim
         out.append(_flag_missed_form(page, st, back))
@@ -1664,34 +1749,132 @@ def _not_tested_block(conn: sqlite3.Connection, st: ClaimState) -> str:
 FAILED_CITED_SHOWN = 12  # records listed per failed check; the rest are counted
 
 
+def _carrier_line(conn: sqlite3.Connection, row: screen_records.Row | None) -> str:
+    """For an attachment, whose row shows its message's time: that message as exported (UTC and
+    the time as printed), so the time in view can be checked; "" for any other record."""
+    if row is None or not row.carrier:
+        return ""
+    return (
+        f"<br><span class='muted'>{e(screen_records.CARRIED_TIME_NOTE)} That message, as "
+        f"exported:</span> {record_line(conn, row.carrier)} · "
+        f"<span class='mono'>{e(row.carrier)}</span>"
+    )
+
+
 def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
     """The records each failed check cites, as the evidence of a claim the rules contradict on
     that check, so the page never says "no evidence" beside a contradiction. Display only: the
-    check, its records and the verdict are as stored."""
+    check, its records and the verdict are as stored. One row a record, in reading words; the
+    values as exported (UTC, the time as printed, the record id) fold under the table."""
     by_assumption = {a.id: a for a in st.assumptions}
+    sources = screen_records.Sources(conn)
     out = []
     for ch in st.checks:
         if ch.outcome is not CheckOutcome.FAIL or not ch.record_ids:
             continue
         a = by_assumption.get(ch.assumption_id)
         n = len(ch.record_ids)
-        head = f"Records the failed check cites ({n})" + (
-            f" · Assumption: {plain_ids(conn, a.text)}" if a is not None else ""
+        # the line above the table speaks for every record the heading counts, so it is taken
+        # over all of them; the table draws the first few
+        cited = screen_records.record_rows(conn, ch.record_ids, sources=sources)
+        rows = cited[:FAILED_CITED_SHOWN]
+        assumed = (
+            f"<p class='muted cited-note'>Assumption: {plain_ids(conn, a.text)}</p>"
+            if a is not None
+            else ""
         )
-        items = []
-        for rid in ch.record_ids[:FAILED_CITED_SHOWN]:
-            href = e(link("/selection/context", id=rid))
-            ctx = (
-                f" · <a href='{href}'>See it in its conversation</a>"
-                if rid.startswith("msg:")
+        same = screen_records.shared(cited, sources)
+        # a cited id with no record behind it has no file, tier or thread: the line then
+        # claims none of them for the list, and each row found gives its own. Such an id is a
+        # record's that is not among the case's records, or an account's or a thread's (the
+        # same_account check cites those), which is in the case but is not a record.
+        unplaced = [r for r in cited if not r.source_id]
+        others = sum(1 for r in unplaced if screen_records.not_a_record(r.record_id))
+        gone = len(unplaced) - others
+        if unplaced:
+            same = screen_records.Shared(None, None, None, same.app, None)
+        # the senders leave their app off when every message is from one app, and the rows
+        # leave the thread off when every message is from one thread: name both here
+        only_messages = all(r.record_id.startswith("msg:") for r in cited)
+        one = n == 1
+        tier = e(same.tier.value).capitalize() if same.tier else ""
+        of = (q(same.app) if same.app else "") + (
+            f" thread {screen_records.titled(same.thread)}" if same.thread else ""
+        )
+        if same.app and only_messages:
+            kind = f"{q(same.app)} message{'' if one else 's'}"
+            what = (f"{tier} {kind}" if tier else kind) + (
+                f" in thread {screen_records.titled(same.thread)}" if same.thread else ""
+            )
+        else:
+            kind = f"record{'' if one else 's'}"
+            what = f"{tier} {kind}" if tier else kind.capitalize()
+        if not same.words:
+            place = ""
+        elif same.thread and same.app and only_messages:
+            place = f", {same.words}"  # "... in thread @northstar, item1.xlsx, Chats sheet"
+        else:
+            place = f" in {same.words}"
+        how = screen_records.note(cited, sources)  # the times, and what an Excel row is
+        note = (
+            what
+            + place
+            + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
+            + "."
+            + (
+                f" {gone} of the {len(cited)} {'is' if gone == 1 else 'are'} not among the case's "
+                "records."
+                if gone
                 else ""
             )
-            items.append(f"<li>{record_line(conn, rid)}{ctx}</li>")
+            + (
+                f" {others} of the {len(cited)} {'is' if others == 1 else 'are'} an account or a "
+                "thread, not a record."
+                if others
+                else ""
+            )
+            + (f" {how}" if how else "")
+        )
+        exported = "".join(
+            f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
+            + _carrier_line(conn, r)
+            + "</li>"
+            for r in rows
+        )
+        excel = (
+            f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
+            if sources.excel(r.source_id for r in rows if r.source_id)
+            else ""
+        )
         more = n - FAILED_CITED_SHOWN
-        if more > 0:
-            items.append(f"<li class='muted'>and {more} more, listed under Rules' working</li>")
-        out.append(f"<h3 class='ev-group'>{head}</h3><ul class='cited'>{''.join(items)}</ul>")
+        out.append(
+            f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
+            f"{assumed}<p class='muted cited-note'>{note}</p>"
+            + screen_records.table(
+                rows,
+                sources,
+                href=_conversation_link,
+                same=same,
+                href_title="Open this message in its conversation",
+            )
+            + (
+                f"<p class='muted cited-more'>and {more} more, listed under Rules' working</p>"
+                if more > 0
+                else ""
+            )
+            + "<details class='exported'><summary>Exported values for "
+            + ("this record" if len(rows) == 1 else f"these {len(rows)} records")
+            + " (UTC, as printed, record id)</summary>"
+            f"{excel}<ol class='cited'>{exported}</ol></details>"
+        )
     return "".join(out)
+
+
+def _conversation_link(row: screen_records.Row) -> str | None:
+    """A message row's place in the file opens the message in its conversation."""
+    if not row.record_id.startswith("msg:"):
+        return None
+    return link("/selection/context", id=row.record_id)
 
 
 def _why(conn: sqlite3.Connection, st: ClaimState, d: VerdictDecision) -> str:
@@ -2130,6 +2313,8 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
     on_screen = (
         st is not None and st.decision is not None and item.id in {x.id for x in st.evidence}
     )
+    sources = screen_records.Sources(conn)
+    row = screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
     out.append(
         evidence_card(
             conn,
@@ -2144,10 +2329,20 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
                 challenge.found_items(conn, pipeline.view_run(conn)) if on_screen else frozenset()
             ),
             around_link=False,
+            found=forwarded.affected(conn),
+            sources=sources,
+            row=row,
         )
     )
-    out.append("<h2>Context</h2>")
     lines = build_context(conn, item.record_id, CONTEXT_WINDOW)
+    # how to read the times of the card and of the messages around it (one thread, one phone)
+    # and the card's Excel row; left out when the page shows neither
+    how = screen_records.note(
+        [row], sources, also=[item.ref.source_id], around=(ln.local_time for ln in lines)
+    )
+    if how:
+        out.append(f"<p class='muted cited-note'>{how}</p>")
+    out.append("<h2>Context</h2>")
     if lines:
         out.append("<div class='thread'>")
         out.append(_msgs(lines))
