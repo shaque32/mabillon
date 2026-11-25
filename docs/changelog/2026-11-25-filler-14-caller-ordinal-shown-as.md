@@ -1,4 +1,4 @@
-## 2026-11-25: Filler 14: who placed "a second call", and a side named "the party displayed as" (#PR)
+## 2026-11-25: Filler 14: who placed "a second call", and a side named "the party displayed as" (#279)
 - Changed: found by the v5 pre-run replay (stored Opus answers replayed through the real
   `hickman_run` driver on tag `validation-v5`, development phones only, no model calls; files in
   `baker/validation/v5/pre-run-replay/`, project files). A false call claim whose direction is
@@ -15,7 +15,7 @@
     Only for an account side, never a person or a phone. The words stay unread, so the core
     event stays too. A handle side that placed the call still gets no caller: a caller row names
     persons or accounts, and code never decides which account a handle is.
-- Where: PR #PR
+- Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
   as" read for an account side, refused for a person, for a handle that placed the call and
@@ -35,4 +35,4 @@
 - Status doc: pending: section 2 table, step 5 (Assumptions): add "Filler 14 reads who placed
   a call written with an ordinal ('a second Signal call', the ordinal keeping a core event) or
   with the other side named by what the log shows ('the party displayed as "X"', an account
-  side only) (#PR)." Header "Other versions": assumption filler 14.
+  side only) (#279)." Header "Other versions": assumption filler 14.
