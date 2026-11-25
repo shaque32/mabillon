@@ -12,7 +12,7 @@ encrypted case, a self-certified attestation, labels that cannot be regenerated)
 [SECURITY_PRIVACY.md](SECURITY_PRIVACY.md), section 5. Where the tool's reliability may be
 challenged in court, keep the case local. The installer downloads three things, once: a Python
 installer (uv), the model runtime's source, and the AI model (9 GB). After that you can disconnect
-from the internet, except while a case that uses cloud AI is being audited.
+from the internet, except while a case that uses cloud AI proposes claims or is being audited.
 
 ## What you need
 

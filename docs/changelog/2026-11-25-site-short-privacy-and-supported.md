@@ -13,7 +13,8 @@
   data goes", the docs/PILOT_ONBOARDING.md intro, and the opening of docs/install.md and
   docs/install-mac.md now say files and the case database stay on the computer, the place the AI
   runs is chosen per case at setup, and cloud AI is recommended for an ordinary case. They keep
-  naming Claude Opus and Anthropic, since examiners set up an Anthropic key. The "Offline
+  naming Claude Opus and Anthropic, since examiners set up an Anthropic key. The one-pager and onboarding now say the case's AI proposes claims (not "a local
+  model"), and the Mac guide says a cloud case needs internet while it proposes claims too. The "Offline
   computer" sections describe a machine without internet and stay. Arsh approved all of this
   wording 2026-11-25 19:58Z in the project thread.
 - Where: PR #281

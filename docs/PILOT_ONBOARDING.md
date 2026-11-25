@@ -97,7 +97,7 @@ demo to a clean copy.
    1. **Files.** Upload the government document (PDF) and the phone reports. Each is copied into
       the case, hashed and made read-only. Your originals are never touched. Check every source's
       coverage line and record count.
-   2. **Claims.** Let the local model propose claims, then accept, edit or remove each one, and add
+   2. **Claims.** Let the case's AI propose claims, then accept, edit or remove each one, and add
       your own.
    3. **Who used each phone.** Stipulate each device's user, or tick that you accept inconclusive
       sender checks.

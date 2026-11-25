@@ -16,7 +16,7 @@ the judgment.
    real-format Cellebrite UFDR exports from public test phones (Reader 7.48). Other
    Cellebrite versions are not yet tested. The Cellebrite Excel and AXIOM readers are not yet
    tested on real exports.
-2. **Splits the document into claims.** A local model proposes one claim at a time; you accept,
+2. **Splits the document into claims.** The case's AI proposes one claim at a time; you accept,
    edit or remove each one and add your own. The claim list is yours.
 3. **Tests each claim.** Code checks what can be computed (sender, account, time and time zone,
    weekday, counts, what a source can and cannot show). A language model labels individual
