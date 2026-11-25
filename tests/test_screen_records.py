@@ -171,9 +171,12 @@ def test_a_row_with_no_time_does_not_read_as_the_day_above(conn) -> None:
         replace(rows[1], local=""),
     ]
     out = records.table(untimed, records.Sources(conn))
-    # a time that was not read is not "no date": only a record with no time at all is
-    assert "<td class='d'>date not read</td><td class='t'>time unknown" in out
+    # a value the source printed but Mabillon did not read as a time is not "no date"
+    assert "<td class='d'>date not read</td><td class='t'>time unknown (source" in out
     assert "<td class='d'>no date</td><td class='t'></td>" in out
+    # a message the source gives no time for at all has no date to read
+    bare = records.table([rows[0], replace(rows[1], local="time unknown")], records.Sources(conn))
+    assert "<td class='d'>no date</td><td class='t'>time unknown</td>" in bare
 
 
 def test_an_attachment_takes_its_messages_time(conn) -> None:
@@ -185,14 +188,17 @@ def test_an_attachment_takes_its_messages_time(conn) -> None:
 
 
 def test_a_message_whose_stored_time_is_not_a_time_keeps_its_row(conn) -> None:
+    sources = records.Sources(conn)
+    (before,) = records.record_rows(conn, [M948], sources=sources)
     conn.execute("UPDATE messages SET ts_utc = 'not a time' WHERE id = ?", (M948,))
     try:
-        sources = records.Sources(conn)
         bad, good = records.record_rows(conn, [M948, "msg:item1:Chats!949"], sources=sources)
-        assert bad.local.startswith("time unknown") and bad.thread and bad.title
-        assert records.reading(good.local) is not None and good.who
+        assert bad.local.startswith("time unknown (source shows")
+        assert records.reading(good.local) is not None
+        # only the time is unread: the sender, direction, thread and text are as before
+        assert replace(bad, local=before.local) == before and bad.who
         assert "date not read" in records.table([bad, good], sources)
-        assert "thread" in records.line(conn, M948, sources)
+        assert records.line(conn, M948, sources).startswith(bad.who)
     finally:
         conn.rollback()
 
@@ -232,7 +238,10 @@ def test_a_direction_that_does_not_follow_from_the_sender_is_said_in_words() -> 
     assert "outgoing" not in records.who(_line("Telegram 7001001 (this phone)", "outgoing"))
     assert "incoming" not in records.who(_line("Telegram 5551234", "incoming"))
     assert records.who(_line("Telegram 7001001 (this phone)", "incoming")).endswith(" · incoming")
-    assert records.who(_line("Telegram 5551234", "unknown")).endswith(" · unknown")
+    # an unknown direction says what is unknown, so it does not read as an unknown sender
+    assert records.who(_line("Telegram 5551234", "unknown")).endswith(" · direction unknown")
+    assert records.who(_line("unknown", "unknown")).endswith(" · direction unknown")
+    assert records.way_words("outgoing") == "outgoing"
 
 
 def test_a_direction_said_in_a_one_line_record_is_bracketed(conn) -> None:
@@ -432,6 +441,43 @@ def test_a_page_with_no_time_in_view_prints_no_note_on_times(app, conn) -> None:
     finally:
         conn.executemany("UPDATE messages SET ts_utc = ?, ts_raw = ? WHERE id = ?", kept)
         conn.commit()
+
+
+def test_the_evidence_note_speaks_for_the_messages_drawn_around_a_record(app, conn) -> None:
+    # C05's cards are both on one message. With that message's time gone, the two messages
+    # drawn around it still show times, so the note still says how to read them.
+    kept = conn.execute("SELECT ts_utc, ts_raw, id FROM messages WHERE id = ?", (M948,)).fetchall()
+    conn.execute("UPDATE messages SET ts_utc = NULL, ts_raw = NULL WHERE id = ?", (M948,))
+    conn.commit()
+    try:
+        body = _get(app, "/claim", id="C05")
+        evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1]
+        above, cards = evidence.split("<div class='item'", 1)
+        assert "class='lt'" in cards.split("<details id='irrelevant'", 1)[0]
+        assert "Times are the phone's local time (America/New_York)" in html.unescape(above)
+    finally:
+        conn.executemany("UPDATE messages SET ts_utc = ?, ts_raw = ? WHERE id = ?", kept)
+        conn.commit()
+
+
+def test_the_items_own_page_shows_a_forwarded_copys_caution_as_the_claim_page_does(
+    app, conn, monkeypatch
+) -> None:
+    from ui import pages
+
+    item = next(x for x in claim_state(conn, "C05").evidence if x.record_id == M948)
+    monkeypatch.setattr(pages.forwarded, "affected", lambda _conn: {M948: "forwarded"})
+    for page in (_get(app, "/claim", id="C05"), _get(app, "/evidence", id=item.id)):
+        card = page.split(f"<div class='item' id='{item.id}'>", 1)[1].split("<h2", 1)[0]
+        assert "<strong class='warn'>" in card.split("<details class='more'>", 1)[0]
+
+
+def test_the_match_page_leaves_the_times_to_the_note_above_the_rows(app, conn) -> None:
+    (match,) = conn.execute("SELECT id FROM exhibit_matches LIMIT 1").fetchone()
+    page = html.unescape(_get(app, "/exhibit/match", id=match))
+    assert "Messages are observed.</p>" in page
+    # how to read the times is said once, by the note that knows whether they are local or UTC
+    assert page.count("derived from UTC and the phone's time zone") == 1
 
 
 def test_a_long_cited_list_is_described_over_every_record_it_counts(app, conn, monkeypatch) -> None:

@@ -191,6 +191,13 @@ def follows(sender: str, direction: str) -> bool:
     return direction == ("outgoing" if own else "incoming")
 
 
+def way_words(direction: str) -> str:
+    """A direction that has to be said, in words: "incoming", "outgoing", or "direction
+    unknown" for any other value, as the bubbles say it (core/report/selection.py
+    direction_words), so the unknown thing does not read as the sender."""
+    return direction if direction in ("incoming", "outgoing") else f"direction {direction}"
+
+
 def who(ln: Line, app: str | None = None, name: str | None = None) -> str:
     """A message's sender as HTML (core/report/selection.py sender_words), with the direction in
     words only when it does not follow from whose account sent it, so no direction is lost.
@@ -203,7 +210,7 @@ def who(ln: Line, app: str | None = None, name: str | None = None) -> str:
         own = ln.sender.endswith(" (this phone)")
         ident = sender_words(ln.sender.removesuffix(" (this phone)"), None, app)
         words = f"{ident} ({q(name)}{', this phone' if own else ''})"
-    return words if follows(ln.sender, ln.direction) else f"{words} · {e(ln.direction)}"
+    return words if follows(ln.sender, ln.direction) else f"{words} · {e(way_words(ln.direction))}"
 
 
 def warning(conn: sqlite3.Connection, record_id: str, found: dict[str, str] | None) -> str:
@@ -227,7 +234,7 @@ class Row:
     what: str  # HTML: the message, or the record's text
     tier: ProvenanceTier | None  # None for a record no longer in the case: nothing to observe
     target: bool = False
-    way: str = ""  # a message's direction where who says it (it does not follow from the sender)
+    way: str = ""  # a message's direction, in words, where who says it (see follows)
     app: str = ""  # a message's app
     thread: str = ""  # a message's thread id
     title: str = ""  # a message's thread title
@@ -279,7 +286,7 @@ def message_rows(
                 what=body,
                 tier=ln.tier,
                 target=ln.is_target,
-                way="" if follows(ln.sender, ln.direction) else ln.direction,
+                way="" if follows(ln.sender, ln.direction) else way_words(ln.direction),
                 app=app or own_app,
                 thread=thread,
                 title=title,
@@ -289,11 +296,41 @@ def message_rows(
     return out
 
 
-def _lines(conn: sqlite3.Connection, ids: list[str]) -> tuple[list[Line], list[str]]:
-    """Messages as conversation lines, and the ids whose stored time is not a time at all
-    (core/restore/view.py message_lines raises on those; the caller still gives them a row)."""
+def _unread(conn: sqlite3.Connection, record_id: str) -> Line | None:
+    """A message whose stored UTC time is not a time at all, as the conversation line
+    core/restore/view.py message_lines would give it were the time missing: the same sender,
+    direction and text, "time unknown" with the value the source printed. message_lines raises
+    on such a time, so this reads the same columns and leaves the time unread."""
+    r = conn.execute(
+        "SELECT m.source_id, m.locator, a.app, a.identifier, a.device_id, m.sender_raw,"
+        " m.direction, m.ts_raw, m.body FROM messages m"
+        " LEFT JOIN accounts a ON a.id = m.sender_account_id WHERE m.id = ?",
+        (record_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    src, loc, app, ident, own_dev, shown, direction, ts_raw, body = r
+    sender = f"{app} {ident}" + (" (this phone)" if own_dev else "") if ident else "unknown"
+    return Line(
+        record_id=record_id,
+        source_id=src,
+        locator=loc,
+        sender=sender,
+        shown_as=shown,
+        direction=direction,
+        utc="time unknown",
+        local=format_local(None, None, ts_raw),
+        raw=ts_raw,
+        body=body,
+        tier=ProvenanceTier.OBSERVED,
+    )
+
+
+def _lines(conn: sqlite3.Connection, ids: list[str]) -> list[Line]:
+    """Messages as conversation lines. core/restore/view.py message_lines raises on a stored
+    time that is not a time at all; such a message still gets its line, with its sender and
+    direction and its time unread (_unread)."""
     lines: list[Line] = []
-    unread: list[str] = []
     for at in range(0, len(ids), CHUNK):
         part = ids[at : at + CHUNK]
         try:
@@ -303,14 +340,15 @@ def _lines(conn: sqlite3.Connection, ids: list[str]) -> tuple[list[Line], list[s
                 try:
                     lines.extend(message_lines(conn, [rid], None))
                 except ValueError:
-                    unread.append(rid)
-    return lines, unread
+                    line_ = _unread(conn, rid)
+                    if line_ is not None:
+                        lines.append(line_)
+    return lines
 
 
 def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[str, str]:
-    """(the phone-local time, the phone) of a call, an attachment (its message's time) or a
-    message whose stored time message_lines could not read; ("", "") for a record with no time
-    (a contact)."""
+    """(the phone-local time, the phone) of a call or an attachment (its message's time);
+    ("", "") for a record with no time (a contact)."""
     if record_id.startswith("call:"):
         sql = "SELECT ts_utc, ts_raw, device_id FROM calls WHERE id = ?"
     elif record_id.startswith("att:"):
@@ -318,11 +356,6 @@ def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[
             "SELECT m.ts_utc, m.ts_raw, t.device_id FROM attachments a"
             " JOIN messages m ON m.id = a.message_id JOIN threads t ON t.id = m.thread_id"
             " WHERE a.id = ?"
-        )
-    elif record_id.startswith("msg:"):
-        sql = (
-            "SELECT m.ts_utc, m.ts_raw, t.device_id FROM messages m"
-            " JOIN threads t ON t.id = m.thread_id WHERE m.id = ?"
         )
     else:
         return "", ""
@@ -353,8 +386,7 @@ def record_rows(
     known = _of_messages(conn, [r for r in dict.fromkeys(ids) if r.startswith("msg:")])
     apps = {v[1] for v in known.values()}
     app = next(iter(apps)) if len(apps) == 1 else None
-    lines, _ = _lines(conn, list(known))
-    by_id = {r.record_id: r for r in message_rows(conn, lines, app, strip)}
+    by_id = {r.record_id: r for r in message_rows(conn, _lines(conn, list(known)), app, strip)}
     out = []
     for rid in ids:
         if rid in by_id:
@@ -365,7 +397,6 @@ def record_rows(
             out.append(Row(rid, "", "", "", "", "record not found", None))
             continue
         local, device = _timed(conn, rid, sources)
-        thread, own_app, title, _, _ = known.get(rid, ("", "", "", "", ""))
         out.append(
             Row(
                 record_id=rid,
@@ -375,9 +406,6 @@ def record_rows(
                 who="",
                 what=q(rec.text),
                 tier=ProvenanceTier.OBSERVED,
-                app=own_app,
-                thread=thread,
-                title=title,
                 device=device,
             )
         )
@@ -417,15 +445,21 @@ def shared(rows: list[Row], sources: Sources) -> Shared:
     return Shared(file, sheet, tier, app or None, thread)
 
 
-def note(rows: Iterable[Row], sources: Sources, also: Iterable[str] = ()) -> str:
+def note(
+    rows: Iterable[Row],
+    sources: Sources,
+    also: Iterable[str] = (),
+    around: Iterable[str] = (),
+) -> str:
     """How to read a set of rows, said once in view above them: their times (time_note, naming
     only the zones of the phones the rows are from) and, when any row sits in an Excel report,
     that its row number is the spreadsheet's own. "" when the rows give neither a time nor an
     Excel row. also: source ids the caller prints a place in besides the rows' own (an
-    evidence item's own reference)."""
+    evidence item's own reference). around: the times of the messages drawn around the rows
+    (the same threads, so the same phones), which the note speaks for too."""
     rows = list(rows)
     zones = zone_names(sources, {r.device for r in rows if r.device})
-    times = time_note((r.local for r in rows), zones)
+    times = time_note([*(r.local for r in rows), *around], zones)
     ids = {r.source_id for r in rows if r.source_id} | set(also)
     return " ".join(x for x in (times, EXCEL_ROW_NOTE if sources.excel(ids) else "") if x)
 
@@ -472,8 +506,9 @@ def table(
             rd = reading(r.local)
             if rd is None:
                 # an empty date cell means "the same day as the row above", so say which it
-                # is: a record with no time at all (a contact), or a time that was not read
-                date = "date not read" if r.local else "no date"
+                # is: no time in the source at all (a contact, a message the source gives no
+                # time for), or a value the source printed that was not read as a time
+                date = "no date" if r.local in ("", "time unknown") else "date not read"
                 cells.append(f"<td class='d'>{date}</td><td class='t'>{e(r.local)}</td>")
                 last_date = None
             else:
@@ -534,8 +569,7 @@ def line(
     if r.thread:
         # " · " parts the line, so a direction that has to be said goes in brackets here
         sender = r.who.removesuffix(f" · {e(r.way)}") + (f" ({e(r.way)})" if r.way else "")
-        # a message whose stored time could not be read has no sender words: its text leads
-        head = f"{sender or r.what} in {q(r.app)} thread {q(r.title)}"
+        head = f"{sender} in {q(r.app)} thread {q(r.title)}"
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     what = "" if quoted is not None and r.what == q(quoted) else r.what
     return " · ".join(x for x in (what, when(r.local) if r.local else "", where) if x)

@@ -1047,6 +1047,7 @@ def evidence_card(
     same_as: str | None = None,
     sources: screen_records.Sources | None = None,
     row: screen_records.Row | None = None,
+    times: list[str] | None = None,
 ) -> str:
     """claim_id: the claim page shows the card; it then carries the optional label flag.
     same_as: the card above on the page for the same record (another assumption's item); this
@@ -1057,7 +1058,8 @@ def evidence_card(
     challenged: the items the challenge step stored in the audit on screen, read once a page.
     around_link: the link to the item's own page (that page leaves it out).
     sources, row: the page's cache of files and zones and the record's row, when the page read
-    every card's record in one call.
+    every card's record in one call. times: gathers the times of the messages the card draws
+    around the record, for the page's one note on how to read times.
     Once the expert has decided an item, its conversation and its decision form fold."""
     stance_cls = "b-against" if item.stance in AGAINST else "b-open"
     flag = ""
@@ -1071,7 +1073,7 @@ def evidence_card(
         else _decide_form(page, item, last_kind == "expert", back)
     )
     shown, thread, drawn = _conversation(
-        conn, item, 0 if same_as else around, threads, folded=settled
+        conn, item, 0 if same_as else around, threads, folded=settled, times=times
     )
     if same_as:
         shown += (
@@ -1193,15 +1195,19 @@ def _conversation(
     around: int,
     threads: dict[str, list[str]] | None = None,
     folded: bool = False,
+    times: list[str] | None = None,
 ) -> tuple[str, str, bool]:
     """The verified quote, and with around > 0 the record among its neighbours: (shown, fold,
     drawn), drawn being True when the neighbours are in view (they give the sender and time).
     folded: the expert has decided the item, so the neighbours come back as a disclosure (fold)
-    for the card's last line, and only the quote shows."""
+    for the card's last line, and only the quote shows. times: gathers the neighbours' times,
+    in view or folded, for the page's note on how to read them."""
     quote = f"<blockquote>{q(item.quote)}</blockquote>"
     lines = build_context(conn, item.record_id, around, threads=threads) if around else []
     if len(lines) < 2:  # no neighbours (a contact, a call): the quote says it all
         return quote, "", False
+    if times is not None:
+        times.extend(ln.local_time for ln in lines)
     thread = f"<div class='thread mini'>{_msgs(lines)}</div>"
     whole = any(ln.is_target and ln.body.strip() == item.quote.strip() for ln in lines)
     # the quote is the whole highlighted message: the bubble already shows it, word for word
@@ -1605,18 +1611,8 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
             conn, dict.fromkeys(x.record_id for x in st.evidence), strip=True, sources=sources
         )
     }
-    if groups:
-        # the cards give times and Excel rows in reading words: say once how to read them
-        carded = [x for _, group in groups for x in group]
-        how = screen_records.note(
-            (of[x.record_id] for x in carded if x.record_id in of),
-            sources,
-            also=(x.ref.source_id for x in carded),
-        )
-        out.append(
-            f"<p class='muted cited-note'>{e(how)}{' ' if how else ''}Each card's fold gives the "
-            "values as exported.</p>"
-        )
+    note_at = len(out)  # the Evidence note goes here once the cards say which times they draw
+    around: list[str] = []
     by_assumption = {a.id: a for a in st.assumptions}
     found = forwarded.affected(conn)
     threads: dict[str, list[str]] = {}  # each thread read once for the page's cards
@@ -1649,9 +1645,25 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
                     same_as=drawn.get(x.record_id),
                     sources=sources,
                     row=of.get(x.record_id),
+                    times=around,
                 )
             )
             drawn.setdefault(x.record_id, x.id)
+    if groups:
+        # the cards give times and Excel rows in reading words: say once, above them, how to
+        # read them, the messages drawn around each record included
+        carded = [x for _, group in groups for x in group]
+        how = screen_records.note(
+            (of[x.record_id] for x in carded if x.record_id in of),
+            sources,
+            also=(x.ref.source_id for x in carded),
+            around=around,
+        )
+        out.insert(
+            note_at,
+            f"<p class='muted cited-note'>{e(how)}{' ' if how else ''}Each card's fold gives the "
+            "values as exported.</p>",
+        )
     hidden = [x for x in st.evidence if x.stance == Stance.IRRELEVANT]
     out.append("<div class='claim-more'>")
     if hidden:
@@ -2269,6 +2281,7 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
                 challenge.found_items(conn, pipeline.view_run(conn)) if on_screen else frozenset()
             ),
             around_link=False,
+            found=forwarded.affected(conn),
             sources=sources,
             row=row,
         )
@@ -2276,10 +2289,9 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
     lines = build_context(conn, item.record_id, CONTEXT_WINDOW)
     # how to read the times of the card and of the messages around it (one thread, one phone)
     # and the card's Excel row; left out when the page shows neither
-    zones = screen_records.zone_names(sources, {row.device} if row.device else ())
-    times = screen_records.time_note([row.local, *(ln.local_time for ln in lines)], zones)
-    excel = screen_records.EXCEL_ROW_NOTE if sources.excel([item.ref.source_id]) else ""
-    how = " ".join(x for x in (times, excel) if x)
+    how = screen_records.note(
+        [row], sources, also=[item.ref.source_id], around=(ln.local_time for ln in lines)
+    )
     if how:
         out.append(f"<p class='muted cited-note'>{e(how)}</p>")
     out.append("<h2>Context</h2>")

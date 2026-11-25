@@ -293,8 +293,7 @@ def match_page(conn: sqlite3.Connection, page: Page, match_id: str) -> str | Non
         + "".join(f"<li>{n}</li>" for n in match_notes(excerpt, m, body_row[0]))
         + "</ul>",
         f"<p class='muted tiers'>Match tier derived: found and verified by code (matcher "
-        f"{e(m.matcher_version)}). Messages are observed; the phone's local time is derived "
-        "from UTC and the phone's time zone.</p>",
+        f"{e(m.matcher_version)}). Messages are observed.</p>",
         conversation(conn, match_view(conn, m)),
         "</div>",
     ]
