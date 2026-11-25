@@ -4,7 +4,7 @@
   at setup for an ordinary case). Arsh asked for it dropped and a new line (2026-11-25), and
   approved the exact wording 08:07Z in the project thread. `site/index.html`: the "Your data"
   section's headline is now "Nothing goes out the door unlogged" with a subline on what leaves
-  (small excerpts, each logged first) and what stays (extraction files, case database); the
+  (text one question at a time, each request logged first) and what stays (extraction files, case database); the
   diagram, its screen-reader label and the columns (Your files / Cloud AI, recommended / On this
   computer) say the same; the example app window names Claude Opus instead of "Local model,
   offline"; the re-check bundle line says "on their own computer" instead of "offline". The site
@@ -25,8 +25,11 @@
   "Cloud stays off until the expert attests per case, so "local by default" stays true." with
   "Since #254 cloud AI is the recommended choice at setup, so "local by default" is no longer
   true." and replace the safe-wording cell with ""Nothing goes out the door unlogged": with cloud
-  AI only small excerpts go out, each logged first, and the extraction files and case database
-  stay on the computer (site, 2026-11-25)". In the paragraph after the table, replace ""files
-  never leave your machine" or any hosted-model wording, because plan C is not built (section 5)
-  and its customer wording still needs Arsh's sign-off;" with "any claim that Mabillon holds a
-  signed zero-retention agreement (none is signed yet);".
+  AI, text goes out one question at a time (the government's document paragraph by paragraph,
+  and the records each claim is tested against), each request logged first, and the extraction
+  files and case database stay on the computer (site, 2026-11-25)". In the paragraph after the
+  table, replace ""files never leave your machine" or any hosted-model wording, because plan C is
+  not built (section 5) and its customer wording still needs Arsh's sign-off;" with "any
+  Mabillon-hosted-model wording, because plan C is not built (section 5) and its customer wording
+  still needs Arsh's sign-off; any claim that Mabillon holds a signed zero-retention agreement
+  (none is signed yet);".
