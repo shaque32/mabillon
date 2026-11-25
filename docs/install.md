@@ -10,7 +10,8 @@ database is never sent. Its open limits (retention at Anthropic unverified by Ma
 is sealed only when saved into an encrypted case, a self-certified attestation, labels that cannot
 be regenerated) are in [SECURITY_PRIVACY.md](SECURITY_PRIVACY.md), section 5. Where the tool's
 reliability may be challenged in court, keep the case local. The only download is the AI model,
-once, during setup, and you can skip it and copy the model from a USB drive instead.
+once, during setup, and you can skip it and copy the model from a USB drive instead. A case that
+uses cloud AI needs internet while it proposes claims or is being audited.
 
 ## What you need
 
