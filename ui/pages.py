@@ -1203,7 +1203,10 @@ def decided_row(
     rationale or a forwarded copy's caution stays in view. times: gathers the times of the
     messages the fold draws around the record, for the page's one note on how to read times."""
     withheld = W.for_item(conn, item)
-    lines = build_context(conn, item.record_id, around, threads=threads) if around else []
+    # a message the page already drew for another assumption: its conversation is in that
+    # row's fold, as the full card leaves it out
+    drawn = around and not same_as
+    lines = build_context(conn, item.record_id, around, threads=threads) if drawn else []
     if times is not None:
         times.extend(ln.local_time for ln in lines)
     thread = f"<div class='thread mini'>{_msgs(lines)}</div>" if len(lines) >= 2 else ""

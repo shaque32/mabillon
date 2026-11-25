@@ -559,8 +559,13 @@ def test_the_same_message_under_another_assumption_points_up_instead_of_repeatin
     for rid, ids in repeats.items():
         drawn = [i for i in ids if "The same message as" not in _card(body, i)]
         assert len(drawn) == 1  # drawn once; every other row points up to it
+        assert "The messages around it" in _card(body, drawn[0])
         for i in ids:
-            assert record_line(conn, rid) in _card(body, i)  # each keeps its exported values
+            card = _card(body, i)
+            assert record_line(conn, rid) in card  # each keeps its exported values
+            assert "<strong>Review:</strong>" in card and "name='status' value='open'" in card
+            if i != drawn[0]:  # the conversation is in the first row's fold only
+                assert "The messages around it" not in card and "class='thread mini'" not in card
 
 
 def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(app, conn) -> None:
