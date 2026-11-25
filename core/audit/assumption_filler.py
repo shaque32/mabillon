@@ -3268,11 +3268,17 @@ _SPOKEN_LENGTH_RE = re.compile(
     re.IGNORECASE,
 )
 # What follows an ordinal "second" before a call: "a second call", "a second outgoing
-# WhatsApp telephone call", "a second-WhatsApp call". Any run of words up to "call" in the
-# same clause, split by spaces or hyphens as `_words` splits them, never a word count: an
-# app's name may be several words (CodeRabbit on #279), and a "second" kept unread by
-# mistake only keeps an expert-only event.
-_BEFORE_A_CALL_RE = re.compile(r"[\s-]+(?:[\w-]+[\s-]+)*?calls?\b", re.IGNORECASE)
+# WhatsApp telephone call", "a second-WhatsApp call". Any run of the call's own words up to
+# "call", split by spaces or hyphens as `_words` splits them, never a word count: an app's
+# name may be several words (CodeRabbit on #279). The run stops at a word that starts another
+# phrase, so "lasted one second and then ended the call" is still a length. A word and its
+# separators never share a character, so a run of hyphens is read in one way only (Claude
+# review on #279: "--" after "second" took seconds).
+_CALL_NOUN_RUN = (
+    r"[\s-]+(?:(?!(?:and|or|but|then|that|which|who|to|from|with|the|a|an|before|after|when|"
+    r"while)\b)\w+[\s-]+)*?calls?\b"
+)
+_BEFORE_A_CALL_RE = re.compile(_CALL_NOUN_RUN, re.IGNORECASE)
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3299,8 +3305,8 @@ _UNTESTED_LENGTH_RE = re.compile(
 _UNPLAIN_PHRASES_RE = re.compile(
     r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
-    r"second(?=[\s-]+(?:[\w-]+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
-    r"device|time|handset|sim)s?\b)|second(?=[\s-]+(?:[\w-]+[\s-]+)*?calls?\b)|"
+    r"second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
+    rf"device|time|handset|sim)s?\b)|second(?={_CALL_NOUN_RUN})|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)

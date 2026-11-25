@@ -5,6 +5,7 @@ every number, name and wording is invented."""
 import copy
 import json
 import sqlite3
+import time
 from datetime import datetime
 
 import pytest
@@ -298,6 +299,22 @@ def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn, noun, length):
                    window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
     assert list(made["caller"].params.sent_by) == [REYES]
     assert bool(made["caller"].params.duration_s) == length and made["event"].is_core
+
+
+def test_the_ordinal_guards_read_only_the_call_s_own_words_and_stay_fast():
+    from core.audit.assumption_filler import _BEFORE_A_CALL_RE, _UNPLAIN_PHRASES_RE
+
+    # the run up to "call" is the call's own words; another phrase ends it, so a length that
+    # ends in "second" stays a length (Claude review on #279)
+    assert _BEFORE_A_CALL_RE.match(" outgoing WhatsApp telephone call")
+    assert _BEFORE_A_CALL_RE.match("-WhatsApp call")
+    assert not _BEFORE_A_CALL_RE.match(" and then ended the call")
+    # a run of hyphens or dashes after "second" is read in one way only: these took seconds
+    started = time.perf_counter()
+    for text in ("PETROV sent a second " + " ".join(["--"] * 40) + " x", "a second" + "-" * 200):
+        _UNPLAIN_PHRASES_RE.findall(text)
+        _BEFORE_A_CALL_RE.match(text, text.index("second") + 6)
+    assert time.perf_counter() - started < 1
 
 
 def test_a_length_written_a_second_is_still_read_as_one(conn):
