@@ -15,9 +15,10 @@
     "X"", also "contact", "caller", "number", "user" or "account", "displayed" or "shown as".
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
     is plain naming, as it already was everywhere else, so the clause reads as 'to "X"' does;
-    "shown" is a word no check reads and keeps the core event, and so do "contact" (a saved
-    contact) and "number" (a phone number), for which the caller row adds the event itself and
-    with no event allowed gets no caller row, and other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
+    "shown" is a word no check reads and keeps the core event, and so do "the contact" (a
+    saved contact) and "the number displayed as" (a phone number), on every path: the unread
+    guard reads them, and the caller row also adds the event itself and with no event allowed
+    gets no caller row. So do other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
     that placed the call still gets no caller: a caller row names persons or accounts, and
     code never decides which account a handle is. The same forms also count as a plain call
     clause where a phone is one side (`_phone_is_a_side`), which sets the time range's
@@ -34,7 +35,9 @@
     call written by ellipsis, which filler 13 also read as a length). Filler 13 read "a second
     WhatsApp call that lasted two minutes" with "a second" as a length, so the claim could rest
     on its time row alone. A length with no ordinal reading ("a one second call", "thirty
-    seconds") reads as before. A word and its separators in the call-noun guard never share a
+    seconds", "a 90 second WhatsApp call") reads as before, or now as a length where filler 13
+    read "second" after digits as an ordinal. A missed call written with an ordinal gets one
+    event that carries both parts. A word and its separators in the call-noun guard never share a
     character, so a run of hyphens is read in one way only. The caller row adds no second event
     when the claim already holds one.
 - Where: PR #279
@@ -49,7 +52,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,266 passed. Free replay of
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,275 passed. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in

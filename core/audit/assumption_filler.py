@@ -3338,6 +3338,8 @@ def _a_tested_length(
         return False
 
 
+# A side named as a saved contact or a phone number by what the log shows (`unread_words`)
+_CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as\b", re.I)
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3364,8 +3366,10 @@ _UNTESTED_LENGTH_RE = re.compile(
 _UNPLAIN_PHRASES_RE = re.compile(
     r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
-    r"second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
-    rf"device|time|handset|sim)s?\b)|second(?={_CALL_NOUN_RUN})|"
+    # a "second" after digits is a length ("a 90 second WhatsApp call"), read by the row that
+    # tests it, never an ordinal (Claude review on #279)
+    r"(?<!\d)(?<!\d[\s-])second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|"
+    rf"account|line|device|time|handset|sim)s?\b)|(?<!\d)(?<!\d[\s-])second(?={_CALL_NOUN_RUN})|"
     # "a second, telephone call", "their second (WhatsApp) call": an ordinal after an article or
     # a possessive states an earlier one, whatever follows it (a tested length "lasted a
     # second" is blanked before this is read; Claude review on #279)
@@ -3895,6 +3899,11 @@ class LocalAssumptionFiller:
             ):
                 cut += found
         extra: list[str] = []
+        # "the contact displayed as", "the number shown as": a saved contact, or a phone number,
+        # that no check reads; read before "displayed as" (plain naming) is blanked (Claude
+        # review on #279)
+        if shown := _CONTACT_SHOWN_RE.search(_unquoted(_flat(_nfc(text)))):
+            extra.append(" ".join(shown.group(0).casefold().split()))
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -7039,7 +7048,8 @@ class LocalAssumptionFiller:
         if missed and "event" in allowed_ids:
             allowed = TEMPLATES["event"].allowed
             event = {k: v for k, v in params.items() if k in allowed}
-            out.append(Proposal("event", event, is_core=True, code_made=True))
+            # "missed a second call": the missed event also carries the part no check reads
+            out.append(Proposal("event", event, is_core=True, code_made=True, unread=unread))
         elif unread and not any(p.is_core and p.template_id == "event" for p in out):
             # "a second call" states an earlier call no check reads ("the contact displayed
             # as", a saved contact), so the claim keeps a core event an expert carries whatever

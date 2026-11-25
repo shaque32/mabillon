@@ -355,6 +355,30 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
     assert made["record_time"].params.duration_s and made["event"].is_core
 
 
+def test_a_missed_call_with_an_ordinal_tells_the_expert_of_the_unread_part(conn):
+    # the missed event also carries the earlier call the ordinal states (Claude review on #279)
+    made, _ = fill(conn, f"{AT} Item 1 missed a second incoming call from (212) 555-0199.")
+    assert made["caller"] and made["event"].is_core
+    assert made["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+    plain, _ = fill(conn, f"{AT} Item 1 missed an incoming call from (212) 555-0199.")
+    assert not plain["event"].text.endswith(UNREAD_EVENT_NOTE + CODE_MADE_NOTE)
+
+
+@pytest.mark.parametrize("length", ["90 second", "ninety second"])
+def test_a_second_after_digits_is_a_length(conn, length):
+    # "a 90 second WhatsApp call": a length the row tests, never an ordinal, as "a ninety
+    # second WhatsApp call" reads (Claude review on #279)
+    text = (
+        f"On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a {length} WhatsApp call"
+        " to PETROV."
+    )
+    made, f = fill(conn, text, ClaimType.TIMING, channels=["call", "WhatsApp"],
+                   duration={"as_written": length},
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert made["record_time"].params.duration_s, [d.reason for d in f.drops]
+    assert "event" not in made
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -709,6 +733,23 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         no_event = [t for t in TEMPLATES.values() if t.id != "event"]
         out = f(claim(f"{WA_AT} {words}", ClaimType.COMMUNICATION), no_event)
         assert "caller" not in {p.template_id for p in out}
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV had a WhatsApp call with the contact displayed as "Marc Garage".',
+        'PETROV had a WhatsApp call with the number shown as "Marc Garage".',
+        'PETROV received a WhatsApp call from the contact displayed as "Marc Garage".',
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path(conn, words, kind):
+    # a saved contact, or a phone number, is a part no check reads, whether or not a caller row
+    # is made (Claude review on #279: "had a call with the contact displayed as" kept none)
+    made, _ = fill(conn, f"{WA_AT} {words}", kind, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
 
 
 def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):
