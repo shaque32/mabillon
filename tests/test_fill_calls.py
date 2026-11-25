@@ -279,17 +279,23 @@ def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
     assert made["event"].is_core
 
 
-def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn):
-    # "a second" before a call is an ordinal, not a length the row tests (CodeRabbit on #279)
-    text = (
-        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a second WhatsApp call"
-        " to PETROV that lasted two minutes."
-    )
-    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
-                   duration={"as_written": "two minutes"},
+@pytest.mark.parametrize(
+    "noun", ["a second WhatsApp call", "a second outgoing WhatsApp telephone call"]
+)
+@pytest.mark.parametrize("length", [True, False])
+def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn, noun, length):
+    # "a second" before a call is an ordinal, not a length the row tests, however many of the
+    # call's words stand between (CodeRabbit on #279)
+    tail = " that lasted two minutes." if length else "."
+    text = f"On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed {noun} to PETROV{tail}"
+    tested = {"duration": {"as_written": "two minutes"}} if length else {}
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"], **tested,
                    window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
-    assert made["caller"].params.duration_s and made["event"].is_core
-    # a length written "a second" is still read as one
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assert bool(made["caller"].params.duration_s) == length and made["event"].is_core
+
+
+def test_a_length_written_a_second_is_still_read_as_one(conn):
     text = (
         "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"
         " that lasted one minute and a second."
