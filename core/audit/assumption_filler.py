@@ -3279,40 +3279,52 @@ _CALL_NOUN_RUN = (
     r"while)\b)\w+[\s-]+)*?calls?\b"
 )
 # A length that ends in "second" may be an ordinal: "a second", "and a second", "the
-# thirty-second". It is read as a tested length only where a length leads into it ("lasted a
-# second", "for one minute and a second", "one minute, and a second") and its clause ends right
-# after it ("lasted a second.", "... and a second on Item 1"). Anywhere else it is an ordinal and
-# stays a word no check reads: "placed a second, telephone call", "for a second time", "over a
-# second line", "two minutes, and a second call" (Claude review on #279).
+# thirty-second". It is read as a tested length only where it is part of the length a row
+# tests: "lasted a second" when the row tests one second, "one minute and a second" (or "one
+# minute, and a second") when it tests 61 seconds, and its clause ends right after it. Anywhere
+# else it is an ordinal and stays a word no check reads: "placed a second, telephone call", "for
+# a second time", "over a second line", "two minutes, and a second call", "about two minutes,
+# and a second to (212) 555-0199" (a second call; Claude review on #279).
 _SECOND_ORDINAL_FORM_RE = re.compile(
     r"(?:and\s+)?(?:a|an|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+second",
     re.IGNORECASE,
 )
 _SECOND_LENGTH_LEAD_RE = re.compile(
     r"\b(?:lasted|lasting|lasts|last|for|of|about|approximately|roughly|nearly|almost|around|"
-    r"just|only|over|under|exactly|some|minutes?|hours?|mins?|hrs?)\s+$",
+    r"just|only|over|under|exactly|some)\s+$",
     re.IGNORECASE,
 )
-# "one minute, and a second": a comma after the unit leads only into "and a second", never into
-# a bare "a second" ("after one minute, a second call" is an ordinal) (CodeRabbit on #279)
-_SECOND_AFTER_A_UNIT_RE = re.compile(r"\b(?:minutes?|hours?|mins?|hrs?),\s*$", re.IGNORECASE)
 _SECOND_LENGTH_END_RE = re.compile(
-    r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|at|with|to|from|before|"
-    r"after|when|while|until|according|per|by)\b",
+    r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
     re.IGNORECASE,
 )
 
 
-def _a_tested_length(text: str, m: re.Match[str]) -> bool:
+def _a_tested_length(
+    text: str, m: re.Match[str], before: re.Match[str] | None, lengths: Collection[tuple[int, int]]
+) -> bool:
     """Whether a spoken length `m` in `text` is read as one. A length whose words could be an
-    ordinal ("a second") is one only where a length leads into it and its clause ends there."""
+    ordinal ("a second") is one only where its clause ends there and it is the length, or the
+    end of the length right `before` it, that a row tests (`lengths`, each as `duration_range`
+    reads it)."""
     words = m.group(0).casefold()
     if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
         return True
-    led = _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()) or (
-        words.startswith("and") and _SECOND_AFTER_A_UNIT_RE.search(text, 0, m.start())
-    )
-    return bool(led and _SECOND_LENGTH_END_RE.match(text, m.end()))
+    if not lengths or not _SECOND_LENGTH_END_RE.match(text, m.end()):
+        return False
+    if words.startswith("and"):
+        # "one minute and a second": read with the length right before it, whole
+        if before is None or not re.fullmatch(r",?\s*", text[before.end() : m.start()]):
+            return False
+        phrase = text[before.start() : m.end()]
+    elif _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()):
+        phrase = m.group(0)
+    else:
+        return False
+    try:
+        return duration_range(phrase, text) in {tuple(x) for x in lengths}
+    except Reject:
+        return False
 
 
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
@@ -3817,6 +3829,7 @@ class LocalAssumptionFiller:
         counts: int = 1,
         expected: Collection[int] | None = None,
         devices: Collection[str] | None = None,
+        tested_lengths: Collection[tuple[int, int]] = (),
     ) -> list[str]:
         """The words of a claim, outside quoted words, that no check reads (`plain_tokens`):
         what is left once code blanks the persons, phones, numbers, handles, account names and
@@ -3828,7 +3841,9 @@ class LocalAssumptionFiller:
         numbers than counting rows, or a number no counting row counts, is a part no row tests.
         With `devices` (the phones the kept rows search), a phone the claim writes that no row
         searches is a part no row tests: "on Item 2, PETROV wrote ..." passed on a message on
-        Item 1 (Claude review on #265).
+        Item 1 (Claude review on #265). `tested_lengths` are the lengths the kept rows test, as
+        `duration_range` reads them: a length that could be an ordinal ("a second") is read
+        only as part of one of them (Claude review on #279).
         Empty when the claim states only what its checks test."""
         tests = frozenset(tests)
         flat = _flat(_nfc(text))
@@ -3860,7 +3875,12 @@ class LocalAssumptionFiller:
             # times code reads: a model may keep "On March 12, 2026, while driving" as a day's
             # range, and "while driving" must still be read (Greptile on #265).
             if not self.unread_words(
-                raw, tests=tests, counts=counts, expected=expected, devices=devices
+                raw,
+                tests=tests,
+                counts=counts,
+                expected=expected,
+                devices=devices,
+                tested_lengths=tested_lengths,
             ):
                 cut += found
         extra: list[str] = []
@@ -3921,7 +3941,12 @@ class LocalAssumptionFiller:
         if "length" in tests:
             # "a second WhatsApp call that lasted two minutes": "a second" before a call is
             # an ordinal, never a length, and stays a word no check reads (CodeRabbit on #279)
-            cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare) if _a_tested_length(bare, m)]
+            spoken = list(_SPOKEN_LENGTH_RE.finditer(bare))
+            cut += [
+                m.span()
+                for i, m in enumerate(spoken)
+                if _a_tested_length(bare, m, spoken[i - 1] if i else None, tested_lengths)
+            ]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a
         # quarter hour", where the row tests "one minute") (CodeRabbit on #265)
@@ -5733,8 +5758,17 @@ class LocalAssumptionFiller:
             if checked
             else set()
         )
+        # the lengths the rows test, as `duration_range` read them: "a second" is a length
+        # only where it is part of one (Claude review on #279)
+        lengths = {tuple(d) for p in core if (d := p.params.get("duration_s"))}
         words = self.unread_words(
-            claim.text, raws, tests, counts=len(distinct), expected=expected, devices=devices
+            claim.text,
+            raws,
+            tests,
+            counts=len(distinct),
+            expected=expected,
+            devices=devices,
+            tested_lengths=lengths,
         )
         if not words and any(p.template_id not in WHOLE_APP_TEMPLATES for p in core):
             # "wrote on Telegram and Viber": a row searched on both apps finds the message on

@@ -362,6 +362,12 @@ def test_a_second_is_a_length_only_where_a_length_leads_into_it(conn, noun, kind
         "Item 1 placed a call that lasted about two minutes to (212) 555-0199 over a second line.",
         "Item 1 placed a call to (212) 555-0199 that lasted about two minutes, and a second call.",
         "Item 1 placed a call to (212) 555-0199 for about two minutes and a second time.",
+        # a second call by ellipsis: "and a second" is no part of the tested "about two minutes"
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes, and a second to"
+        " (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199 for about two minutes, and a second from"
+        " (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199 that lasted about two minutes and a second.",
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -374,29 +380,39 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
 
 
 @pytest.mark.parametrize(
-    ("text", "lengths"),
+    ("text", "tested", "lengths"),
     [
-        ("lasted one minute and a second", ["one minute", "and a second"]),
-        ("lasted one minute, and a second", ["one minute", "and a second"]),
+        ("lasted one minute and a second.", (61, 61), ["one minute", "and a second"]),
+        ("lasted one minute, and a second.", (61, 61), ["one minute", "and a second"]),
+        ("lasted one minute, and a second on Item 1", (61, 61), ["one minute", "and a second"]),
+        ("lasted a second.", (1, 1), ["a second"]),
+        # an ordinal-like length is read only as part of the length a row tests (Claude review
+        # on #279): "and a second" after the tested "one minute" is a second call
+        ("lasted one minute, and a second.", (60, 60), ["one minute"]),
+        ("lasted one minute, and a second to Item 2.", (61, 61), ["one minute"]),
+        ("lasted a second.", (60, 60), []),
         # a comma after a unit never leads into a bare "a second" (CodeRabbit on #279)
-        ("after one minute, a second call", ["one minute"]),
-        ("lasted one minute, a second call", ["one minute"]),
-        ("placed a second, telephone call", []),
-        ("lasted a second", ["a second"]),
-        ("lasted one minute, and a second on Item 1", ["one minute", "and a second"]),
-        ("for a second time", []),
-        ("over a second line", []),
-        ("lasted two minutes, and a second call", ["two minutes"]),
+        ("after one minute, a second call", (60, 60), ["one minute"]),
+        ("lasted one minute, a second call", (60, 60), ["one minute"]),
+        ("placed a second, telephone call", (1, 1), []),
+        ("for a second time", (1, 1), []),
+        ("over a second line", (1, 1), []),
+        ("lasted two minutes, and a second call", (120, 179), ["two minutes"]),
         # a length that is no ordinal reads as it did in filler 13 (Claude review on #279)
-        ("placed a one second call", ["a one second"]),
-        ("lasted thirty seconds", ["thirty seconds"]),
-        ("the thirty-second call", []),
+        ("placed a one second call", (1, 1), ["a one second"]),
+        ("lasted thirty seconds", (30, 30), ["thirty seconds"]),
+        ("the thirty-second call", (32, 32), []),
     ],
 )
-def test_a_lone_second_is_a_length_only_after_a_length_word(text, lengths):
+def test_an_ordinal_like_length_is_read_only_as_part_of_a_tested_one(text, tested, lengths):
     from core.audit.assumption_filler import _SPOKEN_LENGTH_RE, _a_tested_length
 
-    found = [m.group(0) for m in _SPOKEN_LENGTH_RE.finditer(text) if _a_tested_length(text, m)]
+    spoken = list(_SPOKEN_LENGTH_RE.finditer(text))
+    found = [
+        m.group(0)
+        for i, m in enumerate(spoken)
+        if _a_tested_length(text, m, spoken[i - 1] if i else None, {tested})
+    ]
     assert found == lengths
 
 
