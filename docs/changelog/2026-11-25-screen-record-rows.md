@@ -1,4 +1,4 @@
-## 2026-11-25: Review screen: a record reads as one row, exported values one fold away (#PRNUM)
+## 2026-11-25: Review screen: a record reads as one row, exported values one fold away (#277)
 - Changed: Arsh said (2026-11-24) the review screen feels "noisy and crowded with all the
   sources and rough text". The audit that followed found the main cause: every record printed
   its full citation every time it appeared ("...; UTC 2026-03-10T15:15:03Z, as printed
@@ -38,7 +38,7 @@
     prints none, as the report's record line does: "5551234 (@alex92)", "7001001 (Dan P, this
     phone)".
   - Message bubbles on the claim and evidence pages use the same time format.
-- Where: PR #PRNUM (branch `claude/project-thread-4qhfdg`).
+- Where: PR #277 (branch `claude/project-thread-4qhfdg`).
 - Verified: `tests/test_screen_records.py` (21 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; the direction and display-name rules; a tier
   or file column returning when rows differ; and, on the claim, evidence and conversation
