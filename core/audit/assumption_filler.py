@@ -3299,7 +3299,8 @@ _SECOND_LENGTH_LEAD_RE = re.compile(
 # A length written in digits: "90 seconds", "1 minute", "a 30-second call" (CodeRabbit and
 # Claude review on #279)
 _DIGIT_LENGTH_RE = re.compile(
-    r"(?<![\w.,:/])\d+(?:\.\d+)?(?:\s*-\s*|\s*)(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b",
+    r"(?<![\w.,:/])\d+(?:\.\d+)?(?:(?:\s*-\s*|\s*)(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)"
+    r"|[smh])\b",  # "a 30s call" (Claude review on #279)
     re.IGNORECASE,
 )
 # What may part two pieces of one length: "two minutes and 30 seconds", "one minute, and a
@@ -3402,11 +3403,15 @@ _CONTACT_NAMED_RE = re.compile(
     r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?",
     re.I,
 )
-_OPEN_QUOTE_RE = re.compile(r"\s*[\"“‘']")
+_OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact, "Marc"'
+# '"Marc Garage" (a contact)': a saved contact written after the name (Claude review on #279)
+_CONTACT_AFTER_RE = re.compile(
+    r"\(\s*(?:(?:a|the|his|her|their|my|your|our)\s+)?(?:saved\s+)?contact\s*\)", re.I
+)
 # What names a saved contact right after "the contact": a name, a number or a handle ("the
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
 # contact between PETROV and REYES" (Claude review on #279)
-_NAME_AFTER_RE = re.compile(r"\s+(?:[A-Z0-9(+@]|[\"“‘'])")
+_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘'])")
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3417,6 +3422,10 @@ def _phone_kind(word: str) -> str:
     "RCS", "iMessage"), each kind apart: "i-Messages" is "imessage", "MMS" is no "sms"."""
     return re.sub(r"[-\s]", "", word.casefold()).replace("imessages", "imessage")
 
+
+# Where a reply's sentence ends, for the quotes read after a reply word: never the dot of an
+# abbreviation such as "p.m." ("replied to "X" at 9:14 p.m. EDT, "Lol."")
+_SENTENCE_END_RE = re.compile(r"(?<!\.[A-Za-z])[.!?](?=\s+[A-Z]|\s*$)")
 
 # A length no row tests, read as words no check reads: the spoken lengths, and "a quarter
 # hour" (CodeRabbit on #265). Only `_SPOKEN_LENGTH_RE` is ever blanked as a tested length.
@@ -3491,7 +3500,6 @@ _READ_QUOTE_RE = re.compile(
 # A reply is a message the checks read only when the claim quotes it: 'REYES replied "ok"',
 # 'REYES replied to PETROV's message: "ok"'. ', and REYES replied' after the one quoted
 # message states a second message no row tests, so its words stay unread (CodeRabbit on #265).
-_SENTENCE_END_RE = re.compile(r"[.!?](?=\s+[A-Z]|\s*$)")
 _REPLY_QUOTED_RE = re.compile(
     r"\b(?:replied|reply|replies|replying|responded|respond|responds|answered|answers?|back)\b"
     r"(?=(?:(?!,\s*(?:and|but|then)\b|[.!?]\s+(?-i:[A-Z]))[^\"“”;])*?[\"“])",
@@ -3678,6 +3686,8 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     if "direction" in tests:
         never.remove(_PASSIVE_TO_RE)
     rest = words
+    if phrases is not None and len(phrases) != len(words):
+        phrases = None  # its offsets would not point into `words`
     for rx in never:
         # blank only what is reported, where it is read: "his last WhatsApp call" is a phrase
         # only once the app is blanked, so its words stay for the word check ("last") and are
@@ -4000,6 +4010,8 @@ class LocalAssumptionFiller:
             ):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
+        if (after := _CONTACT_AFTER_RE.search(_unquoted(whole))) is not None:
+            extra.append(" ".join(after.group(0).casefold().split()))
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -4103,10 +4115,13 @@ class LocalAssumptionFiller:
             ]
         words = _blank(bare, cut)
         # "sent a video": a kind of message no check reads, not an app (CodeRabbit on #265)
+        # every blanking here keeps the text's length: `plain_tokens` blanks the phrases it
+        # finds in `phrases` at the same offsets in `words` (Claude review on #279)
         words = _OTHER_CALL_APPS_RE.sub(
-            lambda m: m.group(0) if m.group(0).casefold() == "video" else " ", words
+            lambda m: m.group(0) if m.group(0).casefold() == "video" else " " * len(m.group(0)),
+            words,
         )
-        words = _OTHER_CALL_APPS_CAP_RE.sub(" ", words)
+        words = _OTHER_CALL_APPS_CAP_RE.sub(lambda m: " " * len(m.group(0)), words)
         # acts: each verb, or each set of verbs leading to one quoted message, read on the
         # claim's words with kept ranges, names, numbers and addresses blanked
         acts = set()
@@ -4143,7 +4158,11 @@ class LocalAssumptionFiller:
                 extra.append("a second count")
         # a message's own kind, one record: "messages" stays, plain only beside a count
         # (Claude review on #265)
-        words = re.sub(r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b", " ", words)
+        words = re.sub(
+            r"(?i)\b(?:imessage|message|sms|mms|rcs|e-?mail|e-?mailed)\b",
+            lambda m: " " * len(m.group(0)),
+            words,
+        )
         out = plain_tokens(words, phrases, tests)
         if "connected" not in out and connected_with_object(bare):
             out.append("connected")

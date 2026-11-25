@@ -447,6 +447,7 @@ def test_and_a_second_before_more_words_is_no_part_of_the_length(conn, after, ki
         "Item 1 placed a 30 second call to (212) 555-0199 that lasted about two minutes.",
         "Item 1 placed a thirty second call to (212) 555-0199 that lasted about two minutes.",
         "Item 1 placed a 30-second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a 30s call to (212) 555-0199 that lasted about two minutes.",
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -823,6 +824,10 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         # with no quote, an article or possessive before "contact" is enough
         "PETROV called the contact Marc Garage on WhatsApp.",
         "PETROV called his contact Marc Garage on WhatsApp.",
+        # punctuation between "contact" and the name, or the contact written after it
+        'PETROV called his contact, "Marc Garage", on WhatsApp.',
+        'PETROV called the contact: "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact) on WhatsApp.',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -912,6 +917,19 @@ def test_a_reply_to_a_quoted_party_with_its_message_quoted_is_plain(conn):
     text = 'SUBJECT-1 replied to "DFIR Two" on LINE, "Lol. Good luck with that."'
     assert "replied" not in f.unread_words(text, (), set())
     assert "back" in f.unread_words('PETROV placed a call back to "Marc Garage".', (), set())
+
+
+def test_unread_words_are_whole_words(conn):
+    # the words `plain_tokens` reads keep their offsets after app and message words are
+    # blanked (Claude review on #279)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    text = "Item 1 placed a Skype call and sent a video message, the first, reading back later."
+    out = f.unread_words(text, (), {"call"})
+    assert "reading" in out and "rea" not in out
+    reply = 'SUBJECT-1 replied to "DFIR Two" at 9:14 p.m. EDT, "Lol."'
+    assert "replied" not in f.unread_words(reply, (), set())
 
 
 def test_one_length_stated_for_two_calls_keeps_the_event(conn):
