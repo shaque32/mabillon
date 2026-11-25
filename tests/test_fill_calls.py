@@ -251,6 +251,34 @@ def test_a_plain_form_names_the_caller(conn, words, by):
     assert "event" not in made
 
 
+@pytest.mark.parametrize(
+    ("words", "by"),
+    [
+        ("Item 1 received a second telephone call from (212) 555-0199.", "num"),
+        ("Item 1 placed a third call to (212) 555-0199.", PETROV),
+        ("(212) 555-0199 placed a second call to Item 1.", "num"),
+        ("Item 1 received a first incoming call from (212) 555-0199.", "num"),
+    ],
+)
+def test_an_ordinal_names_the_caller_and_keeps_the_expert_only_event(conn, words, by):
+    # Who placed this call is read; the earlier call the ordinal states is not, so a core
+    # event only an expert carries stays beside the checks (v5 pre-run replay, iOS 15 C07).
+    made, _ = fill(conn, f"{AT} {words}")
+    assert list(made["caller"].params.sent_by) == ([PETROV] if by == PETROV else sorted(NUM))
+    assert made["event"].is_core and TEMPLATES["event"].checks == ()
+
+
+def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a second WhatsApp call"
+        " to PETROV."
+    )
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert list(made["caller"].params.sent_by) == [REYES]
+    assert made["event"].is_core
+
+
 def test_missed_adds_an_event_only_an_expert_carries(conn):
     made, _ = fill(conn, f"{AT} Item 1 missed an incoming call from (212) 555-0199.")
     assert list(made["caller"].params.sent_by) == sorted(NUM)
@@ -289,9 +317,10 @@ def test_a_stated_length_must_be_the_time_range_s(conn):
         "Item 1 placed two calls to (212) 555-0199.",
         "Item 1 placed a video call to (212) 555-0199.",
         "Item 1 placed a call to (212) 555-0199, who did not answer.",
-        # an ordinal states an earlier call no check reads
-        "Item 1 received a second telephone call from (212) 555-0199.",
-        "Item 1 placed a third call to (212) 555-0199.",
+        # an ordinal anywhere but right after the article
+        "Item 1 placed a telephone second call to (212) 555-0199.",
+        "Item 1 placed second call to (212) 555-0199.",
+        "Item 1 called a second time (212) 555-0199.",
         # no direction at all
         "Item 1 had a call with (212) 555-0199.",
         "Item 1 and (212) 555-0199 spoke by phone.",
@@ -473,6 +502,44 @@ def test_a_caller_row_keeps_the_clause_s_own_handle(conn):
     a = made["caller"]
     assert list(a.params.sent_by) == [PETROV] and list(a.params.handles) == ["Marc Garage"]
     assert not a.params.account_ids
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        'PETROV called the party displayed as "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the contact shown as "Marc Garage".',
+        'PETROV placed an outgoing call to the account displayed as "Marc Garage" on WhatsApp.',
+    ],
+)
+def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
+    # "the party displayed as "X"": the name the log shows for the other side, read as that
+    # side (v5 pre-run replay, iOS 15 D14 and D27)
+    made, f = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    a = made["caller"]
+    assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
+    assert list(a.params.handles) == ["Marc Garage"]
+
+
+def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):
+    # the descriptor names an account side only, never a person
+    text = "On June 8, 2026, at about 9:00 p.m. EDT, PETROV called the party displayed as REYES."
+    made, _ = fill(conn, text, people=["PETROV", "REYES"], channels=["call", "WhatsApp"],
+                   window=WA_W)  # fmt: skip
+    assert "caller" not in made
+    # the handle side placed the call: a caller row names persons or accounts only, and code
+    # never decides which account a handle is (the checks resolve it), so no caller is made
+    text = f'{WA_AT} PETROV received a WhatsApp call from the party displayed as "Marc Garage".'
+    made, _ = fill(conn, text, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert "caller" not in made
+    # a descriptor the form does not hold
+    for words in ('PETROV called the party known as "Marc Garage" on WhatsApp.',
+                  'PETROV called the party displayed "Marc Garage" on WhatsApp.'):  # fmt: skip
+        made, _ = fill(conn, f"{WA_AT} {words}", people=["PETROV"], handles=["Marc Garage"],
+                       channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+        assert "caller" not in made, words
 
 
 def test_a_handle_that_is_not_the_clause_s_side_names_no_caller(conn):

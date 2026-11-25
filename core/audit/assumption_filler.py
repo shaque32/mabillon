@@ -208,7 +208,11 @@ MAX_PROPOSALS = 8
 #      their caller row; a person written right before their number ("SUBJECT-2's number,
 #      ...", "SUBJECT-2 at ...") comes off the call's time range when a core identity row ties
 #      them, with a core event row holding the rest (coverage recount, 2026-11-21).
-FILLER_VERSION = "13"
+#  14: a call's clause may hold an ordinal after its article ("placed a second Signal call
+#      to"), whose word still keeps the core event, and may name the other side by what the
+#      log shows ("from the party displayed as "X""); both get their caller row (v5 pre-run
+#      replay on development phones, 2026-11-25).
+FILLER_VERSION = "14"
 MAX_WINDOW_DAYS = 400
 TIME_SLACK = timedelta(minutes=15)
 _DAY = timedelta(days=1)
@@ -1886,6 +1890,7 @@ _CALL_FORM_RE = re.compile(
     rf"|(?P<called>called)"
     rf"|(?P<had>had)\s+(?P<np_with>[\w\s-]*?)\s*\bcalls?\s+with"
     rf")\s+(?:the\s+)?(?:(?P<desc>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*)*?)\s+(?:user|account)\s+)?"
+    rf"(?P<shown>(?:party|contact|caller|number|user|account)\s+(?:displayed|shown)\s+as\s+)?"
     rf"(?P<b>{_TOKEN})(?P<tail>[^\x01]*(?:{_TOKEN}[^\x01]*)?)$",
     re.IGNORECASE,
 )
@@ -1912,6 +1917,10 @@ _CALL_ID_TAIL_RE = re.compile(
 # What a call's noun phrase may hold besides the app's name: one article or ordinal, the
 # direction word its verb allows, and a word for a phone call.
 _CALL_ARTICLES = frozenset({"a", "an", "another"})
+# An ordinal after the article: "placed a second Signal call to". Who placed this call is still
+# read; the earlier call the ordinal states is not, so its word keeps the expert-only event
+# (`unread_words`, `_UNPLAIN_PHRASES_RE`) and the claim never rests on the checks alone.
+_CALL_ORDINALS = frozenset({"first", "second", "third", "fourth", "fifth"})
 _CALL_PHONE_WORDS = frozenset({"telephone", "phone", "cellular", "cell"})
 # The app a call was on, right after the clause: "called X on Telegram", "via WhatsApp". Only
 # the call's own app is taken (`_names_app`); any other words leave the tail as it was.
@@ -3284,7 +3293,8 @@ _UNTESTED_LENGTH_RE = re.compile(
 _UNPLAIN_PHRASES_RE = re.compile(
     r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
-    r"second(?=\s+(?:phone|call|message|text|number|account|line|device|time|handset|sim)s?\b)|"
+    r"second(?=\s+(?:[\w-]+\s+){0,2}(?:phone|call|message|text|number|account|line|device|time|"
+    r"handset|sim)s?\b)|"
     r"(?<!each\s)other|(?<!one\s)another|different|new|"
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)
@@ -6773,6 +6783,10 @@ class LocalAssumptionFiller:
             # (`_plain_call_noun`), and only for an account side, never a person.
             if b[0] != "acct" or not self._is_app_name(m.group("desc"), app):
                 return None
+        if m.group("shown") is not None and b[0] != "acct":
+            # "from the party displayed as "iOS 15 Group"": the name the call log shows for an
+            # account side, never a person or a phone
+            return None
         tail = m.group("tail")
         one_account = False
         at_id = _CALL_ID_TAIL_RE.match(tail)
@@ -6828,9 +6842,11 @@ class LocalAssumptionFiller:
 
     @staticmethod
     def _plain_call_noun(np: str, verb: str, app: str) -> bool:
-        """True when the words before "call" are only an article (or, for "had", a number), the
-        direction word the verb allows, the app's name and a phone word. An ordinal ("a second
-        call") is refused: it states an earlier call that no check reads."""
+        """True when the words before "call" are only an article (or, for "had", a number), an
+        ordinal after the article, the direction word the verb allows, the app's name and a
+        phone word. An ordinal ("a second call") states an earlier call that no check reads:
+        the caller is read for this call, and the ordinal's word keeps the claim's expert-only
+        event (`_CALL_ORDINALS`)."""
         words = _words(np).split()
         if verb == "called":
             return not words
@@ -6842,6 +6858,8 @@ class LocalAssumptionFiller:
                 return False
         elif head not in _CALL_ARTICLES:
             return False
+        elif words and words[0] in _CALL_ORDINALS:
+            words.pop(0)
         allowed = {"placed": "outgoing", "made": "outgoing", "received": "incoming"}
         allowed["missed"] = "incoming"
         if words and words[0] in ("outgoing", "incoming"):
