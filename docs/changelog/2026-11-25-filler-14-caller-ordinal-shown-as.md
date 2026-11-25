@@ -78,7 +78,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,330 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,332 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of

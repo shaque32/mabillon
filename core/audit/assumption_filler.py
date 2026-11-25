@@ -3304,7 +3304,11 @@ _DIGIT_LENGTH_RE = re.compile(
 )
 # What may part two pieces of one length: "two minutes and 30 seconds", "one minute, and a
 # second" (whose "and" the second piece holds)
-_LENGTH_JOIN_RE = re.compile(r"\.?\s*,?\s*(?:and\s+)?", re.IGNORECASE)  # "1 min. 40 sec."
+# ("1 min. 40 sec.": a full stop only after an abbreviated unit, never a sentence break)
+_LENGTH_JOIN_RE = re.compile(
+    r"(?:(?:(?<=min)|(?<=mins)|(?<=sec)|(?<=secs)|(?<=hr)|(?<=hrs))\.)?\s*,?\s*(?:and\s+)?",
+    re.IGNORECASE,
+)
 _HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
 _ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
 _SECOND_CLAUSE_END_RE = re.compile(r"\s*(?:$|[.!?](?:\s|$))")

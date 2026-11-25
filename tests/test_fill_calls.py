@@ -924,7 +924,10 @@ def test_one_length_stated_for_two_calls_keeps_the_event(conn):
     assert made["record_time"].params.duration_s and made["event"].is_core
 
 
-@pytest.mark.parametrize("length", ["1 min. 40 sec.", "1 min., 40 sec."])
+@pytest.mark.parametrize(
+    "length",
+    ["1 min. 40 sec.", "1 min., 40 sec.", "one min. and a second.", "1 min. and a second."],
+)
 def test_an_abbreviated_length_is_read_whole(conn, length):
     text = f"{AT} Item 1 placed a call to (212) 555-0199 that lasted {length}"
     made, f = fill(conn, text, ClaimType.TIMING, duration={"as_written": length.rstrip(".")})
