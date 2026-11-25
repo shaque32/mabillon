@@ -7,10 +7,10 @@
   time row alone:
   - a number side: 'the phone number "X"', 'the WhatsApp number "X"' (up to three words
     before the noun), 'the number: "X"', 'the number, "X",', 'the number for "X"', 'the number
-    saved for "X"' (also listed or stored as, for or under, and "belonging to"), "the number
-    Marc Garage", '"X" (a number)', '"X", a number,';
+    saved for "X"' (also listed or stored as, for or under, and "belonging to"), 'the number
+    called "X"', "the number Marc Garage", "the number @handle", '"X" (a number)', '"X", a number,';
   - a saved contact: "called contact Marc Garage" (a bare "contact" before a capitalised name,
-    right after a call's word), 'the contact with the name "X"' (also "by the name", "under the
+    right after a call's word, also in capitals: "PETROV CALLED CONTACT MARC GARAGE"), 'the contact with the name "X"' (also "by the name", "under the
     name"), '"X", who is (or who's) his contact', '"X" on WhatsApp, his contact', '"X" on
     WhatsApp, a contact of REYES', '"X" (a contact of REYES)', '"X" — his contact —' (also "--"
     and ";"), '"X", his saved WhatsApp Business contact'.
@@ -24,11 +24,12 @@
   in the drop reason; each kind is now listed, where filler 14 stopped at the first.
 - Where: PR #282
 - Verified: `tests/test_fill_calls.py`: `test_more_ways_to_name_a_contact_or_number_keep_the_event`
-  (26 wordings, communication and timing; the 16 new forms fail without the fix, and the 10
-  added in review, 4 of which filler 14 already caught, guard the reviews' findings) and
+  (27 wordings, communication and timing; the 16 new forms fail without the fix, and the 11
+  added in review, 4 of which filler 14 already caught, guard the reviews' findings; claims
+  in capitals get no rows from the builder, so their wordings are tested at word level) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (14 wordings).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,436 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,438 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
   Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: see the PR description. Cloud

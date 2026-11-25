@@ -876,6 +876,8 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
         'PETROV called "Marc Garage", his saved WhatsApp Business contact.',
         # an owner after a capitalised word (CodeRabbit on #282)
         'PETROV called "Marc Garage" on WhatsApp, a contact of his.',
+        # a quoted name after "the number called" (CodeRabbit on #282)
+        'PETROV had a WhatsApp call with the number called "Marc Garage".',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -1098,6 +1100,12 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
         # a handle after "the number" (CodeRabbit on #282)
         ("PETROV called the number @northstar on WhatsApp.", "number"),
+        # a quoted name after "number called", and the call's word in capitals (CodeRabbit on
+        # #282)
+        ('PETROV had a WhatsApp call with the number called "Marc Garage".', "number"),
+        ("PETROV CALLED CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
+        ("PETROV PLACED A CALL TO CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
+        ("PETROV called contact Marc Garage on WhatsApp.", "contact"),
     ):
         assert any(word in w.split() for w in f.unread_words(text, (), set())), text
 

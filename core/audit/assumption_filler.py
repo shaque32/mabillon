@@ -3406,7 +3406,13 @@ _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as
 # written as a number ("the number (212) 555-0199"), the side a check reads. The quote is
 # looked for in the text before quotes are blanked.
 _SIDE_ART = r"(?:the|a|an|his|her|their|its|my|your|our)"
-_SIDE_WORDS = r"(?:(?:saved|phone|cell|cellphone|mobile|telephone|(?-i:[A-Z][\w-]*))\s+){0,3}"
+# A capitalised word before the noun is a name ("WhatsApp"), never a call's word: in "PETROV
+# CALLED CONTACT MARC GARAGE" the call's word must stay before the match (CodeRabbit on #282)
+_SIDE_CALL_WORD = r"(?:called|calls?|calling|phoned|rang|dial(?:l)?ed|from|with|to)\b"
+_SIDE_WORDS = (
+    r"(?:(?:saved|phone|cell|cellphone|mobile|telephone"
+    rf"|(?!{_SIDE_CALL_WORD})(?-i:[A-Z][\w-]*))\s+){{0,3}}"
+)
 _SIDE_NAMED_RE = re.compile(
     rf"\b(?:(?P<art>{_SIDE_ART})\s+)?{_SIDE_WORDS}(?P<noun>contact|number)\b"
     r"(?:\s+(?:entry|card|name)\b)?"
@@ -4066,8 +4072,14 @@ class LocalAssumptionFiller:
             # (Claude review on #279; filler 15)
             how = named.group("how")
             number = named.group("noun").casefold() == "number"
-            if number and how and how.casefold() == "called":
-                # "a number called PETROV" is the call's verb, never a name (Claude review on #282)
+            if (
+                number
+                and how
+                and how.casefold() == "called"
+                and not _OPEN_QUOTE_RE.match(whole, named.end())
+            ):
+                # "a number called PETROV" is the call's verb, never a name (Claude review on
+                # #282); 'the number called "Marc Garage"' names it (CodeRabbit on #282)
                 how, end = None, named.end("noun")
             else:
                 end = named.end()
