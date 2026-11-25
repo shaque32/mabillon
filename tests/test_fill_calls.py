@@ -927,6 +927,17 @@ def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind)
         "Item 1 called REYES 4 times (a number the log shows).",
         "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
         "THE NUMBER CALLED ITEM 1 TWICE.",
+        # "contact" as the communication after a person the checks read, after a quoted
+        # message, "contact called" as the call's verb, and "between" in capitals (Claude
+        # review on #282)
+        "On June 8, PETROV called REYES, a contact on WhatsApp.",
+        "PETROV called REYES on WhatsApp, the contact.",
+        "PETROV called REYES, which was the contact.",
+        "PETROV called REYES on WhatsApp, a WhatsApp contact.",
+        'PETROV wrote "ok" to REYES, his contact.',
+        "On June 1, a contact called Item 1.",
+        "His contact called REYES on June 1.",
+        "THE CONTACT BETWEEN PETROV AND REYES.",
     ],
 )
 def test_a_phone_number_or_a_contact_as_a_communication_stays_plain(conn, text):
@@ -1128,8 +1139,20 @@ def test_contact_as_a_communication_is_plain(conn):
         ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
         ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
         ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),
+        # "called" after a call's word names the number (Claude review on #282)
+        ("PETROV called the number called Marc Garage on WhatsApp.", "number"),
     ):
         assert any(word in w.split() for w in f.unread_words(text, (), set())), text
+
+
+def test_a_side_named_two_ways_is_named_once(conn):
+    # the form before the name and the form after it find the same noun (Claude review on
+    # #282)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words('PETROV called "Marc Garage" (his phone number) on WhatsApp.', (), set())
+    assert [w for w in out if "number" in w] == ["his phone number"], out
 
 
 def test_unread_words_name_each_word_once(conn):

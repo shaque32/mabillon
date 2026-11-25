@@ -3428,7 +3428,10 @@ _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact,
 # What names a saved contact right after "the contact": a name, a number or a handle ("the
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
 # contact between PETROV and REYES" (Claude review on #279)
-_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)")
+_NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Claude review on #282)
+    r"[\s,:\u2013\u2014-]+(?!(?i:between|that|which|with|for|lasting|lasted)\b)"
+    r"(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)"
+)
 # What names a side right after "the number": a name or a handle, never the phone itself
 # ("the number (212) 555-0199") or "a number of calls" (filler 15)
 _NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|@|[\w.%+-]+@)", re.I)
@@ -3447,13 +3450,13 @@ _CALL_BEFORE_CONTACT_RE = re.compile(
 # his contact —', '"Marc Garage", who is his contact', '"Marc Garage", a number' (Claude
 # review on #279; filler 15). Each names its separator `sep`, which must stand outside every
 # quote. Right after a quoted name ('"Marc Garage", a contact of his', '"Marc Garage" (a
-# contact with whom he spoke)') any words may follow, as in filler 14. Anywhere else, after a
-# capitalised word or later in a sentence with a quoted name, a "contact" is never "a contact
-# that lasted", "a contact for two minutes" or "the contact between", and a "number" must end
-# its phrase: "on WhatsApp, a number the log shows" and "which was the number of calls" are a
-# count's (Claude review on #282). Nothing is read after a lower-case word in a sentence with
-# no quoted name ("12 messages, a number the log confirms"), and never the phone itself (",
-# the number (212) ...").
+# contact with whom he spoke)') any words may follow, as in filler 14. In brackets anywhere
+# else, or later in a sentence with a party's quoted name, a "contact" is never "a contact that
+# lasted", "a contact for two minutes" or "the contact between", and a "number" must end its
+# phrase: "(a number the log shows)" is a count's (Claude review on #282). Nothing is read
+# after a word with no quoted name before it ("12 messages, a number the log confirms",
+# "REYES, which was the number of calls"), and never the phone itself (", the number (212)
+# ...").
 _SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
 _SIDE_NOUN = rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
 _SIDE_NOT_A_SIDE = (  # "a contact of his" is an owner, never a length (CodeRabbit on #282)
@@ -3469,23 +3472,30 @@ _SIDE_AFTER_RES = (
     re.compile(rf"[\"”’']\s*(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}", re.I),
     re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}{_SIDE_GUARD}", re.I),
     re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}", re.I),
-    re.compile(
-        rf"\b(?-i:[A-Z])[\w-]*(?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}", re.I
-    ),
-    # '"Marc Garage" on WhatsApp at 9:14 p.m., his contact': a quoted name earlier in the
-    # same stretch of words, before any other quote (Claude review on #282)
-    re.compile(
-        rf"[\"”][^\"“”]{{0,80}}?(?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}", re.I
-    ),
     re.compile(rf"[\"”’']\s*,?\s*{_SIDE_REL}\s+{_SIDE_ART}\s+{_SIDE_NOUN}", re.I),
-    re.compile(
-        rf"\b(?-i:[A-Z])[\w-]*\s*,?\s*{_SIDE_REL}\s+{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
-        re.I,
-    ),
+)
+# '"Marc Garage" on WhatsApp at 9:14 p.m., his contact': a party's quoted name earlier in the
+# same stretch of words, before any other quote, never a quoted message ('wrote "ok" to
+# REYES, his contact') (Claude review on #282). After an unquoted name ("REYES, a contact on
+# WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
+_SIDE_LATER_RE = re.compile(
+    rf"(?P<close>[\"”])[^\"“”]{{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
+    rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
+    re.I,
 )
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
+
+
+def _named_in(noun: str, words: list[str]) -> bool:
+    """True when a bare "contact" or "number" the forms after a name found is already the last
+    word of a phrase in `words` ("his phone number"), so the drop reason names it once (Claude
+    review on #282)."""
+    return noun in _SIDE_NOUNS and any(w.split()[-1:] == [noun] for w in words)
+
+
+_SIDE_NOUNS = frozenset({"contact", "contacts", "number", "numbers"})
 
 
 def _phone_kind(word: str) -> str:
@@ -4095,13 +4105,15 @@ class LocalAssumptionFiller:
             number = named.group("noun").casefold().startswith("number")
             verb = False
             if (
-                number
-                and how
+                how
                 and how.casefold() == "called"
                 and not _OPEN_QUOTE_RE.match(whole, named.end())
+                and not _CALL_BEFORE_CONTACT_RE.search(whole, 0, named.start())
             ):
-                # "a number called PETROV" is the call's verb, never a name (Claude review on
-                # #282); 'the number called "Marc Garage"' names it (CodeRabbit on #282)
+                # "a number called PETROV", "his contact called REYES" are the call's verb,
+                # never a name (Claude review on #282); 'the number called "Marc Garage"' and
+                # "called the number called Marc Garage" name it (CodeRabbit, Claude review on
+                # #282)
                 how, end, verb = None, named.end("noun"), True
             else:
                 end = named.end()
@@ -4122,12 +4134,25 @@ class LocalAssumptionFiller:
         # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
         # bracket, comma or word that sets it apart must stand outside every quote
         # (CodeRabbit on #279)
-        for rx in _SIDE_AFTER_RES:
-            for m in rx.finditer(whole):
-                sep = m.group("sep")
-                at = m.start("sep") + len(sep) - len(sep.lstrip())
-                if not unquoted_whole[at].isspace():
-                    extra.append(m.group("noun").casefold())
+        for m in (
+            *(m for rx in _SIDE_AFTER_RES for m in rx.finditer(whole)),
+            *(
+                m
+                for m in _SIDE_LATER_RE.finditer(whole)
+                if _quote_is_a_party(
+                    whole, max(whole.rfind(q, 0, m.start()) for q in '"“'), m.end("close")
+                )
+            ),
+        ):
+            sep = m.group("sep")
+            at = m.start("sep") + len(sep) - len(sep.lstrip())
+            # a noun an earlier form already named ("his phone number") is listed once (Claude
+            # review on #282)
+            noun = m.group("noun").casefold()
+            if not unquoted_whole[at].isspace() and not any(
+                e.split()[-1:] == [noun] for e in extra
+            ):
+                extra.append(noun)
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -4289,7 +4314,7 @@ class LocalAssumptionFiller:
                 [
                     *out,
                     *(w for w in lengths if not set(w.split()) & set(out)),
-                    *(w for w in extra if w not in out),
+                    *(w for w in extra if w not in out and not _named_in(w, out)),
                 ]
             )
         )
