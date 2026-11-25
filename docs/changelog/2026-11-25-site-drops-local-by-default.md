@@ -22,16 +22,17 @@
   (not approved in this round). README.md, docs/ONE_PAGER.md, docs/PILOT_ONBOARDING.md,
   docs/install.md and docs/install-mac.md still say local by default or offline by default.
   `core/casework/cloud.py` FAST_EXPLAINED says a member list goes out "for a group chat", but
-  `core/audit/context.py` sends one for any chat (the site says "each chat's member list");
-  FAST_EXPLAINED is Arsh-approved app text, so that fix needs his sign-off.
+  `core/audit/context.py` sends one for a message in any chat (the record's own chat only, at most
+  20 accounts plus a count of the rest; calls and contacts get none). The site says "each chat's
+  member list". FAST_EXPLAINED is Arsh-approved app text, so that fix needs his sign-off.
 - Affects: customer-facing claims (public site and privacy page)
 - Status doc: pending: in the safe-claims table, row 6, replace the status cell's last sentence
   "Cloud stays off until the expert attests per case, so "local by default" stays true." with
   "Since #254 cloud AI is the recommended choice at setup, so "local by default" is no longer
   true." and replace the safe-wording cell with ""Nothing goes out the door unlogged": with cloud
   AI, text goes out one question at a time (the government's document paragraph by paragraph,
-  the records each claim is tested against, the messages around them, the case's app names and
-  each chat's member list), each request logged first, and the extraction
+  the records each claim is tested against, the messages around them, the case's app names and,
+  for a message, the member list of its own chat, up to 20 accounts), each request logged first, and the extraction
   files and case database stay on the computer (site, 2026-11-25)". In the paragraph after the
   table, replace ""files never leave your machine" or any hosted-model wording, because plan C is
   not built (section 5) and its customer wording still needs Arsh's sign-off;" with "any
