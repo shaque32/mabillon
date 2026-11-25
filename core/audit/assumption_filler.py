@@ -6949,7 +6949,7 @@ class LocalAssumptionFiller:
         if made is None:
             return out
         params, missed, ordinal = made
-        if ordinal and not missed and "event" not in allowed_ids:
+        if ordinal and "event" not in allowed_ids:
             return out  # "a second call": no caller row without the event an expert carries
         out = [*out, Proposal("caller", params, is_core=True, code_made=True)]
         if missed and "event" in allowed_ids:

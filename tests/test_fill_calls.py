@@ -323,11 +323,18 @@ def test_a_caller_read_through_an_ordinal_always_keeps_its_event(conn, monkeypat
                       window=W("June 1, 2026", "2026-06-01T20:52", "2026-06-01T21:09"))  # fmt: skip
     f = LocalAssumptionFiller(FakeModel(json.dumps({"assumptions": [answer.model_dump()]})), conn,
                               template="{claim} {paragraph} {templates} {channels}")  # fmt: skip
-    text = f"{AT} PETROV placed a second call to (212) 555-0199."
-    out = f(
-        claim(text, ClaimType.COMMUNICATION), [t for t in TEMPLATES.values() if t.id != "event"]
-    )
-    assert "caller" not in {p.template_id for p in out}
+    every = list(TEMPLATES.values())
+    no_event = [t for t in every if t.id != "event"]
+    for words in (
+        "Item 1 placed a second call to (212) 555-0199.",
+        # a missed call written with an ordinal too (CodeRabbit on #279)
+        "Item 1 missed a second incoming call from (212) 555-0199.",
+    ):
+        text = f"{AT} {words}"
+        # the same claim reads a caller when the event is allowed, none when it is not
+        assert "caller" in {p.template_id for p in f(claim(text, ClaimType.COMMUNICATION), every)}
+        out = f(claim(text, ClaimType.COMMUNICATION), no_event)
+        assert "caller" not in {p.template_id for p in out}
 
 
 def test_the_ordinal_guards_read_only_the_call_s_own_words_and_stay_fast():
