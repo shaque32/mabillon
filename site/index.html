@@ -45,7 +45,7 @@
         <p class="audience-note">For defense forensic examiners. Attorneys, <a href="#status">bring Mabillon with your expert</a>.</p>
       </div>
       <figure class="app-win reveal" aria-label="The Mabillon review screen on an example case: paragraph 16 is contradicted because the only copy of the message was sent a day later. Example data.">
-        <div class="app-bar"><span>State v. Example, a synthetic case</span><span>Local model, offline</span></div>
+        <div class="app-bar"><span>State v. Example, a synthetic case</span><span>AI: Claude Opus, through Anthropic</span></div>
         <div class="app-body">
           <div class="app-list" aria-hidden="true">
             <p class="grp">Needs you</p>
@@ -71,7 +71,7 @@
           <dl class="app-props">
             <dt>Status</dt><dd>Contradicted</dd>
             <dt>Set by</dt><dd>Rules 0.4.0, a date check</dd>
-            <dt>Labelled by</dt><dd>Local model, on this computer</dd>
+            <dt>Labelled by</dt><dd>Claude Opus, through Anthropic</dd>
             <dt>Source</dt><dd>Phone extraction, opened read-only</dd>
             <dt>Your call</dt><dd>You can override it, with a reason</dd>
           </dl>
@@ -221,7 +221,7 @@
         <div><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path class="draw" pathLength="1" d="M6 3h8l4 4v14H6z"/><path class="draw" pathLength="1" d="M9.5 11h5M9.5 15h5M11.5 9l-1 8M14 9l-1 8"/></svg><h3>Inputs hashed</h3><p>Every file opens read-only, and its SHA-256 goes into the report.</p></div>
         <div><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="draw" pathLength="1" x="7" y="2.5" width="10" height="4" rx="1"/><rect class="draw" pathLength="1" x="7" y="10" width="10" height="4" rx="1"/><rect class="draw" pathLength="1" x="7" y="17.5" width="10" height="4" rx="1"/><path class="draw" pathLength="1" d="M12 6.5V10M12 14v3.5"/></svg><h3>Tamper-evident log</h3><p>A hash-chained audit log, checked each time a case opens. The report prints its last hash.</p></div>
         <div><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" stroke-dasharray="2.2 2.4"/><path class="draw" pathLength="1" d="M15 15l5.5 5.5"/></svg><h3>Careful about absence</h3><p>“Not found” never means “did not happen.” It says what was searched and what the source could show.</p></div>
-        <div><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path class="draw" pathLength="1" d="M3.5 7.5L12 3.5l8.5 4v9L12 20.5l-8.5-4z"/><path class="draw" pathLength="1" d="M3.5 7.5L12 11.5l8.5-4M12 11.5v9"/></svg><h3>A bundle to re-check</h3><p>Opposing counsel's examiner can re-check the verdicts offline, with no account and no network.</p></div>
+        <div><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path class="draw" pathLength="1" d="M3.5 7.5L12 3.5l8.5 4v9L12 20.5l-8.5-4z"/><path class="draw" pathLength="1" d="M3.5 7.5L12 11.5l8.5-4M12 11.5v9"/></svg><h3>A bundle to re-check</h3><p>Opposing counsel's examiner can re-check the verdicts on their own computer, with no account and no network connection.</p></div>
       </div>
     </div>
   </section>
@@ -229,13 +229,14 @@
   <section class="band" id="data">
     <div class="wrap">
       <div class="section-head reveal">
-        <h2>Local by default. Cloud AI only when your case allows it and you opt in</h2>
+        <h2>Nothing goes out the door unlogged</h2>
+        <p>When you use cloud AI, text goes out one question at a time: the government's document paragraph by paragraph, the records each claim is tested against, the messages around each of those records, the names of the case's apps, and each chat's member list. Each request is written to a tamper-evident audit log first. Your extraction files and case database stay on your computer.</p>
       </div>
-      <figure class="flow-diagram reveal" aria-label="The case stays on your computer. The path to cloud AI is locked closed unless you opt in for that case.">
+      <figure class="flow-diagram reveal" aria-label="The phone extractions and the case database stay on your computer. Questions go to Anthropic one at a time, and only for a case where you choose cloud AI.">
         <svg viewBox="0 0 640 130" aria-hidden="true">
           <rect class="box" x="1" y="30" width="200" height="70" rx="10"/>
           <text x="22" y="60">Your computer</text>
-          <text class="sub box-sub" x="22" y="82">The case and the model</text>
+          <text class="sub box-sub" x="22" y="82">Your files and the rules</text>
 
           <path class="trace" d="M201 65 H302"/>
           <path class="trace-stop" d="M296 60 L302 65 L296 70"/>
@@ -246,18 +247,19 @@
             <path class="lock-shackle" d="M314.5 59 v-6 a5.5 5.5 0 0 1 11 0 v6"/>
             <circle class="lock-keyhole" cx="320" cy="67" r="1.5"/>
           </g>
-          <text class="sub gate-label" x="320" y="118" text-anchor="middle">Closed unless you opt in</text>
+          <text class="sub gate-label" x="320" y="118" text-anchor="middle">Open only if you choose cloud AI</text>
 
           <path class="wire-beyond" d="M338 65 H449"/>
 
           <rect class="box cloud" x="449" y="30" width="190" height="70" rx="10"/>
-          <text x="470" y="60">Cloud AI</text>
-          <text class="sub box-sub" x="470" y="82">Per case, your own key</text>
+          <text x="470" y="60">Anthropic</text>
+          <text class="sub box-sub" x="470" y="82">One question at a time</text>
         </svg>
       </figure>
-      <div class="cols two reveal">
-        <div><h3>On your computer</h3><p>Everything runs here. Files open read-only, and cases can be encrypted with a passphrase.</p></div>
-        <div><h3>Cloud AI, per case</h3><p>Off by default. You attest the protective order allows it and use your own key. Never for a case marked as possibly containing CSAM. The report names the model that labelled the case.</p></div>
+      <div class="cols three reveal">
+        <div><h3>Your files</h3><p>The app, the phone extractions and the case database stay on your computer. Files open read-only, cases can be encrypted with a passphrase, and the rules that set every status run here.</p></div>
+        <div><h3>Cloud AI, recommended</h3><p>For an ordinary case, Claude Opus runs the AI steps through Anthropic. You choose it at setup and attest that the protective order (or the court's or the government's written consent) allows it, that your client has given informed consent, and that the Anthropic key belongs to an organization with zero data retention in writing. Each question is logged before it is sent.</p></div>
+        <div><h3>On this computer</h3><p>A case you mark as concerning sexual material or conduct involving a minor, or someone presented as one, or where neither the order nor written consent allows cloud AI, runs its AI on your computer instead. It is slower, and nothing is sent. The report names the model either way.</p></div>
       </div>
     </div>
   </section>
