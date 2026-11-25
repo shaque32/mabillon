@@ -31,16 +31,19 @@ from ui import records as screen_records
 from ui.pages import Page, e, link, q
 
 
-def _table(conn: sqlite3.Connection, lines: tuple[Line, ...], app: str) -> tuple[str, str]:
+def _table(
+    conn: sqlite3.Connection, lines: tuple[Line, ...], app: str, exported: str = ""
+) -> tuple[str, str]:
     """Messages as the screen's table (date, the phone's local time, sender, message, row in
     the file), with the report's own table (core/report/restore.py context_table: UTC, the
     time as printed, direction, tier and source id for every row) folded under it. Returns
-    (what to say once above the rows: their tier and how to read the time, the table)."""
+    (what to say once above the rows: their tier and how to read the time, the table).
+    exported: HTML that leads the fold, for a value the rows themselves do not carry."""
     sources = screen_records.Sources(conn)
     rows = screen_records.message_rows(conn, lines, app)
     same = screen_records.shared(rows, sources)
     n = len(lines)
-    times = screen_records.time_note(ln.local for ln in lines)
+    times = screen_records.time_note((ln.local for ln in lines), screen_records.zone_names(conn))
     note = (
         (f"Tier: {e(same.tier.value)}, for every message" if same.tier else "Tier in each row")
         + (f"; all in {same.words}" if same.sheet else "")
@@ -57,7 +60,7 @@ def _table(conn: sqlite3.Connection, lines: tuple[Line, ...], app: str) -> tuple
         screen_records.table(rows, sources)
         + f"<details class='exported'><summary>Exported values for {'this' if n == 1 else 'these'}"
         f" {n:,} message{'' if n == 1 else 's'} (UTC, as printed, direction, tier, source)"
-        f"</summary>{excel}{context_table(lines)}</details>",
+        f"</summary>{exported}{excel}{context_table(lines)}</details>",
     )
 
 
@@ -81,7 +84,15 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
     one fold away. The related threads fold under one disclosure so the conversation itself
     leads. Every row stays on the page."""
     t = view.thread
-    note, table = _table(conn, view.lines, t.app)
+    # the thread's first and last message in UTC, as the report's header gives them: the header
+    # here gives the two days on the phone's calendar, and the rows shown may not reach either
+    span = (
+        f"<p class='muted'>The thread's first and last message: {e(t.first_utc)} to "
+        f"{e(t.last_utc)} UTC.</p>"
+        if t.first_utc
+        else ""
+    )
+    note, table = _table(conn, view.lines, t.app, span)
     out = [
         f"<p class='conv-head'>{q(t.app)} thread {q(t.title or '(untitled)')} on {q(t.device)} "
         f"in {q(t.file_name)}. {t.messages:,} message{'' if t.messages == 1 else 's'}"

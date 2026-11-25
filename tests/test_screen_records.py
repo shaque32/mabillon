@@ -129,6 +129,33 @@ def test_the_note_on_times_says_utc_where_the_phones_zone_is_unknown() -> None:
     assert records.time_note(["", "time unknown"]) == ""
 
 
+def test_the_note_names_the_phones_zone_in_full(conn) -> None:
+    # a time in view ends in the zone's short name; the full name settles which zone it is
+    assert records.zone_names(conn) == "America/New_York"
+    assert records.time_note([ZONED], "America/New_York") == (
+        "Times are the phone's local time (America/New_York), derived from UTC and the phone's "
+        "time zone."
+    )
+    assert "(America/New_York)" in records.times_note(conn)
+
+
+def test_a_row_with_no_time_does_not_read_as_the_day_above(conn) -> None:
+    rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"])
+    untimed = [rows[0], replace(rows[1], local="time unknown (source shows '3/12')")]
+    out = records.table(untimed, records.Sources(conn))
+    assert "<td class='d'>no date</td><td class='t'>time unknown" in out
+
+
+def test_a_call_whose_stored_time_cannot_be_read_says_so(conn) -> None:
+    call = conn.execute("SELECT id FROM calls LIMIT 1").fetchone()[0]
+    conn.execute("UPDATE calls SET ts_utc = 'not a time' WHERE id = ?", (call,))
+    try:
+        (row,) = records.record_rows(conn, [call])
+        assert row.local.startswith("time unknown")
+    finally:
+        conn.rollback()
+
+
 def test_a_table_of_utc_times_is_not_headed_local_time(conn) -> None:
     rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"])
     utc = [replace(r, local=UTC_ONLY) for r in rows]
@@ -156,6 +183,22 @@ def test_a_direction_that_does_not_follow_from_the_sender_is_said_in_words() -> 
     assert records.who(_line("Telegram 5551234", "unknown")).endswith(" · unknown")
 
 
+def test_a_direction_said_in_a_one_line_record_is_bracketed(conn) -> None:
+    # " · " parts the line, so "· incoming in Telegram thread" would read as one part
+    (row,) = records.record_rows(conn, [M948])
+    assert row.way == ""
+    line = records.line(conn, M948, records.Sources(conn))
+    assert " · incoming" not in line and " · outgoing" not in line
+    conn.execute("UPDATE messages SET direction = 'incoming' WHERE id = ?", (M948,))
+    try:
+        (row,) = records.record_rows(conn, [M948])
+        assert row.way == "incoming" and row.who.endswith(" · incoming")
+        line = records.line(conn, M948, records.Sources(conn))
+        assert "this phone) (incoming) in " in line
+    finally:
+        conn.rollback()
+
+
 def test_a_message_with_no_sender_account_always_says_its_direction() -> None:
     # CodeRabbit on #277: "unknown" is no account, so it cannot stand in for the direction
     assert records.who(_line("unknown", "incoming")).endswith(" · incoming")
@@ -171,7 +214,9 @@ def test_a_cited_table_names_the_app_its_senders_leave_off(app, conn) -> None:
     note, table = block.split("<table class='recs'>", 1)
     table = table.split("</table>", 1)[0]
     assert "Telegram" not in table
-    assert 'Observed <span class="q">Telegram</span> messages in' in note
+    assert 'Observed <span class="q">Telegram</span> messages in thread ' in note
+    assert "@northstar" in note  # one thread: said once, so no row repeats it
+    assert "in thread" not in table
     # and when the cited messages are from more than one app, each sender keeps its own
     mixed = records.record_rows(conn, [M948, "msg:item1:Chats!857"])
     assert records.shared(mixed, records.Sources(conn)).app is None
@@ -226,6 +271,36 @@ def test_a_record_that_is_gone_keeps_its_row(conn) -> None:
 # ---------------------------------------------------------------- the claim page
 
 
+def test_cited_messages_from_several_threads_each_say_their_thread(app, conn) -> None:
+    # an outgoing row's counterparty is its thread: C14 cites two phones' SMS and Telegram
+    block = _get(app, "/claim", id="C14").split("Records the failed check cites", 1)[1]
+    note, table = block.split("<table class='recs'>", 1)
+    table = table.split("</table>", 1)[0]
+    cited = [rid for ch in claim_state(conn, "C14").checks for rid in ch.record_ids]
+    messages = [rid for rid in cited if rid.startswith("msg:")]
+    assert len(messages) > 1 and "in thread" not in note
+    assert table.count("<span class='muted'>in thread ") == len(messages)
+
+
+def test_one_cited_record_is_said_in_the_singular(app) -> None:
+    block = _get(app, "/claim", id="C11").split("Records the failed check cites (1)", 1)[1]
+    assert 'Observed <span class="q">Telegram</span> message in thread' in block
+    assert "<summary>Exported values for this record (UTC" in block
+    assert "these 1 record" not in block
+
+
+def test_an_undecided_card_keeps_the_senders_name_from_the_source(app, conn) -> None:
+    # the messages drawn above the line give the account, not its display name
+    body = _get(app, "/claim", id="C05")
+    item = next(x for x in claim_state(conn, "C05").evidence if x.record_id == M948)
+    card = body.split(f"<div class='item' id='{item.id}'>", 1)[1]
+    rec = card.split("<p class='ev-rec'>", 1)[1].split("</p>", 1)[0]
+    assert rec.startswith(
+        '<span class="q">7001001</span> (<span class="q">Dan P</span>, this phone)'
+    )
+    assert "class='lt'" not in rec  # the bubble above gives the time
+
+
 def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(app, conn) -> None:
     body = _get(app, "/claim", id="C04")
     st = claim_state(conn, "C04")
@@ -263,7 +338,7 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
         assert "spreadsheet row" in fold and "not the report's # column" in fold
         assert item.record_id in fold
     evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
-    assert records.TIMES_NOTE in evidence.replace("&#x27;", "'")
+    assert records.times_note(conn) in evidence.replace("&#x27;", "'")
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
 
@@ -273,7 +348,7 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     rows = body.split("<details id='irrelevant'", 1)[1].split("</details>", 1)[0]
     assert "labeled irrelevant</summary>" in rows and "Open, or flag this label" in rows
     assert "as printed" not in rows and "Excel row" in rows
-    assert records.TIMES_NOTE in rows.replace("&#x27;", "'")
+    assert records.times_note(conn) in rows.replace("&#x27;", "'")
     item = next(x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant")
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
@@ -311,6 +386,8 @@ def test_the_conversation_is_five_columns_and_the_reports_table_folds_under_it(a
     assert "derived from UTC and the phone's time zone" in note
     fold = _folds(body, "exported")[0]
     assert context_table(view.lines) in fold  # the report's own table, every column
+    t = view.thread  # and the thread's first and last message in UTC, as the report's header
+    assert f"{t.first_utc} to {t.last_utc} UTC" in fold
     assert "not the report's # column" in html.unescape(fold)
     for ln in view.lines:
         assert ln.utc in fold and ln.direction in fold

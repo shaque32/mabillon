@@ -1372,7 +1372,7 @@ def _irrelevant_list(
     shown = " open" if any(x.id in withheld for x in items) else ""
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
-        f"irrelevant</summary><p class='muted'>{e(screen_records.TIMES_NOTE)}</p>"
+        f"irrelevant</summary><p class='muted cited-note'>{e(screen_records.times_note(conn))}</p>"
         f"<ul>{rows}</ul></details>"
     )
 
@@ -1586,8 +1586,8 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         out.append("<p class='muted'>No relevant evidence items.</p>")
     if groups:  # the cards' one-line records give times in reading words: say how to read them
         out.append(
-            f"<p class='muted'>{e(screen_records.TIMES_NOTE)} Each card's fold gives the values "
-            "as exported.</p>"
+            f"<p class='muted cited-note'>{e(screen_records.times_note(conn))} Each card's fold "
+            "gives the values as exported.</p>"
         )
     by_assumption = {a.id: a for a in st.assumptions}
     found = forwarded.affected(conn)
@@ -1702,6 +1702,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
     values as exported (UTC, the time as printed, the record id) fold under the table."""
     by_assumption = {a.id: a for a in st.assumptions}
     sources = screen_records.Sources(conn)
+    zones = screen_records.zone_names(conn)
     out = []
     for ch in st.checks:
         if ch.outcome is not CheckOutcome.FAIL or not ch.record_ids:
@@ -1716,18 +1717,33 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             else ""
         )
         same = screen_records.shared(rows, sources)
-        # the senders leave their app off when every message is from one app: name it here
+        # the senders leave their app off when every message is from one app, and the rows
+        # leave the thread off when every message is from one thread: name both here
         only_messages = all(r.record_id.startswith("msg:") for r in rows)
+        one = len(rows) == 1
         tier = e(same.tier.value).capitalize() if same.tier else ""
+        of = (q(same.app) if same.app else "") + (
+            f" thread {q(same.thread)}" if same.thread else ""
+        )
         if same.app and only_messages:
-            what = f"{tier} {q(same.app)} messages" if tier else f"{q(same.app)} messages"
+            kind = f"{q(same.app)} message{'' if one else 's'}"
+            what = (f"{tier} {kind}" if tier else kind) + (
+                f" in thread {q(same.thread)}" if same.thread else ""
+            )
         else:
-            what = f"{tier} records" if tier else "Records"
-        times = screen_records.time_note(r.local for r in rows)
+            kind = f"record{'' if one else 's'}"
+            what = f"{tier} {kind}" if tier else kind.capitalize()
+        if not same.words:
+            place = ""
+        elif same.thread and same.app and only_messages:
+            place = f", {same.words}"  # "... in thread @northstar, item1.xlsx, Chats sheet"
+        else:
+            place = f" in {same.words}"
+        times = screen_records.time_note((r.local for r in rows), zones)
         note = (
             what
-            + (f" in {same.words}" if same.words else "")
-            + (f"; the messages are from {q(same.app)}" if same.app and not only_messages else "")
+            + place
+            + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
             + "."
             + (f" {times}" if times else "")
         )
@@ -1751,8 +1767,9 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if more > 0
                 else ""
             )
-            + f"<details class='exported'><summary>Exported values for these {len(rows)} "
-            f"record{'' if len(rows) == 1 else 's'} (UTC, as printed, record id)</summary>"
+            + "<details class='exported'><summary>Exported values for "
+            + ("this record" if one else f"these {len(rows)} records")
+            + " (UTC, as printed, record id)</summary>"
             f"{excel}<ol class='cited'>{exported}</ol></details>"
         )
     return "".join(out)

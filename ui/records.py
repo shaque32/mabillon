@@ -23,6 +23,7 @@ from core.ingest import forwarded
 from core.report.fmt import e, q
 from core.report.selection import sender_words
 from core.restore.view import Line, message_lines
+from core.zones import device_zones
 
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 # format_local's two timed forms: "2026-02-20 19:02:11 EST (UTC-05:00)" and
@@ -35,10 +36,6 @@ _SHEET_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
 EXCEL = "cellebrite_excel"
 EXCEL_ROW_NOTE = "An Excel row is the spreadsheet's own row number, not the report's # column."
 LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
-# for lines whose times are not gathered in one table: true whether the zone is known or not
-TIMES_NOTE = (
-    f"Times are the phone's local time, {LOCAL_TIME_NOTE}, or UTC where the zone is unknown."
-)
 # a message with no sender account, as core/restore/view.py and core/audit/context.py name it
 UNKNOWN_SENDERS = frozenset({"unknown", "unknown sender"})
 
@@ -76,21 +73,40 @@ def when(local: str, date: bool = True) -> str:
     )
 
 
-def time_note(locals_: Iterable[str]) -> str:
+def zone_names(conn: sqlite3.Connection) -> str:
+    """The time zones the case's phones are read in, by their full names: "America/New_York",
+    or "America/New_York or Asia/Kolkata, by phone"; "" when no phone's zone is known. A time
+    in view ends in the zone's short name ("EDT", "CST"), which more than one zone can share;
+    the full name beside the note on times settles which, and with it the UTC offset."""
+    names = sorted(
+        {z.key for z in (device_zone(conn, d) for d in device_zones(conn)) if z is not None}
+    )
+    return " or ".join(names) + (", by phone" if len(names) > 1 else "")
+
+
+def _local_words(zones: str) -> str:
+    return f"Times are the phone's local time{f' ({zones})' if zones else ''}, {LOCAL_TIME_NOTE}"
+
+
+def time_note(locals_: Iterable[str], zones: str = "") -> str:
     """How to read the times of a set of rows, said once above them: the phone's local time,
-    UTC where the phone's zone is unknown, or both; "" when no row has a time in either form."""
+    UTC where the phone's zone is unknown, or both; "" when no row has a time in either form.
+    zones: zone_names(conn), named once so a short zone name in a row is not ambiguous."""
     readings = [r for r in (reading(x) for x in locals_ if x) if r is not None]
     if not readings:
         return ""
     zoned = sum(1 for r in readings if not r.caveat)
     if zoned == len(readings):
-        return f"Times are the phone's local time, {LOCAL_TIME_NOTE}."
+        return f"{_local_words(zones)}."
     if zoned == 0:
         return "Times are UTC: the phone's time zone is unknown."
-    return (
-        f"Times are the phone's local time, {LOCAL_TIME_NOTE}, except those marked device zone "
-        "unknown, which are UTC."
-    )
+    return f"{_local_words(zones)}, except those marked device zone unknown, which are UTC."
+
+
+def times_note(conn: sqlite3.Connection) -> str:
+    """The same note for lines whose times are not gathered in one table (evidence cards, the
+    labeled-irrelevant list): true whether each phone's zone is known or not."""
+    return f"{_local_words(zone_names(conn))}, or UTC where the zone is unknown."
 
 
 def local_day(conn: sqlite3.Connection, ts_utc: str | None, device_id: str | None) -> str:
@@ -191,6 +207,7 @@ class Row:
     what: str  # HTML: the message, or the record's text
     tier: ProvenanceTier | None  # None for a record no longer in the case: nothing to observe
     target: bool = False
+    way: str = ""  # a message's direction where who says it (it does not follow from the sender)
     app: str = ""  # a message's app
     thread: str = ""  # a message's thread id
     title: str = ""  # a message's thread title
@@ -234,6 +251,7 @@ def message_rows(
                 what=body,
                 tier=ln.tier,
                 target=ln.is_target,
+                way="" if follows(ln.sender, ln.direction) else ln.direction,
                 app=app or own_app,
                 thread=thread,
                 title=title,
@@ -248,7 +266,11 @@ def _call_local(conn: sqlite3.Connection, record_id: str) -> str:
     ).fetchone()
     if r is None:
         return ""
-    return format_local(parse_utc(r[0]), device_zone(conn, r[2]), r[1])
+    try:
+        utc = parse_utc(r[0])
+    except ValueError:  # not a time: say so with the source's own value, as a NULL time does
+        utc = None
+    return format_local(utc, device_zone(conn, r[2]), r[1])
 
 
 def record_rows(conn: sqlite3.Connection, record_ids: Iterable[str]) -> list[Row]:
@@ -293,6 +315,7 @@ class Shared:
     sheet: str | None  # the one Excel sheet of that file every row is on
     tier: ProvenanceTier | None  # the one tier every row carries
     app: str | None = None  # the app the rows' senders leave off, for the caller to name
+    thread: str | None = None  # the one thread's title, when every message is from it
 
     @property
     def words(self) -> str:
@@ -311,7 +334,10 @@ def shared(rows: list[Row], sources: Sources) -> Shared:
     # a message no longer in the case has no app to give, and takes none from the others
     apps = {r.app for r in rows if r.record_id.startswith("msg:") and r.source_id}
     app = next(iter(apps)) if len(apps) == 1 else None
-    return Shared(file, sheet, next(iter(tiers)) if len(tiers) == 1 else None, app or None)
+    threads = {r.thread: r.title for r in rows if r.thread}
+    thread = next(iter(threads.values())) if len(threads) == 1 else None
+    tier = next(iter(tiers)) if len(tiers) == 1 else None
+    return Shared(file, sheet, tier, app or None, thread)
 
 
 def table(
@@ -324,13 +350,15 @@ def table(
     would leave empty is left out. What the rows share is left to the caller to say once above
     the table (shared(rows): the file and sheet, the tier, and the app its senders leave off):
     a row then gives only its Excel row number, and a tier column appears only when the rows
-    differ in tier. The time column says the phone's local time when any row's zone is known
+    differ in tier; a message says its thread only when the messages are from more than one.
+    The time column says the phone's local time when any row's zone is known
     (a row whose zone is not says so). href: a link for a row's place in the file, such as its
     conversation."""
     same = shared(rows, sources)
     timed = any(r.local for r in rows)
     read = [rd for rd in (reading(r.local) for r in rows) if rd is not None]
     named = any(r.who for r in rows)
+    split = len({r.thread for r in rows if r.thread}) > 1
     what = "Message" if rows and all(r.record_id.startswith("msg:") for r in rows) else "Record"
     if any(not rd.caveat for rd in read):
         clock = "Phone's local time"
@@ -350,7 +378,8 @@ def table(
         if timed:
             rd = reading(r.local)
             if rd is None:
-                cells.append(f"<td class='d'></td><td class='t'>{e(r.local)}</td>")
+                # an empty date cell means "the same day as the row above": say there is none
+                cells.append(f"<td class='d'>no date</td><td class='t'>{e(r.local)}</td>")
                 last_date = None
             else:
                 date = "" if rd.date == last_date else e(rd.date)
@@ -358,7 +387,12 @@ def table(
                 last_date = rd.date
         if named:
             cells.append(f"<td class='from'>{r.who}</td>")
-        cells.append(f"<td class='what'>{r.what}</td>")
+        # messages from more than one thread: each says its own (its counterparty), under the
+        # message, where the row has room
+        where = (
+            f"<br><span class='muted'>in thread {q(r.title)}</span>" if split and r.thread else ""
+        )
+        cells.append(f"<td class='what'>{r.what}{where}</td>")
         if not same.tier:
             cells.append(f"<td class='tier'>{e(r.tier.value) if r.tier else ''}</td>")
         if not r.source_id:
@@ -389,7 +423,8 @@ def line(
     """One record as a short line of HTML: who, when and where it sits in the file.
     place: the (source id, locator) to print, when the caller holds its own reference to the
     record (an evidence item's); the default is the record's own. shown: the messages drawn
-    above already give the sender and the time, so the line gives the thread and the place.
+    above already give the time, so the line leaves it out; the sender stays, because only
+    this line gives the account's display name from the source.
     quoted: the words the caller prints beside the line; a record whose whole text they are (a
     contact, a call) is not printed twice."""
     r = record_rows(conn, [record_id])[0]
@@ -400,10 +435,10 @@ def line(
     if not r.source_id:  # the record is gone; the caller's own reference still places it
         return f"{r.what} · {where}"
     if r.thread:
-        thread = f"{q(r.app)} thread {q(r.title)}"
-        if shown:
-            return f"{thread} · {where}"
-        return f"{r.who} in {thread} · {when(r.local)} · {where}"
+        # " · " parts the line, so a direction that has to be said goes in brackets here
+        sender = r.who.removesuffix(f" · {e(r.way)}") + (f" ({e(r.way)})" if r.way else "")
+        head = f"{sender} in {q(r.app)} thread {q(r.title)}"
+        return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     rec = get_record(conn, record_id)
     what = "" if rec is not None and quoted is not None and rec.text == quoted else r.what
     return " · ".join(x for x in (what, when(r.local) if r.local else "", where) if x)
