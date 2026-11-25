@@ -1,4 +1,4 @@
-## 2026-11-25: Filler 15: more ways to name a side as a saved contact or a phone number (#PRNUM)
+## 2026-11-25: Filler 15: more ways to name a side as a saved contact or a phone number (#282)
 - Changed: the follow-up PR #279 promised before the v5 run, for older gaps its Claude reviews
   found (filler 13 read them the same way). A claim that names the other side as a saved contact
   or a phone number states a part no check reads, so the unread-words guard
@@ -17,7 +17,7 @@
   minutes" and "the contact between" stay plain. Written inside a quoted message, these words
   stay the message's, as in filler 14. The words found are named in the drop reason; each kind
   is now listed, where filler 14 stopped at the first.
-- Where: PR #PRNUM
+- Where: PR #282
 - Verified: `tests/test_fill_calls.py`: `test_more_ways_to_name_a_contact_or_number_keep_the_event`
   (16 wordings, communication and timing; all 32 fail without the fix) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (8 wordings).
