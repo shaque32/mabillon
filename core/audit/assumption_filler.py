@@ -3422,7 +3422,7 @@ _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact,
 _NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)")
 # What names a side right after "the number": a name or a handle, never the phone itself
 # ("the number (212) 555-0199") or "a number of calls" (filler 15)
-_NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|[\w.%+-]+@)", re.I)
+_NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|@|[\w.%+-]+@)", re.I)
 # A bare "contact" before a capitalised name, right after a call's word: "called contact Marc
 # Garage", "a call to contact Marc Garage", never the verb ("told him to contact Marc Garage",
 # "Contact PETROV later") (filler 15)
@@ -3440,7 +3440,10 @@ _CALL_BEFORE_CONTACT_RE = re.compile(
 # messages, a number the log confirms"). Never the phone itself (", the number (212) ...").
 _SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
 _SIDE_NOUN = rf"{_SIDE_WORDS}(?P<noun>contact|number)\b(?!\s*[\d(+])"
-_SIDE_NOT_A_SIDE = r"(?!\s+(?:that|which|lasting|lasted|between|with|for|of\s+(?-i:[a-z0-9])))"
+_SIDE_NOT_A_SIDE = (  # "a contact of his" is an owner, never a length (CodeRabbit on #282)
+    r"(?!\s+(?:that|which|lasting|lasted|between|with|for"
+    r"|of\s+(?!(?:his|her|hers|their|theirs|mine|yours|ours)\b)(?-i:[a-z0-9])))"
+)
 _SIDE_AFTER_RES = (
     re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}{_SIDE_NOT_A_SIDE}", re.I),
     re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}", re.I),

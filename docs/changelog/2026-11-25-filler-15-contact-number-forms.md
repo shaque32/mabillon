@@ -24,11 +24,11 @@
   in the drop reason; each kind is now listed, where filler 14 stopped at the first.
 - Where: PR #282
 - Verified: `tests/test_fill_calls.py`: `test_more_ways_to_name_a_contact_or_number_keep_the_event`
-  (25 wordings, communication and timing; the 16 new forms fail without the fix, and the 9
-  added in review, 4 of which filler 14 already caught, guard the review's findings) and
+  (26 wordings, communication and timing; the 16 new forms fail without the fix, and the 10
+  added in review, 4 of which filler 14 already caught, guard the reviews' findings) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (14 wordings).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,434 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,436 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
   Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: see the PR description. Cloud
