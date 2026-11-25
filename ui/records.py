@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from core import db
 from core.contracts import ProvenanceTier
 from core.enrich.local_time import format_local, parse_utc
 from core.enrich.records import get_record
@@ -41,6 +42,9 @@ LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
 CARRIED_TIME_NOTE = "The time is that of the message it is attached to."
 # a message with no sender account, as core/restore/view.py and core/audit/context.py name it
 UNKNOWN_SENDERS = frozenset({"unknown", "unknown sender"})
+# what reading a stored time can raise: not an ISO time (ValueError), or a date so near year 1
+# or 9999 that moving it into the phone's zone leaves the calendar (OverflowError)
+UNREAD = (ValueError, OverflowError)
 
 
 @dataclass(frozen=True)
@@ -114,14 +118,13 @@ def time_note(locals_: Iterable[str], zones: str = "") -> str:
 def local_day(sources: Sources, ts_utc: str | None, device_id: str | None) -> str:
     """A stored UTC time's date on the phone's calendar, "Feb 21, 2026", as the rows' date
     cells give it; the UTC date with " (UTC)" when the phone's zone is unknown; "" when the
-    time cannot be read."""
+    time cannot be read (not a time, or a date too near year 1 or 9999 to move into the
+    phone's zone)."""
     try:
         dt = parse_utc(ts_utc)
-    except ValueError:
+        r = reading(format_local(dt, sources.zones.get(device_id or ""), None)) if dt else None
+    except UNREAD:
         return ""
-    if dt is None:
-        return ""
-    r = reading(format_local(dt, sources.zones.get(device_id or ""), None))
     if r is None:
         return ""
     return r.date + (" (UTC)" if r.caveat else "")
@@ -307,21 +310,30 @@ def message_rows(
     return out
 
 
-def _unread(conn: sqlite3.Connection, record_id: str) -> Line | None:
-    """A message whose stored UTC time is not a time at all, as the conversation line
-    core/restore/view.py message_lines would give it were the time missing: the same sender,
-    direction and text, "time unknown" with the value the source printed. message_lines raises
-    on such a time, so this reads the same columns and leaves the time unread."""
+def _own_line(conn: sqlite3.Connection, record_id: str, sources: Sources) -> Line | None:
+    """One message as the conversation line core/restore/view.py message_lines gives it, read
+    here for the cases message_lines raises on: a stored time that cannot be read (the line
+    then says "time unknown" with the value the source printed, and keeps its sender,
+    direction and text), and a case made before messages kept the sender text as printed."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    shown_col = "m.sender_raw" if "sender_raw" in cols else "NULL"
     r = conn.execute(
-        "SELECT m.source_id, m.locator, a.app, a.identifier, a.device_id, m.sender_raw,"
-        " m.direction, m.ts_raw, m.body FROM messages m"
+        f"SELECT m.source_id, m.locator, a.app, a.identifier, a.device_id, {shown_col},"  # noqa: S608
+        " m.direction, m.ts_utc, m.ts_raw, m.body, t.device_id FROM messages m"
+        " LEFT JOIN threads t ON t.id = m.thread_id"
         " LEFT JOIN accounts a ON a.id = m.sender_account_id WHERE m.id = ?",
         (record_id,),
     ).fetchone()
     if r is None:
         return None
-    src, loc, app, ident, own_dev, shown, direction, ts_raw, body = r
+    src, loc, app, ident, own_dev, shown, direction, ts_utc, ts_raw, body, dev = r
     sender = f"{app} {ident}" + (" (this phone)" if own_dev else "") if ident else "unknown"
+    try:
+        dt = parse_utc(ts_utc)
+        local = format_local(dt, sources.zones.get(dev or ""), ts_raw)
+        utc = f"{dt:%Y-%m-%d %H:%M:%S} UTC" if dt else "time unknown"
+    except UNREAD:
+        utc, local = "time unknown", format_local(None, None, ts_raw)
     return Line(
         record_id=record_id,
         source_id=src,
@@ -329,31 +341,25 @@ def _unread(conn: sqlite3.Connection, record_id: str) -> Line | None:
         sender=sender,
         shown_as=shown,
         direction=direction,
-        utc="time unknown",
-        local=format_local(None, None, ts_raw),
+        utc=utc,
+        local=local,
         raw=ts_raw,
         body=body,
         tier=ProvenanceTier.OBSERVED,
     )
 
 
-def _lines(conn: sqlite3.Connection, ids: list[str]) -> list[Line]:
-    """Messages as conversation lines. core/restore/view.py message_lines raises on a stored
-    time that is not a time at all; such a message still gets its line, with its sender and
-    direction and its time unread (_unread)."""
+def _lines(conn: sqlite3.Connection, ids: list[str], sources: Sources) -> list[Line]:
+    """Messages as conversation lines (core/restore/view.py message_lines). Where that raises
+    for a batch (a stored time that cannot be read, a case from an older schema), each of its
+    messages still gets its line (_own_line)."""
     lines: list[Line] = []
     for at in range(0, len(ids), CHUNK):
         part = ids[at : at + CHUNK]
         try:
             lines.extend(message_lines(conn, part, None))
-        except ValueError:
-            for rid in part:
-                try:
-                    lines.extend(message_lines(conn, [rid], None))
-                except ValueError:
-                    line_ = _unread(conn, rid)
-                    if line_ is not None:
-                        lines.append(line_)
+        except (*UNREAD, *db.OperationalError):
+            lines.extend(ln for ln in (_own_line(conn, rid, sources) for rid in part) if ln)
     return lines
 
 
@@ -375,10 +381,22 @@ def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[
     if r is None:
         return "", "", ""
     try:
-        utc = parse_utc(r[0])
-    except ValueError:  # not a time: say so with the source's own value, as a NULL time does
-        utc = None
-    return format_local(utc, sources.zones.get(r[2]), r[1]), r[2] or "", r[3]
+        local = format_local(parse_utc(r[0]), sources.zones.get(r[2]), r[1])
+    except UNREAD:  # say so with the source's own value, as a NULL time does
+        local = format_local(None, None, r[1])
+    return local, r[2] or "", r[3]
+
+
+NOT_RECORDS = {"acct": "an account", "thr": "a thread"}
+
+
+def not_a_record(record_id: str) -> str:
+    """For an id a check cites that is not a record's id (an account, a thread): what it is,
+    as HTML, so its row does not read as a record that went missing. "" for a record's id."""
+    kind = NOT_RECORDS.get(record_id.split(":", 1)[0])
+    if kind is None:
+        return ""
+    return f"<span class='mono'>{e(record_id)}</span> is {kind}, not a record"
 
 
 def record_rows(
@@ -388,7 +406,8 @@ def record_rows(
     sources: Sources | None = None,
 ) -> list[Row]:
     """Rows for records of any kind, in the order given. A record that is no longer in the
-    case keeps its row and says so. Every record is as its source holds it: tier observed.
+    case keeps its row and says so; so does an id that is an account's or a thread's. Every
+    record is as its source holds it: tier observed.
     When every message among them is from one app, the senders leave the app's name off (the
     caller's heading or the row's thread gives it); strip leaves each sender's own app off
     whatever the others are (see message_rows). sources: the page's cache, for the phones'
@@ -398,7 +417,8 @@ def record_rows(
     known = _of_messages(conn, [r for r in dict.fromkeys(ids) if r.startswith("msg:")])
     apps = {v[1] for v in known.values()}
     app = next(iter(apps)) if len(apps) == 1 else None
-    by_id = {r.record_id: r for r in message_rows(conn, _lines(conn, list(known)), app, strip)}
+    lines = _lines(conn, list(known), sources)
+    by_id = {r.record_id: r for r in message_rows(conn, lines, app, strip)}
     out = []
     for rid in ids:
         if rid in by_id:
@@ -406,7 +426,7 @@ def record_rows(
             continue
         rec = get_record(conn, rid)
         if rec is None:
-            out.append(Row(rid, "", "", "", "", "record not found", None))
+            out.append(Row(rid, "", "", "", "", not_a_record(rid) or "record not found", None))
             continue
         local, device, carrier = _timed(conn, rid, sources)
         out.append(
@@ -552,9 +572,9 @@ def table(
                 place = (sources.row if same.file else sources.place)(r.source_id, r.locator)
             url = href(r) if href else None
             if url:
-                title = (
-                    f" title='{e(href_title)}' aria-label='{e(href_title)}'" if href_title else ""
-                )
+                # a title, not an aria-label: a label would replace the row number as the
+                # link's name
+                title = f" title='{e(href_title)}'" if href_title else ""
                 place = f"<a href='{e(url)}'{title}>{place}</a>"
         cells.append(f"<td class='src'>{place}</td>")
         cls = " class='target'" if r.target else ""

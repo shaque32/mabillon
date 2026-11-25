@@ -1783,10 +1783,14 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             else ""
         )
         same = screen_records.shared(cited, sources)
-        # a cited id that is not among the case's records has no file, tier or thread: the
-        # line then claims none of them for the list, and each row found gives its own
-        gone = sum(1 for r in cited if not r.source_id)
-        if gone:
+        # a cited id with no record behind it has no file, tier or thread: the line then
+        # claims none of them for the list, and each row found gives its own. Such an id is a
+        # record's that is not among the case's records, or an account's or a thread's (the
+        # same_account check cites those), which is in the case but is not a record.
+        unplaced = [r for r in cited if not r.source_id]
+        others = sum(1 for r in unplaced if screen_records.not_a_record(r.record_id))
+        gone = len(unplaced) - others
+        if unplaced:
             same = screen_records.Shared(None, None, None, same.app, None)
         # the senders leave their app off when every message is from one app, and the rows
         # leave the thread off when every message is from one thread: name both here
@@ -1820,6 +1824,12 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 f" {gone} of the {len(cited)} {'is' if gone == 1 else 'are'} not among the case's "
                 "records."
                 if gone
+                else ""
+            )
+            + (
+                f" {others} of the {len(cited)} {'is' if others == 1 else 'are'} an account or a "
+                "thread, not a record."
+                if others
                 else ""
             )
             + (f" {e(how)}" if how else "")

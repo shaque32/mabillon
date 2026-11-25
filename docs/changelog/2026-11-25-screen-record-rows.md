@@ -21,19 +21,23 @@
     as the day of the row above; "no date" is for a record the source gives no time for at all
     (a contact, a message with no time). An attachment has no time of its own: its row shows its
     message's time and says so, and the fold gives that message's exported line (UTC and as
-    printed). A message whose stored time is not a time keeps its row, sender and direction.
+    printed). A message whose stored time is not a time, or is too near year 1 or 9999 to move
+    into the phone's zone, keeps its row, sender and direction and reads "time unknown"; a case
+    made before messages kept the sender text as printed still gets its rows.
   - Claim page, the records a failed check cites: a table (date once per run of rows, the
     phone's local time, sender, the message or record text, the Excel row linked to the message
     in its conversation) in place of the list of full citations. Above it, once: the assumption,
     the tier, the app and the thread when every message shares them ("Observed Telegram messages
     in thread @northstar"), the file and sheet, and that the time is derived from UTC and the
     phone's time zone. That line is taken over every record the heading counts, also when the
-    table draws only the first 12; when a cited id is not among the case's records, the line
-    says how many and claims no shared tier, file or thread. Each Excel row link carries a title
-    saying it opens the message in its conversation. Messages from more than one thread each say
-    their thread under the message. Under it, one fold, "Exported values for these N records":
-    each record's line exactly as the report prints it (`record_line`: UTC and the time as
-    printed) with its record id, and the note on what an Excel row number is.
+    table draws only the first 12; when a cited id is not among the case's records, or is an
+    account's or a thread's (which is in the case but is not a record), the line says how many
+    of each and claims no shared tier, file or thread, and an account or thread row says what it
+    is in place of "record not found". Each Excel row link carries a title saying it opens the
+    message in its conversation. Messages from more than one thread each say their thread under
+    the message. Under it, one fold, "Exported values for these N records": each record's line
+    exactly as the report prints it (`record_line`: UTC and the time as printed) with its record
+    id, and the note on what an Excel row number is.
   - Evidence card: one line (sender, thread, time, file, sheet and Excel row) in place of the
     "As exported" line and the "From ..." line. When the messages are drawn above it, the line
     leaves the time out. The Evidence section, the labeled-irrelevant list and the evidence
@@ -61,7 +65,7 @@
     none, as the report's record line does: "5551234 (@alex92)", "7001001 (Dan P, this phone)".
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (45 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (48 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; times said as UTC, and headed so, where the
   phone's zone is unknown; the note naming only the zones of the phones its rows are from, and
   left out when no row has a time or an Excel row; an attachment's time, said to be its
@@ -79,15 +83,16 @@
   eye in the running demo at 1440 px and 390 px. On the demo case the cited-records block of C04
   goes from 20 lines of citation to a 10-row table, and each decided evidence card loses two
   wrapped lines.
-- Open: a failed check that cites an account or a thread (`acct:`, `thr:` ids, the same_account
-  check) still lists it as "record not found", on the screen and in the report alike
-  (`record_line` in `core/`); wording those needs a decision on the tier an account row carries
-  and a report change. Three more screen PRs (evidence as table rows, Timeline and Gaps, the
-  Case page record block with the Audit log and Activity). The Selection page's own bubbles and
-  its "nearby" table are report fragments and keep the long format until the report is decided.
-  The report itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's go-ahead. Not
-  tested on a real export: sender and place wording was only seen on the synthetic Excel
-  reports.
+- Open: for an account or a thread a failed check cites (`acct:`, `thr:` ids, the same_account
+  check) the report, and so the fold under the screen's table, still prints "record not found"
+  (`record_line` in `core/`), and the screen's row gives it no tier; both need a report change
+  and a decision on the tier an account carries. A conversation page whose window holds a
+  message dated too near year 1 or 9999 still fails in `core/restore/view.py`, as before this
+  PR. Three more screen PRs (evidence as table rows, Timeline and Gaps, the Case page record
+  block with the Audit log and Activity). The Selection page's own bubbles and its "nearby"
+  table are report fragments and keep the long format until the report is decided. The report
+  itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's go-ahead. Not tested on a
+  real export: sender and place wording was only seen on the synthetic Excel reports.
 - Affects: the review screen's wording and layout only. No capability, verdict path, model,
   privacy or customer-facing claim.
 - Status doc: no change

@@ -402,6 +402,7 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
     assert table.count("<tr") == len(cited) + 1
     assert "/selection/context?id=msg%3Aitem1%3AChats%21938" in table
     assert table.count("title='Open this message in its conversation'") == len(cited)
+    assert "aria-label" not in table  # the row number stays the link's name
     (fold,) = _folds(block.split("Rules' working", 1)[0], "exported")
     assert "not the report's # column" in html.unescape(fold)
     for rid in cited:
@@ -533,6 +534,63 @@ def test_one_message_in_a_conversation_table_is_said_in_the_singular(conn) -> No
     view = context_view(conn, M948)
     _, table = restore_pages._table(conn, view.lines[:1], view.thread.app, records.Sources(conn))
     assert "<summary>Exported values for this message (UTC" in table
+
+
+def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    acct = conn.execute("SELECT id FROM accounts LIMIT 1").fetchone()[0]
+    thread = conn.execute("SELECT id FROM threads LIMIT 1").fetchone()[0]
+    assert acct.startswith("acct:") and thread.startswith("thr:")
+    real = pages.screen_records.record_rows
+
+    def with_two_more(conn, ids, **kw):  # noqa: ANN001, ANN003, ANN202
+        return real(conn, [*ids, acct, thread], **kw)
+
+    monkeypatch.setattr(pages.screen_records, "record_rows", with_two_more)
+    block = _get(app, "/claim", id="C11").split("Records the failed check cites", 1)[1]
+    above, table = block.split("<table class='recs'>", 1)
+    above = html.unescape(above)
+    assert "2 of the 3 are an account or a thread, not a record." in above
+    assert "not among the case's records" not in above
+    table = table.split("</table>", 1)[0]
+    assert "record not found" not in table
+    assert f"<span class='mono'>{acct}</span> is an account, not a record" in table
+    assert f"<span class='mono'>{thread}</span> is a thread, not a record" in table
+
+
+def test_a_date_too_far_to_move_into_the_phones_zone_reads_as_time_unknown(conn) -> None:
+    from ui import restore_pages
+
+    # year 1 parses, but New York is west of UTC: the local time would fall before year 1
+    far = "0001-01-01T00:00:00Z"
+    sources = records.Sources(conn)
+    assert records.local_day(sources, far, "dev:item1") == ""
+    # the conversation's header reads the thread's first and last message
+    thread = replace(context_view(conn, M948).thread, first_utc=far)
+    assert restore_pages._span(conn, thread, sources) == ""
+    call = conn.execute("SELECT id FROM calls LIMIT 1").fetchone()[0]
+    conn.execute("UPDATE messages SET ts_utc = ? WHERE id = ?", (far, M948))
+    conn.execute("UPDATE calls SET ts_utc = ? WHERE id = ?", (far, call))
+    try:
+        message, called = records.record_rows(conn, [M948, call], sources=sources)
+        assert message.local.startswith("time unknown (source shows") and message.who
+        assert called.local.startswith("time unknown")
+    finally:
+        conn.rollback()
+
+
+def test_a_case_from_before_the_sender_text_column_still_gets_its_rows(conn) -> None:
+    sources = records.Sources(conn)
+    (before,) = records.record_rows(conn, [M948], sources=sources)
+    conn.execute("BEGIN")
+    try:
+        conn.execute("ALTER TABLE messages DROP COLUMN sender_raw")
+        (row,) = records.record_rows(conn, [M948], sources=sources)
+        assert row.local == before.local and row.what == before.what and row.who
+    finally:
+        conn.rollback()
+    assert records.record_rows(conn, [M948], sources=sources) == [before]
 
 
 def test_a_long_cited_list_is_described_over_every_record_it_counts(app, conn, monkeypatch) -> None:
