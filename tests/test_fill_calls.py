@@ -1143,6 +1143,10 @@ def test_contact_as_a_communication_is_plain(conn):
         ("PETROV called contact Marc Garage on WhatsApp.", "contact"),
         # a message's word before a bare "contact", and a plural (Claude review on #282)
         ('PETROV called "Marc Garage" on WhatsApp at 9:14 p.m., his contact.', "contact"),
+        # an abbreviation's dot is not a sentence end (CodeRabbit on #282)
+        ('PETROV had a WhatsApp call with "Marc Garage" at 9:14 p.m. EDT, his contact.', "contact"),
+        ('PETROV called "Marc Garage" in the U.S. On WhatsApp, his contact.', "contact"),
+        ('PETROV called "Marc Garage" for Mr. Reyes, his contact.', "contact"),
         ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
         ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
         ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),

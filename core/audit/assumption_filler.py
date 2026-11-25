@@ -3482,9 +3482,11 @@ _SIDE_AFTER_RES = (
 # REYES, his contact') (Claude review on #282). After an unquoted name ("REYES, a contact on
 # WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
 # The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282),
-# within its sentence (Claude review on #282).
+# within its sentence (Claude review on #282). A dot after an abbreviation ("p.m. EDT", "U.S.",
+# "Mr.") does not end the sentence (CodeRabbit on #282).
+_SENTENCE_END = r"(?<!\.[a-z])(?<!\b(?:mr|ms|dr|st))(?<!\bmrs)[.!?]\s+(?-i:[A-Z])"
 _SIDE_LATER_RE = re.compile(
-    rf"(?:(?![.!?]\s+(?-i:[A-Z]))[^\"“”‘’']){{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
+    rf"(?:(?!{_SENTENCE_END})[^\"“”‘’']){{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
     rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )

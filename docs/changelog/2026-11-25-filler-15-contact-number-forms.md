@@ -27,7 +27,8 @@
   WhatsApp" (the checks read REYES), "4 times on WhatsApp, a number the log shows", "which was
   the number of calls", "12 messages, a number the log confirms". A quoted message is not a
   name ('wrote "ok" to REYES, his contact'), a count's "number" right after a quoted name stays
-  plain ('"X", a number of times'), and a later side must stand in the quote's sentence. A saved
+  plain ('"X", a number of times'), and a later side must stand in the quote's sentence (a dot
+  after "p.m.", "U.S." or "Mr." does not end it). A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
