@@ -964,6 +964,9 @@ def test_contact_as_a_communication_is_plain(conn):
         "the contact between PETROV and REYES",
     ):
         assert not any("contact" in w for w in f.unread_words(text, (), set())), text
+    # a lower-case address after "the contact" is still a saved contact (CodeRabbit on #279)
+    out = f.unread_words("Item 1 called the contact marc@example.org on Skype.", (), set())
+    assert any("contact" in w for w in out)
 
 
 def test_unread_words_name_each_word_once(conn):

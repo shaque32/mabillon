@@ -3411,7 +3411,7 @@ _CONTACT_AFTER_RE = re.compile(
 # What names a saved contact right after "the contact": a name, a number or a handle ("the
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
 # contact between PETROV and REYES" (Claude review on #279)
-_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘'])")
+_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)")
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
