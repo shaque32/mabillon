@@ -528,8 +528,10 @@ def test_a_decided_item_is_one_row_and_its_details_keep_everything_the_card_had(
         # in view: stance, tier, the quote and the record in short
         assert "<div class='ev-tags'>" in visible and "confirmed: accepted by an expert" in visible
         assert "Excel row" in visible and "UTC 20" not in visible
-        # folded: the review, the decision form, the values as exported, the ids, the model note
-        assert "<strong>Review:</strong>" in fold and "name='status' value='open'" in fold
+        # folded: the review (the group says it above, so the row does not), the decision
+        # form, the values as exported, the ids, the model note
+        assert fold.count("<strong>Review:</strong>") == 1 and "name='status' value='open'" in fold
+        assert "dismissed by an expert" not in visible  # accepted: its tier says so
         assert record_line(conn, item.record_id) in fold
         assert "spreadsheet row" in fold and "not the report's # column" in fold
         assert item.record_id in fold and "Labeled " in fold
@@ -543,6 +545,17 @@ def test_a_review_every_decided_row_shares_is_said_once(app, conn) -> None:
     for i in _decided(claim_state(conn, "C03")):
         visible = _card(body, i).split("<details class='ev-detail'>", 1)[0]
         assert "<strong>Review:</strong>" not in visible
+
+
+def test_a_dismissed_row_says_so_when_the_group_says_the_review_once(app, conn) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    gone = [x for x in st.evidence if x.id in _decided(st) and x.status.value == "dismissed"]
+    assert gone
+    for x in gone:
+        visible = _card(body, x.id).split("<details class='ev-detail'>", 1)[0]
+        assert "<span class='badge b-dismissed'>dismissed by an expert</span>" in visible
+        assert "confirmed: accepted by an expert" not in visible
 
 
 def test_the_same_message_under_another_assumption_points_up_instead_of_repeating(
@@ -563,7 +576,9 @@ def test_the_same_message_under_another_assumption_points_up_instead_of_repeatin
         for i in ids:
             card = _card(body, i)
             assert record_line(conn, rid) in card  # each keeps its exported values
-            assert "<strong>Review:</strong>" in card and "name='status' value='open'" in card
+            # the review once: in view, or in the fold when the group says it above
+            assert card.count("<strong>Review:</strong>") == 1
+            assert "name='status' value='open'" in card
             if i != drawn[0]:  # the conversation is in the first row's fold only
                 assert "The messages around it" not in card and "class='thread mini'" not in card
 
@@ -691,6 +706,10 @@ def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, mon
     assert "record not found" not in table
     assert f"<span class='mono'>{acct}</span> is an account, not a record" in table
     assert f"<span class='mono'>{thread}</span> is a thread, not a record" in table
+    # the fold counts the one record and says what the two other ids are
+    fold = block.split("<details class='exported'>", 1)[1].split("</details>", 1)[0]
+    assert "Exported values for this record" in fold and "record not found" not in fold
+    assert f"<li><span class='mono'>{acct}</span> is an account, not a record</li>" in fold
 
 
 def test_a_list_of_accounts_and_threads_alone_is_not_called_records(app, conn, monkeypatch) -> None:
@@ -704,15 +723,28 @@ def test_a_list_of_accounts_and_threads_alone_is_not_called_records(app, conn, m
         pages.screen_records, "record_rows", lambda conn, ids, **kw: real(conn, cited, **kw)
     )
 
-    def above() -> str:
-        block = _get(app, "/claim", id="C11").split("Records the failed check cites", 1)[1]
-        note = block.split("<p class='muted cited-note'>")[-1].split("</p>", 1)[0]
+    def block(heading: str) -> str:
+        body = _get(app, "/claim", id="C11")
+        assert "Records the failed check cites" not in body
+        return body.split(f"{heading} the failed check cites", 1)[1].split("<h2", 1)[0]
+
+    def above(heading: str) -> str:
+        note = block(heading).split("<p class='muted cited-note'>")[-1].split("</p>", 1)[0]
         return html.unescape(re.sub(r"<[^>]+>", "", note))
 
-    assert above().startswith("The 2 cited ids are accounts or threads, not records.")
-    assert "of the 2" not in above() and "Record" not in above()
+    assert above("Accounts or threads").startswith(
+        "The 2 cited ids are accounts or threads, not records."
+    )
+    assert "of the 2" not in above("Accounts or threads")
+    assert "Record" not in above("Accounts or threads")
+    # the column is not headed Record, and no fold offers exported values for ids that have none
+    both = block("Accounts or threads")
+    assert "<th>Cited id</th>" in both and "<th>Record</th>" not in both
+    assert "record not found" not in both and "Exported values for" not in both
     cited.pop()
-    assert above().startswith("The cited id is an account or a thread, not a record.")
+    assert above("Account or thread").startswith(
+        "The cited id is an account or a thread, not a record."
+    )
 
 
 def test_a_date_too_far_to_move_into_the_phones_zone_reads_as_time_unknown(conn) -> None:

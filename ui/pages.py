@@ -1143,12 +1143,16 @@ def evidence_card(
 
 
 def _tags(item: EvidenceItem, last_kind: str | None, flagged: bool, withheld: object,
-          challenged: frozenset[str]) -> str:  # fmt: skip
-    """The item's stance and tier, and the marks that ask for attention."""
+          challenged: frozenset[str], decision: bool = False) -> str:  # fmt: skip
+    """The item's stance and tier, and the marks that ask for attention. decision (a decided
+    row): an item the expert dismissed says so beside its stance, since its tier does not and
+    its review may be said once above the rows; an accepted item's tier already says it."""
     stance_cls = "b-against" if item.stance in AGAINST else "b-open"
+    dismissed = decision and item.status == EvidenceStatus.DISMISSED
     return (
         f"<span class='badge {stance_cls}'>{e(STANCE_LABEL[item.stance])}</span>"
         f"{_tier_badge(item, last_kind)}"
+        + ("<span class='badge b-dismissed'>dismissed by an expert</span>" if dismissed else "")
         + ("<span class='badge b-flag'>flagged by you</span>" if flagged else "")
         + ("<span class='badge b-withheld'>needs expert review</span>" if withheld else "")
         + (
@@ -1232,7 +1236,7 @@ def decided_row(
     flag = _flag_label_form(page, claim_id, item, back, run_id) if claim_id is not None else ""
     return (
         f"<div class='item' id='{e(item.id)}'><div class='ev-row'>"
-        f"<div class='ev-tags'>{_tags(item, 'expert', flagged, withheld, challenged)}</div>"
+        f"<div class='ev-tags'>{_tags(item, 'expert', flagged, withheld, challenged, True)}</div>"
         f"<div class='ev-body'>{head}"
         + (f"<p class='ev-rec'><strong class='warn'>{caution}</strong></p>" if caution else "")
         + (
@@ -1244,7 +1248,7 @@ def decided_row(
         + ("" if review_said else review)
         + "<details class='ev-detail'><summary>Details</summary>"
         + (f"<p class='ev-sub'>The messages around it ({len(lines)})</p>{thread}" if thread else "")
-        + review
+        + (review if review_said else "")
         + f"<p class='ev-sub'>Change your decision</p>{_decide_form(page, item, True, back)}"
         + "<p class='ev-sub'>Exported values and model note</p>"
         + (f"<p>{rec}</p>" if same_as else "")
@@ -1739,9 +1743,10 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
     for title, group in groups:
         out.append(f"<h3 class='ev-group'>{e(title)} <span>({len(group)})</span></h3>")
         # a decided group whose items all carry the same review says it once, above the rows
-        reviews = {review_label(conn, x) for x in group}
-        said_once = title == "Evidence the expert already decided" and len(group) > 1
-        said_once = said_once and len(reviews) == 1
+        reviews: set[str] = set()
+        if title == "Evidence the expert already decided" and len(group) > 1:
+            reviews = {review_label(conn, x) for x in group}
+        said_once = len(reviews) == 1
         if said_once:
             out.append(
                 f"<p class='ev-review ev-said'><strong>Review, all {len(group)}:</strong> "
@@ -1970,12 +1975,20 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             )
         )
         note += f" {how}" if how else ""
+        # an account's or a thread's id has no exported line: its line says what it is, as
+        # its row does, and the fold counts only the records
         exported = "".join(
-            f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
-            + _carrier_line(conn, r)
-            + "</li>"
+            f"<li>{screen_records.not_a_record(r.record_id)}</li>"
+            if screen_records.not_a_record(r.record_id)
+            else f"<li>{record_line(conn, r.record_id)} · "
+            f"<span class='mono'>{e(r.record_id)}</span>" + _carrier_line(conn, r) + "</li>"
             for r in rows
         )
+        n_recs = sum(1 for r in rows if not screen_records.not_a_record(r.record_id))
+        if others == len(cited):
+            heading = "Account or thread" if others == 1 else "Accounts or threads"
+        else:
+            heading = "Records"
         excel = (
             f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
             if sources.excel(r.source_id for r in rows if r.source_id)
@@ -1983,7 +1996,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         )
         more = n - FAILED_CITED_SHOWN
         out.append(
-            f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
+            f"<h3 class='ev-group'>{heading} the failed check cites ({n})</h3>"
             f"{assumed}<p class='muted cited-note'>{note}</p>"
             + screen_records.table(
                 rows,
@@ -1997,10 +2010,14 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if more > 0
                 else ""
             )
-            + "<details class='exported'><summary>Exported values for "
-            + ("this record" if len(rows) == 1 else f"these {len(rows)} records")
-            + " (UTC, as printed, record id)</summary>"
-            f"{excel}<ol class='cited'>{exported}</ol></details>"
+            + (
+                "<details class='exported'><summary>Exported values for "
+                + ("this record" if n_recs == 1 else f"these {n_recs} records")
+                + " (UTC, as printed, record id)</summary>"
+                f"{excel}<ol class='cited'>{exported}</ol></details>"
+                if n_recs
+                else ""
+            )
         )
     return "".join(out)
 

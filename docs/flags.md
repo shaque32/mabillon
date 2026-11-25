@@ -4,7 +4,7 @@ An expert can flag three things on a claim page, all optional:
 
 | Flag | Where | Asks for |
 |---|---|---|
-| Wrong label | "Flag this label" under any evidence item | what the label should be (or "not sure"), an optional note |
+| Wrong label | "Flag this label" under any evidence item (in "Details" on an item the expert has decided) | what the label should be (or "not sure"), an optional note |
 | Missed record | "Flag a record Mabillon missed" under the evidence | where the record is (optional), an optional note |
 | Disagree with the verdict | "Flag: I disagree with this verdict" in the verdict card | what the verdict should be (or "not sure"), an optional note |
 

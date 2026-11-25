@@ -544,7 +544,12 @@ def table(
     read = [rd for rd in (reading(r.local) for r in rows) if rd is not None]
     named = any(r.who for r in rows)
     split = same.thread is None and any(r.thread for r in rows)
-    what = "Message" if rows and all(r.record_id.startswith("msg:") for r in rows) else "Record"
+    if rows and all(r.record_id.startswith("msg:") for r in rows):
+        what = "Message"
+    elif rows and all(not_a_record(r.record_id) for r in rows):
+        what = "Cited id"  # accounts and threads alone: none is a record
+    else:
+        what = "Record"
     # only an Excel report has rows; any other source (a UFDR, a PDF) gives a place in the file
     rowed = all(sources.get(r.source_id)[1] == EXCEL for r in rows if r.source_id)
     place_head = "Excel row" if same.sheet else "Row in the file" if rowed else "Place in the file"

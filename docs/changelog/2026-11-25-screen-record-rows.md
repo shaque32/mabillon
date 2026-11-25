@@ -71,7 +71,7 @@
     later message (a changed handle); a table row says only what the message's own row gives.
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (53 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (51 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; times said as UTC, and headed so, where the
   phone's zone is unknown; the note naming only the zones of the phones its rows are from, and
   left out when no row has a time or an Excel row; an attachment's time, said to be its
@@ -81,8 +81,6 @@
   display-name rules (a message with no sender account always says its direction); a tier or
   file column returning when rows differ; the app and thread named above a cited table whose
   rows leave them off; a cited list longer than the table described over every record it counts;
-  a list of accounts and threads alone not called records; a source that is not an Excel report
-  heading its last column "Place in the file";
   and, on the claim, evidence and conversation pages, that every record's report line, record
   id, spreadsheet-row sentence and the report's conversation table are still on the same page
   inside a fold. The pinned strings in `tests/test_start_case.py`, `tests/test_flags.py`,
