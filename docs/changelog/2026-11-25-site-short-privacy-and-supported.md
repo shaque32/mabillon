@@ -6,8 +6,9 @@
   "cloud AI provider" or "AI provider" instead of Claude Opus and Anthropic; "On this computer"
   says the audit runs locally and nothing is sent. The Supported column no longer says "Only
   after you accept the evidence behind it" (untrue since rules 0.5.0 added the "checked" basis);
-  it now says supported comes from your acceptance or from code checks against the phone
-  records confirming every core fact, never from an AI label alone. Step 4 says no AI label
+  it now says supported comes from your acceptance or, for a message, timing or count claim,
+  from passing every code check against the phone records, never from an AI label alone
+  (scoped after review; pending Arsh's pick on the decision card). Step 4 says no AI label
   makes a claim supported. The example window shows Rules 0.6.0. The docs drop "local-first",
   "local by default" and "offline by default": README.md line 3, docs/ONE_PAGER.md "Where your
   data goes", the docs/PILOT_ONBOARDING.md intro, and the opening of docs/install.md and
