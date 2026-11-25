@@ -1754,9 +1754,14 @@ def _carrier_line(conn: sqlite3.Connection, row: screen_records.Row | None) -> s
     the time as printed), so the time in view can be checked; "" for any other record."""
     if row is None or not row.carrier:
         return ""
+    # as on the row: with no time read for its message, there is no time in view to explain
+    lead = (
+        f"{e(screen_records.CARRIED_TIME_NOTE)} That message, as exported:"
+        if screen_records.reading(row.local)
+        else "The message it is attached to, as exported:"
+    )
     return (
-        f"<br><span class='muted'>{e(screen_records.CARRIED_TIME_NOTE)} That message, as "
-        f"exported:</span> {record_line(conn, row.carrier)} · "
+        f"<br><span class='muted'>{lead}</span> {record_line(conn, row.carrier)} · "
         f"<span class='mono'>{e(row.carrier)}</span>"
     )
 
@@ -1796,7 +1801,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         # the senders leave their app off when every message is from one app, and the rows
         # leave the thread off when every message is from one thread: name both here
         only_messages = all(r.record_id.startswith("msg:") for r in cited)
-        one = n == 1
+        one = len(cited) - others == 1  # the records among them; an account is not one
         tier = e(same.tier.value).capitalize() if same.tier else ""
         of = (q(same.app) if same.app else "") + (
             f" thread {screen_records.titled(same.thread)}" if same.thread else ""
@@ -1816,7 +1821,16 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         else:
             place = f" in {same.words}"
         how = screen_records.note(cited, sources)  # the times, and what an Excel row is
-        note = (
+        if others == len(cited):
+            # nothing cited is a record, so the line says only what the ids are
+            said = (
+                "The cited id is an account or a thread, not a record."
+                if others == 1
+                else f"The {others} cited ids are accounts or threads, not records."
+            )
+        else:
+            said = ""
+        note = said or (
             what
             + place
             + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
@@ -1833,8 +1847,8 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if others
                 else ""
             )
-            + (f" {how}" if how else "")
         )
+        note += f" {how}" if how else ""
         exported = "".join(
             f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
             + _carrier_line(conn, r)

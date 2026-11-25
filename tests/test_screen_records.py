@@ -217,6 +217,11 @@ def test_an_attachments_fold_gives_its_messages_exported_time(app, conn) -> None
     fold = pages._carrier_line(conn, row)
     assert record_line(conn, msg) in fold and f"<span class='mono'>{msg}</span>" in fold
     assert pages._carrier_line(conn, records.record_rows(conn, [msg])[0]) == ""
+    # with no time read for its message, the fold keeps that message's exported line and
+    # does not speak of a time the row does not show
+    assert records.CARRIED_TIME_NOTE in fold
+    bare = pages._carrier_line(conn, replace(row, local="time unknown"))
+    assert records.CARRIED_TIME_NOTE not in bare and record_line(conn, msg) in bare
     # on its evidence card, the fold under the attachment's own line carries it
     item = conn.execute("SELECT id FROM evidence_items WHERE record_id = ? LIMIT 1", (att,))
     item = item.fetchone()
@@ -379,6 +384,28 @@ def test_rows_that_differ_in_tier_or_file_say_so_in_each_row(conn) -> None:
     out = records.table(two_files, sources)
     assert "<th>Row in the file</th>" in out
     assert 'item2.xlsx</span>, <span class="q">Chats</span> sheet, Excel row 918' in out
+
+
+def test_a_source_that_is_not_an_excel_report_gives_a_place_not_a_row(conn) -> None:
+    """Only an Excel report has rows. Any other source's locator is a place in the file, and a
+    table cell under that heading does not start with "at"."""
+    conn.execute("UPDATE sources SET kind = 'ufdr' WHERE id = 'item1'")
+    try:
+        sources = records.Sources(conn)
+        rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"], sources=sources)
+        out = records.table(rows, sources)
+        assert "<th>Place in the file</th>" in out
+        assert "Excel row" not in out and "Row in the file" not in out
+        assert "<td class='src'><span class='mono'>Chats!948</span></td>" in out
+        # the one-line form is a phrase, so it keeps the "at"
+        assert "at <span class='mono'>Chats!948</span>" in sources.row("item1", "Chats!948")
+        # rows from two files name each file, then the place
+        two = records.record_rows(conn, [M948, "msg:item2:Chats!918"], sources=sources)
+        mixed = records.table(two, sources)
+        assert "<th>Place in the file</th>" in mixed
+        assert "item1.xlsx</span>, at <span class='mono'>Chats!948</span>" in mixed
+    finally:
+        conn.rollback()
 
 
 def test_a_record_that_is_gone_keeps_its_row(conn) -> None:
@@ -602,6 +629,28 @@ def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, mon
     assert "record not found" not in table
     assert f"<span class='mono'>{acct}</span> is an account, not a record" in table
     assert f"<span class='mono'>{thread}</span> is a thread, not a record" in table
+
+
+def test_a_list_of_accounts_and_threads_alone_is_not_called_records(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    acct = conn.execute("SELECT id FROM accounts LIMIT 1").fetchone()[0]
+    thread = conn.execute("SELECT id FROM threads LIMIT 1").fetchone()[0]
+    real = pages.screen_records.record_rows
+    cited: list[str] = [acct, thread]
+    monkeypatch.setattr(
+        pages.screen_records, "record_rows", lambda conn, ids, **kw: real(conn, cited, **kw)
+    )
+
+    def above() -> str:
+        block = _get(app, "/claim", id="C11").split("Records the failed check cites", 1)[1]
+        note = block.split("<p class='muted cited-note'>")[-1].split("</p>", 1)[0]
+        return html.unescape(re.sub(r"<[^>]+>", "", note))
+
+    assert above().startswith("The 2 cited ids are accounts or threads, not records.")
+    assert "of the 2" not in above() and "Record" not in above()
+    cited.pop()
+    assert above().startswith("The cited id is an account or a thread, not a record.")
 
 
 def test_a_date_too_far_to_move_into_the_phones_zone_reads_as_time_unknown(conn) -> None:
