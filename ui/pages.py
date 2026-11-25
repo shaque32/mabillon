@@ -1705,9 +1705,17 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
             else ""
         )
         same = screen_records.shared(rows, sources)
+        # the senders leave their app off when every message is from one app: name it here
+        only_messages = all(r.record_id.startswith("msg:") for r in rows)
+        tier = e(same.tier.value).capitalize() if same.tier else ""
+        if same.app and only_messages:
+            what = f"{tier} {q(same.app)} messages" if tier else f"{q(same.app)} messages"
+        else:
+            what = f"{tier} records" if tier else "Records"
         note = (
-            (f"{e(same.tier.value).capitalize()} records" if same.tier else "Records")
+            what
             + (f" in {same.words}" if same.words else "")
+            + (f"; the messages are from {q(same.app)}" if same.app and not only_messages else "")
             + (
                 f". Times are the phone's local time, {screen_records.LOCAL_TIME_NOTE}."
                 if any(r.local for r in rows)

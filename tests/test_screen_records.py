@@ -124,6 +124,30 @@ def test_a_direction_that_does_not_follow_from_the_sender_is_said_in_words() -> 
     assert records.who(_line("Telegram 5551234", "unknown")).endswith(" · unknown")
 
 
+def test_a_message_with_no_sender_account_always_says_its_direction() -> None:
+    # CodeRabbit on #277: "unknown" is no account, so it cannot stand in for the direction
+    assert records.who(_line("unknown", "incoming")).endswith(" · incoming")
+    assert records.who(_line("unknown", "outgoing")).endswith(" · outgoing")
+    assert records.who(_line("unknown sender", "incoming")).endswith(" · incoming")
+
+
+def test_a_cited_table_names_the_app_its_senders_leave_off(app, conn) -> None:
+    # CodeRabbit on #277: senders drop "Telegram" when every cited message is from it, so the
+    # line above the table has to say it
+    body = _get(app, "/claim", id="C04")
+    block = body.split("Records the failed check cites", 1)[1]
+    note, table = block.split("<table class='recs'>", 1)
+    table = table.split("</table>", 1)[0]
+    assert "Telegram" not in table
+    assert 'Observed <span class="q">Telegram</span> messages in' in note
+    # and when the cited messages are from more than one app, each sender keeps its own
+    mixed = records.record_rows(conn, [M948, "msg:item1:Chats!857"])
+    assert records.shared(mixed, records.Sources(conn)).app is None
+    assert all(
+        r.who.startswith(('<span class="q">Telegram ', '<span class="q">SMS ')) for r in mixed
+    )
+
+
 def test_a_sender_keeps_the_account_and_gains_the_name_the_source_gives() -> None:
     own = _line("Telegram 7001001 (this phone)", "outgoing")
     assert records.who(own, "Telegram", "Dan P") == (
@@ -168,7 +192,7 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
     block = body.split("Records the failed check cites", 1)[1]
     table = block.split("</table>", 1)[0]
     assert "<table class='recs'>" in table and "UTC 20" not in table
-    assert "Observed records in" in block.split("<table", 1)[0]
+    assert "messages in" in block.split("<table", 1)[0]
     assert "derived from UTC and the phone's time zone" in block.split("<table", 1)[0]
     assert table.count("<tr") == len(cited) + 1
     assert "/selection/context?id=msg%3Aitem1%3AChats%21938" in table

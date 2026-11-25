@@ -35,6 +35,8 @@ _SHEET_ROW = re.compile(r"^(?P<sheet>.+)!(?P<row>\d+)$")
 EXCEL = "cellebrite_excel"
 EXCEL_ROW_NOTE = "An Excel row is the spreadsheet's own row number, not the report's # column."
 LOCAL_TIME_NOTE = "derived from UTC and the phone's time zone"
+# a message with no sender account, as core/restore/view.py and core/audit/context.py name it
+UNKNOWN_SENDERS = frozenset({"unknown", "unknown sender"})
 
 
 @dataclass(frozen=True)
@@ -117,8 +119,11 @@ class Sources:
 
 def follows(sender: str, direction: str) -> bool:
     """The direction is what the sender already says: the phone's own account sent it, or
-    another account's message came in."""
+    another known account's message came in. A message with no sender account says nothing
+    about its direction, so its direction is always written."""
     own = sender.endswith(" (this phone)")
+    if not own and sender in UNKNOWN_SENDERS:
+        return False
     return direction == ("outgoing" if own else "incoming")
 
 
@@ -257,6 +262,7 @@ class Shared:
     file: str | None  # the one file every row is in
     sheet: str | None  # the one Excel sheet of that file every row is on
     tier: ProvenanceTier | None  # the one tier every row carries
+    app: str | None = None  # the app the rows' senders leave off, for the caller to name
 
     @property
     def words(self) -> str:
@@ -272,7 +278,9 @@ def shared(rows: list[Row], sources: Sources) -> Shared:
     sheets = {sources.sheet(r.source_id, r.locator) for r in rows if r.source_id}
     sheet = next(iter(sheets)) if file is not None and len(sheets) == 1 else None
     tiers = {r.tier for r in rows}
-    return Shared(file, sheet, next(iter(tiers)) if len(tiers) == 1 else None)
+    apps = {r.app for r in rows if r.record_id.startswith("msg:")}
+    app = next(iter(apps)) if len(apps) == 1 else None
+    return Shared(file, sheet, next(iter(tiers)) if len(tiers) == 1 else None, app or None)
 
 
 def table(
@@ -283,8 +291,9 @@ def table(
     """Records as one table: date, the phone's local time, sender, the message or record, and
     the row in the file. A date prints once per run of rows that share it. A column every row
     would leave empty is left out. What the rows share is left to the caller to say once above
-    the table (shared(rows).words, and the tier): a row then gives only its Excel row number,
-    and a tier column appears only when the rows differ in tier. href: a link for a row's
+    the table (shared(rows): the file and sheet, the tier, and the app its senders leave off):
+    a row then gives only its Excel row number, and a tier column appears only when the rows
+    differ in tier. href: a link for a row's
     place in the file, such as its conversation."""
     same = shared(rows, sources)
     timed = any(r.local for r in rows)
