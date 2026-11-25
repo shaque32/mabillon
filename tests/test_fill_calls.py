@@ -424,6 +424,7 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
         " on Item 1",
         " in the evening",
         " to (212) 555-0199",
+        "",  # ", and a second." may be a second call too (Claude review on #279)
         # punctuation before more words still leaves a second call (Claude review on #279)
         ", on Item 1",
         ", from (212) 555-0199",
@@ -460,12 +461,13 @@ def test_a_length_no_row_tests_keeps_the_event(conn, text, kind):
     ("text", "tested", "read", "unread"),
     [
         ("lasted one minute and a second.", (61, 61), ["one minute and a second"], []),
-        ("lasted one minute, and a second.", (61, 61), ["one minute, and a second"], []),
+        # after a comma, "and a second" may be a second call (Claude review on #279)
+        ("lasted one minute, and a second.", (61, 61), [], ["one minute", "and a second"]),
         # ", and a second on Item 1" may be a second call by ellipsis (Claude review on #279)
         ("lasted one minute, and a second on Item 1", (61, 61), [], ["one minute", "and a second"]),
         ("lasted a second.", (1, 1), ["a second"], []),
         ("for 1 minute and a second.", (61, 61), ["1 minute and a second"], []),
-        ("for 1 minute, and a second.", (61, 61), ["1 minute, and a second"], []),
+        ("for 1 minute, and a second.", (61, 61), [], ["1 minute", "and a second"]),
         ("lasted two minutes and 30 seconds.", (150, 150), ["two minutes and 30 seconds"], []),
         ("lasted a minute and a half.", (90, 119), ["a minute and a half"], []),
         ("placed a ninety second call", (90, 90), ["ninety second"], []),
@@ -527,9 +529,7 @@ def test_the_ordinal_guards_stay_fast():
     )
 
 
-@pytest.mark.parametrize(
-    "length", ["one minute and a second", "one minute, and a second", "1 minute and a second"]
-)
+@pytest.mark.parametrize("length", ["one minute and a second", "1 minute and a second"])
 def test_a_length_written_a_second_is_still_read_as_one(conn, length):
     text = (
         "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"
@@ -820,6 +820,9 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         'PETROV called his contact saved as "Marc Garage" on WhatsApp.',
         'PETROV called the contact entry "Marc Garage" on WhatsApp.',
         'PETROV called Contact "Marc Garage" on WhatsApp.',
+        # with no quote, an article or possessive before "contact" is enough
+        "PETROV called the contact Marc Garage on WhatsApp.",
+        "PETROV called his contact Marc Garage on WhatsApp.",
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
@@ -877,6 +880,13 @@ def test_an_ordinal_keeps_its_event_beside_a_model_event(conn):
     made = TemplateAssumptionBuilder(f).build(claim(text, ClaimType.COMMUNICATION))
     assert any(a.template_id == "caller" for a in made)
     assert any(is_unread_event(a.template_id, a.text) for a in made)
+
+
+def test_another_call_keeps_its_event_without_the_guard(conn, monkeypatch):
+    # "another call" states an earlier call as "a second call" does (Claude review on #279)
+    monkeypatch.setattr(LocalAssumptionFiller, "unread_words", lambda *a, **k: [])
+    made, _ = fill(conn, f"{AT} Item 1 placed another call to (212) 555-0199.")
+    assert made["caller"] and is_unread_event("event", made["event"].text)
 
 
 def test_unread_words_name_each_word_once(conn):

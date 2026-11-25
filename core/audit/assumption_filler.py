@@ -3323,7 +3323,10 @@ def _may_be_a_length(text: str, m: re.Match[str]) -> bool:
         return True
     if words.startswith("and"):
         # ", and a second on Item 1" (or ", and a second, on Item 1") may be a second call by
-        # ellipsis: only a sentence's end closes this form (Claude review on #279)
+        # ellipsis: only a sentence's end closes this form, and never after a comma ("one
+        # minute, and a second." may be a second call too; Claude review on #279)
+        if text[: m.start()].rstrip().endswith(","):
+            return False
         return bool(_SECOND_CLAUSE_END_RE.match(text, m.end()))
     if not _SECOND_LENGTH_END_RE.match(text, m.end()):
         return False
@@ -3383,7 +3386,7 @@ _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as
 # Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
 # with") stays plain; the quote is looked for in the text before quotes are blanked.
 _CONTACT_NAMED_RE = re.compile(
-    r"\b(?:(?:the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact"
+    r"\b(?:(?P<art>the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact\b"
     r"(?:\s+(?:entry|card|name)\b)?"
     r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?",
     re.I,
@@ -3957,7 +3960,10 @@ class LocalAssumptionFiller:
         ):
             extra.append(" ".join(shown.group(0).casefold().split()))
         for named in () if "contact" in tests else _CONTACT_NAMED_RE.finditer(_unquoted(whole)):
-            if named.group("how") or _OPEN_QUOTE_RE.match(whole, named.end()):
+            # "the contact Marc Garage": an article or possessive before "contact" makes it a
+            # saved contact by itself; a bare "Contact" only before a quote or "named"
+            # (Claude review on #279)
+            if named.group("art") or named.group("how") or _OPEN_QUOTE_RE.match(whole, named.end()):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
@@ -6997,7 +7003,12 @@ class LocalAssumptionFiller:
                 return None
         caller = {"placed": "a", "made": "a", "called": "a", "received": "b", "missed": "b"}
         noun = _words(np).split()
-        ordinal = len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS
+        # "another call" states an earlier call as "a second call" does (Claude review on #279)
+        ordinal = (
+            bool(noun)
+            and noun[0] == "another"
+            or (len(noun) > 1 and noun[0] in _CALL_ARTICLES and noun[1] in _CALL_ORDINALS)
+        )
         # "the contact displayed as" states a saved contact, "the number displayed as" that
         # the side is a phone number: no check reads either (Claude review on #279)
         shown = (m.group("shown") or "").split()

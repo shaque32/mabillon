@@ -16,9 +16,9 @@
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
     is plain naming, as it already was everywhere else, so the clause reads as 'to "X"' does;
     "shown" and "caller" are words no check reads and keep the core event, and so do "the
-    contact" (a saved contact, also 'the contact "X"', 'the contact entry "X"', 'Contact
-    "X"', "the contact named X" or "saved as X" with no "displayed as", which filler 13 read
-    as plain; beside a kept contact_entry row, which reads the saved contact, these words are
+    contact" (a saved contact, also "the contact X", "his contact X", 'the contact entry
+    "X"', 'Contact "X"', "the contact named X" or "saved as X" with no "displayed as", which
+    filler 13 read as plain; beside a kept contact_entry row, which reads the saved contact, these words are
     plain) and "the number displayed as" (a
     phone number), on every path: the unread
     guard reads them, and the caller row also adds the event itself and with no event allowed
@@ -33,7 +33,8 @@
     and a second", "one minute, and a second" or "1 minute and a second" beside one testing 61
     seconds), and its clause
     ends right after it (a full stop, a comma, a dash, a bracket, or a word such as "and" or
-    "on"; for "and a second", only a sentence's end, so ", and a second on Item 1", ", and a
+    "on"; for "and a second", only a sentence's end and never after a comma, so "one
+    minute, and a second." is read as a possible second call, and ", and a second on Item 1", ", and a
     second, from (212) 555-0199" or "in the evening" is a second call by ellipsis, which filler
     13 read as a length). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
     event: "a second, telephone call", "for a second time", "over a second line", "two
@@ -45,6 +46,8 @@
     read "second" after digits as an ordinal. A missed call written with an ordinal keeps its
     missed event and gets the unread event beside it, so the testability sheet check still
     counts the missed event; so does a call whose claim already holds a model's own event.
+    "another call" states an earlier call as an ordinal does and keeps the event the same
+    way.
     The words no check reads are listed once each in a drop reason.
   - A stated length, spoken or in digits, is read as tested only where it is the length a
     row tests, as `duration_range` reads it, whole or in parts ("two minutes and 30 seconds",
@@ -68,7 +71,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,317 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,323 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of
@@ -79,7 +82,11 @@
   both: 0 false Supported, 0 false Contradicted. v5 bar 4 as replayed 0 of 50 and 0 of 37;
   worst case 1 of 50 (D023) and 1 of 37 (D27), was 1 and 2. `make eval`: see the PR
   description. Cloud container, Linux x86_64, 2026-11-25.
-- Open: development phones only. D27 ("received ... from the party displayed as") stays: the
+- Open: development phones only. Older than this PR: where the model's answer holds its own
+  core event, the unread-words guard adds no event of code's own, so words no check reads
+  (such as an untested "30 second") are not named for the expert beside it; the claim still
+  needs an expert's acceptance of that event. A fix needs a way to tell code's missed-call
+  event from a model event whose range code repaired, which `Proposal` does not carry yet. D27 ("received ... from the party displayed as") stays: the
   caller is a handle side. D023 stays: its key reads "about 2:08" as the failed 2:08 attempt,
   while the signed 8-minute "about" finds the connected 2:14 call. The time range must still
   name both parties for any caller row (iOS 15 D14 reads the form, gets none). This changes
