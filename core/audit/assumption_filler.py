@@ -3267,6 +3267,8 @@ _SPOKEN_LENGTH_RE = re.compile(
     r"secs?|mins?|hrs?)\b",
     re.IGNORECASE,
 )
+# What follows an ordinal "second" before a call: "a second call", "a second WhatsApp call".
+_BEFORE_A_CALL_RE = re.compile(r"\s+(?:[\w-]+\s+){0,2}calls?\b", re.IGNORECASE)
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
 # "on Telegram and SMS" names two apps (CodeRabbit on #265).
 _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
@@ -3867,7 +3869,16 @@ class LocalAssumptionFiller:
                 cut.append((h.start(1), h.end(2) if h.group(2) else h.end(1)))
         lengths: list[str] = []
         if "length" in tests:
-            cut += [m.span() for m in _SPOKEN_LENGTH_RE.finditer(bare)]
+            # "a second WhatsApp call that lasted two minutes": "a second" before a call is
+            # an ordinal, never a length, and stays a word no check reads (CodeRabbit on #279)
+            cut += [
+                m.span()
+                for m in _SPOKEN_LENGTH_RE.finditer(bare)
+                if not (
+                    m.group(0).casefold().endswith("second")
+                    and _BEFORE_A_CALL_RE.match(bare, m.end())
+                )
+            ]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a
         # quarter hour", where the row tests "one minute") (CodeRabbit on #265)
@@ -6785,7 +6796,8 @@ class LocalAssumptionFiller:
                 return None
         if m.group("shown") is not None and b[0] != "acct":
             # "from the party displayed as "iOS 15 Group"": the name the call log shows for an
-            # account side, never a person or a phone
+            # account side, never a person or a phone. "displayed as" is plain naming, as
+            # everywhere (`_RECORDS_SAY_RE`), so the clause reads as 'to "iOS 15 Group"' does
             return None
         tail = m.group("tail")
         one_account = False

@@ -279,6 +279,27 @@ def test_an_ordinal_on_the_call_s_app_keeps_the_event(conn):
     assert made["event"].is_core
 
 
+def test_an_ordinal_beside_a_tested_length_keeps_the_event(conn):
+    # "a second" before a call is an ordinal, not a length the row tests (CodeRabbit on #279)
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a second WhatsApp call"
+        " to PETROV that lasted two minutes."
+    )
+    made, _ = fill(conn, text, channels=["call", "WhatsApp"],
+                   duration={"as_written": "two minutes"},
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert made["caller"].params.duration_s and made["event"].is_core
+    # a length written "a second" is still read as one
+    text = (
+        "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"
+        " that lasted one minute and a second."
+    )
+    made, f = fill(conn, text, channels=["call", "WhatsApp"],
+                   duration={"as_written": "one minute and a second"},
+                   window=W("June 8", "2026-06-08T20:52", "2026-06-08T21:09"))  # fmt: skip
+    assert "caller" in made and "event" not in made, [d.reason for d in f.drops]
+
+
 def test_missed_adds_an_event_only_an_expert_carries(conn):
     made, _ = fill(conn, f"{AT} Item 1 missed an incoming call from (212) 555-0199.")
     assert list(made["caller"].params.sent_by) == sorted(NUM)
@@ -520,6 +541,12 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
     a = made["caller"]
     assert list(a.params.sent_by) == [PETROV], [d.reason for d in f.drops]
     assert list(a.params.handles) == ["Marc Garage"]
+    # "displayed as" is plain naming (`_RECORDS_SAY_RE`): the claim reads as it does with the
+    # name alone, 'called "Marc Garage"'; "shown" is a word no check reads (CodeRabbit on #279)
+    bare, _ = fill(conn, GARAGE, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert ("event" in made) == ("shown" in words)
+    assert "event" not in bare
 
 
 def test_a_shown_name_that_is_a_person_or_a_received_handle_names_no_caller(conn):

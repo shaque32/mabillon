@@ -12,14 +12,19 @@
     still never rests on its checks alone.
   - The other side may be named by what the log shows for it: "to the party displayed as
     "X"", also "contact", "caller", "number", "user" or "account", "displayed" or "shown as".
-    Only for an account side, never a person or a phone. The words stay unread, so the core
-    event stays too. A handle side that placed the call still gets no caller: a caller row names
-    persons or accounts, and code never decides which account a handle is.
+    Only for an account side, never a person or a phone. "displayed as" is plain naming, as it
+    already was everywhere else, so the clause reads as 'to "X"' does; "shown" is a word no
+    check reads and keeps the core event. A handle side that placed the call still gets no
+    caller: a caller row names persons or accounts, and code never decides which account a
+    handle is.
+  - "a second" before a call is an ordinal, not a tested length ("a second WhatsApp call that
+    lasted two minutes" kept no event because its "a second" was read as a length).
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
   and on an app; an ordinal anywhere but after the article refused; "displayed as" and "shown
   as" read for an account side, refused for a person, for a handle that placed the call and
-  for other descriptors). The filler test files: 1,245 passed. Free replay of stored answers
+  for other descriptors; an ordinal beside a tested length keeps the event, which fails
+  without the fix). The filler test files: 1,245 passed. Free replay of stored answers
   (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106): one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
   the window), so it is held open by a check, not only by the event. Bars 1 to 3 unchanged on
