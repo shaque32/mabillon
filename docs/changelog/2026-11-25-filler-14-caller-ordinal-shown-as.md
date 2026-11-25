@@ -24,7 +24,8 @@
   - A length whose words could be an ordinal ("a second", "and a second", "thirty-second")
     is read as a tested length only where it is part of the length a row tests, as
     `duration_range` reads it ("lasted a second" beside a row testing one second, "one minute
-    and a second" or "one minute, and a second" beside one testing 61 seconds), and its clause
+    and a second", "one minute, and a second" or "1 minute and a second" beside one testing 61
+    seconds), and its clause
     ends right after it (a full stop, a comma, a dash, a bracket, or a word such as "and" or
     "on"). Anywhere else it is an ordinal and a word no check reads, so it keeps the core
     event: "a second, telephone call", "for a second time", "over a second line", "two
@@ -47,7 +48,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,259 passed. Free replay of
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,264 passed. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in

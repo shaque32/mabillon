@@ -386,6 +386,11 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
         ("lasted one minute, and a second.", (61, 61), ["one minute", "and a second"]),
         ("lasted one minute, and a second on Item 1", (61, 61), ["one minute", "and a second"]),
         ("lasted a second.", (1, 1), ["a second"]),
+        # a length in digits before "and a second" (CodeRabbit on #279)
+        ("for 1 minute and a second.", (61, 61), ["and a second"]),
+        ("for 1 minute, and a second.", (61, 61), ["and a second"]),
+        ("for 1 minute, and a second to Item 2.", (61, 61), []),
+        ("for 1 minute and a second call.", (61, 61), []),
         # an ordinal-like length is read only as part of the length a row tests (Claude review
         # on #279): "and a second" after the tested "one minute" is a second call
         ("lasted one minute, and a second.", (60, 60), ["one minute"]),
@@ -427,7 +432,9 @@ def test_the_ordinal_guards_stay_fast():
     assert time.perf_counter() - started < 5
 
 
-@pytest.mark.parametrize("length", ["one minute and a second", "one minute, and a second"])
+@pytest.mark.parametrize(
+    "length", ["one minute and a second", "one minute, and a second", "1 minute and a second"]
+)
 def test_a_length_written_a_second_is_still_read_as_one(conn, length):
     text = (
         "On June 8, 2026, at about 9:00 p.m. EDT, Marcus Reyes placed a WhatsApp call to PETROV"

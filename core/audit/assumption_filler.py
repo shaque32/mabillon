@@ -3294,6 +3294,10 @@ _SECOND_LENGTH_LEAD_RE = re.compile(
     r"just|only|over|under|exactly|some)\s+$",
     re.IGNORECASE,
 )
+# "1 minute, and a second": a length in digits right before "and a second" (CodeRabbit on #279)
+_DIGIT_LENGTH_BEFORE_RE = re.compile(
+    r"(?<![\w.])\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?)\s*,?\s*$", re.IGNORECASE
+)
 _SECOND_LENGTH_END_RE = re.compile(
     r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
     re.IGNORECASE,
@@ -3313,10 +3317,15 @@ def _a_tested_length(
     if not lengths or not _SECOND_LENGTH_END_RE.match(text, m.end()):
         return False
     if words.startswith("and"):
-        # "one minute and a second": read with the length right before it, whole
-        if before is None or not re.fullmatch(r",?\s*", text[before.end() : m.start()]):
+        # "one minute and a second", "1 minute and a second": read with the length right
+        # before it, whole
+        if before is not None and re.fullmatch(r",?\s*", text[before.end() : m.start()]):
+            start = before.start()
+        elif (digits := _DIGIT_LENGTH_BEFORE_RE.search(text, 0, m.start())) is not None:
+            start = digits.start()
+        else:
             return False
-        phrase = text[before.start() : m.end()]
+        phrase = text[start : m.end()]
     elif _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()):
         phrase = m.group(0)
     else:
