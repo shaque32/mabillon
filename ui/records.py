@@ -81,37 +81,47 @@ def when(local: str, date: bool = True) -> str:
 
 
 def zone_names(sources: Sources, devices: Iterable[str] | None = None) -> str:
-    """The time zones the phones are read in, by their full names, for the note on times:
-    "America/New_York", or each phone and its file with its zone when they differ ("Apple
-    iPhone 13, in item1.xlsx: America/New_York; Pixel 7, in item2.xlsx: America/Chicago"); ""
-    when no zone is known. devices: the
-    phones the rows are from; None means every phone in the case. A time in view ends in the
-    zone's short name ("EDT", "CST"), which more than one zone can share; the full name settles
-    which, and with it the UTC offset."""
+    """The time zones the phones are read in, by their full names, as HTML for the note on
+    times: "America/New_York", or each phone and its file with its zone when they differ
+    ("Apple iPhone 13, in item1.xlsx: America/New_York; Pixel 7, in item2.xlsx:
+    America/Chicago", the phone's label and the file name cited as the source's text); ""
+    when no zone is known. devices: the phones the rows are from; None means every phone in
+    the case. A time in view ends in the zone's short name ("EDT", "CST"), which more than one
+    zone can share; the full name settles which, and with it the UTC offset."""
     wanted = None if devices is None else set(devices)
     zones = {
         d: z for d, z in sources.zones.items() if z is not None and (wanted is None or d in wanted)
     }
     names = sorted({z.key for z in zones.values()})
     if len(names) < 2:
-        return "".join(names)
-    # a row names its file, not its phone: name both, so a row's zone can be told
-    return "; ".join(f"{sources.labels.get(d, d)}: {zones[d].key}" for d in sorted(zones))
+        return e("".join(names))
+    # a row names its file, not its phone: name both, so a row's zone can be told. Both are
+    # the source's text, so they are cited, never the tool's own words.
+    parts = []
+    for d in sorted(zones):
+        label, file = sources.labels.get(d, (d, ""))
+        parts.append(q(label) + (f", in {q(file)}" if file else "") + f": {e(zones[d].key)}")
+    return "; ".join(parts)
 
 
 def time_note(locals_: Iterable[str], zones: str = "") -> str:
-    """How to read the times of a set of rows, said once above them: the phone's local time,
-    UTC where the phone's zone is unknown, or both; "" when no row has a time in either form.
-    zones: zone_names(...), named once so a short zone name in a row is not ambiguous."""
+    """How to read the times of a set of rows, said once above them, as HTML: the phone's
+    local time, UTC where the phone's zone is unknown, or both; "" when no row has a time in
+    either form. zones: zone_names(...) (HTML), named once so a short zone name in a row is
+    not ambiguous."""
     readings = [r for r in (reading(x) for x in locals_ if x) if r is not None]
     if not readings:
         return ""
     zoned = sum(1 for r in readings if not r.caveat)
-    local = f"Times are the phone's local time{f' ({zones})' if zones else ''}, {LOCAL_TIME_NOTE}"
+    local = (
+        e("Times are the phone's local time")
+        + (f" ({zones})" if zones else "")
+        + e(f", {LOCAL_TIME_NOTE}")
+    )
     if zoned == len(readings):
         return f"{local}."
     if zoned == 0:
-        return "Times are UTC: the phone's time zone is unknown."
+        return e("Times are UTC: the phone's time zone is unknown.")
     return f"{local}, except those marked device zone unknown, which are UTC."
 
 
@@ -139,7 +149,7 @@ class Sources:
         self._conn = conn
         self._seen: dict[str, tuple[str, str]] = {}
         self._zones: dict[str, ZoneInfo | None] | None = None
-        self._labels: dict[str, str] | None = None
+        self._labels: dict[str, tuple[str, str]] | None = None
 
     @property
     def zones(self) -> dict[str, ZoneInfo | None]:
@@ -154,11 +164,11 @@ class Sources:
         return self._zones
 
     @property
-    def labels(self) -> dict[str, str]:
-        """Device id -> the phone's label and its file: "Apple iPhone 13, in item1.xlsx"."""
+    def labels(self) -> dict[str, tuple[str, str]]:
+        """Device id -> (the phone's label, its file's name), both the source's text."""
         if self._labels is None:
             self._labels = {
-                did: f"{label}, in {self.get(src)[0]}"
+                did: (label, self.get(src)[0])
                 for did, label, src in self._conn.execute(
                     "SELECT id, label, source_id FROM devices"
                 )
@@ -214,15 +224,18 @@ def way_words(direction: str) -> str:
 def who(ln: Line, app: str | None = None, name: str | None = None) -> str:
     """A message's sender as HTML (core/report/selection.py sender_words), with the direction in
     words only when it does not follow from whose account sent it, so no direction is lost.
-    name: the account's display name in the source, as the report's record line gives it:
-    "5551234 (@alex92)", "7001001 (Dan P, this phone)". A name printed on the message's own
-    row (shown_as) leads instead, as sender_words puts it."""
+    name: the account's display name in the case, for a one-line record: "5551234 (account
+    name @alex92)", "7001001 (account name Dan P, this phone)". It is the account's name, kept
+    once per account, and not text from the message's own row: the source can print another
+    name on a later message (a changed handle), so it is worded as the account's and left out
+    of the tables, whose rows say only what each message's row gives. A name printed on the
+    message's own row (shown_as) leads instead, as sender_words puts it."""
     if ln.shown_as or not name:
         words = sender_words(ln.sender, ln.shown_as, app)
     else:
         own = ln.sender.endswith(" (this phone)")
         ident = sender_words(ln.sender.removesuffix(" (this phone)"), None, app)
-        words = f"{ident} ({q(name)}{', this phone' if own else ''})"
+        words = f"{ident} (account name {q(name)}{', this phone' if own else ''})"
     return words if follows(ln.sender, ln.direction) else f"{words} · {e(way_words(ln.direction))}"
 
 
@@ -281,8 +294,9 @@ def message_rows(
     conn: sqlite3.Connection, lines: Iterable[Line], app: str | None = None, strip: bool = False
 ) -> list[Row]:
     """Rows for messages already read as conversation lines. app: the conversation's app, left
-    off each sender because the conversation's header gives it. strip: leave each sender's own
-    app off, for a caller that names the app beside each row (a one-line record)."""
+    off each sender because the conversation's header gives it. strip: the rows are for
+    one-line records, which name the app beside each row: leave each sender's own app off, and
+    add the account's name, worded as the account's (see who)."""
     lines = list(lines)
     known = _of_messages(conn, [ln.record_id for ln in lines])
     out = []
@@ -296,7 +310,7 @@ def message_rows(
                 source_id=ln.source_id,
                 locator=ln.locator,
                 local=ln.local,
-                who=who(ln, app or (own_app if strip else None), name),
+                who=who(ln, app or (own_app if strip else None), name if strip else None),
                 what=body,
                 tier=ln.tier,
                 target=ln.is_target,
@@ -484,17 +498,17 @@ def note(
     also: Iterable[str] = (),
     around: Iterable[str] = (),
 ) -> str:
-    """How to read a set of rows, said once in view above them: their times (time_note, naming
-    only the zones of the phones the rows are from) and, when any row sits in an Excel report,
-    that its row number is the spreadsheet's own. "" when the rows give neither a time nor an
-    Excel row. also: source ids the caller prints a place in besides the rows' own (an
-    evidence item's own reference). around: the times of the messages drawn around the rows
-    (the same threads, so the same phones), which the note speaks for too."""
+    """How to read a set of rows, said once in view above them, as HTML: their times
+    (time_note, naming only the zones of the phones the rows are from) and, when any row sits
+    in an Excel report, that its row number is the spreadsheet's own. "" when the rows give
+    neither a time nor an Excel row. also: source ids the caller prints a place in besides
+    the rows' own (an evidence item's own reference). around: the times of the messages drawn
+    around the rows (the same threads, so the same phones), which the note speaks for too."""
     rows = list(rows)
     zones = zone_names(sources, {r.device for r in rows if r.device})
     times = time_note([*(r.local for r in rows), *around], zones)
     ids = {r.source_id for r in rows if r.source_id} | set(also)
-    return " ".join(x for x in (times, EXCEL_ROW_NOTE if sources.excel(ids) else "") if x)
+    return " ".join(x for x in (times, e(EXCEL_ROW_NOTE) if sources.excel(ids) else "") if x)
 
 
 def table(

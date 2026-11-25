@@ -49,6 +49,11 @@ def _get(app: App, path: str, **query: str) -> str:
     return app.handle(Request("GET", path, query, dict(HOST))).body.decode()
 
 
+def _text(markup: str) -> str:
+    """HTML as the reader sees it: tags off, entities read."""
+    return html.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
 def _folds(body: str, cls: str) -> list[str]:
     """The inside of every <details class=cls> on a page (none of them nests another)."""
     return re.findall(rf"<details class='{cls}'>(.*?)</details>", body, re.S)
@@ -119,10 +124,12 @@ UTC_ONLY = "2026-03-10 15:16:44 UTC (device zone unknown)"
 
 
 def test_the_note_on_times_says_utc_where_the_phones_zone_is_unknown() -> None:
-    assert records.time_note([ZONED, ZONED]) == (
+    assert _text(records.time_note([ZONED, ZONED])) == (
         "Times are the phone's local time, derived from UTC and the phone's time zone."
     )
-    assert records.time_note([UTC_ONLY, ""]) == "Times are UTC: the phone's time zone is unknown."
+    assert _text(records.time_note([UTC_ONLY, ""])) == (
+        "Times are UTC: the phone's time zone is unknown."
+    )
     assert "except those marked device zone unknown, which are UTC" in records.time_note(
         [ZONED, UTC_ONLY]
     )
@@ -133,7 +140,7 @@ def test_the_note_names_the_phones_zone_in_full(conn) -> None:
     # a time in view ends in the zone's short name; the full name settles which zone it is
     sources = records.Sources(conn)
     assert records.zone_names(sources) == "America/New_York"
-    assert records.time_note([ZONED], "America/New_York") == (
+    assert _text(records.time_note([ZONED], "America/New_York")) == (
         "Times are the phone's local time (America/New_York), derived from UTC and the phone's "
         "time zone."
     )
@@ -150,9 +157,12 @@ def test_the_note_names_only_the_zones_of_the_phones_the_rows_are_from(conn) -> 
         assert records.zone_names(sources, ()) == ""
         note = records.note(records.record_rows(conn, [M948], sources=sources), sources)
         assert "(America/New_York)" in note and "Chicago" not in note
-        # with both phones' rows, each zone is named with its phone and its file
-        assert "in item1.xlsx: America/New_York" in both
-        assert "in item2.xlsx: America/Chicago" in both
+        # with both phones' rows, each zone is named with its phone and its file, and both
+        # names are cited as the source's text, never said in the tool's own words
+        assert "in item1.xlsx: America/New_York" in _text(both)
+        assert "in item2.xlsx: America/Chicago" in _text(both)
+        assert '<span class="q">item2.xlsx</span>' in both
+        assert '<span class="q">Samsung Galaxy S22 (SM-S901U)</span>' in both
     finally:
         conn.rollback()
 
@@ -162,8 +172,8 @@ def test_the_note_is_left_out_when_no_row_has_a_time_or_an_excel_row(conn) -> No
     (row,) = records.record_rows(conn, [M948], sources=sources)
     assert records.note([replace(row, local="", source_id="")], sources) == ""
     # a row in an Excel report says, in view, what its row number is
-    assert records.note([replace(row, local="")], sources) == records.EXCEL_ROW_NOTE
-    assert records.note([row], sources).endswith(records.EXCEL_ROW_NOTE)
+    assert _text(records.note([replace(row, local="")], sources)) == records.EXCEL_ROW_NOTE
+    assert _text(records.note([row], sources)).endswith(records.EXCEL_ROW_NOTE)
 
 
 def test_a_row_with_no_time_does_not_read_as_the_day_above(conn) -> None:
@@ -223,7 +233,7 @@ def test_a_message_whose_stored_time_is_not_a_time_keeps_its_row(conn) -> None:
         # only the time is unread: the sender, direction, thread and text are as before
         assert replace(bad, local=before.local) == before and bad.who
         assert "date not read" in records.table([bad, good], sources)
-        assert records.line(conn, M948, sources).startswith(bad.who)
+        assert records.line(conn, M948, sources).startswith('<span class="q">7001001</span> (')
     finally:
         conn.rollback()
 
@@ -313,14 +323,29 @@ def test_a_cited_table_names_the_app_its_senders_leave_off(app, conn) -> None:
 
 def test_a_sender_keeps_the_account_and_gains_the_name_the_source_gives() -> None:
     own = _line("Telegram 7001001 (this phone)", "outgoing")
+    # worded as the account's name: the source can print another name on a later message
     assert records.who(own, "Telegram", "Dan P") == (
-        '<span class="q">7001001</span> (<span class="q">Dan P</span>, this phone)'
+        '<span class="q">7001001</span> (account name <span class="q">Dan P</span>, this phone)'
     )
     # a name printed on the message's own row leads, as on the rest of the screen
     printed = _line("Telegram 5551234", "incoming", shown_as="Sasha")
     assert records.who(printed, "Telegram", "@alex92") == (
         '<span class="q">Sasha</span> (<span class="q">5551234</span>)'
     )
+
+
+def test_a_table_row_says_only_what_the_messages_own_row_gives(app, conn) -> None:
+    # the account 5551234 is named @alex92 in the case, and the source prints @northstar on
+    # its later messages: a table row gives the account, and no name the row may not carry
+    table = records.table(records.record_rows(conn, [M948, "msg:item1:Chats!949"]),
+                          records.Sources(conn))  # fmt: skip
+    assert "alex92" not in table and "Dan P" not in table and "account name" not in table
+    for page in (_get(app, "/claim", id="C04"), _get(app, "/selection/context", id=M948)):
+        rows = page.split("<table class='recs'>", 1)[1].split("</table>", 1)[0]
+        assert "alex92" not in rows and "Dan P" not in rows
+    # the one-line record names it as the account's name
+    line = records.line(conn, "msg:item1:Chats!949", records.Sources(conn))
+    assert 'account name <span class="q">@alex92</span>' in line
 
 
 def test_rows_that_differ_in_tier_or_file_say_so_in_each_row(conn) -> None:
@@ -382,7 +407,7 @@ def test_an_undecided_card_keeps_the_senders_name_from_the_source(app, conn) -> 
     card = body.split(f"<div class='item' id='{item.id}'>", 1)[1]
     rec = card.split("<p class='ev-rec'>", 1)[1].split("</p>", 1)[0]
     assert rec.startswith(
-        '<span class="q">7001001</span> (<span class="q">Dan P</span>, this phone)'
+        '<span class="q">7001001</span> (account name <span class="q">Dan P</span>, this phone)'
     )
     assert "class='lt'" not in rec  # the bubble above gives the time
 
@@ -430,8 +455,8 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
     evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
     sources = records.Sources(conn)
     how = records.note(records.record_rows(conn, [x.record_id for x in items]), sources)
-    assert "(America/New_York)" in how and how.endswith(records.EXCEL_ROW_NOTE)
-    assert how in html.unescape(evidence)
+    assert "(America/New_York)" in how and _text(how).endswith(records.EXCEL_ROW_NOTE)
+    assert how in evidence
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
 
@@ -444,13 +469,13 @@ def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(
     hidden = [x for x in claim_state(conn, "C16").evidence if x.stance.value == "irrelevant"]
     sources = records.Sources(conn)
     how = records.note(records.record_rows(conn, [x.record_id for x in hidden]), sources)
-    assert how.endswith(records.EXCEL_ROW_NOTE) and how in html.unescape(rows)
-    assert f"Tier: observed, for every record. {how}" in html.unescape(rows)  # the rows' tier
+    assert _text(how).endswith(records.EXCEL_ROW_NOTE)
+    assert f"Tier: observed, for every record. {how}" in rows  # the rows' tier, said once
     item = hidden[0]
     page = _get(app, "/evidence", id=item.id)
     assert record_line(conn, item.record_id) in page
     # the item's own page says how to read its time and the times of the messages around it
-    card = html.unescape(page.split("<h2>Context</h2>", 1)[0])
+    card = page.split("<h2>Context</h2>", 1)[0]
     assert records.note(records.record_rows(conn, [item.record_id]), sources) in card
 
 

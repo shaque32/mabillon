@@ -52,7 +52,7 @@ def _table(
         (f"Tier: {e(same.tier.value)}, for every message" if same.tier else "Tier in each row")
         + (f"; all in {same.words}" if same.sheet else "")
         + "."
-        + (f" {e(how)}" if how else "")
+        + (f" {how}" if how else "")
     )
     excel = (
         f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
@@ -124,7 +124,8 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
         rt = r.thread
         out.append(
             f"<p><strong>{q(rt.app)} thread {q(rt.title or '(untitled)')}</strong> on "
-            f"{q(rt.device)} in {q(rt.file_name)} ({rt.messages:,} messages). Shares "
+            f"{q(rt.device)} in {q(rt.file_name)} ({rt.messages:,} "
+            f"message{'' if rt.messages == 1 else 's'}). Shares "
             + ", ".join(q(s.split(":", 1)[1]) for s in r.shared)
             + ".</p>"
         )
@@ -137,7 +138,10 @@ def conversation(conn: sqlite3.Connection, view: ContextView) -> str:
         if r.lines:
             out.append("".join(_table(conn, r.lines, rt.app, sources)))
         if r.more:
-            out.append(f"<p class='muted'>{r.more:,} more messages in the period.</p>")
+            out.append(
+                f"<p class='muted'>{r.more:,} more message{'' if r.more == 1 else 's'} in the "
+                "period.</p>"
+            )
     out.append("</details>")
     return "".join(out)
 

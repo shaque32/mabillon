@@ -1394,11 +1394,12 @@ def _irrelevant_list(
     shown = " open" if any(x.id in withheld for x in items) else ""
     # how to read the lines' times and Excel rows; left out when no line gives either
     how = screen_records.note((of[x.record_id] for x in items if x.record_id in of), sources)
-    how = " ".join(x for x in (f"Tier: {one.value}, for every record." if one else "", how) if x)
+    tier = f"Tier: {e(one.value)}, for every record." if one else ""
+    how = " ".join(x for x in (tier, how) if x)
     return (
         f"<details id='irrelevant'{shown}><summary>{len(items)} retrieved records were labeled "
         "irrelevant</summary>"
-        + (f"<p class='muted cited-note'>{e(how)}</p>" if how else "")
+        + (f"<p class='muted cited-note'>{how}</p>" if how else "")
         + f"<ul>{rows}</ul></details>"
     )
 
@@ -1668,7 +1669,7 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
         )
         out.insert(
             note_at,
-            f"<p class='muted cited-note'>{e(how)}{' ' if how else ''}Each card's fold gives the "
+            f"<p class='muted cited-note'>{how}{' ' if how else ''}Each card's fold gives the "
             "values as exported.</p>",
         )
     hidden = [x for x in st.evidence if x.stance == Stance.IRRELEVANT]
@@ -1832,7 +1833,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if others
                 else ""
             )
-            + (f" {e(how)}" if how else "")
+            + (f" {how}" if how else "")
         )
         exported = "".join(
             f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
@@ -2340,7 +2341,7 @@ def evidence_page(conn: sqlite3.Connection, page: Page, evidence_id: str) -> str
         [row], sources, also=[item.ref.source_id], around=(ln.local_time for ln in lines)
     )
     if how:
-        out.append(f"<p class='muted cited-note'>{e(how)}</p>")
+        out.append(f"<p class='muted cited-note'>{how}</p>")
     out.append("<h2>Context</h2>")
     if lines:
         out.append("<div class='thread'>")

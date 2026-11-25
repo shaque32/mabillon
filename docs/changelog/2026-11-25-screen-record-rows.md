@@ -13,17 +13,18 @@
     full value with its UTC offset is the hover title, and the note said once above the rows
     names in full the zone of the phones those rows are from ("America/New_York"), so a short
     zone name is not ambiguous; when the phones differ in zone, each is named with its file, as
-    the rows name files. The same note says, in view, that an Excel row is the spreadsheet's own
-    row number, not the report's # column, and it is left out where no row gives a time or an
-    Excel row. A time shown in UTC still says "device zone unknown" in view, its table's time
-    column is headed "Time (UTC)" and the note says UTC. A value the source printed that was not
-    read as a time prints as stored, with "date not read" in the date cell so it does not read
-    as the day of the row above; "no date" is for a record the source gives no time for at all
-    (a contact, a message with no time). An attachment has no time of its own: its row shows its
-    message's time and says so, and the fold gives that message's exported line (UTC and as
-    printed). A message whose stored time is not a time, or is too near year 1 or 9999 to move
-    into the phone's zone, keeps its row, sender and direction and reads "time unknown"; a case
-    made before messages kept the sender text as printed still gets its rows.
+    the rows name files (the phone's label and the file name cited as the source's text). The
+    same note says, in view, that an Excel row is the spreadsheet's own row number, not the
+    report's # column, and it is left out where no row gives a time or an Excel row. A time
+    shown in UTC still says "device zone unknown" in view, its table's time column is headed
+    "Time (UTC)" and the note says UTC. A value the source printed that was not read as a time
+    prints as stored, with "date not read" in the date cell so it does not read as the day of
+    the row above; "no date" is for a record the source gives no time for at all (a contact, a
+    message with no time). An attachment has no time of its own: its row shows its message's
+    time and says so, and the fold gives that message's exported line (UTC and as printed). A
+    message whose stored time is not a time, or is too near year 1 or 9999 to move into the
+    phone's zone, keeps its row, sender and direction and reads "time unknown"; a case made
+    before messages kept the sender text as printed still gets its rows.
   - Claim page, the records a failed check cites: a table (date once per run of rows, the
     phone's local time, sender, the message or record text, the Excel row linked to the message
     in its conversation) in place of the list of full citations. Above it, once: the assumption,
@@ -61,11 +62,14 @@
     the phone's calendar, as the rows do; the two UTC times the report's header gives lead the
     fold. The match page's fixed line ends at "Messages are observed." and leaves the times to
     the note above the rows, which knows whether they are local or UTC.
-  - The sender cell adds the account's display name from the source where the message row prints
-    none, as the report's record line does: "5551234 (@alex92)", "7001001 (Dan P, this phone)".
+  - A one-line record (an evidence card, a labeled-irrelevant row) adds the account's name,
+    worded as the account's: "5551234 (account name @alex92)", "7001001 (account name Dan P,
+    this phone)". The tables give the account only. The name is kept once per account and no
+    importer stores the sender text per message yet, so the source can print another name on a
+    later message (a changed handle); a table row says only what the message's own row gives.
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (48 tests, synthetic demo case, cloud container,
+- Verified: `tests/test_screen_records.py` (49 tests, synthetic demo case, cloud container,
   2026-11-25): the time format and its fallbacks; times said as UTC, and headed so, where the
   phone's zone is unknown; the note naming only the zones of the phones its rows are from, and
   left out when no row has a time or an Excel row; an attachment's time, said to be its
@@ -86,13 +90,16 @@
 - Open: for an account or a thread a failed check cites (`acct:`, `thr:` ids, the same_account
   check) the report, and so the fold under the screen's table, still prints "record not found"
   (`record_line` in `core/`), and the screen's row gives it no tier; both need a report change
-  and a decision on the tier an account carries. A conversation page whose window holds a
-  message dated too near year 1 or 9999 still fails in `core/restore/view.py`, as before this
-  PR. Three more screen PRs (evidence as table rows, Timeline and Gaps, the Case page record
-  block with the Audit log and Activity). The Selection page's own bubbles and its "nearby"
-  table are report fragments and keep the long format until the report is decided. The report
-  itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's go-ahead. Not tested on a
-  real export: sender and place wording was only seen on the synthetic Excel reports.
+  and a decision on the tier an account carries. A message dated too near year 1 or 9999 to move
+  into the phone's zone still fails the pages that read it through `core/` (the conversation
+  page when it is in the window shown, the evidence item page's context, a claim page through
+  the selection audit or the Why lines), as before this PR; `format_local`'s callers in `core/`
+  need the guard in a follow-up. Three more screen PRs (evidence as table rows, Timeline and
+  Gaps, the Case page record block with the Audit log and Activity). The Selection page's own
+  bubbles and its "nearby" table are report fragments and keep the long format until the report
+  is decided. The report itself is not trimmed: that needs a REPORT_VERSION bump and Arsh's
+  go-ahead. Not tested on a real export: sender and place wording was only seen on the synthetic
+  Excel reports.
 - Affects: the review screen's wording and layout only. No capability, verdict path, model,
   privacy or customer-facing claim.
 - Status doc: no change
