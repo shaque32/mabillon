@@ -222,6 +222,13 @@ def test_an_attachments_fold_gives_its_messages_exported_time(app, conn) -> None
     assert records.CARRIED_TIME_NOTE in fold
     bare = pages._carrier_line(conn, replace(row, local="time unknown"))
     assert records.CARRIED_TIME_NOTE not in bare and record_line(conn, msg) in bare
+    # a value the source printed for the message, not read as a time, is still the message's
+    unread = replace(row, local="time unknown (source shows '3/15/2026 25:61')")
+    assert records.CARRIED_TIME_NOTE in pages._carrier_line(conn, unread)
+    assert records.CARRIED_TIME_NOTE in records.table([unread], records.Sources(conn))
+    assert records.CARRIED_TIME_NOTE not in records.table(
+        [replace(row, local="time unknown")], records.Sources(conn)
+    )
     # on its evidence card, the fold under the attachment's own line carries it
     item = conn.execute("SELECT id FROM evidence_items WHERE record_id = ? LIMIT 1", (att,))
     item = item.fetchone()
@@ -538,6 +545,26 @@ def test_a_decided_item_is_one_row_and_its_details_keep_everything_the_card_had(
         assert "Open this item on its own page" in fold
 
 
+def test_a_decided_row_marks_a_quote_that_is_part_of_its_message(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    decided = _decided(claim_state(conn, "C03"))
+
+    def rows() -> list[str]:
+        body = _get(app, "/claim", id="C03")
+        return [_card(body, i).split("<details class='ev-detail'>", 1)[0] for i in decided]
+
+    # the demo's quotes are whole messages: no mark
+    assert all("Quoted:" not in r for r in rows())
+    real = pages.build_context
+
+    def longer(*args, **kw):  # noqa: ANN002, ANN003, ANN202
+        return [replace(ln, body=ln.body + " and more") for ln in real(*args, **kw)]
+
+    monkeypatch.setattr(pages, "build_context", longer)
+    assert all("<p class='ev-q'><span class='muted'>Quoted:</span> " in r for r in rows())
+
+
 def test_a_review_every_decided_row_shares_is_said_once(app, conn) -> None:
     body = _get(app, "/claim", id="C03")
     group = body.split("Evidence the expert already decided", 1)[1]
@@ -701,6 +728,7 @@ def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, mon
     above, table = block.split("<table class='recs'>", 1)
     above = html.unescape(above)
     assert "2 of the 3 are an account or a thread, not a record." in above
+    assert "; the message is from" in above and "the messages are" not in above  # one record
     assert "not among the case's records" not in above
     table = table.split("</table>", 1)[0]
     assert "record not found" not in table
@@ -740,6 +768,9 @@ def test_a_list_of_accounts_and_threads_alone_is_not_called_records(app, conn, m
     # the column is not headed Record, and no fold offers exported values for ids that have none
     both = block("Accounts or threads")
     assert "<th>Cited id</th>" in both and "<th>Record</th>" not in both
+    # an account or a thread has no tier and no place in a file: neither column is drawn empty
+    assert "<th>Tier</th>" not in both and "in the file</th>" not in both
+    assert "<td class='tier'>" not in both and "<td class='src'>" not in both
     assert "record not found" not in both and "Exported values for" not in both
     cited.pop()
     assert above("Account or thread").startswith(

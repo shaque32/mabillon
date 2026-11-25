@@ -1225,12 +1225,16 @@ def decided_row(
         row=row,
     )
     caution = screen_records.warning(conn, item.record_id, found)
+    # a quote that is part of its message says so, as the folded card did: beside the sender
+    # and the time it would otherwise read as the whole message
+    whole = any(ln.is_target and ln.body.strip() == item.quote.strip() for ln in lines)
+    mark = "<span class='muted'>Quoted:</span> " if len(lines) >= 2 and not whole else ""
     # the same message, drawn above for another assumption: said once, pointed to here
     head = (
         f"<p class='ev-q ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a> "
         f"({q(item.quote)}), judged here for this assumption.</p>"
         if same_as
-        else f"<p class='ev-q'>{q(item.quote)}</p><p class='ev-rec'>{rec}</p>"
+        else f"<p class='ev-q'>{mark}{q(item.quote)}</p><p class='ev-rec'>{rec}</p>"
     )
     review = f"<p class='ev-review'><strong>Review:</strong> {review_label(conn, item)}</p>"
     flag = _flag_label_form(page, claim_id, item, back, run_id) if claim_id is not None else ""
@@ -1880,10 +1884,10 @@ def _carrier_line(conn: sqlite3.Connection, row: screen_records.Row | None) -> s
     the time as printed), so the time in view can be checked; "" for any other record."""
     if row is None or not row.carrier:
         return ""
-    # as on the row: with no time read for its message, there is no time in view to explain
+    # as on the row: when the source gives its message no time, nothing in view needs explaining
     lead = (
         f"{e(screen_records.CARRIED_TIME_NOTE)} That message, as exported:"
-        if screen_records.reading(row.local)
+        if screen_records.carried(row)
         else "The message it is attached to, as exported:"
     )
     return (
@@ -1959,7 +1963,11 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         note = said or (
             what
             + place
-            + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
+            + (
+                f"; the message{' is' if one else 's are'} from {of.strip()}"
+                if same.app and not only_messages
+                else ""
+            )
             + "."
             + (
                 f" {gone} of the {len(cited)} {'is' if gone == 1 else 'are'} not among the case's "

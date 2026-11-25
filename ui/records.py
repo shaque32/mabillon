@@ -413,6 +413,13 @@ def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[
 NOT_RECORDS = {"acct": "an account", "thr": "a thread"}
 
 
+def carried(row: Row) -> bool:
+    """An attachment's row that shows a value of its message's: a time, or what the source
+    printed where no time was read ("time unknown (source shows ...)"). False for any other
+    record, and for an attachment whose message the source gives no time at all."""
+    return bool(row.carrier) and row.local not in ("", "time unknown")
+
+
 def not_a_record(record_id: str) -> str:
     """For an id a check cites that is not a record's id (an account, a thread): what it is,
     as HTML, so its row does not read as a record that went missing. "" for a record's id."""
@@ -553,6 +560,9 @@ def table(
     # only an Excel report has rows; any other source (a UFDR, a PDF) gives a place in the file
     rowed = all(sources.get(r.source_id)[1] == EXCEL for r in rows if r.source_id)
     place_head = "Excel row" if same.sheet else "Row in the file" if rowed else "Place in the file"
+    # a list of accounts and threads alone has no tier and no place in a file to show
+    tiered = not same.tier and any(r.tier for r in rows)
+    placed = any(r.source_id for r in rows)
     if any(not rd.caveat for rd in read):
         clock = "Phone's local time"
     else:
@@ -561,8 +571,8 @@ def table(
         (f"<th>Date</th><th>{clock}</th>" if timed else "")
         + ("<th>From</th>" if named else "")
         + f"<th>{what}</th>"
-        + ("" if same.tier else "<th>Tier</th>")
-        + f"<th>{place_head}</th>"
+        + ("<th>Tier</th>" if tiered else "")
+        + (f"<th>{place_head}</th>" if placed else "")
     )
     out = [f"<table class='recs'><thead><tr>{head}</tr></thead>"]
     last_date = None
@@ -593,10 +603,10 @@ def table(
             if split and r.thread
             else ""
         )
-        if r.carrier and reading(r.local):  # an attachment: the time in its row is not its own
+        if carried(r):  # an attachment: the time in its row is not its own
             where += f"<br><span class='muted'>{CARRIED_TIME_NOTE}</span>"
         cells.append(f"<td class='what'>{r.what}{where}</td>")
-        if not same.tier:
+        if tiered:
             cells.append(f"<td class='tier'>{e(r.tier.value) if r.tier else ''}</td>")
         if not r.source_id:
             place = ""
@@ -616,7 +626,8 @@ def table(
                 # link's name
                 title = f" title='{e(href_title)}'" if href_title else ""
                 place = f"<a href='{e(url)}'{title}>{place}</a>"
-        cells.append(f"<td class='src'>{place}</td>")
+        if placed:
+            cells.append(f"<td class='src'>{place}</td>")
         cls = " class='target'" if r.target else ""
         out.append(f"<tr{cls}>{''.join(cells)}</tr>")
     out.append("</table>")
@@ -654,6 +665,6 @@ def line(
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     what = "" if quoted is not None and r.what == q(quoted) else r.what
     at = when(r.local) if r.local else ""
-    if r.carrier and reading(r.local):  # an attachment: the time is its message's
+    if carried(r):  # an attachment: the time is its message's
         at += " (the time of the message it is attached to)"
     return " · ".join(x for x in (what, at, where) if x)
