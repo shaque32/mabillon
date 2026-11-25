@@ -3394,19 +3394,26 @@ def _tested_lengths_in(
 
 # A side named as a saved contact or a phone number by what the log shows (`unread_words`)
 _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as\b", re.I)
+# 'the number "Marc Garage"': a side named as a phone number by a quoted name, read before
+# quotes are blanked (Claude review on #279)
+_NUMBER_QUOTED_RE = re.compile(r"\b(?:the|a|his|her|their)\s+number\s*[\"“‘']", re.I)
 # A side written as a saved contact by name: 'the contact "Marc Garage"', "the contact named
 # Marc", "his contact saved as Marc" (Claude review on #279). A bare "contact" ("made contact
 # with") stays plain; the quote is looked for in the text before quotes are blanked.
 _CONTACT_NAMED_RE = re.compile(
     r"\b(?:(?P<art>the|a|an|his|her|their|its|my|your|our)\s+)?(?:saved\s+)?contact\b"
     r"(?:\s+(?:entry|card|name)\b)?"
-    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?",
+    r"(?:\s+(?P<how>named|called|saved\s+as|listed\s+as|stored\s+as)\b)?"
+    r"(?:\s+(?:for|under)\b)?",  # "the contact for "Marc Garage"" (Claude review on #279)
     re.I,
 )
 _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact, "Marc"'
 # '"Marc Garage" (a contact)': a saved contact written after the name (Claude review on #279)
 _CONTACT_AFTER_RE = re.compile(
-    r"\(\s*(?:(?:a|the|his|her|their|my|your|our)\s+)?(?:saved\s+)?contact\s*\)", re.I
+    r"\(\s*(?:(?:a|the|his|her|their|my|your|our)\s+)?(?:saved\s+)?contact\s*\)"
+    # '"Marc Garage", his contact,' (Claude review on #279)
+    r"|[\"”’'],\s*(?:a|the|his|her|their|my|your|our)\s+(?:saved\s+)?contact\b",
+    re.I,
 )
 # What names a saved contact right after "the contact": a name, a number or a handle ("the
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
@@ -3426,6 +3433,10 @@ def _phone_kind(word: str) -> str:
 # Where a reply's sentence ends, for the quotes read after a reply word: never the dot of an
 # abbreviation such as "p.m." ("replied to "X" at 9:14 p.m. EDT, "Lol."")
 _SENTENCE_END_RE = re.compile(r"(?<!\.[A-Za-z])[.!?](?=\s+[A-Z]|\s*$)")
+# A call "back": the other side called first, which no check reads (Claude review on #279)
+_CALL_BEFORE_BACK_RE = re.compile(
+    r"\b(?:call(?:ed|s|ing)?|rang|phoned|dial(?:l)?ed|ring(?:s|ing)?)\s+$", re.IGNORECASE
+)
 
 # A length no row tests, read as words no check reads: the spoken lengths, and "a quarter
 # hour" (CodeRabbit on #265). Only `_SPOKEN_LENGTH_RE` is ever blanked as a tested length.
@@ -3686,17 +3697,21 @@ def plain_tokens(words: str, phrases: str | None = None, tests: Iterable[str] = 
     if "direction" in tests:
         never.remove(_PASSIVE_TO_RE)
     rest = words
-    if phrases is not None and len(phrases) != len(words):
-        phrases = None  # its offsets would not point into `words`
+    # `phrases` blanks at its own offsets only when it is `words` before blanking (same
+    # length); otherwise its phrases are still reported, and only `words`' own are blanked
+    same = phrases is not None and len(phrases) == len(words)
     for rx in never:
         # blank only what is reported, where it is read: "his last WhatsApp call" is a phrase
         # only once the app is blanked, so its words stay for the word check ("last") and are
         # never dropped unreported (Claude review on #279)
-        for m in rx.finditer(words if phrases is None else phrases):
-            w = " ".join(m.group(0).casefold().split())
-            if w not in out:
-                out.append(w)
-            rest = rest[: m.start()] + " " * (m.end() - m.start()) + rest[m.end() :]
+        texts = [phrases] if same else [words] if phrases is None else [phrases, words]
+        for text in texts:
+            for m in rx.finditer(text):
+                w = " ".join(m.group(0).casefold().split())
+                if w not in out:
+                    out.append(w)
+                if same or text is words:
+                    rest = rest[: m.start()] + " " * (m.end() - m.start()) + rest[m.end() :]
     for m in _NUMERAL_RE.finditer(rest):
         gate = "length" if _UNIT_AFTER_RE.match(rest, m.end()) else "count"
         if gate not in tests and m.group(0) not in out:
@@ -3960,13 +3975,20 @@ class LocalAssumptionFiller:
                 # words, so "back" stays a word no check reads (Claude review on #279)
                 # A quoted message after the party ('replied to "DFIR Two" on LINE, "Lol."')
                 # is still the reply's words.
-                kept, outside = flat, _unquoted(flat)
+                # A call "back" ("called back "X"", "a call back to the party displayed as
+                # "X"") is never a reply's quoted words. Parties are read on the text before
+                # "displayed as" was blanked (same length).
+                kept, outside, whole = flat, _unquoted(flat), _flat(_nfc(text))
                 for m in rx.finditer(kept):
+                    if m.group(0).casefold() == "back" and _CALL_BEFORE_BACK_RE.search(
+                        kept, 0, m.start()
+                    ):
+                        continue
                     end = _SENTENCE_END_RE.search(outside, m.end())
                     quotes = _QUOTE_SPAN_RE.finditer(
-                        kept, m.end(), end.start() if end else len(kept)
+                        whole, m.end(), end.start() if end else len(whole)
                     )
-                    if not all(_quote_is_a_party(kept, q.start(), q.end()) for q in quotes):
+                    if not all(_quote_is_a_party(whole, q.start(), q.end()) for q in quotes):
                         flat = flat[: m.start()] + " " * (m.end() - m.start()) + flat[m.end() :]
                 continue
             flat = rx.sub(lambda m: " " * len(m.group(0)), flat)
@@ -4010,8 +4032,10 @@ class LocalAssumptionFiller:
             ):
                 extra.append(" ".join(named.group(0).casefold().split()))
                 break
-        if (after := _CONTACT_AFTER_RE.search(_unquoted(whole))) is not None:
-            extra.append(" ".join(after.group(0).casefold().split()))
+        if _CONTACT_AFTER_RE.search(whole) is not None:
+            extra.append("contact")
+        if _NUMBER_QUOTED_RE.search(whole) is not None:
+            extra.append("number")
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
         if ranges and any(
@@ -4075,7 +4099,8 @@ class LocalAssumptionFiller:
             cut += spans
             extra += [w for w in untested if w not in extra]
         elif "length" in tests:
-            # no tested length given: every length but an ordinal-like one, as filler 13 read
+            # no tested length given (direct callers only; the filler always gives them): every
+            # spoken length but an ordinal-like one, as before filler 14
             cut += [
                 m.span()
                 for m in _SPOKEN_LENGTH_RE.finditer(bare)

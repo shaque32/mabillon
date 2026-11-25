@@ -61,12 +61,14 @@
   - Three older gaps in the unread-words guard, each of which let a timing claim rest on its
     checks alone, now keep the core event: a phrase that is never plain once an app's name is
     blanked ("his last WhatsApp call") is no longer dropped unreported; "back" before a quoted
-    party's name ('a call back to "Marc Garage"') stays a word no check reads, while a reply
+    party's name ('a call back to "Marc Garage"', also through "the party displayed as") or
+    after a call verb ('called back "Marc Garage"') stays a word no check reads, while a reply
     whose message is quoted after the party ('replied to "X" on LINE, "..."') stays plain; and
     a tested length covers one stated length only ("lasted 100 seconds and a call of 100
     seconds"), also when written compactly ("a 30s call"); a saved contact is read with
     punctuation before the name ('his contact, "X"', 'the contact: "X"') or after it ('"X"
-    (a contact)'). "the contact" followed by no name ("a contact that lasted", "the contact
+    (a contact)', '"X", his contact,'), and so is 'the contact for "X"' and a side named as a
+    number by a quoted name ('the number "X"'). "the contact" followed by no name ("a contact that lasted", "the contact
     between") stays plain, and an abbreviated length ("1 min. 40 sec.") is read whole.
 - Where: PR #279
 - Verified: `tests/test_fill_calls.py` (ordinal forms read with the event kept, on the call log
@@ -80,7 +82,7 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,341 passed. A length no row
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,348 passed. A length no row
   tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
   keeps the event, which fails without the fix; each stated length read only where a row
   tests it, spoken and in digits, whole and in parts. Free replay of

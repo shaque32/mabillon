@@ -901,6 +901,14 @@ def test_another_call_keeps_its_event_without_the_guard(conn, monkeypatch):
         'PETROV placed his last WhatsApp call to "Marc Garage".',
         # the quote after "back" is a party's name, not a reply's words
         'PETROV placed a WhatsApp call back to "Marc Garage".',
+        'PETROV placed a WhatsApp call back to the party displayed as "Marc Garage".',
+        'PETROV called back the party displayed as "Marc Garage" on WhatsApp.',
+        'PETROV called back "Marc Garage" on WhatsApp.',
+        # a saved contact after the name, or "for" before it; a side named as a number
+        'PETROV called "Marc Garage", his contact, on WhatsApp.',
+        'PETROV called "Marc Garage", a contact, on WhatsApp.',
+        'PETROV called the contact for "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the number "Marc Garage".',
     ],
 )
 def test_words_beside_an_app_or_a_quoted_party_stay_unread(conn, words):
@@ -930,6 +938,11 @@ def test_unread_words_are_whole_words(conn):
     assert "reading" in out and "rea" not in out
     reply = 'SUBJECT-1 replied to "DFIR Two" at 9:14 p.m. EDT, "Lol."'
     assert "replied" not in f.unread_words(reply, (), set())
+    # a reply's own "back" before its quoted words stays plain
+    assert "back" not in f.unread_words('REYES texted back "ok".', (), set())
+    assert not any(
+        "contact" in w for w in f.unread_words("PETROV had a contact for two minutes.", (), set())
+    )
 
 
 def test_one_length_stated_for_two_calls_keeps_the_event(conn):
