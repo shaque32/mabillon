@@ -28,7 +28,7 @@
   the number of calls", "12 messages, a number the log confirms". A quoted message is not a
   name ('wrote "ok" to REYES, his contact'), a count's "number" right after a quoted name stays
   plain ('"X", a number of times'), and a later side must stand in the quote's sentence (a dot
-  after "Mr." never ends it; one after "p.m." ends it only before a word written like a
+  after a title or a company's short form ("Mr.", "Prof.", "Det.", "Inc.") never ends it; one after "p.m." ends it only before a word written like a
   sentence's first word, so "p.m. EDT" goes on and "p.m. On WhatsApp" starts a new sentence). A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A

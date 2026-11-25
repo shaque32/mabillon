@@ -3482,11 +3482,15 @@ _SIDE_AFTER_RES = (
 # REYES, his contact') (Claude review on #282). After an unquoted name ("REYES, a contact on
 # WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
 # The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282),
-# within its sentence (Claude review on #282). A title's dot ("Mr. Reyes") never ends the
-# sentence; an abbreviation's dot ("p.m.") ends it only before a word written like a sentence's
-# first word ("p.m. On WhatsApp", not "p.m. EDT") (CodeRabbit on #282).
+# within its sentence (Claude review on #282). The dot of a title or a company's short form
+# ("Mr. Reyes", "Prof. Reyes", "Det. Reyes", "Acme Inc.") never ends the sentence; a letter-dot
+# abbreviation's dot ("p.m.") ends it only before a word written like a sentence's first word
+# ("p.m. On WhatsApp", not "p.m. EDT") (CodeRabbit on #282). Python's look-behinds are fixed
+# width, so the short forms are grouped by length.
 _SENTENCE_END = (
-    r"(?<!\b(?:mr|ms|dr|st))(?<!\bmrs)"
+    r"(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft))"
+    r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd))"
+    r"(?<!\b(?:prof|capt|insp|atty|supt|corp))"
     r"(?:(?<!\.[a-z])[.!?]\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+(?-i:[A-Z][a-z]))"
 )
 _SIDE_LATER_RE = re.compile(
