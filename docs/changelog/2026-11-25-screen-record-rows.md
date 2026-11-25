@@ -39,16 +39,17 @@
     phone)".
   - Message bubbles on the claim and evidence pages use the same time format.
 - Where: PR #277 (branch `claude/project-thread-4qhfdg`).
-- Verified: `tests/test_screen_records.py` (21 tests, synthetic demo case, cloud container,
-  2026-11-25): the time format and its fallbacks; the direction and display-name rules; a tier
-  or file column returning when rows differ; and, on the claim, evidence and conversation
-  pages, that every record's report line, record id, spreadsheet-row sentence and the report's
-  conversation table are still on the same page inside a fold. The pinned strings in
+- Verified: `tests/test_screen_records.py` (23 tests, synthetic demo case, cloud container,
+  2026-11-25): the time format and its fallbacks; the direction and display-name rules (a message
+  with no sender account always says its direction); a tier or file column returning when rows
+  differ; the app named above a cited table whose senders leave it off; and, on the claim, evidence
+  and conversation pages, that every record's report line, record id, spreadsheet-row sentence and
+  the report's conversation table are still on the same page inside a fold. The pinned strings in
   `tests/test_start_case.py`, `tests/test_flags.py`, `tests/test_first_read_fixes.py`,
   `tests/test_restore_case01.py` and both screen-against-report tests in
-  `tests/test_report_consistency.py` pass unchanged. Checked by eye in the running demo at
-  1440 px and 390 px. On the demo case the cited-records block of C04 goes from 20 lines of
-  citation to a 10-row table, and each decided evidence card loses two wrapped lines.
+  `tests/test_report_consistency.py` pass unchanged. Checked by eye in the running demo at 1440 px
+  and 390 px. On the demo case the cited-records block of C04 goes from 20 lines of citation to a
+  10-row table, and each decided evidence card loses two wrapped lines.
 - Open: three more screen PRs (evidence as table rows, Timeline and Gaps, the Case page record
   block with the Audit log and Activity). The Selection page's own bubbles and its "nearby"
   table are report fragments and keep the long format until the report is decided. The report
