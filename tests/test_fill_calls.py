@@ -404,45 +404,71 @@ def test_a_second_followed_by_more_words_stays_an_ordinal(conn, text, kind):
 
 
 @pytest.mark.parametrize(
-    ("text", "tested", "lengths"),
+    "text",
     [
-        ("lasted one minute and a second.", (61, 61), ["one minute", "and a second"]),
-        ("lasted one minute, and a second.", (61, 61), ["one minute", "and a second"]),
-        ("lasted one minute, and a second on Item 1", (61, 61), ["one minute", "and a second"]),
-        ("lasted a second.", (1, 1), ["a second"]),
-        # a length in digits before "and a second" (CodeRabbit on #279)
-        ("for 1 minute and a second.", (61, 61), ["and a second"]),
-        ("for 1 minute, and a second.", (61, 61), ["and a second"]),
-        ("for 1 minute, and a second to Item 2.", (61, 61), []),
-        ("for 1 minute and a second call.", (61, 61), []),
-        # an ordinal-like length is read only as part of the length a row tests (Claude review
-        # on #279): "and a second" after the tested "one minute" is a second call
-        ("lasted one minute, and a second.", (60, 60), ["one minute"]),
-        ("lasted one minute, and a second to Item 2.", (61, 61), ["one minute"]),
-        ("lasted a second.", (60, 60), []),
-        # a comma after a unit never leads into a bare "a second" (CodeRabbit on #279)
-        ("after one minute, a second call", (60, 60), ["one minute"]),
-        ("lasted one minute, a second call", (60, 60), ["one minute"]),
-        ("placed a second, telephone call", (1, 1), []),
-        ("for a second time", (1, 1), []),
-        ("over a second line", (1, 1), []),
-        ("lasted two minutes, and a second call", (120, 179), ["two minutes"]),
-        # a length that is no ordinal reads as it did in filler 13 (Claude review on #279)
-        ("placed a one second call", (1, 1), ["a one second"]),
-        ("lasted thirty seconds", (30, 30), ["thirty seconds"]),
-        ("the thirty-second call", (32, 32), []),
+        "Item 1 placed a 30 second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a thirty second call to (212) 555-0199 that lasted about two minutes.",
+        "Item 1 placed a 30-second call to (212) 555-0199 that lasted about two minutes.",
     ],
 )
-def test_an_ordinal_like_length_is_read_only_as_part_of_a_tested_one(text, tested, lengths):
-    from core.audit.assumption_filler import _SPOKEN_LENGTH_RE, _a_tested_length
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_a_length_no_row_tests_keeps_the_event(conn, text, kind):
+    # the row tests "about two minutes"; "30 second" is a length no check reads, so the claim
+    # never rests on the time row alone (Claude review on #279)
+    made, _ = fill(conn, f"{AT} {text}", kind, duration={"as_written": "about two minutes"})
+    assert made["record_time"].params.duration_s and made["event"].is_core
 
-    spoken = list(_SPOKEN_LENGTH_RE.finditer(text))
-    found = [
-        m.group(0)
-        for i, m in enumerate(spoken)
-        if _a_tested_length(text, m, spoken[i - 1] if i else None, {tested})
-    ]
-    assert found == lengths
+
+@pytest.mark.parametrize(
+    ("text", "tested", "read", "unread"),
+    [
+        ("lasted one minute and a second.", (61, 61), ["one minute and a second"], []),
+        ("lasted one minute, and a second.", (61, 61), ["one minute, and a second"], []),
+        ("lasted one minute, and a second on Item 1", (61, 61), ["one minute, and a second"], []),
+        ("lasted a second.", (1, 1), ["a second"], []),
+        ("for 1 minute and a second.", (61, 61), ["1 minute and a second"], []),
+        ("for 1 minute, and a second.", (61, 61), ["1 minute, and a second"], []),
+        ("lasted two minutes and 30 seconds.", (150, 150), ["two minutes and 30 seconds"], []),
+        ("lasted a minute and a half.", (90, 119), ["a minute and a half"], []),
+        ("placed a ninety second call", (90, 90), ["ninety second"], []),
+        ("placed a 90 second call", (90, 90), ["90 second"], []),
+        ("lasted thirty seconds", (30, 30), ["thirty seconds"], []),
+        # a length is read only where it is the length a row tests (Claude review on #279):
+        # "and a second" after the tested "one minute" is a second call
+        ("lasted one minute, and a second.", (60, 119), ["one minute"], ["and a second"]),
+        ("lasted one minute, and a second to Item 2.", (61, 61), [], ["one minute"]),
+        ("for 1 minute, and a second to Item 2.", (61, 61), [], ["1 minute"]),
+        ("for 1 minute and a second call.", (61, 61), [], ["1 minute"]),
+        ("lasted a second.", (60, 60), [], ["a second"]),
+        (
+            "a 30 second call that lasted about two minutes",
+            (90, 150),
+            ["two minutes"],
+            ["30 second"],
+        ),
+        (
+            "a thirty second call that lasted two minutes",
+            (120, 179),
+            ["two minutes"],
+            ["a thirty second"],
+        ),  # fmt: skip
+        # a comma after a unit never leads into a bare "a second" (CodeRabbit on #279)
+        ("after one minute, a second call", (60, 119), ["one minute"], []),
+        ("placed a second, telephone call", (1, 1), [], []),
+        ("for a second time", (1, 1), [], []),
+        ("over a second line", (1, 1), [], []),
+        ("lasted two minutes, and a second call", (120, 179), ["two minutes"], []),
+        ("the thirty-second call", (32, 32), [], []),
+    ],
+)
+def test_a_stated_length_is_read_only_where_a_row_tests_it(text, tested, read, unread):
+    from core.audit.assumption_filler import _tested_lengths_in
+
+    spans, untested = _tested_lengths_in(text, {tested})
+    assert sorted({text[a:b] for a, b in spans}) == sorted(read)
+    # an ordinal-like "second" that may not be a length is no length at all: the unread-words
+    # guard reads it as an ordinal
+    assert [w for w in untested if not w.endswith("second") or w in unread] == unread
 
 
 def test_the_ordinal_guards_stay_fast():
@@ -741,6 +767,8 @@ def test_a_side_named_by_what_the_log_shows_gets_a_caller(conn, words):
         'PETROV had a WhatsApp call with the contact displayed as "Marc Garage".',
         'PETROV had a WhatsApp call with the number shown as "Marc Garage".',
         'PETROV received a WhatsApp call from the contact displayed as "Marc Garage".',
+        # "caller" is a word no check reads, as "shown" is (Claude review on #279)
+        'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
     ],
 )
 @pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])

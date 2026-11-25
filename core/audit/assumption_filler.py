@@ -3296,46 +3296,80 @@ _SECOND_LENGTH_LEAD_RE = re.compile(
     r"just|only|over|under|exactly|some)\s+$",
     re.IGNORECASE,
 )
-# "1 minute, and a second": a length in digits right before "and a second" (CodeRabbit on #279)
-_DIGIT_LENGTH_BEFORE_RE = re.compile(
-    r"(?<![\w.])\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?)\s*,?\s*$", re.IGNORECASE
+# A length written in digits: "90 seconds", "1 minute", "a 30-second call" (CodeRabbit and
+# Claude review on #279)
+_DIGIT_LENGTH_RE = re.compile(
+    r"(?<![\w.,:/])\d+(?:\.\d+)?(?:\s*-\s*|\s*)(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b",
+    re.IGNORECASE,
 )
+# What may part two pieces of one length: "two minutes and 30 seconds", "one minute, and a
+# second" (whose "and" the second piece holds)
+_LENGTH_JOIN_RE = re.compile(r"\s*,?\s*(?:and\s+)?", re.IGNORECASE)
+_HALF_AFTER_RE = re.compile(r"\s+and\s+a\s+half\b", re.IGNORECASE)
+_ARTICLE_BEFORE_RE = re.compile(r"an?[\s-]+(?=\w+[\s-]+\w)", re.IGNORECASE)
 _SECOND_LENGTH_END_RE = re.compile(
     r"\s*(?:$|[.,;:!?)\]\u2014\u2013])|\s+(?:and|or|but|then|on|in|according|per)\b",
     re.IGNORECASE,
 )
 
 
-def _a_tested_length(
-    text: str, m: re.Match[str], before: re.Match[str] | None, lengths: Collection[tuple[int, int]]
-) -> bool:
-    """Whether a spoken length `m` in `text` is read as one. A length whose words could be an
-    ordinal ("a second") is one only where its clause ends there and it is the length, or the
-    end of the length right `before` it, that a row tests (`lengths`, each as `duration_range`
-    reads it)."""
+def _may_be_a_length(text: str, m: re.Match[str]) -> bool:
+    """Whether a stated length `m` may be read as a length at all. One whose words could be an
+    ordinal ("a second", "and a second") may be only where its clause ends right after it, and
+    a lone "a second" only where a length word leads into it ("lasted a second")."""
     words = m.group(0).casefold()
     if not _SECOND_ORDINAL_FORM_RE.fullmatch(words):
         return True
-    if not lengths or not _SECOND_LENGTH_END_RE.match(text, m.end()):
+    if not _SECOND_LENGTH_END_RE.match(text, m.end()):
         return False
-    if words.startswith("and"):
-        # "one minute and a second", "1 minute and a second": read with the length right
-        # before it, whole
-        if before is not None and re.fullmatch(r",?\s*", text[before.end() : m.start()]):
-            start = before.start()
-        elif (digits := _DIGIT_LENGTH_BEFORE_RE.search(text, 0, m.start())) is not None:
-            start = digits.start()
+    return words.startswith("and") or bool(_SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()))
+
+
+def _tested_lengths_in(
+    text: str, lengths: Collection[tuple[int, int]]
+) -> tuple[list[tuple[int, int]], list[str]]:
+    """The spans of the lengths `text` states that a row tests (`lengths`, each as
+    `duration_range` reads it), and the words of every other length it states. A length may
+    be written in parts ("two minutes and 30 seconds", "one minute, and a second", "a minute
+    and a half"): each run of parts is read whole and in every shorter run, and a part is
+    tested only where a run holding it gives a tested length. "a 30 second call that lasted
+    about two minutes" beside a row testing about two minutes leaves "30 second" a length no
+    row tests (Claude review on #279)."""
+    tested = {tuple(x) for x in lengths}
+    found = sorted(
+        [*_SPOKEN_LENGTH_RE.finditer(text), *_DIGIT_LENGTH_RE.finditer(text)],
+        key=lambda m: m.start(),
+    )
+    runs: list[list[re.Match[str]]] = []
+    for m in found:
+        if not _may_be_a_length(text, m):
+            runs.append([])  # an ordinal parts the runs around it
+        elif runs and runs[-1] and _LENGTH_JOIN_RE.fullmatch(text, runs[-1][-1].end(), m.start()):
+            runs[-1].append(m)
         else:
-            return False
-        phrase = text[start : m.end()]
-    elif _SECOND_LENGTH_LEAD_RE.search(text, 0, m.start()):
-        phrase = m.group(0)
-    else:
-        return False
-    try:
-        return duration_range(phrase, text) in {tuple(x) for x in lengths}
-    except Reject:
-        return False
+            runs.append([m])
+    spans: list[tuple[int, int]] = []
+    covered: set[int] = set()
+    for run in runs:
+        for i, first in enumerate(run):
+            for j in range(i, len(run)):
+                ends = [run[j].end()]
+                if (half := _HALF_AFTER_RE.match(text, run[j].end())) is not None:
+                    ends.append(half.end())
+                # "a ninety second call": the article before a length is no part of it
+                starts = [first.start()]
+                if (art := _ARTICLE_BEFORE_RE.match(text, first.start())) is not None:
+                    starts.append(art.end())
+                for start, end in ((a, b) for a in starts for b in ends):
+                    try:
+                        if duration_range(text[start:end], text) not in tested:
+                            continue
+                    except Reject:
+                        continue
+                    spans.append((start, end))
+                    covered.update(m.start() for m in run[i : j + 1])
+    untested = [" ".join(m.group(0).casefold().split()) for m in found if m.start() not in covered]
+    return spans, untested
 
 
 # A side named as a saved contact or a phone number by what the log shows (`unread_words`)
@@ -3366,10 +3400,8 @@ _UNTESTED_LENGTH_RE = re.compile(
 _UNPLAIN_PHRASES_RE = re.compile(
     r"\b(?:the\s+last|last\s+(?:message|text|call|time|one)|first|only|again|twice|never|not|"
     r"no(?!\s+(?:fewer|more|less)\s+than)|n['’]t|"
-    # a "second" after digits is a length ("a 90 second WhatsApp call"), read by the row that
-    # tests it, never an ordinal (Claude review on #279)
-    r"(?<!\d)(?<!\d[\s-])second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|"
-    rf"account|line|device|time|handset|sim)s?\b)|(?<!\d)(?<!\d[\s-])second(?={_CALL_NOUN_RUN})|"
+    r"second(?=[\s-]+(?:\w+[\s-]+){0,2}(?:phone|call|message|text|number|account|line|"
+    rf"device|time|handset|sim)s?\b)|second(?={_CALL_NOUN_RUN})|"
     # "a second, telephone call", "their second (WhatsApp) call": an ordinal after an article or
     # a possessive states an earlier one, whatever follows it (a tested length "lasted a
     # second" is blanked before this is read; Claude review on #279)
@@ -3958,14 +3990,20 @@ class LocalAssumptionFiller:
             if (h := _BARE_HOUR_RE.search(bare[: m.start()])) is not None:
                 cut.append((h.start(1), h.end(2) if h.group(2) else h.end(1)))
         lengths: list[str] = []
-        if "length" in tests:
-            # "a second WhatsApp call that lasted two minutes": "a second" before a call is
-            # an ordinal, never a length, and stays a word no check reads (CodeRabbit on #279)
-            spoken = list(_SPOKEN_LENGTH_RE.finditer(bare))
+        if "length" in tests and tested_lengths:
+            # a length the claim states is read only where it is the length a row tests: "a
+            # second WhatsApp call that lasted two minutes" keeps "a second" (an ordinal), and
+            # "a 30 second call that lasted about two minutes" keeps "30 second", words no
+            # check reads (CodeRabbit and Claude review on #279)
+            spans, untested = _tested_lengths_in(bare, tested_lengths)
+            cut += spans
+            extra += [w for w in untested if w not in extra]
+        elif "length" in tests:
+            # no tested length given: every length but an ordinal-like one, as filler 13 read
             cut += [
                 m.span()
-                for i, m in enumerate(spoken)
-                if _a_tested_length(bare, m, spoken[i - 1] if i else None, tested_lengths)
+                for m in _SPOKEN_LENGTH_RE.finditer(bare)
+                if not _SECOND_ORDINAL_FORM_RE.fullmatch(m.group(0).casefold())
             ]
         # "over one hour", "an hour after the call": a length no row tests, whose words are
         # each plain alone; beside a tested length, what is left of it ("one minute and a

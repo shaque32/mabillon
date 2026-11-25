@@ -15,8 +15,8 @@
     "X"", also "contact", "caller", "number", "user" or "account", "displayed" or "shown as".
     Only for an account side, never a person or a phone. With a quoted name, "displayed as"
     is plain naming, as it already was everywhere else, so the clause reads as 'to "X"' does;
-    "shown" is a word no check reads and keeps the core event, and so do "the contact" (a
-    saved contact) and "the number displayed as" (a phone number), on every path: the unread
+    "shown" and "caller" are words no check reads and keep the core event, and so do "the
+    contact" (a saved contact) and "the number displayed as" (a phone number), on every path: the unread
     guard reads them, and the caller row also adds the event itself and with no event allowed
     gets no caller row. So do other words left beside it (a number written after "displayed as" keeps its digits unread). A handle side
     that placed the call still gets no caller: a caller row names persons or accounts, and
@@ -37,7 +37,15 @@
     on its time row alone. A length with no ordinal reading ("a one second call", "thirty
     seconds", "a 90 second WhatsApp call") reads as before, or now as a length where filler 13
     read "second" after digits as an ordinal. A missed call written with an ordinal gets one
-    event that carries both parts. A word and its separators in the call-noun guard never share a
+    event that carries both parts.
+  - A stated length, spoken or in digits, is read as tested only where it is the length a
+    row tests, as `duration_range` reads it, whole or in parts ("two minutes and 30 seconds",
+    "a minute and a half"). Any other stated length is a part no check reads and keeps the
+    core event. Before this, every spoken length with no ordinal reading was cut as tested
+    whatever its value, and a digit length was read as a plain numeral whenever any row
+    tested a length, so "a 30 second call that lasted about two minutes" (or "a thirty
+    second call ...") beside a row testing about two minutes could rest on its time row
+    alone (filler 13 too, for the spoken form). A word and its separators in the call-noun guard never share a
     character, so a run of hyphens is read in one way only. The caller row adds no second event
     when the claim already holds one.
 - Where: PR #279
@@ -52,7 +60,10 @@
   comma, a dash or brackets before "call", "for a second time", "over a second line",
   "minutes, and a second call" and "minutes, and a second to (212) 555-0199", which fail
   without the fix). `tests/test_fill*.py`, `tests/*filler*.py`,
-  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,275 passed. Free replay of
+  `tests/test_call_parties.py`, `tests/test_fewer_calls.py`: 1,287 passed. A length no row
+  tests ("a 30 second", "a thirty second", "a 30-second call that lasted about two minutes")
+  keeps the event, which fails without the fix; each stated length read only where a row
+  tests it, spoken and in digits, whole and in parts. Free replay of
   stored answers (no spend), Android 13 v4 (150 claims) and iOS 15 dev (106), rerun on the
   final code: one claim changes, iOS 15 C07
   (gold contradicted), which gains a caller row that stays inconclusive (calls both ways in
