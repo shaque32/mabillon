@@ -1201,6 +1201,8 @@ def test_a_side_named_two_ways_is_named_once(conn):
     assert [w for w in out if "number" in w] == ["his phone number"], out
     out = f.unread_words('PETROV called the contacts "Marc Garage" and "Bob" on WhatsApp.', ())
     assert [w for w in out if "contacts" in w] == ["the contacts"], out
+    out = f.unread_words('PETROV called "Marc Garage" on WhatsApp, his contact Number.', ())
+    assert [w for w in out if "contact" in w] == ["his contact number"], out
 
 
 def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
@@ -1256,6 +1258,17 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Local time, his contact.',
         'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Daylight Time, his contact.',
         "PETROV called REYES's contact Marc Garage on WhatsApp.",
+        # round 5: a weekday or a date after "p.m.", a plural possessive, "his own contact",
+        # "WITH" in capitals as in filler 14
+        'PETROV called "Marc Garage" on WhatsApp at 9:14 p.m. Saturday, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp at 9:14 p.m. June 8, a number.',
+        'PETROV called "Marc Garage", REYES\' contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, REYES\' contact.',
+        'PETROV called "Marc Garage" (REYES\' contact) on WhatsApp.',
+        'PETROV called "Marc Garage", his own contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, his own contact.',
+        "PETROV called his own contact Marc Garage on WhatsApp.",
+        "PETROV CALLED THE CONTACT WITH MARC GARAGE ON WHATSAPP.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (

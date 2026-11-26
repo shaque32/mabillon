@@ -3414,7 +3414,7 @@ _CALL_VERBS = (
 )
 # Where a saved contact's owner may stand: an article, a possessive, or a capitalised name's
 # possessive ('"Marc Garage", REYES's contact', Claude review on #282)
-_SIDE_OWNER = rf"(?:{_SIDE_ART}|(?-i:[A-Z][\w.-]*)['’]s)"
+_SIDE_OWNER = rf"(?:{_SIDE_ART}|(?-i:[A-Z][\w.-]*)['’]s|(?-i:[A-Z][\w.-]*[sS])['’](?!\w))"
 # A capitalised word before the noun is a name ("WhatsApp"), never a call's word: in "PETROV
 # CALLED CONTACT MARC GARAGE" the call's word must stay before the match (CodeRabbit on #282)
 _SIDE_CALL_WORD = (
@@ -3422,16 +3422,16 @@ _SIDE_CALL_WORD = (
     r"|sent|from|with|to)\b"
 )
 _SIDE_WORDS = (
-    r"(?:(?:saved|phone|cell|cellphone|mobile|telephone"
+    r"(?:(?:saved|own|phone|cell|cellphone|mobile|telephone"
     rf"|(?!{_SIDE_CALL_WORD}|{_SIDE_ART}\b)(?-i:[A-Z][\w-]*))\s+){{0,3}}"
 )
 # Words before "number" or "contact" that describe it and name no side, in capitals too
 _PLAIN_BEFORE_NOUN = frozenset(
     {
-        "saved", "phone", "cell", "cellphone", "mobile", "telephone", "unknown", "same", "other",
-        "another", "new", "old", "first", "second", "third", "last", "different", "private",
-        "blocked", "hidden", "withheld", "restricted", "foreign", "international", "local",
-        "business", "personal", "work", "home", "landline", "burner", "prepaid", "main",
+        "saved", "own", "phone", "cell", "cellphone", "mobile", "telephone", "unknown", "same",
+        "other", "another", "new", "old", "first", "second", "third", "last", "different",
+        "private", "blocked", "hidden", "withheld", "restricted", "foreign", "international",
+        "local", "business", "personal", "work", "home", "landline", "burner", "prepaid", "main",
         "primary", "only", "single", "unsaved", "unidentified", "unlisted", "listed",
     }
 )  # fmt: skip
@@ -3449,7 +3449,9 @@ _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact,
 # contact between PETROV and REYES" (Claude review on #279)
 _NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Claude review on #282)
     r"[\s,:\u2013\u2014-]+(?!(?:between|that|which|with|for|lasting|lasted)\b)"
-    r"(?!(?:BETWEEN|THAT|WHICH|WITH|FOR|LASTING|LASTED)\b)"  # never "With" (Claude review)
+    # in capitals "WITH" and "FOR" still name a side, as in filler 14; "his contact Number" is
+    # one side, never two (Claude review on #282)
+    r"(?!(?:BETWEEN|THAT|WHICH|LASTING|LASTED)\b)(?!(?i:numbers?|contacts?)\b)"
     r"(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)"
 )
 # What names a side right after "the number": a name or a handle, never the phone itself
@@ -3543,7 +3545,10 @@ _SENTENCE_END = (
     r"(?<!\b(?:prof|capt|insp|atty|supt|corp|bros|blvd|sept))"
     r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+"
     r"(?!(?:eastern|pacific|central|mountain|atlantic|alaska|hawaii|greenwich|local|daylight"
-    r"|standard|time|zone|universal|coordinated)\b)"
+    r"|standard|time|zone|universal|coordinated|monday|tuesday|wednesday|thursday|friday"
+    r"|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|january|february|march"
+    r"|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun"
+    r"|jul|aug|sep|sept|oct|nov|dec)\b)"
     r"(?-i:[A-Z][a-z])))"
 )
 # An apostrophe inside a word ("REYES's", "o'clock") is no quote, as in `_QUOTE_SPAN_RE`; the
@@ -3562,10 +3567,10 @@ _PHONE_APP_WORD_RE = re.compile(r"(?i)\b(?:sms|mms|rcs|i-?messages?)\b")
 
 
 def _named_in(noun: str, words: list[str]) -> bool:
-    """True when a bare "contact" or "number" the forms after a name found is already the last
-    word of a phrase in `words` ("his phone number"), so the drop reason names it once (Claude
-    review on #282)."""
-    return noun in _SIDE_NOUNS and any(w.split()[-1:] == [noun] for w in words)
+    """True when a bare "contact" or "number" the forms after a name found is already a word
+    of a phrase in `words` ("his phone number", "his contact number"), so the drop reason
+    names it once (Claude review on #282)."""
+    return noun in _SIDE_NOUNS and any(noun in w.split() for w in words if w != noun)
 
 
 _SIDE_NOUNS = frozenset({"contact", "contacts", "number", "numbers"})
@@ -4277,9 +4282,7 @@ class LocalAssumptionFiller:
             # a noun an earlier form already named ("his phone number") is listed once (Claude
             # review on #282)
             noun = m.group("noun").casefold()
-            if not unquoted_whole[at].isspace() and not any(
-                e.split()[-1:] == [noun] for e in extra
-            ):
+            if not unquoted_whole[at].isspace() and not any(noun in e.split() for e in extra):
                 extra.append(noun)
         # "at 9 p.m. and at 10 p.m.": a time of day outside every kept range is one no row
         # tests (Claude review on #265); with no range at all, `coverage_gap` asks for one
