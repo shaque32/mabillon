@@ -3489,7 +3489,8 @@ _CALL_BEFORE_CONTACT_RE = re.compile(  # "was calling the number called X" (Clau
 # What makes "the number called X" name the number rather than the call's verb: a call's word,
 # or a word that reaches a side ("spoke to the number called Marc Garage") (Claude review)
 _NUMBER_CALLED_NAMED_RE = re.compile(
-    rf"(?:\b(?:{_CALL_VERBS}|from|with|to|reached|contacted|(?:wrote|sent|spoke|talked)\s+to)"
+    rf"(?:\b(?:{_CALL_VERBS}|from|with|to|and|between|of|reached|contacted"
+    r"|(?:wrote|sent|spoke|talked)\s+to)"
     r"|\b(?:calls?|messages?|texts?)\s+(?:to|from|with))\s+$",
     re.I,
 )
@@ -4233,6 +4234,7 @@ class LocalAssumptionFiller:
                 and (sp := re.match(r"\s+", whole[named.end() :])) is not None
                 and (
                     _PRONOUN_RE.match(whole, at := named.end() + sp.end())
+                    or re.match(r"[+(]?\d", whole[at:])  # "a number called +1 (212) ..."
                     or not unread_name(at, at + 1, read_at)
                 )
             ):

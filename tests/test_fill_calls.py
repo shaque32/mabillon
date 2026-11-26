@@ -1294,6 +1294,8 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         "ON JUNE 8, PETROV PHONES CONTACT MARC GARAGE ON WHATSAPP.",
         "ON JUNE 8, PETROV WAS MESSAGING CONTACT MARC GARAGE ON WHATSAPP.",
         'PETROV called "Marc Garage" on WhatsApp at 21:14 hrs. EDT, his contact.',
+        # "between ... and the number called REYES" names the number (CodeRabbit on #282)
+        "PETROV had a WhatsApp call between him and the number called REYES.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (
@@ -1312,6 +1314,7 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
         "On June 8, a number called him on WhatsApp.",
         "ON JUNE 8, ITEM 1 CALLED THE NUMBER TWICE.",
+        "A number called +1 (212) 555-0199 on WhatsApp.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert not any(w.split()[-1] in {"contact", "number"} for w in out), (text, out)
