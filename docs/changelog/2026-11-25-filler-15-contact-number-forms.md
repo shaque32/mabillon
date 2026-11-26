@@ -21,7 +21,9 @@
     his contact', '"X", REYES's contact' (a name's possessive in place of the article), '"X"
     on WhatsApp, a contact of the phone', "the Marc Garage number" and "the Marc Garage
     contact entry" (a capitalised name before the noun that is no app's, no read person's and
-    no plain word such as "PHONE"), 'the contact With "X"'.
+    no plain word such as "PHONE" or "UNKNOWN"), also as the caller ("The Marc Garage number
+    called PETROV"), 'the contact With "X"', "REYES's contact Marc Garage", "spoke to the
+    number called Marc Garage" (also "to", "reached", "contacted", "talked to").
   Right after a quoted name any words may follow ('"X", a contact of his', '"X", his contact
   for years', '"X" (a contact with whom he spoke)'), as filler 14 read them. Later in a sentence
   with a party's quoted name, or in brackets elsewhere, "a contact that lasted", "a contact for
@@ -37,14 +39,16 @@
   title, a company's short form or an initial ("Mr.", "Prof.", "Inc.", "Co.", "J.", "U.S.")
   never ends the sentence, nor does a month's or a street's short form ("Sept.", "Ave."); one
   after "p.m." ends it only before a word written like a sentence's first word that is no time
-  zone ("p.m. EDT" and "p.m. Eastern" go on, "p.m. On WhatsApp" starts a new sentence); "!"
+  zone ("p.m. EDT", "p.m. Eastern", "p.m. Local time" and "p.m. Daylight Time" go on, "p.m. On WhatsApp" starts a new sentence); "!"
   and "?" always end it. The quote may follow a call's or a message's verb in any form ("called",
   "was calling", "phoned", "dialed", "rang", "texted", "messaged"), and so may "the number
   called Marc Garage" ("was calling the number called Marc Garage" names the number). After "a
   contact of", only a length ("of two minutes", "of about 3 minutes") is the communication. "his contact number" is unread like "his phone number". After "the number" a
   person or a phone the checks read ("the phone number for REYES", "the number Item 2 uses")
-  names no saved contact, and so does a person the checks read after "his contact" ("his
-  WhatsApp contact REYES", plain in filler 14 too). 'the contact saved as "X"' and 'the number saved as "X"' stay
+  names no saved contact, and so does a person the checks read after words before "contact"
+  ("his WhatsApp contact REYES", plain in filler 14 too); "the contact REYES" and "his
+  contact, REYES," still name a saved contact, as in filler 14. In capitals, "THE NUMBER ON
+  WHATSAPP" names no side, as in filler 14. 'the contact saved as "X"' and 'the number saved as "X"' stay
   unread beside a contact entry row, since the row may name another contact (as #279 does
   for "displayed as"); the number form was plain there in filler 14, a small coverage cost. A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
@@ -61,8 +65,8 @@
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`, and
-  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (11 keep-event
-  and 4 plain wordings at word level, Claude review round 3).
+  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (19 keep-event
+  and 7 plain wordings at word level, Claude review rounds 3 and 4).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
   `tests/test_fewer_calls.py`: 1,477 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
@@ -83,7 +87,8 @@
   with a name in capitals ("p.m. REYES later called PETROV, his contact") reads as the same
   sentence, "a contact for 2 minutes" (digits) stays unread as in filler 14, and a quoted
   message after "texted" or "messaged" is read as a side ('texted "ok" on WhatsApp, his
-  contact'). A capitalised word before the noun that is not one of the case's apps ("the
+  contact'). "placed a call on WhatsApp to contact Marc Garage" (a call's word apart from
+  "contact") reads as the verb "to contact" and stays plain. A capitalised word before the noun that is not one of the case's apps ("the
   Verizon number") is read as a name, an over-flag in the same safe direction. This changes the
   code frozen at tag `validation-v5`, as #279 did: v5 needs a new tag and a redone freeze
   addendum.

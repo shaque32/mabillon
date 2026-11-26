@@ -1245,6 +1245,17 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         'PETROV called "Marc Garage" on WhatsApp: his contact.',
         'PETROV called "Marc Garage" on WhatsApp, a contact of the phone.',
         "PETROV called his contact (212) 555-0199 on WhatsApp.",
+        # round 4: a read person right after the noun is a saved contact's name, as in
+        # filler 14; a name before the noun beside the verb; other words that reach a side;
+        # zone words after "p.m."; a name's possessive before the noun
+        "PETROV called the contact REYES on WhatsApp.",
+        "PETROV called his contact, REYES, on WhatsApp.",
+        "The Marc Garage number called PETROV on WhatsApp.",
+        "On June 8, the Marc Garage number called PETROV on WhatsApp.",
+        "PETROV spoke to the number called Marc Garage on WhatsApp.",
+        'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Local time, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Daylight Time, his contact.',
+        "PETROV called REYES's contact Marc Garage on WhatsApp.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (
@@ -1258,6 +1269,9 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         "PETROV CALLED THE PHONE NUMBER FOR REYES.",
         'PETROV called "Marc Garage" on WhatsApp, a contact of two minutes.',
         'PETROV called "Marc Garage" on WhatsApp, a contact of about 3 minutes.',
+        "ON JUNE 8, ITEM 1 CALLED THE NUMBER ON WHATSAPP.",
+        "ON JUNE 8, PETROV CALLED A NUMBER ON WHATSAPP.",
+        "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert not any(w.split()[-1] in {"contact", "number"} for w in out), (text, out)
