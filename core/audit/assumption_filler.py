@@ -4143,11 +4143,18 @@ class LocalAssumptionFiller:
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
             # (Claude review on #279; filler 15)
             how = named.group("how")
-            if how and "contact" in tests and how.split()[0].casefold() in _GATED_WORDS["contact"]:
-                # 'the number saved as "Marc Garage"' is the contact entry's words, which its
-                # row reads, as in filler 14 (`_GATED_WORDS`; Claude review on #282)
-                continue
             number = named.group("noun").casefold().startswith("number")
+            if (
+                number
+                and how
+                and "contact" in tests
+                and how.split()[0].casefold() in _GATED_WORDS["contact"]
+            ):
+                # 'the number saved as "Marc Garage"' is the contact entry's words, which its
+                # row reads, as in filler 14 (`_GATED_WORDS`; Claude review on #282). 'the
+                # contact saved as "Bob"' stays unread beside that row, as in filler 14: a row
+                # names one saved contact, and the words may name another (CodeRabbit on #282)
+                continue
             verb = False
             if (
                 number

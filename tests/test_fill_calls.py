@@ -1219,6 +1219,10 @@ def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
     ):
         out = f.unread_words(text, (), set(tests))
         assert not any("number" in w for w in out), (text, out)
+    # a saved contact's label stays unread beside a contact entry row, as in filler 14
+    # (CodeRabbit on #282)
+    out = f.unread_words('PETROV called the contact saved as "Bob" on WhatsApp.', (), {"contact"})
+    assert "the contact saved as" in out, out
 
 
 def test_unread_words_name_each_word_once(conn):
