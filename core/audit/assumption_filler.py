@@ -3462,6 +3462,15 @@ _NUMBER_NAME_AFTER_RE = re.compile(
     r"|four|five|six|seven|eight|nine|ten)\b)(?:(?-i:[A-Z])|@|[\w.%+-]+@)",
     re.I,
 )
+# The capitalised word that goes on with a name ("REYES Garage"), and the words that never do
+# ("REYES ON WHATSAPP", "REYES TWICE"): a name the checks read is plain only when it ends
+# where the read name ends (CodeRabbit on #282)
+_NAME_GOES_ON_RE = re.compile(r"[ \t]+((?-i:[A-Z])[\w.\-]*)")
+_NAME_STOP_WORDS = frozenset(
+    "of on at in from to with for and or via over by between that which is was he she they it"
+    " twice once again back later earlier then also two three four five six seven eight nine"
+    " ten".split()
+)
 # A bare "contact" or "number" before a capitalised name, right after a call's or a message's
 # word: "called contact Marc Garage", "a call to number Marc Garage", "texted contact Marc
 # Garage", never the verb ("told him to contact Marc Garage", "Contact PETROV later") (filler
@@ -4215,6 +4224,20 @@ class LocalAssumptionFiller:
             """Whether the words at [st, en) hold none of the spans `at` the checks read."""
             return not any(a <= st < b or st <= a < en for a, b in at)
 
+        def read_whole(st: int, at: Collection[tuple[int, int]]) -> bool:
+            """Whether the name at `st` is wholly one the checks read: "the number REYES" is,
+            "the number REYES Garage" is not (CodeRabbit on #282)."""
+            for a, b in at:
+                if a <= st < b:
+                    on = _NAME_GOES_ON_RE.match(whole, b)
+                    if (
+                        on is None
+                        or (w := on.group(1).rstrip(".").casefold()) in app_words
+                        or (w in _NAME_STOP_WORDS)
+                    ):
+                        return True
+            return False
+
         for named in _SIDE_NAMED_RE.finditer(unquoted_whole):
             # "the contact Marc Garage": an article or possessive before the noun and a name
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
@@ -4234,8 +4257,12 @@ class LocalAssumptionFiller:
                 and (sp := re.match(r"\s+", whole[named.end() :])) is not None
                 and (
                     _PRONOUN_RE.match(whole, at := named.end() + sp.end())
-                    or re.match(r"[+(]?\d", whole[at:])  # "a number called +1 (212) ..."
-                    or not unread_name(at, at + 1, read_at)
+                    # "a number called +1 (212) ...", a whole phone, never "2Fast" (CodeRabbit)
+                    or (
+                        (phone := _PHONE_RE.match(whole, at)) is not None
+                        and phone_digits(phone.group(0).strip(" .,-")) is not None
+                    )
+                    or read_whole(at, read_at)
                 )
             ):
                 # "a number called PETROV" (a person or a phone the checks read, or "him") is
@@ -4261,8 +4288,8 @@ class LocalAssumptionFiller:
             elif verb:
                 by_name = False  # "AN UNKNOWN NUMBER CALLED PETROV" (Claude review on #282)
             elif number and named.group("art"):
-                by_name = (m := _NUMBER_NAME_AFTER_RE.match(*after)) is not None and unread_name(
-                    m.end() - 1, m.end(), read_at
+                by_name = (m := _NUMBER_NAME_AFTER_RE.match(*after)) is not None and not (
+                    read_whole(m.end() - 1, read_at)
                 )
             elif named.group("art"):
                 # "his WhatsApp contact REYES" names REYES, whom the checks read, as filler 14
@@ -4275,7 +4302,7 @@ class LocalAssumptionFiller:
                     for w in whole[named.end("art") : named.start("noun")].split()
                 )
                 by_name = (m := _NAME_AFTER_RE.match(*after)) is not None and (
-                    not words_between or unread_name(m.end() - 1, m.end(), persons_at)
+                    not words_between or not read_whole(m.end() - 1, persons_at)
                 )
             else:
                 by_name = _CAP_AFTER_RE.match(*after) and _CALL_BEFORE_CONTACT_RE.search(
