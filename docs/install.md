@@ -1,15 +1,17 @@
 # Installing Mabillon on Windows
 
-Mabillon runs on one Windows PC, offline by default. Nothing leaves the computer and Mabillon sends no
-telemetry, unless you opt a case in to cloud AI at case setup (only if its protective order
-allows it). Then, for that case only, one stance question at a time goes to Anthropic under your
-own key: the claim, the assumption, the record and up to 20 messages either side, with their
-senders' handles, numbers and saved names, never a file or the case database. Its open limits
-(retention at Anthropic unverified by Mabillon, a key that is sealed only when saved into an
-encrypted case, a self-certified attestation, labels that cannot be regenerated) are in
-[SECURITY_PRIVACY.md](SECURITY_PRIVACY.md), section 5. Where the tool's reliability may be
-challenged in court, keep the case local. The only download is the AI model, once, during setup, and you
-can skip it and copy the model from a USB drive instead.
+Mabillon runs on one Windows PC. Your files and the case database stay on it, and Mabillon sends no
+telemetry. For each case you choose at setup where the AI runs: on this computer, or with cloud AI
+(Claude Opus, through Anthropic), recommended for an ordinary case when its protective order allows
+it. With cloud AI, text goes to Anthropic one question at a time under your own key, for example a
+paragraph of the government's document, or the claim, the assumption, the record and up to 20
+messages either side, with their senders' handles, numbers and saved names. A file or the case
+database is never sent. Its open limits (retention at Anthropic unverified by Mabillon, a key that
+is sealed only when saved into an encrypted case, a self-certified attestation, labels that cannot
+be regenerated) are in [SECURITY_PRIVACY.md](SECURITY_PRIVACY.md), section 5. Where the tool's
+reliability may be challenged in court, keep the case local. The only download is the AI model,
+once, during setup, and you can skip it and copy the model from a USB drive instead. A case that
+uses cloud AI needs internet while it proposes claims or is being audited.
 
 ## What you need
 

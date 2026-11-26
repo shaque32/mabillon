@@ -1,18 +1,18 @@
 # Installing Mabillon on a Mac
 
-Mabillon runs on your own Mac, offline by default. Nothing about your cases leaves the computer and
-Mabillon sends no telemetry, unless you opt a case in to cloud AI at case setup (only if its
-protective order allows it). Then, for that case only, one stance question at a time goes to
-Anthropic (Claude Opus 5.5) under your own key (see "Cloud AI for this case" on the setup
-screen): the claim, the assumption, the record and up to 20 messages either side, with their
-senders' handles, numbers and saved names, never a file or the case database. Its open limits
+Mabillon runs on your own Mac. Your files and the case database stay on it, and Mabillon sends no
+telemetry. For each case you choose at setup where the AI runs: on this computer, or with cloud AI
+(Claude Opus 5.5, through Anthropic), recommended for an ordinary case when its protective order
+allows it (see "Cloud AI for this case" on the setup screen). With cloud AI, text goes to Anthropic
+one question at a time under your own key, for example a paragraph of the government's document, or
+the claim, the assumption, the record and up to 20 messages either side, with their senders'
+handles, numbers and saved names. A file or the case database is never sent. Its open limits
 (retention at Anthropic unverified by Mabillon, a key that is sealed only when saved into an
 encrypted case, a self-certified attestation, labels that cannot be regenerated) are in
 [SECURITY_PRIVACY.md](SECURITY_PRIVACY.md), section 5. Where the tool's reliability may be
-challenged in court, keep the case local. The installer downloads three
-things, once: a Python installer (uv), the model runtime's source, and the AI model (9 GB).
-After that you can disconnect from the internet, except while a case that uses cloud AI is being
-audited.
+challenged in court, keep the case local. The installer downloads three things, once: a Python
+installer (uv), the model runtime's source, and the AI model (9 GB). After that you can disconnect
+from the internet, except while a case that uses cloud AI proposes claims or is being audited.
 
 ## What you need
 

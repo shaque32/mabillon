@@ -45,7 +45,7 @@
         <p class="audience-note">For defense forensic examiners. Attorneys, <a href="#status">bring Mabillon with your expert</a>.</p>
       </div>
       <figure class="app-win reveal" aria-label="The Mabillon review screen on an example case: paragraph 16 is contradicted because the only copy of the message was sent a day later. Example data.">
-        <div class="app-bar"><span>State v. Example, a synthetic case</span><span>AI: Claude Opus, through Anthropic</span></div>
+        <div class="app-bar"><span>State v. Example, a synthetic case</span><span>AI: cloud AI provider</span></div>
         <div class="app-body">
           <div class="app-list" aria-hidden="true">
             <p class="grp">Needs you</p>
@@ -70,8 +70,8 @@
           </div>
           <dl class="app-props">
             <dt>Status</dt><dd>Contradicted</dd>
-            <dt>Set by</dt><dd>Rules 0.4.0, a date check</dd>
-            <dt>Labelled by</dt><dd>Claude Opus, through Anthropic</dd>
+            <dt>Set by</dt><dd>Rules 0.6.0, a date check</dd>
+            <dt>Labelled by</dt><dd>Cloud AI provider</dd>
             <dt>Source</dt><dd>Phone extraction, opened read-only</dd>
             <dt>Your call</dt><dd>You can override it, with a reason</dd>
           </dl>
@@ -129,7 +129,7 @@
           <li role="presentation"><button type="button" role="tab" id="walk-tab-1" aria-controls="walk-panel" aria-selected="true" tabindex="0" data-step="1" data-title="The claim" data-desc="Mabillon reads the affidavit and proposes its claims one at a time. You accept, edit or remove each one."><span class="n">1</span><span class="label">Claim</span></button></li>
           <li role="presentation"><button type="button" role="tab" id="walk-tab-2" aria-controls="walk-panel" aria-selected="false" tabindex="-1" data-step="2" data-title="Assumptions" data-desc="Each claim is split into the facts it depends on: who sent it, when, and what it said."><span class="n">2</span><span class="label">Assump&shy;tions</span></button></li>
           <li role="presentation"><button type="button" role="tab" id="walk-tab-3" aria-controls="walk-panel" aria-selected="false" tabindex="-1" data-step="3" data-title="Checks" data-desc="Code checks the sender, the time and the time zone. Any quote is matched word for word. A model labels records, never the claim."><span class="n">3</span><span class="label">Checks</span></button></li>
-          <li role="presentation"><button type="button" role="tab" id="walk-tab-4" aria-controls="walk-panel" aria-selected="false" tabindex="-1" data-step="4" data-title="Your call" data-desc="Nothing is supported until you accept the evidence. Your decision and reason go into the audit log under your name."><span class="n">4</span><span class="label">Your call</span></button></li>
+          <li role="presentation"><button type="button" role="tab" id="walk-tab-4" aria-controls="walk-panel" aria-selected="false" tabindex="-1" data-step="4" data-title="Your call" data-desc="No AI label makes a claim supported. Your decision and reason go into the audit log under your name."><span class="n">4</span><span class="label">Your call</span></button></li>
           <li role="presentation"><button type="button" role="tab" id="walk-tab-5" aria-controls="walk-panel" aria-selected="false" tabindex="-1" data-step="5" data-title="A failed check" data-desc="A failed check on a core fact contradicts the claim directly, with the check shown. You can still override it."><span class="n">5</span><span class="label">Failed check</span></button></li>
         </ol>
         <div class="walk-panel" id="walk-panel" role="tabpanel" aria-labelledby="walk-tab-1" tabindex="0">
@@ -204,7 +204,7 @@
         <p>Code rules — not the model — set every status, and the rules version goes into each report. You can override any status.</p>
       </div>
       <div class="cols three reveal">
-        <div><span class="status sup">Supported</span><p>Only after you accept the evidence behind it.</p></div>
+        <div><span class="status sup">Supported</span><p>A claim is marked supported only when you accept the evidence, or when the phone records pass every code check. An AI label alone never makes it supported.</p></div>
         <div><span class="status con">Contradicted</span><p>When a code check on a core fact fails. A model's “contradicts” counts only after you confirm it.</p></div>
         <div><span class="status unp">Unproven</span><p>Everything else, with what is still missing.</p></div>
       </div>
@@ -230,9 +230,9 @@
     <div class="wrap">
       <div class="section-head reveal">
         <h2>Nothing goes out the door unlogged</h2>
-        <p>When you use cloud AI, text goes out one question at a time: the government's document paragraph by paragraph, the records each claim is tested against, the messages around each of those records, the names of the case's apps, and each chat's member list. Each request is written to a tamper-evident audit log first. Your extraction files and case database stay on your computer.</p>
+        <p>Your files stay on your computer. With cloud AI, questions go out one at a time, and each one is logged before it is sent.</p>
       </div>
-      <figure class="flow-diagram reveal" aria-label="The phone extractions and the case database stay on your computer. Questions go to Anthropic one at a time, and only for a case where you choose cloud AI.">
+      <figure class="flow-diagram reveal" aria-label="The phone extractions and the case database stay on your computer. Questions go to the cloud AI provider one at a time, and only for a case where you choose cloud AI.">
         <svg viewBox="0 0 640 130" aria-hidden="true">
           <rect class="box" x="1" y="30" width="200" height="70" rx="10"/>
           <text x="22" y="60">Your computer</text>
@@ -252,14 +252,14 @@
           <path class="wire-beyond" d="M338 65 H449"/>
 
           <rect class="box cloud" x="449" y="30" width="190" height="70" rx="10"/>
-          <text x="470" y="60">Anthropic</text>
+          <text x="470" y="60">AI provider</text>
           <text class="sub box-sub" x="470" y="82">One question at a time</text>
         </svg>
       </figure>
       <div class="cols three reveal">
-        <div><h3>Your files</h3><p>The app, the phone extractions and the case database stay on your computer. Files open read-only, cases can be encrypted with a passphrase, and the rules that set every status run here.</p></div>
-        <div><h3>Cloud AI, recommended</h3><p>For an ordinary case, Claude Opus runs the AI steps through Anthropic. You choose it at setup and attest that the protective order (or the court's or the government's written consent) allows it, that your client has given informed consent, and that the Anthropic key belongs to an organization with zero data retention in writing. Each question is logged before it is sent.</p></div>
-        <div><h3>On this computer</h3><p>A case you mark as concerning sexual material or conduct involving a minor, or someone presented as one, or where neither the order nor written consent allows cloud AI, runs its AI on your computer instead. It is slower, and nothing is sent. The report names the model either way.</p></div>
+        <div><h3>Your files</h3><p>The phone extractions and the case database stay on your computer. The rules that set every status run here.</p></div>
+        <div><h3>Cloud AI, recommended</h3><p>A cloud AI provider runs the AI steps. You turn it on per case, when the protective order allows it.</p></div>
+        <div><h3>On this computer</h3><p>You run the audit locally, and nothing is sent.</p></div>
       </div>
     </div>
   </section>

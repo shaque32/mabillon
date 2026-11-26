@@ -5,11 +5,14 @@ run the synthetic demo, then open your first case. Mabillon is alpha software an
 pilot-ready for real case data** (`docs/PILOT_GATES.md`). Until it is, use the demo and synthetic
 cases only, unless the Mabillon team has told you in writing that your pilot has started.
 
-Mabillon is local by default; cloud AI only when your case allows it and you opt in. The case setup
-page has a cloud option: for that case only, Claude Opus 5.5 labels the stance questions, under
-your own Anthropic key, after you attest that the case's protective order allows it. A case you
-mark as possibly containing CSAM never uses cloud AI. Every other step, and every case you do
-not opt in, runs on your computer; a cloud case needs internet while it runs.
+Your files and the case database stay on your computer. For each case you choose at setup where the
+AI runs. Cloud AI is recommended for an ordinary case (the setup page calls it "Fast: Opus through
+Anthropic"): Claude Opus 5.5 runs that case's AI steps through Anthropic under your own Anthropic
+key, after you attest that the case's protective order (or the court's or the government's written
+consent) allows it, that your client has given informed consent, and that the key belongs to an
+organization with zero data retention in writing. A case you mark as concerning sexual material or
+conduct involving a minor, or someone presented as one, runs its AI on your computer, as does any
+case you set up that way. A cloud case needs internet while it runs.
 
 ## 1. Check your computer (5 minutes)
 
@@ -19,7 +22,7 @@ not opt in, runs on your computer; a cloud case needs internet while it runs.
 | Memory | 16 GB minimum, 24 GB or more recommended | 16 GB minimum, 32 GB recommended |
 | Graphics | built in | An NVIDIA card with 12 GB or more is strongly recommended (estimate, not measured) |
 | Disk | 15 GB for Mabillon and the model (9 GB), plus about twice the size of your case files | Same, SSD |
-| Internet | Once, during install; and while a case you opted in to cloud AI is audited | Once, during install, or none (put the model next to the installer); and while a case you opted in to cloud AI is audited |
+| Internet | Once, during install; and while a case you opted in to cloud AI proposes claims or is audited | Once, during install, or none (put the model next to the installer); and while a case you opted in to cloud AI proposes claims or is audited |
 
 How long a case takes is **not yet measured on the current version**. Older measurements on a
 24 GB M4 Mac were 22 to 56 seconds per model call, which put the 20-claim synthetic case at
@@ -94,7 +97,7 @@ demo to a clean copy.
    1. **Files.** Upload the government document (PDF) and the phone reports. Each is copied into
       the case, hashed and made read-only. Your originals are never touched. Check every source's
       coverage line and record count.
-   2. **Claims.** Let the local model propose claims, then accept, edit or remove each one, and add
+   2. **Claims.** Let the case's AI propose claims, then accept, edit or remove each one, and add
       your own.
    3. **Who used each phone.** Stipulate each device's user, or tick that you accept inconclusive
       sender checks.
