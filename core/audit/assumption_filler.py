@@ -3407,6 +3407,14 @@ _CONTACT_SHOWN_RE = re.compile(r"\b(?:contact|number)\s+(?:displayed|shown)\s+as
 # written as a number ("the number (212) 555-0199"), the side a check reads. The quote is
 # looked for in the text before quotes are blanked.
 _SIDE_ART = r"(?:the|a|an|his|her|their|its|my|your|our)"
+# A call's or a message's verb, in every form, for the matchers below (Claude review on #282)
+_CALL_VERBS = (
+    r"call(?:s|ed|ing)?|phon(?:e|es|ed|ing)|r(?:ang|ung|ings?|inging)|dial(?:s|l?ed|l?ing)?"
+    r"|text(?:s|ed|ing)|messag(?:ed|ing)"
+)
+# Where a saved contact's owner may stand: an article, a possessive, or a capitalised name's
+# possessive ('"Marc Garage", REYES's contact', Claude review on #282)
+_SIDE_OWNER = rf"(?:{_SIDE_ART}|(?-i:[A-Z][\w.-]*)['’]s)"
 # A capitalised word before the noun is a name ("WhatsApp"), never a call's word: in "PETROV
 # CALLED CONTACT MARC GARAGE" the call's word must stay before the match (CodeRabbit on #282)
 _SIDE_CALL_WORD = (
@@ -3430,7 +3438,8 @@ _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact,
 # contact Marc Garage", "his contact (212) 555-0199"), never "a contact that lasted" or "the
 # contact between PETROV and REYES" (Claude review on #279)
 _NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Claude review on #282)
-    r"[\s,:\u2013\u2014-]+(?!(?i:between|that|which|with|for|lasting|lasted)\b)"
+    r"[\s,:\u2013\u2014-]+(?!(?:between|that|which|with|for|lasting|lasted)\b)"
+    r"(?!(?:BETWEEN|THAT|WHICH|WITH|FOR|LASTING|LASTED)\b)"  # never "With" (Claude review)
     r"(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)"
 )
 # What names a side right after "the number": a name or a handle, never the phone itself
@@ -3443,8 +3452,8 @@ _NUMBER_NAME_AFTER_RE = re.compile(  # never "THE NUMBER OF CALLS" (Claude revie
 # Garage", never the verb ("told him to contact Marc Garage", "Contact PETROV later") (filler
 # 15; Claude review on #282)
 _CAP_AFTER_RE = re.compile(r"\s+(?-i:[A-Z])", re.I)
-_CALL_BEFORE_CONTACT_RE = re.compile(
-    r"(?:\b(?:called|phoned|rang|dial(?:l)?ed|texted|messaged|from|with|(?:wrote|sent)\s+to)"
+_CALL_BEFORE_CONTACT_RE = re.compile(  # "was calling the number called X" (Claude review)
+    rf"(?:\b(?:{_CALL_VERBS}|from|with|(?:wrote|sent)\s+to)"
     r"|\b(?:calls?|messages?|texts?)\s+(?:to|from|with))\s+$",
     re.I,
 )
@@ -3463,18 +3472,26 @@ _CALL_BEFORE_CONTACT_RE = re.compile(
 # A quote right after a call's or a message's word is the side ('phoned "Marc Garage"'), for the
 # words after it (Claude review on #282); a quoted message read as one only holds an event.
 _CALL_BEFORE_QUOTE_RE = re.compile(
-    r"\b(?:called|calls?|calling|phoned|phoning|rang|rung|dial(?:l)?ed|dial(?:l)?ing|texted"
-    r"|messaged)\s*$",
+    rf"\b(?:{_CALL_VERBS})\s*$",
     re.I,
 )
-_SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
+_SIDE_SEP = r"\s*(?:[,;:\u2013\u2014]|\s-{1,2}|--)\s*"  # '"X": his contact' (Claude review)
 _SIDE_NOUN = (  # never "a number of times" (Claude review on #282)
     rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
     r"(?!(?:(?<=number)|(?<=numbers))\s+of\b)"
 )
+# A length or a count after "a contact of": "of two minutes", "of about 3 minutes", "of a
+# minute", never an owner ("a contact of the phone", "a contact of his") (Claude review on #282)
+_A_LENGTH = (
+    r"(?:(?:about|around|roughly|nearly|almost|over|under|just|some|only|less\s+than"
+    r"|more\s+than|at\s+least)\s+)?"
+    r"(?:\d|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty"
+    r"|thirty|forty|fifty|sixty|ninety|several|few|many|half|a\s+few|a\s+couple|a\s+half"
+    r"|an?\s+(?:second|minute|hour|moment|while)|(?:second|minute|hour|moment)s?)\b)"
+)
 _SIDE_NOT_A_SIDE = (  # "a contact of his" is an owner, never a length (CodeRabbit on #282)
     r"(?!\s+(?:that|which|lasting|lasted|between|with|for"
-    r"|of\s+(?!(?:his|her|hers|their|theirs|mine|yours|ours)\b)(?-i:[a-z0-9])))"
+    rf"|of\s+{_A_LENGTH}))"
 )
 _SIDE_GUARD = (
     r"(?:(?:(?<=number)|(?<=numbers))(?=\s*(?:[,;.)\u2013\u2014]|-|$))"
@@ -3482,10 +3499,10 @@ _SIDE_GUARD = (
 )
 _SIDE_REL = r"(?P<sep>\b(?:who|which|that)(?:\s+(?:is|was|are|were)|['’]s))"
 _SIDE_AFTER_RES = (
-    re.compile(rf"[\"”’']\s*(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}", re.I),
-    re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_ART}\s+)?{_SIDE_NOUN}{_SIDE_GUARD}", re.I),
-    re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_ART}\s+{_SIDE_NOUN}", re.I),
-    re.compile(rf"[\"”’']\s*,?\s*{_SIDE_REL}\s+{_SIDE_ART}\s+{_SIDE_NOUN}", re.I),
+    re.compile(rf"[\"”’']\s*(?P<sep>\()\s*(?:{_SIDE_OWNER}\s+)?{_SIDE_NOUN}", re.I),
+    re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_OWNER}\s+)?{_SIDE_NOUN}{_SIDE_GUARD}", re.I),
+    re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_OWNER}\s+{_SIDE_NOUN}", re.I),
+    re.compile(rf"[\"”’']\s*,?\s*{_SIDE_REL}\s+{_SIDE_OWNER}\s+{_SIDE_NOUN}", re.I),
 )
 # '"Marc Garage" on WhatsApp at 9:14 p.m., his contact': a party's quoted name earlier in the
 # same stretch of words, before any other quote, never a quoted message ('wrote "ok" to
@@ -3514,9 +3531,9 @@ _SENTENCE_END = (
 # contact"), within 200 characters (Claude review on #282).
 _SIDE_LATER_RE = re.compile(
     rf"(?:(?!{_SENTENCE_END})(?:[^\"“”‘’']|(?<=\w)['’](?=\w))){{0,200}}?"
-    r"(?P<sep>\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
+    r"(?P<sep>\s*(?:[,;:\u2013\u2014]|\s-{1,2}|--)\s*"
     r"(?:(?:who|which|that)(?:\s+(?:is|was|are|were)|['’]s)\s+)?)"
-    rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
+    rf"{_SIDE_OWNER}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
@@ -4135,10 +4152,37 @@ class LocalAssumptionFiller:
         unquoted_whole = _unquoted(whole)
         # where the claim writes a person or a phone the checks read: "the phone number for
         # REYES" names REYES, not a saved contact (Claude review on #282)
-        read_at = [
-            *(sp for spans in self._person_spans(unquoted_whole).values() for sp in spans),
-            *((st, en) for _, st, en in self._phone_spans(unquoted_whole)),
-        ]
+        try:
+            persons_at = [
+                sp for spans in self._person_spans(unquoted_whole).values() for sp in spans
+            ]
+        except Reject:
+            persons_at = []  # a name in lower case: read below, where its words stay unread
+        read_at = [*persons_at, *((st, en) for _, st, en in self._phone_spans(unquoted_whole))]
+        # an app's words before the noun ("the WhatsApp number") name the channel, not a side,
+        # and so do the plain words in capitals ("THE PHONE NUMBER FOR REYES")
+        app_words = {
+            "saved",
+            "phone",
+            "cell",
+            "cellphone",
+            "mobile",
+            "telephone",
+            *(
+                w
+                for a in (
+                    *(c.casefold() for c in self.channels()),
+                    *(a.casefold() for words in APP_ALIASES.values() for a in words),
+                    *APP_ALIASES,
+                )
+                for w in a.split()
+            ),
+        }
+
+        def unread_name(st: int, en: int, at: Collection[tuple[int, int]]) -> bool:
+            """Whether the words at [st, en) hold none of the spans `at` the checks read."""
+            return not any(a <= st < b or st <= a < en for a, b in at)
+
         for named in _SIDE_NAMED_RE.finditer(unquoted_whole):
             # "the contact Marc Garage": an article or possessive before the noun and a name
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
@@ -4168,12 +4212,26 @@ class LocalAssumptionFiller:
             after = whole, end
             if verb:
                 by_name = False  # "AN UNKNOWN NUMBER CALLED PETROV" (Claude review on #282)
+            elif named.group("art") and any(
+                # "the Marc Garage number": a capitalised name before the noun that is no
+                # app's and no read person's (Claude review on #282)
+                w.group(0).casefold() not in app_words
+                and unread_name(off + w.start(), off + w.end(), persons_at)
+                for off in [named.end("art")]
+                for w in re.finditer(r"(?-i:[A-Z])[\w-]*", whole[off : named.start("noun")])
+            ):
+                by_name = True
             elif number and named.group("art"):
-                by_name = (m := _NUMBER_NAME_AFTER_RE.match(*after)) is not None and not any(
-                    a <= m.end() - 1 < b for a, b in read_at
+                by_name = (m := _NUMBER_NAME_AFTER_RE.match(*after)) is not None and unread_name(
+                    m.end() - 1, m.end(), read_at
                 )
             elif named.group("art"):
-                by_name = _NAME_AFTER_RE.match(*after)
+                # "his WhatsApp contact REYES" names REYES, whom the checks read, the same as
+                # "the number REYES"; a phone after it ("his contact (212) 555-0199") is still
+                # a saved contact's (Claude review on #282)
+                by_name = (m := _NAME_AFTER_RE.match(*after)) is not None and unread_name(
+                    m.end() - 1, m.end(), persons_at
+                )
             else:
                 by_name = _CAP_AFTER_RE.match(*after) and _CALL_BEFORE_CONTACT_RE.search(
                     whole, 0, named.start()

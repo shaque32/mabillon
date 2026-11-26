@@ -1228,6 +1228,41 @@ def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
         assert any(w.endswith("saved as") for w in out), (text, out)
 
 
+def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(conn):
+    # Claude review on #282, round 3: every form names a side no check reads
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text in (
+        "PETROV was calling the number called Marc Garage on WhatsApp.",
+        'PETROV called the contact With "Marc Garage" on WhatsApp.',
+        "PETROV called the Marc Garage number on WhatsApp.",
+        "PETROV called the Marc Garage contact entry on WhatsApp.",
+        'PETROV called "Marc Garage", REYES\'s contact, on WhatsApp.',
+        'PETROV called "Marc Garage" (REYES\'s contact) on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, REYES\'s contact.',
+        'PETROV called "Marc Garage": his contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp: his contact.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of the phone.',
+        "PETROV called his contact (212) 555-0199 on WhatsApp.",
+    ):
+        out = f.unread_words(text, (), {"call"})
+        assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (
+            text,
+            out,
+        )
+    # a person the checks read after "his contact", an app's or a plain word before the
+    # noun, and a length after "a contact of" name no side
+    for text in (
+        "PETROV called his WhatsApp contact REYES.",
+        "PETROV CALLED THE PHONE NUMBER FOR REYES.",
+        'PETROV called "Marc Garage" on WhatsApp, a contact of two minutes.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of about 3 minutes.',
+    ):
+        out = f.unread_words(text, (), {"call"})
+        assert not any(w.split()[-1] in {"contact", "number"} for w in out), (text, out)
+
+
 def test_unread_words_name_each_word_once(conn):
     f = LocalAssumptionFiller(
         FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
