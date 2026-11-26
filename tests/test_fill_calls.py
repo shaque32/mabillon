@@ -1154,6 +1154,23 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called "Marc Garage" for Prof. Reyes, his contact.', "contact"),
         ('PETROV called "Marc Garage" for Det. Reyes, his contact.', "contact"),
         ('PETROV called "Marc Garage" at Acme Corp. Ltd., his contact.', "contact"),
+        # a possessive, "o'clock", a semicolon, a relative word, an initial, a company's short
+        # form and a long stretch of read words before the side (Claude review on #282)
+        ('PETROV called "Marc Garage" on REYES\'s WhatsApp, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on REYES’s WhatsApp, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at 9 o\'clock, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp; his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp, which was his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp, who is his contact.', "contact"),
+        ('PETROV called "Marc Garage" for J. Reyes, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at Acme Co. Ltd, his contact.', "contact"),
+        ('PETROV called "Marc Garage" in the U.S. Virgin Islands, his contact.', "contact"),
+        (
+            'PETROV called "Marc Garage" on WhatsApp on June 8 at 9:14 p.m. from Item 1 while he'
+            " was parked near the river, his contact.",
+            "contact",
+        ),
+        ("PETROV called his contact number on WhatsApp.", "number"),
         ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
         ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
         ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),

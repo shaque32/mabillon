@@ -27,9 +27,13 @@
   WhatsApp" (the checks read REYES), "4 times on WhatsApp, a number the log shows", "which was
   the number of calls", "12 messages, a number the log confirms". A quoted message is not a
   name ('wrote "ok" to REYES, his contact'), a count's "number" right after a quoted name stays
-  plain ('"X", a number of times'), and a later side must stand in the quote's sentence (a dot
-  after a title or a company's short form ("Mr.", "Prof.", "Det.", "Inc.") never ends it; one after "p.m." ends it only before a word written like a
-  sentence's first word, so "p.m. EDT" goes on and "p.m. On WhatsApp" starts a new sentence; "!" and "?" always end it). A saved
+  plain ('"X", a number of times'), and a later side must stand in the quote's sentence, within
+  200 characters, after a comma, a semicolon, a dash or a relative word ("which was his
+  contact"); an apostrophe inside a word ("REYES's", "o'clock") is no quote. A dot after a
+  title, a company's short form or an initial ("Mr.", "Prof.", "Inc.", "Co.", "J.", "U.S.")
+  never ends the sentence; one after "p.m." ends it only before a word written like a
+  sentence's first word ("p.m. EDT" goes on, "p.m. On WhatsApp" starts a new sentence); "!"
+  and "?" always end it. "his contact number" is unread like "his phone number". A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
@@ -58,8 +62,11 @@
   article-less '"X", contact of REYES', four or more words before the noun, an unquoted name
   before the noun ("Marc Garage, his contact", which "REYES, a contact" makes ambiguous), and
   words after the noun later in a sentence ('"X" on WhatsApp, his contact for years', '"X" on
-  WhatsApp, the number that he saved'); each such claim still needs its other unread words
-  to hold the event. This changes the
+  WhatsApp, the number that he saved'), and a side more than 200 characters after the quote;
+  each such claim still needs its other unread words to hold the event. Two over-flags hold a
+  claim open that a check could test: after "p.m." or an initial a next sentence that starts
+  with a name in capitals ("p.m. REYES later called PETROV, his contact") reads as the same
+  sentence, and "a contact for 2 minutes" (digits) stays unread as in filler 14. This changes the
   code frozen at tag `validation-v5`, as #279 did: v5 needs a new tag and a redone freeze
   addendum.
 - Affects: capabilities (which call claims code can test)

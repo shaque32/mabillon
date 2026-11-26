@@ -3483,19 +3483,25 @@ _SIDE_AFTER_RES = (
 # WhatsApp") "contact" is the communication: the checks read REYES (Claude review on #282).
 # The words after a quoted span (`_QUOTE_SPAN_RE`: double or single quotes, CodeRabbit on #282),
 # within its sentence (Claude review on #282). The dot of a title or a company's short form
-# ("Mr. Reyes", "Prof. Reyes", "Det. Reyes", "Acme Inc.") never ends the sentence; a letter-dot
+# ("Mr. Reyes", "Prof. Reyes", "Det. Reyes", "Acme Inc.", "Acme Co."), and of an initial in
+# capitals ("J. Reyes", "U.S. Virgin Islands"), never ends the sentence; a letter-dot
 # abbreviation's dot ("p.m.") ends it only before a word written like a sentence's first word
 # ("p.m. On WhatsApp", not "p.m. EDT"); "!" and "?" always end it (CodeRabbit on #282).
 # Python's look-behinds are fixed width, so the short forms are grouped by length.
 _SENTENCE_END = (
     r"(?:[!?]\s+(?-i:[A-Z])"
-    r"|(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft))"
-    r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd))"
+    r"|(?<!\b(?-i:[A-Z]))(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft|co|lp))"
+    r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd|llc|plc|llp))"
     r"(?<!\b(?:prof|capt|insp|atty|supt|corp))"
     r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+(?-i:[A-Z][a-z])))"
 )
+# An apostrophe inside a word ("REYES's", "o'clock") is no quote, as in `_QUOTE_SPAN_RE`; the
+# side may follow a comma, a semicolon or a dash, and a relative word ("which was his
+# contact"), within 200 characters (Claude review on #282).
 _SIDE_LATER_RE = re.compile(
-    rf"(?:(?!{_SENTENCE_END})[^\"“”‘’']){{0,80}}?(?P<sep>\s*(?:,|[\u2013\u2014]|\s-{{1,2}}|--)\s*)"
+    rf"(?:(?!{_SENTENCE_END})(?:[^\"“”‘’']|(?<=\w)['’](?=\w))){{0,200}}?"
+    r"(?P<sep>\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
+    r"(?:(?:who|which|that)(?:\s+(?:is|was|are|were)|['’]s)\s+)?)"
     rf"{_SIDE_ART}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )
@@ -3553,7 +3559,7 @@ _UNPLAIN_PHRASES_RE = re.compile(
     # "texted REYES his phone number": what the message held, or a number no check binds
     # (Claude review on #265)
     r"(?:his|her|their|its|my|your|our)\s+(?:own\s+)?(?:(?:phone|cell|mobile|telephone|work|"
-    r"personal|other)\s+)?(?:numbers?|phones?|cells?|mobiles?|lines?|accounts?|handles?|"
+    r"personal|other|contact)\s+)?(?:numbers?|phones?|cells?|mobiles?|lines?|accounts?|handles?|"
     r"usernames?|ids?|devices?)|"
     # "sent @northstar a phone number", "texted REYES the account number", "a date and a time":
     # what the message held, which no check reads (Claude review on #265)
