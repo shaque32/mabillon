@@ -25,7 +25,7 @@
     called PETROV"), 'the contact With "X"', "REYES's contact Marc Garage", "spoke to the
     number called Marc Garage" (also "to", "reached", "contacted", "talked to"), '"X", REYES'
     contact' (a plural possessive), "his own contact", and "THE CONTACT WITH MARC GARAGE" in
-    capitals, as in filler 14.
+    capitals, as in filler 14 (a name may start with "Number": "the contact Number One").
   Right after a quoted name any words may follow ('"X", a contact of his', '"X", his contact
   for years', '"X" (a contact with whom he spoke)'), as filler 14 read them. Later in a sentence
   with a party's quoted name, or in brackets elsewhere, "a contact that lasted", "a contact for
@@ -67,7 +67,7 @@
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`, and
-  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (28 keep-event
+  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (29 keep-event
   and 7 plain wordings at word level, Claude review rounds 3 to 5).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
   `tests/test_fewer_calls.py`: 1,477 passed with `tests/test_changelog.py`. Free replay of

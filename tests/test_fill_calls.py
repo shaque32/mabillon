@@ -1269,6 +1269,8 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         'PETROV called "Marc Garage" on WhatsApp, his own contact.',
         "PETROV called his own contact Marc Garage on WhatsApp.",
         "PETROV CALLED THE CONTACT WITH MARC GARAGE ON WHATSAPP.",
+        # a saved contact's name may start with "Number" (CodeRabbit on #282)
+        "PETROV had a WhatsApp call with the contact Number One.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (

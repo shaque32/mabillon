@@ -3449,9 +3449,9 @@ _OPEN_QUOTE_RE = re.compile(r"[\s,:\u2013\u2014-]*[\"“‘']")  # 'his contact,
 # contact between PETROV and REYES" (Claude review on #279)
 _NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Claude review on #282)
     r"[\s,:\u2013\u2014-]+(?!(?:between|that|which|with|for|lasting|lasted)\b)"
-    # in capitals "WITH" and "FOR" still name a side, as in filler 14; "his contact Number" is
-    # one side, never two (Claude review on #282)
-    r"(?!(?:BETWEEN|THAT|WHICH|LASTING|LASTED)\b)(?!(?i:numbers?|contacts?)\b)"
+    # in capitals "WITH" and "FOR" still name a side, as in filler 14; a name may start with
+    # "Number" ("the contact Number One", CodeRabbit on #282)
+    r"(?!(?:BETWEEN|THAT|WHICH|LASTING|LASTED)\b)"
     r"(?:[A-Z0-9(+@]|[\"“‘']|[\w.%+-]+@)"
 )
 # What names a side right after "the number": a name or a handle, never the phone itself
@@ -4440,7 +4440,7 @@ class LocalAssumptionFiller:
         if "connected" not in out and connected_with_object(bare):
             out.append("connected")
         # each word once, in order: the list is the drop reason an expert reads
-        return list(
+        named = list(
             dict.fromkeys(
                 [
                     # "the contacts" named after a name keeps "contacts" once (Claude review on
@@ -4451,6 +4451,9 @@ class LocalAssumptionFiller:
                 ]
             )
         )
+        # "his contact" beside "his contact number" is the same side, named once (Claude
+        # review on #282)
+        return [w for w in named if not any(v != w and v.startswith(w + " ") for v in named)]
 
     @staticmethod
     def _count_mentions(words: str) -> list[int | None]:
