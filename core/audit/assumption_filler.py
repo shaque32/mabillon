@@ -3248,7 +3248,8 @@ _GATED_WORDS = {
     # "connected" says the same: a tested length is never below one second (duration_range),
     # so a call the row finds with it connected (coverage recount 2026-11-21).
     "length": frozenset("lasted lasting lasts length duration long answered connected".split()),
-    # "the number saved as \"Marc Garage\"": a contact entry's words, read by its row
+    # "saved as": a contact entry's words, read by its row; a side named as a saved contact
+    # or a number ('the number saved as "X"') still keeps its event (`unread_words`, filler 15)
     "contact": frozenset("saved stored listed".split()),
     # "exchanged messages", "had a conversation": messages between both sides, which only a
     # count of both sides reads, never one sender row (Claude review on #265)
@@ -4143,18 +4144,10 @@ class LocalAssumptionFiller:
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
             # (Claude review on #279; filler 15)
             how = named.group("how")
+            # 'the contact saved as "Bob"' and 'the number saved as "Bob"' stay unread beside a
+            # contact entry row too: a row names one saved contact, and the words may name
+            # another (CodeRabbit on #279 and #282)
             number = named.group("noun").casefold().startswith("number")
-            if (
-                number
-                and how
-                and "contact" in tests
-                and how.split()[0].casefold() in _GATED_WORDS["contact"]
-            ):
-                # 'the number saved as "Marc Garage"' is the contact entry's words, which its
-                # row reads, as in filler 14 (`_GATED_WORDS`; Claude review on #282). 'the
-                # contact saved as "Bob"' stays unread beside that row, as in filler 14: a row
-                # names one saved contact, and the words may name another (CodeRabbit on #282)
-                continue
             verb = False
             if (
                 number

@@ -1204,8 +1204,8 @@ def test_a_side_named_two_ways_is_named_once(conn):
 
 
 def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
-    # a person or a phone the checks read after "the number", a count's "number" in capitals,
-    # and a contact entry's words beside its row (Claude review on #282)
+    # a person or a phone the checks read after "the number", and a count's "number" in
+    # capitals (Claude review on #282)
     f = LocalAssumptionFiller(
         FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
     )
@@ -1215,14 +1215,17 @@ def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
         ("Item 1 called the number Item 2 uses.", ()),
         ("PETROV CALLED REYES A NUMBER OF TIMES ON WHATSAPP.", ()),
         ("ITEM 1 CALLED (212) 555-0199, THE NUMBER OF CALLS BEING ONE.", ()),
-        ('PETROV called the number saved as "Marc Garage" on WhatsApp.', ("call", "contact")),
     ):
         out = f.unread_words(text, (), set(tests))
         assert not any("number" in w for w in out), (text, out)
-    # a saved contact's label stays unread beside a contact entry row, as in filler 14
-    # (CodeRabbit on #282)
-    out = f.unread_words('PETROV called the contact saved as "Bob" on WhatsApp.', (), {"contact"})
-    assert "the contact saved as" in out, out
+    # a saved contact's or a number's label stays unread beside a contact entry row: the row
+    # may name another contact (CodeRabbit on #279 and #282)
+    for text in (
+        'PETROV called the contact saved as "Bob" on WhatsApp.',
+        'PETROV called the number saved as "Bob" on WhatsApp.',
+    ):
+        out = f.unread_words(text, (), {"call", "contact"})
+        assert any(w.endswith("saved as") for w in out), (text, out)
 
 
 def test_unread_words_name_each_word_once(conn):

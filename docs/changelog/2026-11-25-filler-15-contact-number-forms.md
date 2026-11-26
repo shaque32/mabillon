@@ -37,8 +37,9 @@
   and "?" always end it. The quote may follow "called", "phoned", "dialed", "rang", "texted" or
   "messaged". "his contact number" is unread like "his phone number". After "the number" a
   person or a phone the checks read ("the phone number for REYES", "the number Item 2 uses")
-  names no saved contact, and 'the number saved as "X"' stays read by a contact entry's row,
-  while 'the contact saved as "X"' stays unread beside that row, both as in filler 14. A saved
+  names no saved contact. 'the contact saved as "X"' and 'the number saved as "X"' stay
+  unread beside a contact entry row, since the row may name another contact (as #279 does
+  for "displayed as"); the number form was plain there in filler 14, a small coverage cost. A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
