@@ -842,6 +842,126 @@ def test_a_contact_or_number_by_what_the_log_shows_keeps_the_event_on_every_path
 @pytest.mark.parametrize(
     "words",
     [
+        # a side named as a phone number, in more ways than 'the number "X"' (Claude review
+        # on #279, left for this follow-up)
+        'PETROV called the phone number "Marc Garage" on WhatsApp.',
+        'PETROV called the WhatsApp number "Marc Garage".',
+        'PETROV called the number: "Marc Garage" on WhatsApp.',
+        'PETROV called the number, "Marc Garage", on WhatsApp.',
+        'PETROV called the number for "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage" (a number) on WhatsApp.',
+        'PETROV called "Marc Garage", a number, on WhatsApp.',
+        "PETROV called the number Marc Garage on WhatsApp.",
+        # a saved contact, in more ways than 'the contact "X"'
+        "PETROV called contact Marc Garage on WhatsApp.",
+        'PETROV called the contact with the name "Marc Garage" on WhatsApp.',
+        'PETROV placed a WhatsApp call to the party displayed as "Marc Garage", who is his'
+        " contact.",
+        'PETROV called "Marc Garage" on WhatsApp, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of REYES.',
+        'PETROV called "Marc Garage" \u2014 his contact \u2014 on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact of REYES) on WhatsApp.',
+        'PETROV called "Marc Garage", his WhatsApp contact.',
+        # right after a quoted name any words may follow, as in filler 14 (Claude review on
+        # #282: these regressed)
+        'PETROV called "Marc Garage", a contact of his, on WhatsApp.',
+        'PETROV called "Marc Garage", his contact for years, on WhatsApp.',
+        'PETROV called "Marc Garage", a contact that he saved, on WhatsApp.',
+        'PETROV called "Marc Garage", his contact between 2024 and 2026, on WhatsApp.',
+        # more separators, naming words and words before the noun (Claude review on #282)
+        'PETROV called the number saved for "Marc Garage" on WhatsApp.',
+        'PETROV called "Marc Garage", who\'s his contact, on WhatsApp.',
+        'PETROV called "Marc Garage" -- his contact -- on WhatsApp.',
+        'PETROV called "Marc Garage"; his contact, on WhatsApp.',
+        'PETROV called "Marc Garage", his saved WhatsApp Business contact.',
+        # an owner after a capitalised word (CodeRabbit on #282)
+        'PETROV called "Marc Garage" on WhatsApp, a contact of his.',
+        # a quoted name after "the number called" (CodeRabbit on #282)
+        'PETROV had a WhatsApp call with the number called "Marc Garage".',
+        # later in the sentence, in brackets after a quote, a bare "number", a plural (Claude
+        # review on #282)
+        'PETROV called "Marc Garage" on WhatsApp at that time, his contact.',
+        # a party's name in single quotes, straight or curly (CodeRabbit on #282)
+        "PETROV called 'Marc Garage' on WhatsApp, his contact.",
+        "PETROV called \u2018Marc Garage\u2019 on WhatsApp, his contact.",
+        'PETROV called "Marc Garage" (a contact with whom he spoke) on WhatsApp.',
+        'PETROV called "Marc Garage" (a contact of item 1) on WhatsApp.',
+        "PETROV called number Marc Garage on WhatsApp.",
+        # a saved contact as the caller, and "called" as "named" after another verb (Claude
+        # review on #282)
+        "PETROV spoke to his contact called Marc Garage on WhatsApp.",
+        'PETROV called the numbers "Marc Garage" on WhatsApp.',
+    ],
+)
+@pytest.mark.parametrize("kind", [ClaimType.COMMUNICATION, ClaimType.TIMING])
+def test_more_ways_to_name_a_contact_or_number_keep_the_event(conn, words, kind):
+    # each names the other side as a saved contact or a phone number, which no check reads,
+    # so a timing claim can never rest on its time row alone (filler 15)
+    made, _ = fill(conn, f"{WA_AT} {words}", kind, people=["PETROV"], handles=["Marc Garage"],
+                   channels=["call", "WhatsApp"], window=WA_W)  # fmt: skip
+    assert made["event"].is_core
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # a phone written as a number is the side a check reads, never an unread word
+        "On June 1, the number (212) 555-0199 called Item 1.",
+        "Item 1 called (212) 555-0199, the number (212) 555-0199 on the log.",
+        "Item 1 called the phone number +1 212 555 0199.",
+        # a number of calls, or "contact" as a communication, is no side
+        "Item 1 placed a number of calls to (212) 555-0199.",
+        "Item 1 placed a call to (212) 555-0199, a contact that lasted about two minutes.",
+        "Item 1 placed a call to (212) 555-0199, a contact for two minutes.",
+        "the contact between PETROV and REYES",
+        "Item 1 called (212) 555-0199, the number of calls being one.",
+        # "called" after "number" is the call's verb; "contact" as a verb; a count's "number"
+        # (Claude review on #282)
+        "An unknown number called PETROV on WhatsApp.",
+        "On June 1, the number called Item 1 twice.",
+        "REYES told PETROV to contact Marc Garage.",
+        "On June 1, Item 1 called REYES. Contact PETROV later.",
+        "PETROV sent REYES 12 messages, a number the log confirms.",
+        "Item 1 called REYES 4 times, a number the call log shows.",
+        # a count's "number" after a relative word, a capitalised word or in brackets, and
+        # "number called" in capitals (Claude review on #282)
+        "Item 1 called REYES 4 times, which was the number of calls.",
+        "Item 1 called REYES 4 times, which is the number the log shows.",
+        "Item 1 called REYES 4 times, which is the contact the log shows.",
+        "Item 1 called REYES, which was the number of calls.",
+        "Item 1 called REYES 4 times on WhatsApp, a number the log shows.",
+        "Item 1 called REYES 4 times (a number the log shows).",
+        "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
+        "THE NUMBER CALLED ITEM 1 TWICE.",
+        # "contact" as the communication after a person the checks read, after a quoted
+        # message, "between" in capitals, a count's "number" after a quote, and a contact in
+        # the next sentence (Claude review on #282)
+        'PETROV called "Marc Garage", a number of times, on WhatsApp.',
+        'PETROV called "Marc Garage" (the number of times shown) on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp. REYES later called PETROV, his contact.',
+        # a sentence that ends on an abbreviation's dot (CodeRabbit on #282)
+        'PETROV called "Marc Garage" at 9:14 p.m. On WhatsApp, his contact was brief.',
+        'PETROV called "Marc Garage" at Acme Inc! On WhatsApp, his contact was brief.',
+        'PETROV called "Marc Garage" at Acme Inc? On WhatsApp, his contact was brief.',
+        "On June 8, PETROV called REYES, a contact on WhatsApp.",
+        "PETROV called REYES on WhatsApp, the contact.",
+        "PETROV called REYES, which was the contact.",
+        "PETROV called REYES on WhatsApp, a WhatsApp contact.",
+        'PETROV wrote "ok" to REYES, his contact.',
+        "THE CONTACT BETWEEN PETROV AND REYES.",
+    ],
+)
+def test_a_phone_number_or_a_contact_as_a_communication_stays_plain(conn, text):
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words(text, (), set())
+    assert not any("contact" in w or "number" in w for w in out), (text, out)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
         'PETROV placed a WhatsApp call to the party shown as "Marc Garage".',
         'PETROV placed a WhatsApp call to the caller displayed as "Marc Garage".',
         'PETROV placed a WhatsApp call to the contact displayed as "Marc Garage".',
@@ -1017,8 +1137,196 @@ def test_contact_as_a_communication_is_plain(conn):
         ('PETROV called "Marc Garage", his contact, on WhatsApp.', "contact"),
         ('PETROV called "Marc Garage" (a contact) on WhatsApp.', "contact"),
         ('PETROV called the number "Marc Garage" on WhatsApp.', "number"),
+        # a handle after "the number" (CodeRabbit on #282)
+        ("PETROV called the number @northstar on WhatsApp.", "number"),
+        # a quoted name after "number called", and the call's word in capitals (CodeRabbit on
+        # #282)
+        ('PETROV had a WhatsApp call with the number called "Marc Garage".', "number"),
+        ("PETROV CALLED CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
+        ("PETROV PLACED A CALL TO CONTACT MARC GARAGE ON WHATSAPP.", "contact"),
+        ("PETROV called contact Marc Garage on WhatsApp.", "contact"),
+        # a message's word before a bare "contact", and a plural (Claude review on #282)
+        ('PETROV called "Marc Garage" on WhatsApp at 9:14 p.m., his contact.', "contact"),
+        # an abbreviation's dot is not a sentence end (CodeRabbit on #282)
+        ('PETROV had a WhatsApp call with "Marc Garage" at 9:14 p.m. EDT, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at 9:14 a.m. UTC, his contact.', "contact"),
+        ('PETROV called "Marc Garage" for Mr. Reyes, his contact.', "contact"),
+        ('PETROV called "Marc Garage" for Prof. Reyes, his contact.', "contact"),
+        ('PETROV called "Marc Garage" for Det. Reyes, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at Acme Corp. Ltd., his contact.', "contact"),
+        # a possessive, "o'clock", a semicolon, a relative word, an initial, a company's short
+        # form and a long stretch of read words before the side (Claude review on #282)
+        ('PETROV called "Marc Garage" on REYES\'s WhatsApp, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on REYES’s WhatsApp, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at 9 o\'clock, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp; his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp, which was his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp, who is his contact.', "contact"),
+        ('PETROV called "Marc Garage" for J. Reyes, his contact.', "contact"),
+        ('PETROV called "Marc Garage" at Acme Co. Ltd, his contact.', "contact"),
+        ('PETROV called "Marc Garage" in the U.S. Virgin Islands, his contact.', "contact"),
+        (
+            'PETROV called "Marc Garage" on WhatsApp on June 8 at 9:14 p.m. from Item 1 while he'
+            " was parked near the river, his contact.",
+            "contact",
+        ),
+        ("PETROV called his contact number on WhatsApp.", "number"),
+        # a time zone after "p.m.", a month's short form, and a quote after "phoned", "dialed"
+        # or "rang" (Claude review on #282)
+        ('PETROV called "Marc Garage" on WhatsApp at 9 p.m. Eastern, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp at 9 p.m. Central Time, a number.', "number"),
+        ('PETROV called "Marc Garage" on Sept. 5 on WhatsApp, his contact.', "contact"),
+        ('PETROV phoned "Marc Garage" on WhatsApp, his contact.', "contact"),
+        ('PETROV dialed "Marc Garage" on WhatsApp, a number.', "number"),
+        ('PETROV rang "Marc Garage" on WhatsApp, his contact.', "contact"),
+        ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
+        ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
+        ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),
+        # "called" after a call's word names the number (Claude review on #282)
+        ("PETROV called the number called Marc Garage on WhatsApp.", "number"),
+        # a saved contact as the caller (Claude review on #282)
+        ("His contact called PETROV on WhatsApp.", "contact"),
+        ("On June 1, a contact called Item 1.", "contact"),
     ):
-        assert word in f.unread_words(text, (), set()), text
+        assert any(word in w.split() for w in f.unread_words(text, (), set())), text
+
+
+def test_a_side_named_two_ways_is_named_once(conn):
+    # the form before the name and the form after it find the same noun (Claude review on
+    # #282)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    out = f.unread_words('PETROV called "Marc Garage" (his phone number) on WhatsApp.', (), set())
+    assert [w for w in out if "number" in w] == ["his phone number"], out
+    out = f.unread_words('PETROV called the contacts "Marc Garage" and "Bob" on WhatsApp.', ())
+    assert [w for w in out if "contacts" in w] == ["the contacts"], out
+    out = f.unread_words('PETROV called "Marc Garage" on WhatsApp, his contact Number.', ())
+    assert [w for w in out if "contact" in w] == ["his contact number"], out
+    # only a side's phrases fold: an earlier call's "a second" stays beside "a second writer"
+    out = f.unread_words("PETROV made a second call to REYES and REYES called PETROV.", ())
+    assert "a second" in out, out
+    # a drop reason never copies a quote (Claude review on #282)
+    out = f.unread_words('PETROV called the "Marc Garage" number on WhatsApp.', ())
+    assert not any('"' in w or "marc" in w for w in out), out
+
+
+def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
+    # a person or a phone the checks read after "the number", and a count's "number" in
+    # capitals (Claude review on #282)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text, tests in (
+        ("Item 1 called the phone number for REYES.", ()),
+        ("PETROV called the WhatsApp number REYES uses.", ()),
+        ("Item 1 called the number Item 2 uses.", ()),
+        ("PETROV CALLED REYES A NUMBER OF TIMES ON WHATSAPP.", ()),
+        ("ITEM 1 CALLED (212) 555-0199, THE NUMBER OF CALLS BEING ONE.", ()),
+    ):
+        out = f.unread_words(text, (), set(tests))
+        assert not any("number" in w for w in out), (text, out)
+    # a saved contact's or a number's label stays unread beside a contact entry row: the row
+    # may name another contact (CodeRabbit on #279 and #282)
+    for text in (
+        'PETROV called the contact saved as "Bob" on WhatsApp.',
+        'PETROV called the number saved as "Bob" on WhatsApp.',
+    ):
+        out = f.unread_words(text, (), {"call", "contact"})
+        assert any(w.endswith("saved as") for w in out), (text, out)
+
+
+def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(conn):
+    # Claude review on #282, round 3: every form names a side no check reads
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text in (
+        "PETROV was calling the number called Marc Garage on WhatsApp.",
+        'PETROV called the contact With "Marc Garage" on WhatsApp.',
+        "PETROV called the Marc Garage number on WhatsApp.",
+        "PETROV called the Marc Garage contact entry on WhatsApp.",
+        'PETROV called "Marc Garage", REYES\'s contact, on WhatsApp.',
+        'PETROV called "Marc Garage" (REYES\'s contact) on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, REYES\'s contact.',
+        'PETROV called "Marc Garage": his contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp: his contact.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of the phone.',
+        "PETROV called his contact (212) 555-0199 on WhatsApp.",
+        # round 4: a read person right after the noun is a saved contact's name, as in
+        # filler 14; a name before the noun beside the verb; other words that reach a side;
+        # zone words after "p.m."; a name's possessive before the noun
+        "PETROV called the contact REYES on WhatsApp.",
+        "PETROV called his contact, REYES, on WhatsApp.",
+        "The Marc Garage number called PETROV on WhatsApp.",
+        "On June 8, the Marc Garage number called PETROV on WhatsApp.",
+        "PETROV spoke to the number called Marc Garage on WhatsApp.",
+        'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Local time, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp at 9 p.m. Daylight Time, his contact.',
+        "PETROV called REYES's contact Marc Garage on WhatsApp.",
+        # round 5: a weekday or a date after "p.m.", a plural possessive, "his own contact",
+        # "WITH" in capitals as in filler 14
+        'PETROV called "Marc Garage" on WhatsApp at 9:14 p.m. Saturday, his contact.',
+        'PETROV called "Marc Garage" on WhatsApp at 9:14 p.m. June 8, a number.',
+        'PETROV called "Marc Garage", REYES\' contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, REYES\' contact.',
+        'PETROV called "Marc Garage" (REYES\' contact) on WhatsApp.',
+        'PETROV called "Marc Garage", his own contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, his own contact.',
+        "PETROV called his own contact Marc Garage on WhatsApp.",
+        "PETROV CALLED THE CONTACT WITH MARC GARAGE ON WHATSAPP.",
+        # a saved contact's name may start with "Number" (CodeRabbit on #282)
+        "PETROV had a WhatsApp call with the contact Number One.",
+        # round 6: a plain word before the noun, "THAT" in capitals, any word before "the
+        # number called X", a relative word in brackets
+        "PETROV called the saved contact REYES on WhatsApp.",
+        "THE CONTACT THAT PETROV CALLED ON WHATSAPP WAS MARC GARAGE.",
+        "PETROV had a WhatsApp call between him and the number called Marc Garage.",
+        'PETROV called "Marc Garage" (who is a contact) on WhatsApp.',
+        # round 7: a plural possessive inside the stretch, a plain word before the noun, "a
+        # number of his", a bare name before the noun, capitals verbs, "hrs." before a zone
+        'PETROV called "Marc Garage" on REYES\' WhatsApp, his contact.',
+        'PETROV called "Marc Garage" (a local number) on WhatsApp.',
+        'PETROV called "Marc Garage", a local contact, on WhatsApp.',
+        'PETROV called "Marc Garage", a number of his, on WhatsApp.',
+        'PETROV called "Marc Garage", REYES contact, on WhatsApp.',
+        'PETROV called "Marc Garage" on WhatsApp, REYES contact.',
+        "ON JUNE 8, PETROV PHONES CONTACT MARC GARAGE ON WHATSAPP.",
+        "ON JUNE 8, PETROV WAS MESSAGING CONTACT MARC GARAGE ON WHATSAPP.",
+        'PETROV called "Marc Garage" on WhatsApp at 21:14 hrs. EDT, his contact.',
+        # "between ... and the number called REYES" names the number (CodeRabbit on #282)
+        "PETROV had a WhatsApp call between him and the number called REYES.",
+        # a name that starts with a digit is no phone, and a read name that goes on is
+        # another name (CodeRabbit on #282)
+        "The number called 2Fast had a WhatsApp call with PETROV.",
+        "PETROV had a WhatsApp call with the number REYES Garage.",
+        "A number called REYES Garage called PETROV on WhatsApp.",
+        "PETROV called his own contact REYES Garage on WhatsApp.",
+    ):
+        out = f.unread_words(text, (), {"call"})
+        assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (
+            text,
+            out,
+        )
+    # a person the checks read after "his contact", an app's or a plain word before the
+    # noun, and a length after "a contact of" name no side
+    for text in (
+        "PETROV called his WhatsApp contact REYES.",
+        "PETROV CALLED THE PHONE NUMBER FOR REYES.",
+        'PETROV called "Marc Garage" on WhatsApp, a contact of two minutes.',
+        'PETROV called "Marc Garage" on WhatsApp, a contact of about 3 minutes.',
+        "ON JUNE 8, ITEM 1 CALLED THE NUMBER ON WHATSAPP.",
+        "ON JUNE 8, PETROV CALLED A NUMBER ON WHATSAPP.",
+        "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
+        "On June 8, a number called him on WhatsApp.",
+        "ON JUNE 8, ITEM 1 CALLED THE NUMBER TWICE.",
+        "A number called +1 (212) 555-0199 on WhatsApp.",
+        "PETROV had a WhatsApp call with the number REYES on June 8.",
+        "PETROV CALLED THE NUMBER REYES ON WHATSAPP.",
+        "A number called REYES. It lasted 2 minutes.",
+    ):
+        out = f.unread_words(text, (), {"call"})
+        assert not any(w.split()[-1] in {"contact", "number"} for w in out), (text, out)
 
 
 def test_unread_words_name_each_word_once(conn):
