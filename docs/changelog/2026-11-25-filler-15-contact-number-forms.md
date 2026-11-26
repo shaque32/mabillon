@@ -31,9 +31,14 @@
   200 characters, after a comma, a semicolon, a dash or a relative word ("which was his
   contact"); an apostrophe inside a word ("REYES's", "o'clock") is no quote. A dot after a
   title, a company's short form or an initial ("Mr.", "Prof.", "Inc.", "Co.", "J.", "U.S.")
-  never ends the sentence; one after "p.m." ends it only before a word written like a
-  sentence's first word ("p.m. EDT" goes on, "p.m. On WhatsApp" starts a new sentence); "!"
-  and "?" always end it. "his contact number" is unread like "his phone number". A saved
+  never ends the sentence, nor does a month's or a street's short form ("Sept.", "Ave."); one
+  after "p.m." ends it only before a word written like a sentence's first word that is no time
+  zone ("p.m. EDT" and "p.m. Eastern" go on, "p.m. On WhatsApp" starts a new sentence); "!"
+  and "?" always end it. The quote may follow "called", "phoned", "dialed", "rang", "texted" or
+  "messaged". "his contact number" is unread like "his phone number". After "the number" a
+  person or a phone the checks read ("the phone number for REYES", "the number Item 2 uses")
+  names no saved contact, and 'the number saved as "X"' stays read by a contact entry's row,
+  as in filler 14. A saved
   contact stays unread as the caller too ("his contact called PETROV", as in filler 14), and
   "called the number called Marc Garage" names the number. A
   phone written as a number stays the side a check reads ("the number (212) 555-0199"); "a
@@ -49,7 +54,7 @@
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`.
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
-  `tests/test_fewer_calls.py`: 1,475 passed with `tests/test_changelog.py`. Free replay of
+  `tests/test_fewer_calls.py`: 1,476 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
   assumptions and verdicts identical to filler 14 on both (Android 13: 6 Supported, 8
   Contradicted, 136 Unproven; iOS 15: 2, 11, 93). `make eval`: CI on the PR's final head, numbers in the PR description. Cloud
@@ -66,7 +71,9 @@
   each such claim still needs its other unread words to hold the event. Two over-flags hold a
   claim open that a check could test: after "p.m." or an initial a next sentence that starts
   with a name in capitals ("p.m. REYES later called PETROV, his contact") reads as the same
-  sentence, and "a contact for 2 minutes" (digits) stays unread as in filler 14. This changes the
+  sentence, "a contact for 2 minutes" (digits) stays unread as in filler 14, and a quoted
+  message after "texted" or "messaged" is read as a side ('texted "ok" on WhatsApp, his
+  contact'). This changes the
   code frozen at tag `validation-v5`, as #279 did: v5 needs a new tag and a redone freeze
   addendum.
 - Affects: capabilities (which call claims code can test)

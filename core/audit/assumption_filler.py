@@ -3414,7 +3414,7 @@ _SIDE_CALL_WORD = (
 )
 _SIDE_WORDS = (
     r"(?:(?:saved|phone|cell|cellphone|mobile|telephone"
-    rf"|(?!{_SIDE_CALL_WORD})(?-i:[A-Z][\w-]*))\s+){{0,3}}"
+    rf"|(?!{_SIDE_CALL_WORD}|{_SIDE_ART}\b)(?-i:[A-Z][\w-]*))\s+){{0,3}}"
 )
 _SIDE_NAMED_RE = re.compile(
     rf"\b(?:(?P<art>{_SIDE_ART})\s+)?{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b"
@@ -3434,7 +3434,9 @@ _NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Clau
 )
 # What names a side right after "the number": a name or a handle, never the phone itself
 # ("the number (212) 555-0199") or "a number of calls" (filler 15)
-_NUMBER_NAME_AFTER_RE = re.compile(r"[\s,:\u2013\u2014-]+(?:(?-i:[A-Z])|@|[\w.%+-]+@)", re.I)
+_NUMBER_NAME_AFTER_RE = re.compile(  # never "THE NUMBER OF CALLS" (Claude review on #282)
+    r"[\s,:\u2013\u2014-]+(?!of\b)(?:(?-i:[A-Z])|@|[\w.%+-]+@)", re.I
+)
 # A bare "contact" or "number" before a capitalised name, right after a call's or a message's
 # word: "called contact Marc Garage", "a call to number Marc Garage", "texted contact Marc
 # Garage", never the verb ("told him to contact Marc Garage", "Contact PETROV later") (filler
@@ -3457,6 +3459,13 @@ _CALL_BEFORE_CONTACT_RE = re.compile(
 # after a word with no quoted name before it ("12 messages, a number the log confirms",
 # "REYES, which was the number of calls"), and never the phone itself (", the number (212)
 # ...").
+# A quote right after a call's or a message's word is the side ('phoned "Marc Garage"'), for the
+# words after it (Claude review on #282); a quoted message read as one only holds an event.
+_CALL_BEFORE_QUOTE_RE = re.compile(
+    r"\b(?:called|calls?|calling|phoned|phoning|rang|rung|dial(?:l)?ed|dial(?:l)?ing|texted"
+    r"|messaged)\s*$",
+    re.I,
+)
 _SIDE_SEP = r"\s*(?:[,;\u2013\u2014]|\s-{1,2}|--)\s*"
 _SIDE_NOUN = (  # never "a number of times" (Claude review on #282)
     rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
@@ -3486,14 +3495,18 @@ _SIDE_AFTER_RES = (
 # ("Mr. Reyes", "Prof. Reyes", "Det. Reyes", "Acme Inc.", "Acme Co."), and of an initial in
 # capitals ("J. Reyes", "U.S. Virgin Islands"), never ends the sentence; a letter-dot
 # abbreviation's dot ("p.m.") ends it only before a word written like a sentence's first word
-# ("p.m. On WhatsApp", not "p.m. EDT"); "!" and "?" always end it (CodeRabbit on #282).
+# ("p.m. On WhatsApp", not "p.m. EDT" or "p.m. Eastern"); "!" and "?" always end it (CodeRabbit,
+# Claude review on #282). Months and street words ("Sept.", "Ave.") never end it either.
 # Python's look-behinds are fixed width, so the short forms are grouped by length.
 _SENTENCE_END = (
     r"(?:[!?]\s+(?-i:[A-Z])"
     r"|(?<!\b(?-i:[A-Z]))(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft|co|lp))"
-    r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd|llc|plc|llp))"
-    r"(?<!\b(?:prof|capt|insp|atty|supt|corp))"
-    r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+(?-i:[A-Z][a-z])))"
+    r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd|llc|plc|llp"
+    r"|ave|apt|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec))"
+    r"(?<!\b(?:prof|capt|insp|atty|supt|corp|bros|blvd|sept))"
+    r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+"
+    r"(?!(?:eastern|pacific|central|mountain|atlantic|alaska|hawaii|greenwich)\b)"
+    r"(?-i:[A-Z][a-z])))"
 )
 # An apostrophe inside a word ("REYES's", "o'clock") is no quote, as in `_QUOTE_SPAN_RE`; the
 # side may follow a comma, a semicolon or a dash, and a relative word ("which was his
@@ -4119,11 +4132,21 @@ class LocalAssumptionFiller:
         for shown in _CONTACT_SHOWN_RE.finditer(_unquoted(whole)):
             extra.append(" ".join(shown.group(0).casefold().split()))
         unquoted_whole = _unquoted(whole)
+        # where the claim writes a person or a phone the checks read: "the phone number for
+        # REYES" names REYES, not a saved contact (Claude review on #282)
+        read_at = [
+            *(sp for spans in self._person_spans(unquoted_whole).values() for sp in spans),
+            *((st, en) for _, st, en in self._phone_spans(unquoted_whole)),
+        ]
         for named in _SIDE_NAMED_RE.finditer(unquoted_whole):
             # "the contact Marc Garage": an article or possessive before the noun and a name
             # after it; a bare "Contact" only before a quote, "named" or a capitalised name
             # (Claude review on #279; filler 15)
             how = named.group("how")
+            if how and "contact" in tests and how.split()[0].casefold() in _GATED_WORDS["contact"]:
+                # 'the number saved as "Marc Garage"' is the contact entry's words, which its
+                # row reads, as in filler 14 (`_GATED_WORDS`; Claude review on #282)
+                continue
             number = named.group("noun").casefold().startswith("number")
             verb = False
             if (
@@ -4146,7 +4169,9 @@ class LocalAssumptionFiller:
             if verb:
                 by_name = False  # "AN UNKNOWN NUMBER CALLED PETROV" (Claude review on #282)
             elif number and named.group("art"):
-                by_name = _NUMBER_NAME_AFTER_RE.match(*after)
+                by_name = (m := _NUMBER_NAME_AFTER_RE.match(*after)) is not None and not any(
+                    a <= m.end() - 1 < b for a, b in read_at
+                )
             elif named.group("art"):
                 by_name = _NAME_AFTER_RE.match(*after)
             else:
@@ -4164,7 +4189,10 @@ class LocalAssumptionFiller:
             *(
                 m
                 for q in _QUOTE_SPAN_RE.finditer(whole)
-                if _quote_is_a_party(whole, q.start(), q.end())
+                if (
+                    _quote_is_a_party(whole, q.start(), q.end())
+                    or _CALL_BEFORE_QUOTE_RE.search(whole, 0, q.start())
+                )
                 and (m := _SIDE_LATER_RE.match(whole, q.end())) is not None
             ),
         ):
@@ -4336,7 +4364,9 @@ class LocalAssumptionFiller:
         return list(
             dict.fromkeys(
                 [
-                    *out,
+                    # "the contacts" named after a name keeps "contacts" once (Claude review on
+                    # #282)
+                    *(w for w in out if not _named_in(w, [e for e in extra if e != w])),
                     *(w for w in lengths if not set(w.split()) & set(out)),
                     *(w for w in extra if w not in out and not _named_in(w, out)),
                 ]

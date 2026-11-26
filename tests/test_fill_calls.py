@@ -1171,6 +1171,14 @@ def test_contact_as_a_communication_is_plain(conn):
             "contact",
         ),
         ("PETROV called his contact number on WhatsApp.", "number"),
+        # a time zone after "p.m.", a month's short form, and a quote after "phoned", "dialed"
+        # or "rang" (Claude review on #282)
+        ('PETROV called "Marc Garage" on WhatsApp at 9 p.m. Eastern, his contact.', "contact"),
+        ('PETROV called "Marc Garage" on WhatsApp at 9 p.m. Central Time, a number.', "number"),
+        ('PETROV called "Marc Garage" on Sept. 5 on WhatsApp, his contact.', "contact"),
+        ('PETROV phoned "Marc Garage" on WhatsApp, his contact.', "contact"),
+        ('PETROV dialed "Marc Garage" on WhatsApp, a number.', "number"),
+        ('PETROV rang "Marc Garage" on WhatsApp, his contact.', "contact"),
         ("PETROV texted contact Marc Garage on WhatsApp.", "contact"),
         ("PETROV sent a message to contact Marc Garage on WhatsApp.", "contact"),
         ('PETROV called the numbers "Marc Garage" and "Bob" on WhatsApp.', "numbers"),
@@ -1191,6 +1199,26 @@ def test_a_side_named_two_ways_is_named_once(conn):
     )
     out = f.unread_words('PETROV called "Marc Garage" (his phone number) on WhatsApp.', (), set())
     assert [w for w in out if "number" in w] == ["his phone number"], out
+    out = f.unread_words('PETROV called the contacts "Marc Garage" and "Bob" on WhatsApp.', ())
+    assert [w for w in out if "contacts" in w] == ["the contacts"], out
+
+
+def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
+    # a person or a phone the checks read after "the number", a count's "number" in capitals,
+    # and a contact entry's words beside its row (Claude review on #282)
+    f = LocalAssumptionFiller(
+        FakeModel("{}"), conn, template="{claim} {paragraph} {templates} {channels}"
+    )
+    for text, tests in (
+        ("Item 1 called the phone number for REYES.", ()),
+        ("PETROV called the WhatsApp number REYES uses.", ()),
+        ("Item 1 called the number Item 2 uses.", ()),
+        ("PETROV CALLED REYES A NUMBER OF TIMES ON WHATSAPP.", ()),
+        ("ITEM 1 CALLED (212) 555-0199, THE NUMBER OF CALLS BEING ONE.", ()),
+        ('PETROV called the number saved as "Marc Garage" on WhatsApp.', ("call", "contact")),
+    ):
+        out = f.unread_words(text, (), set(tests))
+        assert not any("number" in w for w in out), (text, out)
 
 
 def test_unread_words_name_each_word_once(conn):
