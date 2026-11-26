@@ -29,7 +29,11 @@
     "THE CONTACT THAT PETROV CALLED WAS MARC GARAGE" in capitals, as in filler 14, and
     '"X" (who is a contact)'. "the number called X" is the call's verb only when a person or
     a phone the checks read, or "him", follows ("a number called PETROV"); otherwise it names
-    the number ("between him and the number called Marc Garage").
+    the number ("between him and the number called Marc Garage"). Also '"X" on REYES'
+    WhatsApp, his contact', '"X" (a local number)' (a plain word before the noun), '"X", a
+    number of his', '"X", REYES contact' (a bare name before the noun), "PETROV PHONES
+    CONTACT MARC GARAGE" (every form of a call's verb in capitals) and "21:14 hrs. EDT, his
+    contact".
   Right after a quoted name any words may follow ('"X", a contact of his', '"X", his contact
   for years', '"X" (a contact with whom he spoke)'), as filler 14 read them. Later in a sentence
   with a party's quoted name, or in brackets elsewhere, "a contact that lasted", "a contact for
@@ -72,8 +76,8 @@
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`, and
-  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (33 keep-event
-  and 8 plain wordings at word level, Claude review rounds 3 to 5).
+  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (42 keep-event
+  and 9 plain wordings at word level, Claude review rounds 3 to 5).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
   `tests/test_fewer_calls.py`: 1,477 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
@@ -95,7 +99,8 @@
   sentence, "a contact for 2 minutes" (digits) stays unread as in filler 14, and a quoted
   message after "texted" or "messaged" is read as a side ('texted "ok" on WhatsApp, his
   contact'). "the number belonging to REYES" keeps the event although the checks read REYES,
-  since "belonging" itself is a word no check reads. "and his contact" after a quoted name stays plain. "placed a call on WhatsApp to contact Marc Garage" (a call's word apart from
+  since "belonging" itself is a word no check reads. "and his contact" after a quoted name stays plain, and so does "the number of Marc Garage" (as
+  in filler 14). "placed a call on WhatsApp to contact Marc Garage" (a call's word apart from
   "contact") reads as the verb "to contact" and stays plain. A capitalised word before the noun that is not one of the case's apps ("the
   Verizon number") is read as a name, an over-flag in the same safe direction. This changes the
   code frozen at tag `validation-v5`, as #279 did: v5 needs a new tag and a redone freeze

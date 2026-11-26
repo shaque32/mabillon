@@ -3417,14 +3417,7 @@ _CALL_VERBS = (
 _SIDE_OWNER = rf"(?:{_SIDE_ART}|(?-i:[A-Z][\w.-]*)['’]s|(?-i:[A-Z][\w.-]*[sS])['’](?!\w))"
 # A capitalised word before the noun is a name ("WhatsApp"), never a call's word: in "PETROV
 # CALLED CONTACT MARC GARAGE" the call's word must stay before the match (CodeRabbit on #282)
-_SIDE_CALL_WORD = (
-    r"(?:called|calls?|calling|phoned|rang|dial(?:l)?ed|texted|texts?|messaged|messages?|wrote"
-    r"|sent|from|with|to)\b"
-)
-_SIDE_WORDS = (
-    r"(?:(?:saved|own|phone|cell|cellphone|mobile|telephone"
-    rf"|(?!{_SIDE_CALL_WORD}|{_SIDE_ART}\b)(?-i:[A-Z][\w-]*))\s+){{0,3}}"
-)
+_SIDE_CALL_WORD = rf"(?:{_CALL_VERBS}|texts?|messages?|wrote|sent|from|with|to)\b"
 # Words before "number" or "contact" that describe it and name no side, in capitals too
 _PLAIN_BEFORE_NOUN = frozenset(
     {
@@ -3435,6 +3428,11 @@ _PLAIN_BEFORE_NOUN = frozenset(
         "primary", "only", "single", "unsaved", "unidentified", "unlisted", "listed",
     }
 )  # fmt: skip
+# "a local number", "his own contact": a plain word before the noun (Claude review on #282)
+_SIDE_WORDS = (
+    rf"(?:(?:(?:{'|'.join(sorted(_PLAIN_BEFORE_NOUN, key=len, reverse=True))})\b"
+    rf"|(?!{_SIDE_CALL_WORD}|{_SIDE_ART}\b)(?-i:[A-Z][\w-]*))\s+){{0,3}}"
+)
 _SIDE_NAMED_RE = re.compile(
     rf"\b(?:(?P<art>{_SIDE_OWNER})\s+)?{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b"
     r"(?:\s+(?:entry|card|name)\b)?"
@@ -3457,9 +3455,11 @@ _NAME_AFTER_RE = re.compile(  # "THE CONTACT BETWEEN PETROV AND REYES" too (Clau
 )
 # What names a side right after "the number": a name or a handle, never the phone itself
 # ("the number (212) 555-0199") or "a number of calls" (filler 15)
-_NUMBER_NAME_AFTER_RE = re.compile(  # never "THE NUMBER OF CALLS" (Claude review on #282)
+# never "THE NUMBER OF CALLS", "THE NUMBER ON WHATSAPP" or "THE NUMBER TWICE" (Claude review)
+_NUMBER_NAME_AFTER_RE = re.compile(
     r"[\s,:\u2013\u2014-]+(?!(?:of|on|at|in|from|to|with|for|and|or|via|over|by|between|that"
-    r"|which|is|was|he|she|they|it)\b)(?:(?-i:[A-Z])|@|[\w.%+-]+@)",  # "THE NUMBER ON WHATSAPP"
+    r"|which|is|was|he|she|they|it|twice|once|again|back|later|earlier|then|also|two|three"
+    r"|four|five|six|seven|eight|nine|ten)\b)(?:(?-i:[A-Z])|@|[\w.%+-]+@)",
     re.I,
 )
 # A bare "contact" or "number" before a capitalised name, right after a call's or a message's
@@ -3501,7 +3501,7 @@ _CALL_BEFORE_QUOTE_RE = re.compile(
 _SIDE_SEP = r"\s*(?:[,;:\u2013\u2014]|\s-{1,2}|--)\s*"  # '"X": his contact' (Claude review)
 _SIDE_NOUN = (  # never "a number of times" (Claude review on #282)
     rf"{_SIDE_WORDS}(?P<noun>contacts?|numbers?)\b(?!\s*[\d(+])"
-    r"(?!(?:(?<=number)|(?<=numbers))\s+of\b)"
+    r"(?!(?:(?<=number)|(?<=numbers))\s+of\b(?!\s+(?:his|her|hers|their|theirs|mine|yours|ours)\b))"
 )
 # A length or a count after "a contact of": "of two minutes", "of about 3 minutes", "of a
 # minute", never an owner ("a contact of the phone", "a contact of his") (Claude review on #282)
@@ -3520,11 +3520,13 @@ _SIDE_GUARD = (
     r"(?:(?:(?<=number)|(?<=numbers))(?=\s*(?:[,;.)\u2013\u2014]|-|$))"
     rf"|(?:(?<=contact)|(?<=contacts)){_SIDE_NOT_A_SIDE})"
 )
+# An owner before the noun, or a bare name: '"Marc Garage", REYES contact' (Claude review)
+_SIDE_BY = rf"(?:{_SIDE_OWNER}\s+|(?=(?!(?i:contacts?|numbers?)\b)(?-i:[A-Z])[\w-]*\s))"
 _SIDE_REL = r"(?P<sep>\b(?:who|which|that)(?:\s+(?:is|was|are|were)|['’]s))"
 _SIDE_AFTER_RES = (
     re.compile(rf"[\"”’']\s*(?P<sep>\()\s*(?:{_SIDE_OWNER}\s+)?{_SIDE_NOUN}", re.I),
     re.compile(rf"(?P<sep>\()\s*(?:{_SIDE_OWNER}\s+)?{_SIDE_NOUN}{_SIDE_GUARD}", re.I),
-    re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_OWNER}\s+{_SIDE_NOUN}", re.I),
+    re.compile(rf"[\"”’'](?P<sep>{_SIDE_SEP}){_SIDE_BY}{_SIDE_NOUN}", re.I),
     re.compile(rf"[\"”’']\s*,?\s*{_SIDE_REL}\s+{_SIDE_OWNER}\s+{_SIDE_NOUN}", re.I),
     # '"Marc Garage" (who is a contact)' (Claude review on #282)
     re.compile(
@@ -3549,8 +3551,8 @@ _SENTENCE_END = (
     r"(?:[!?]\s+(?-i:[A-Z])"
     r"|(?<!\b(?-i:[A-Z]))(?<!\b(?:mr|ms|dr|st|sr|jr|lt|mt|ft|co|lp))"
     r"(?<!\b(?:mrs|gen|col|sgt|det|rev|hon|gov|sen|rep|ofc|cpl|maj|pvt|inc|ltd|llc|plc|llp"
-    r"|ave|apt|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec))"
-    r"(?<!\b(?:prof|capt|insp|atty|supt|corp|bros|blvd|sept))"
+    r"|ave|apt|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|hrs|est))"
+    r"(?<!\b(?:prof|capt|insp|atty|supt|corp|bros|blvd|sept))(?<!\bapprox)"
     r"(?:(?<!\.[a-z])\.\s+(?-i:[A-Z])|(?<=\.[a-z])\.\s+"
     r"(?!(?:eastern|pacific|central|mountain|atlantic|alaska|hawaii|greenwich|local|daylight"
     r"|standard|time|zone|universal|coordinated|monday|tuesday|wednesday|thursday|friday"
@@ -3563,10 +3565,10 @@ _SENTENCE_END = (
 # side may follow a comma, a semicolon or a dash, and a relative word ("which was his
 # contact"), within 200 characters (Claude review on #282).
 _SIDE_LATER_RE = re.compile(
-    rf"(?:(?!{_SENTENCE_END})(?:[^\"“”‘’']|(?<=\w)['’](?=\w))){{0,200}}?"
+    rf"(?:(?!{_SENTENCE_END})(?:[^\"“”‘’']|(?<=\w)['’](?=\w)|(?<=[sS])['’](?=\s))){{0,200}}?"
     r"(?P<sep>\s*(?:[,;:\u2013\u2014]|\s-{1,2}|--)\s*"
     r"(?:(?:who|which|that)(?:\s+(?:is|was|are|were)|['’]s)\s+)?)"
-    rf"{_SIDE_OWNER}\s+{_SIDE_NOUN}{_SIDE_GUARD}",
+    rf"{_SIDE_BY}{_SIDE_NOUN}{_SIDE_GUARD}",
     re.I,
 )
 # A phone's own messages app written by the word that names it (never "texted" or "a text"):
@@ -4278,7 +4280,8 @@ class LocalAssumptionFiller:
                     whole, 0, named.start()
                 )
             if how or _OPEN_QUOTE_RE.match(*after) or by_name:
-                extra.append(" ".join(whole[named.start() : end].casefold().split()))
+                # from the unquoted words: the drop reason never copies a quote (Claude review)
+                extra.append(" ".join(unquoted_whole[named.start() : end].casefold().split()))
         # Searched on the text with its quotes, which '"Marc Garage", his contact' needs, but
         # never read inside a quoted message ('wrote "Alex (a contact) will call."'): the
         # bracket, comma or word that sets it apart must stand outside every quote
