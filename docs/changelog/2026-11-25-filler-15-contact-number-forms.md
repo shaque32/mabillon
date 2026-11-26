@@ -25,7 +25,11 @@
     called PETROV"), 'the contact With "X"', "REYES's contact Marc Garage", "spoke to the
     number called Marc Garage" (also "to", "reached", "contacted", "talked to"), '"X", REYES'
     contact' (a plural possessive), "his own contact", and "THE CONTACT WITH MARC GARAGE" in
-    capitals, as in filler 14 (a name may start with "Number": "the contact Number One").
+    capitals, as in filler 14 (a name may start with "Number": "the contact Number One"),
+    "THE CONTACT THAT PETROV CALLED WAS MARC GARAGE" in capitals, as in filler 14, and
+    '"X" (who is a contact)'. "the number called X" is the call's verb only when a person or
+    a phone the checks read, or "him", follows ("a number called PETROV"); otherwise it names
+    the number ("between him and the number called Marc Garage").
   Right after a quoted name any words may follow ('"X", a contact of his', '"X", his contact
   for years', '"X" (a contact with whom he spoke)'), as filler 14 read them. Later in a sentence
   with a party's quoted name, or in brackets elsewhere, "a contact that lasted", "a contact for
@@ -48,7 +52,8 @@
   contact of", only a length ("of two minutes", "of about 3 minutes") is the communication. "his contact number" is unread like "his phone number". After "the number" a
   person or a phone the checks read ("the phone number for REYES", "the number Item 2 uses")
   names no saved contact, and so does a person the checks read after words before "contact"
-  ("his WhatsApp contact REYES", plain in filler 14 too); "the contact REYES" and "his
+  ("his WhatsApp contact REYES", plain in filler 14 too; a plain word such as "saved" does not
+  count, so "the saved contact REYES" keeps the event, as in filler 14); "the contact REYES" and "his
   contact, REYES," still name a saved contact, as in filler 14. In capitals, "THE NUMBER ON
   WHATSAPP" names no side, as in filler 14. 'the contact saved as "X"' and 'the number saved as "X"' stay
   unread beside a contact entry row, since the row may name another contact (as #279 does
@@ -67,8 +72,8 @@
   tested at word level, in `test_contact_as_a_communication_is_plain`) and
   `test_a_phone_number_or_a_contact_as_a_communication_stays_plain` (34 wordings), and
   `test_a_side_named_two_ways_is_named_once`, and
-  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (29 keep-event
-  and 7 plain wordings at word level, Claude review rounds 3 to 5).
+  `test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread` (33 keep-event
+  and 8 plain wordings at word level, Claude review rounds 3 to 5).
   `tests/test_fill*.py`, `tests/*filler*.py`, `tests/test_call_parties.py`,
   `tests/test_fewer_calls.py`: 1,477 passed with `tests/test_changelog.py`. Free replay of
   stored answers (no spend, no model calls), Android 13 v4 (150 claims) and iOS 15 dev (106):
@@ -90,7 +95,7 @@
   sentence, "a contact for 2 minutes" (digits) stays unread as in filler 14, and a quoted
   message after "texted" or "messaged" is read as a side ('texted "ok" on WhatsApp, his
   contact'). "the number belonging to REYES" keeps the event although the checks read REYES,
-  since "belonging" itself is a word no check reads. "placed a call on WhatsApp to contact Marc Garage" (a call's word apart from
+  since "belonging" itself is a word no check reads. "and his contact" after a quoted name stays plain. "placed a call on WhatsApp to contact Marc Garage" (a call's word apart from
   "contact") reads as the verb "to contact" and stays plain. A capitalised word before the noun that is not one of the case's apps ("the
   Verizon number") is read as a name, an over-flag in the same safe direction. This changes the
   code frozen at tag `validation-v5`, as #279 did: v5 needs a new tag and a redone freeze

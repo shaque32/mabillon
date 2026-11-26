@@ -1203,6 +1203,9 @@ def test_a_side_named_two_ways_is_named_once(conn):
     assert [w for w in out if "contacts" in w] == ["the contacts"], out
     out = f.unread_words('PETROV called "Marc Garage" on WhatsApp, his contact Number.', ())
     assert [w for w in out if "contact" in w] == ["his contact number"], out
+    # only a side's phrases fold: an earlier call's "a second" stays beside "a second writer"
+    out = f.unread_words("PETROV made a second call to REYES and REYES called PETROV.", ())
+    assert "a second" in out, out
 
 
 def test_a_number_for_a_party_the_checks_read_or_a_count_names_no_side(conn):
@@ -1271,6 +1274,12 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         "PETROV CALLED THE CONTACT WITH MARC GARAGE ON WHATSAPP.",
         # a saved contact's name may start with "Number" (CodeRabbit on #282)
         "PETROV had a WhatsApp call with the contact Number One.",
+        # round 6: a plain word before the noun, "THAT" in capitals, any word before "the
+        # number called X", a relative word in brackets
+        "PETROV called the saved contact REYES on WhatsApp.",
+        "THE CONTACT THAT PETROV CALLED ON WHATSAPP WAS MARC GARAGE.",
+        "PETROV had a WhatsApp call between him and the number called Marc Garage.",
+        'PETROV called "Marc Garage" (who is a contact) on WhatsApp.',
     ):
         out = f.unread_words(text, (), {"call"})
         assert any(w.split()[-1] in {"contact", "number", "called", "entry"} for w in out), (
@@ -1287,6 +1296,7 @@ def test_a_side_named_before_the_noun_with_an_owner_or_after_a_colon_is_unread(c
         "ON JUNE 8, ITEM 1 CALLED THE NUMBER ON WHATSAPP.",
         "ON JUNE 8, PETROV CALLED A NUMBER ON WHATSAPP.",
         "AN UNKNOWN NUMBER CALLED PETROV ON WHATSAPP.",
+        "On June 8, a number called him on WhatsApp.",
     ):
         out = f.unread_words(text, (), {"call"})
         assert not any(w.split()[-1] in {"contact", "number"} for w in out), (text, out)
