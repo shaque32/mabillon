@@ -1029,6 +1029,13 @@ def _acknowledge_form(page: Page, item: EvidenceItem, back: str) -> str:
     )
 
 
+def _kind_word(record_id: str) -> str:
+    """What a row calls its record when it points at another item for the same one: a call or
+    an attachment is never called a message."""
+    kind = record_id.split(":", 1)[0]
+    return {"msg": "message", "call": "call", "att": "attachment"}.get(kind, "record")
+
+
 def evidence_card(
     conn: sqlite3.Connection,
     page: Page,
@@ -1045,6 +1052,8 @@ def evidence_card(
     challenged: frozenset[str] = frozenset(),
     around_link: bool = True,
     same_as: str | None = None,
+    compact: bool = False,
+    review_said: bool = False,
     sources: screen_records.Sources | None = None,
     row: screen_records.Row | None = None,
     times: list[str] | None = None,
@@ -1060,8 +1069,15 @@ def evidence_card(
     sources, row: the page's cache of files and zones and the record's row, when the page read
     every card's record in one call. times: gathers the times of the messages the card draws
     around the record, for the page's one note on how to read times.
-    Once the expert has decided an item, its conversation and its decision form fold."""
-    stance_cls = "b-against" if item.stance in AGAINST else "b-open"
+    Once the expert has decided an item, its conversation and its decision form fold.
+    compact (the claim page): a decided item is one row, its stance, tier, quote and record,
+    with everything else in one Details fold (decided_row). review_said: the group above the
+    row already says this item's review, word for word, so the row leaves it to the fold."""
+    if compact and last_kind == "expert" and item.status != EvidenceStatus.OPEN and not confirm:
+        return decided_row(
+            conn, page, item, back, found, claim_id, flagged, run_id, around, threads,
+            challenged, same_as, review_said, sources, row, times,
+        )  # fmt: skip
     flag = ""
     if claim_id is not None:
         flag = _flag_label_form(page, claim_id, item, back, run_id)
@@ -1077,7 +1093,8 @@ def evidence_card(
     )
     if same_as:
         shown += (
-            f"<p class='ev-same'>The same message as <a href='#{e(same_as)}'>the item above</a>, "
+            f"<p class='ev-same'>The same {_kind_word(item.record_id)} as "
+            f"<a href='#{e(same_as)}'>the item above</a>, "
             "judged here for this assumption.</p>"
         )
     # one line for the record: who, when and where it sits in the file. The messages drawn
@@ -1110,17 +1127,7 @@ def evidence_card(
     )
     return (
         f"<div class='item' id='{e(item.id)}'>"
-        "<div class='ev-tags'>"
-        f"<span class='badge {stance_cls}'>{e(STANCE_LABEL[item.stance])}</span>"
-        f"{_tier_badge(item, last_kind)}"
-        + ("<span class='badge b-flag'>flagged by you</span>" if flagged else "")
-        + ("<span class='badge b-withheld'>needs expert review</span>" if withheld else "")
-        + (
-            f"<span class='badge b-challenge'>{e(challenge.FOUND_MARK)}</span>"
-            if item.id in challenged
-            else ""
-        )
-        + "</div>"
+        f"<div class='ev-tags'>{_tags(item, last_kind, flagged, withheld, challenged)}</div>"
         + shown
         + f"<p class='ev-rec'>{rec}</p>"
         + (
@@ -1135,15 +1142,138 @@ def evidence_card(
         "<details class='more'><summary>Exported values and model note</summary>"
         # the card's time is the phone's local time; this keeps the export's own values, as
         # the report prints them
+        + _exported(conn, item, found, row)
+        + f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
+        + ("" if withheld else f" {rationale_html(item, None)}")
+        + "</p></details>"
+        + f"{flag}{around_a}</div></div>"
+    )
+
+
+def _tags(item: EvidenceItem, last_kind: str | None, flagged: bool, withheld: W.Withheld | None,
+          challenged: frozenset[str], decision: bool = False) -> str:  # fmt: skip
+    """The item's stance and tier, and the marks that ask for attention. decision (a decided
+    row): an item the expert dismissed says so beside its stance, since its tier does not and
+    its review may be said once above the rows; an accepted item's tier already says it."""
+    stance_cls = "b-against" if item.stance in AGAINST else "b-open"
+    dismissed = decision and item.status == EvidenceStatus.DISMISSED
+    return (
+        f"<span class='badge {stance_cls}'>{e(STANCE_LABEL[item.stance])}</span>"
+        f"{_tier_badge(item, last_kind)}"
+        + ("<span class='badge b-dismissed'>dismissed by an expert</span>" if dismissed else "")
+        + ("<span class='badge b-flag'>flagged by you</span>" if flagged else "")
+        + ("<span class='badge b-withheld'>needs expert review</span>" if withheld else "")
+        + (
+            f"<span class='badge b-challenge'>{e(challenge.FOUND_MARK)}</span>"
+            if item.id in challenged
+            else ""
+        )
+    )
+
+
+def _exported(
+    conn: sqlite3.Connection,
+    item: EvidenceItem,
+    found: dict[str, str] | None,
+    row: screen_records.Row | None = None,
+) -> str:
+    """The record's values as exported, as the report prints them, its place in the file in
+    full and its ids: what the card's short line leaves out. row: the record's row, so an
+    attachment's fold gives its message's exported line too."""
+    return (
         f"<p><span class='ev-asx'>As exported:</span> "
         f"{record_line(conn, item.record_id, found)}{_carrier_line(conn, row)}</p>"
         f"<p class='muted'>{source_line(conn, item.ref.source_id, item.ref.locator)}</p>"
         f"<p><span class='mono'>{e(item.ref.source_id)} {e(item.ref.locator)} · "
         f"{e(item.record_id)}</span></p>"
-        f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
+    )
+
+
+def decided_row(
+    conn: sqlite3.Connection,
+    page: Page,
+    item: EvidenceItem,
+    back: str,
+    found: dict[str, str] | None,
+    claim_id: str | None,
+    flagged: bool,
+    run_id: str | None,
+    around: int,
+    threads: dict[str, list[str]] | None,
+    challenged: frozenset[str],
+    same_as: str | None,
+    review_said: bool,
+    sources: screen_records.Sources | None = None,
+    row: screen_records.Row | None = None,
+    times: list[str] | None = None,
+) -> str:
+    """An item the expert has decided, as one row of the claim page: its stance and tier, the
+    quote and who sent it when, and where it sits in the file. Its review shows unless the
+    group above says it for every row. One Details fold holds the rest: the messages around
+    it, the review, the form to change the decision, the values as exported, the model's note
+    and the label flag. Nothing is dropped: it is the card's content, folded. A withheld
+    rationale or a forwarded copy's caution stays in view. times: gathers the times of the
+    messages the fold draws around the record, for the page's one note on how to read times."""
+    withheld = W.for_item(conn, item)
+    # a message the page already drew for another assumption: its conversation is in that
+    # row's fold, as the full card leaves it out
+    drawn = around and not same_as
+    lines = build_context(conn, item.record_id, around, threads=threads) if drawn else []
+    if times is not None:
+        times.extend(ln.local_time for ln in lines)
+    thread = f"<div class='thread mini'>{_msgs(lines)}</div>" if len(lines) >= 2 else ""
+    sources = sources or screen_records.Sources(conn)
+    row = row or screen_records.record_rows(conn, [item.record_id], strip=True, sources=sources)[0]
+    rec = screen_records.line(
+        conn,
+        item.record_id,
+        sources,
+        place=(item.ref.source_id, item.ref.locator),
+        quoted=item.quote,
+        row=row,
+    )
+    caution = screen_records.warning(conn, item.record_id, found)
+    # a quote that is part of its message says so: beside the sender and the time it would
+    # otherwise read as the whole message. Only a message is judged: a call's line here is its
+    # text with "[call]" before it, and an attachment's is the message that carries it.
+    body = next((ln.body for ln in lines if ln.is_target), None)
+    part = item.record_id.startswith("msg:") and body is not None
+    part = part and body.strip() != item.quote.strip()
+    mark = "<span class='muted'>Quoted:</span> " if part else ""
+    # the same record, drawn above for another assumption: said once, pointed to here
+    head = (
+        f"<p class='ev-q ev-same'>The same {_kind_word(item.record_id)} as "
+        f"<a href='#{e(same_as)}'>the item above</a> "
+        f"({q(item.quote)}), judged here for this assumption.</p>"
+        if same_as
+        else f"<p class='ev-q'>{mark}{q(item.quote)}</p><p class='ev-rec'>{rec}</p>"
+    )
+    review = f"<p class='ev-review'><strong>Review:</strong> {review_label(conn, item)}</p>"
+    flag = _flag_label_form(page, claim_id, item, back, run_id) if claim_id is not None else ""
+    return (
+        f"<div class='item' id='{e(item.id)}'><div class='ev-row'>"
+        f"<div class='ev-tags'>{_tags(item, 'expert', flagged, withheld, challenged, True)}</div>"
+        f"<div class='ev-body'>{head}"
+        + (f"<p class='ev-rec'><strong class='warn'>{caution}</strong></p>" if caution else "")
+        + (
+            f"<p>{rationale_html(item, withheld)}</p>"
+            + ("" if withheld.acknowledged else _acknowledge_form(page, item, back))
+            if withheld
+            else ""
+        )
+        + ("" if review_said else review)
+        + "<details class='ev-detail'><summary>Details</summary>"
+        + (f"<p class='ev-sub'>The messages around it ({len(lines)})</p>{thread}" if thread else "")
+        + (review if review_said else "")
+        + f"<p class='ev-sub'>Change your decision</p>{_decide_form(page, item, True, back)}"
+        + "<p class='ev-sub'>Exported values and model note</p>"
+        + (f"<p>{rec}</p>" if same_as else "")
+        + _exported(conn, item, found, row)
+        + f"<p class='muted'>{e(labelled_by(conn, item.model_run_id))}."
         + ("" if withheld else f" {rationale_html(item, None)}")
-        + "</p></details>"
-        + f"{flag}{around_a}</div></div>"
+        + "</p>"
+        + f"<p><a href='{e(link('/evidence', id=item.id))}'>Open this item on its own page, "
+        "with more of the conversation</a></p>" + f"{flag}</details></div></div></div>"
     )
 
 
@@ -1584,10 +1714,16 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
     if st.unlabeled and d0 is not None and d0.verdict is Verdict.CONTRADICTED and not st.stale:
         # The run's own note (pipeline.unlabeled_reason) stays in the report; here, plainly,
         # and only while the verdict the rules gave is the contradiction that note leads to.
+        cited_ids = [
+            rid for ch in st.checks if ch.outcome is CheckOutcome.FAIL for rid in ch.record_ids
+        ]
+        # a check can cite accounts or threads alone (same_account): those are not records
+        ids_only = bool(cited_ids) and all(screen_records.not_a_record(r) for r in cited_ids)
         out.append(
             "<p class='muted'>A check on the phone records failed on a core part of this claim, "
-            "so the verdict rules contradict it whatever the evidence says. The records that "
-            "check cites are the evidence; the model was not asked to label any.</p>"
+            "so the verdict rules contradict it whatever the evidence says. "
+            + ("What that check cites is" if ids_only else "The records that check cites are")
+            + " the evidence; the model was not asked to label any.</p>"
         )
         out.append(_failed_check_records(conn, st))
     elif st.unlabeled:
@@ -1628,6 +1764,16 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
     drawn: dict[str, str] = {}  # record id -> the first card on the page that draws it
     for title, group in groups:
         out.append(f"<h3 class='ev-group'>{e(title)} <span>({len(group)})</span></h3>")
+        # a decided group whose items all carry the same review says it once, above the rows
+        reviews: set[str] = set()
+        if title == "Evidence the expert already decided" and len(group) > 1:
+            reviews = {review_label(conn, x) for x in group}
+        said_once = len(reviews) == 1
+        if said_once:
+            out.append(
+                f"<p class='ev-review ev-said'><strong>Review, all {len(group)}:</strong> "
+                f"{next(iter(reviews))}</p>"
+            )
         shown_on = None
         order = {a.id: i for i, a in enumerate(st.assumptions)}
         for x in sorted(group, key=lambda x: order.get(x.assumption_id, len(order))):
@@ -1651,6 +1797,8 @@ def claim_page(conn: sqlite3.Connection, page: Page, claim_id: str) -> str | Non
                     threads=threads,
                     challenged=challenged,
                     same_as=drawn.get(x.record_id),
+                    compact=True,
+                    review_said=said_once,
                     sources=sources,
                     row=of.get(x.record_id),
                     times=around,
@@ -1754,9 +1902,14 @@ def _carrier_line(conn: sqlite3.Connection, row: screen_records.Row | None) -> s
     the time as printed), so the time in view can be checked; "" for any other record."""
     if row is None or not row.carrier:
         return ""
+    # as on the row: when the source gives its message no time, nothing in view needs explaining
+    lead = (
+        f"{e(screen_records.CARRIED_TIME_NOTE)} That message, as exported:"
+        if screen_records.carried(row)
+        else "The message it is attached to, as exported:"
+    )
     return (
-        f"<br><span class='muted'>{e(screen_records.CARRIED_TIME_NOTE)} That message, as "
-        f"exported:</span> {record_line(conn, row.carrier)} · "
+        f"<br><span class='muted'>{lead}</span> {record_line(conn, row.carrier)} · "
         f"<span class='mono'>{e(row.carrier)}</span>"
     )
 
@@ -1796,7 +1949,8 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         # the senders leave their app off when every message is from one app, and the rows
         # leave the thread off when every message is from one thread: name both here
         only_messages = all(r.record_id.startswith("msg:") for r in cited)
-        one = n == 1
+        one = len(cited) - others == 1  # the records among them; an account is not one
+        n_msgs = sum(1 for r in cited if r.record_id.startswith("msg:") and r.source_id)
         tier = e(same.tier.value).capitalize() if same.tier else ""
         of = (q(same.app) if same.app else "") + (
             f" thread {screen_records.titled(same.thread)}" if same.thread else ""
@@ -1816,10 +1970,23 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         else:
             place = f" in {same.words}"
         how = screen_records.note(cited, sources)  # the times, and what an Excel row is
-        note = (
+        if others == len(cited):
+            # nothing cited is a record, so the line says only what the ids are
+            said = (
+                "The cited id is an account or a thread, not a record."
+                if others == 1
+                else f"The {others} cited ids are accounts or threads, not records."
+            )
+        else:
+            said = ""
+        note = said or (
             what
             + place
-            + (f"; the messages are from {of.strip()}" if same.app and not only_messages else "")
+            + (
+                f"; the message{' is' if n_msgs == 1 else 's are'} from {of.strip()}"
+                if same.app and not only_messages
+                else ""
+            )
             + "."
             + (
                 f" {gone} of the {len(cited)} {'is' if gone == 1 else 'are'} not among the case's "
@@ -1833,14 +2000,22 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if others
                 else ""
             )
-            + (f" {how}" if how else "")
         )
+        note += f" {how}" if how else ""
+        # an account's or a thread's id has no exported line: its line says what it is, as
+        # its row does, and the fold counts only the records
         exported = "".join(
-            f"<li>{record_line(conn, r.record_id)} · <span class='mono'>{e(r.record_id)}</span>"
-            + _carrier_line(conn, r)
-            + "</li>"
+            f"<li>{screen_records.not_a_record(r.record_id)}</li>"
+            if screen_records.not_a_record(r.record_id)
+            else f"<li>{record_line(conn, r.record_id)} · "
+            f"<span class='mono'>{e(r.record_id)}</span>" + _carrier_line(conn, r) + "</li>"
             for r in rows
         )
+        n_recs = sum(1 for r in rows if not screen_records.not_a_record(r.record_id))
+        if others == len(cited):
+            heading = "Account or thread" if others == 1 else "Accounts or threads"
+        else:
+            heading = "Records"
         excel = (
             f"<p class='muted'>{e(screen_records.EXCEL_ROW_NOTE)}</p>"
             if sources.excel(r.source_id for r in rows if r.source_id)
@@ -1848,7 +2023,7 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
         )
         more = n - FAILED_CITED_SHOWN
         out.append(
-            f"<h3 class='ev-group'>Records the failed check cites ({n})</h3>"
+            f"<h3 class='ev-group'>{heading} the failed check cites ({n})</h3>"
             f"{assumed}<p class='muted cited-note'>{note}</p>"
             + screen_records.table(
                 rows,
@@ -1862,10 +2037,14 @@ def _failed_check_records(conn: sqlite3.Connection, st: ClaimState) -> str:
                 if more > 0
                 else ""
             )
-            + "<details class='exported'><summary>Exported values for "
-            + ("this record" if len(rows) == 1 else f"these {len(rows)} records")
-            + " (UTC, as printed, record id)</summary>"
-            f"{excel}<ol class='cited'>{exported}</ol></details>"
+            + (
+                "<details class='exported'><summary>Exported values for "
+                + ("this record" if n_recs == 1 else f"these {n_recs} records")
+                + " (UTC, as printed, record id)</summary>"
+                f"{excel}<ol class='cited'>{exported}</ol></details>"
+                if n_recs
+                else ""
+            )
         )
     return "".join(out)
 

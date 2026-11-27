@@ -184,13 +184,14 @@ class Sources:
             self._seen[source_id] = (row[0], row[1]) if row else (source_id, "")
         return self._seen[source_id]
 
-    def row(self, source_id: str, locator: str) -> str:
+    def row(self, source_id: str, locator: str, at: bool = True) -> str:
         """Where in its file, as HTML: "Chats sheet, Excel row 947" for an Excel report, else
-        the locator as the importer wrote it."""
+        the locator as the importer wrote it ("at Chat[7]/Messages[1]"; at=False leaves the
+        "at" off, for a table cell under a heading that already says it is a place)."""
         m = _SHEET_ROW.match(locator)
         if self.get(source_id)[1] == EXCEL and m:
             return f"{q(m['sheet'])} sheet, Excel row {e(m['row'])}"
-        return f"at <span class='mono'>{e(locator)}</span>"
+        return f"{'at ' if at else ''}<span class='mono'>{e(locator)}</span>"
 
     def sheet(self, source_id: str, locator: str) -> str | None:
         """The sheet an Excel report's row is on; None for any other record."""
@@ -412,6 +413,13 @@ def _timed(conn: sqlite3.Connection, record_id: str, sources: Sources) -> tuple[
 NOT_RECORDS = {"acct": "an account", "thr": "a thread"}
 
 
+def carried(row: Row) -> bool:
+    """An attachment's row that shows a value of its message's: a time, or what the source
+    printed where no time was read ("time unknown (source shows ...)"). False for any other
+    record, and for an attachment whose message the source gives no time at all."""
+    return bool(row.carrier) and row.local not in ("", "time unknown")
+
+
 def not_a_record(record_id: str) -> str:
     """For an id a check cites that is not a record's id (an account, a thread): what it is,
     as HTML, so its row does not read as a record that went missing. "" for a record's id."""
@@ -543,7 +551,18 @@ def table(
     read = [rd for rd in (reading(r.local) for r in rows) if rd is not None]
     named = any(r.who for r in rows)
     split = same.thread is None and any(r.thread for r in rows)
-    what = "Message" if rows and all(r.record_id.startswith("msg:") for r in rows) else "Record"
+    if rows and all(r.record_id.startswith("msg:") for r in rows):
+        what = "Message"
+    elif rows and all(not_a_record(r.record_id) for r in rows):
+        what = "Cited id"  # accounts and threads alone: none is a record
+    else:
+        what = "Record"
+    # only an Excel report has rows; any other source (a UFDR, a PDF) gives a place in the file
+    rowed = all(sources.get(r.source_id)[1] == EXCEL for r in rows if r.source_id)
+    place_head = "Excel row" if same.sheet else "Row in the file" if rowed else "Place in the file"
+    # a list of accounts and threads alone has no tier and no place in a file to show
+    tiered = not same.tier and any(r.tier for r in rows)
+    placed = any(r.source_id for r in rows)
     if any(not rd.caveat for rd in read):
         clock = "Phone's local time"
     else:
@@ -552,8 +571,8 @@ def table(
         (f"<th>Date</th><th>{clock}</th>" if timed else "")
         + ("<th>From</th>" if named else "")
         + f"<th>{what}</th>"
-        + ("" if same.tier else "<th>Tier</th>")
-        + f"<th>{'Excel row' if same.sheet else 'Row in the file'}</th>"
+        + ("<th>Tier</th>" if tiered else "")
+        + (f"<th>{place_head}</th>" if placed else "")
     )
     out = [f"<table class='recs'><thead><tr>{head}</tr></thead>"]
     last_date = None
@@ -584,10 +603,10 @@ def table(
             if split and r.thread
             else ""
         )
-        if r.carrier and reading(r.local):  # an attachment: the time in its row is not its own
+        if carried(r):  # an attachment: the time in its row is not its own
             where += f"<br><span class='muted'>{CARRIED_TIME_NOTE}</span>"
         cells.append(f"<td class='what'>{r.what}{where}</td>")
-        if not same.tier:
+        if tiered:
             cells.append(f"<td class='tier'>{e(r.tier.value) if r.tier else ''}</td>")
         if not r.source_id:
             place = ""
@@ -596,14 +615,19 @@ def table(
             if same.sheet and m:
                 place = e(m["row"])
             else:
-                place = (sources.row if same.file else sources.place)(r.source_id, r.locator)
+                place = (
+                    sources.row(r.source_id, r.locator, at=False)
+                    if same.file
+                    else sources.place(r.source_id, r.locator)
+                )
             url = href(r) if href else None
             if url:
                 # a title, not an aria-label: a label would replace the row number as the
                 # link's name
                 title = f" title='{e(href_title)}'" if href_title else ""
                 place = f"<a href='{e(url)}'{title}>{place}</a>"
-        cells.append(f"<td class='src'>{place}</td>")
+        if placed:
+            cells.append(f"<td class='src'>{place}</td>")
         cls = " class='target'" if r.target else ""
         out.append(f"<tr{cls}>{''.join(cells)}</tr>")
     out.append("</table>")
@@ -641,6 +665,6 @@ def line(
         return f"{head} · {where}" if shown else f"{head} · {when(r.local)} · {where}"
     what = "" if quoted is not None and r.what == q(quoted) else r.what
     at = when(r.local) if r.local else ""
-    if r.carrier and reading(r.local):  # an attachment: the time is its message's
+    if carried(r):  # an attachment: the time is its message's
         at += " (the time of the message it is attached to)"
     return " · ".join(x for x in (what, at, where) if x)

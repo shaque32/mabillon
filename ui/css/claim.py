@@ -153,7 +153,7 @@ blockquote.claimtext { font: 400 var(--t4)/var(--l4) var(--sans); border: 0; pad
 p.ev-same, p.ev-rec { margin: var(--s1) 0 0; max-width: 80ch; font-size: var(--t1);
   line-height: var(--l1); color: var(--muted); overflow-wrap: anywhere; }
 p.ev-rec { max-width: none; }
-.ev-foot .ev-asx { font-weight: 600; }
+.ev-foot .ev-asx, .ev-row .ev-asx { font-weight: 600; }
 p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .ev-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s5);
   margin: var(--s2) 0 0; font-size: var(--t1); line-height: var(--l1); }
@@ -161,8 +161,41 @@ p.ev-review { margin: var(--s3) 0 0; max-width: none; }
 .ev-foot > details[open] { flex-basis: 100%; }
 .ev-foot summary { color: var(--muted); }
 .ev-foot summary:hover { color: var(--ink); }
-.ev-foot details p { margin: var(--s1) 0; }
+.ev-foot details p, .ev-row details.ev-detail p { margin: var(--s1) 0; }
 .ev-foot .ev-around { margin-left: auto; }
+
+/* a decided item as one row: its stance and tier on the left, the quote and the record line
+   beside them, everything else in one Details fold under the quote */
+.pg-claim .item:has(> .ev-row) { padding: var(--s3) 0; }
+.pg-claim .ev-row { display: grid; grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 0 var(--s4); }
+.ev-row .ev-tags { flex-direction: column; align-items: flex-start; gap: var(--s1); margin: 0; }
+.ev-row .ev-tags .badge:first-child { font-size: var(--t2); line-height: var(--l2); }
+.ev-row .ev-tags .badge + .badge::before { content: none; }
+.ev-row .badge.b-dismissed { color: var(--ink); font-weight: 600; }
+.ev-row .ev-body { min-width: 0; }
+.ev-row p.ev-q { margin: 0; max-width: 72ch; }
+.ev-row p.ev-rec { margin: var(--s1) 0 0; }
+.ev-row p.ev-review { margin: var(--s2) 0 0; font-size: var(--t1); line-height: var(--l1); }
+.ev-row details.ev-detail { margin: var(--s2) 0 0; }
+.ev-row details.ev-detail > summary { color: var(--muted); font-size: var(--t1);
+  line-height: var(--l1); }
+.ev-row details.ev-detail > summary:hover { color: var(--ink); }
+.ev-row details.ev-detail[open] { padding: 0 0 var(--s2) var(--s4); }
+/* the fold's content is indented, not its summary, so the label stays under the pointer */
+.ev-row details.ev-detail[open] > summary { margin-left: calc(-1 * var(--s4)); }
+.ev-row details.ev-detail p { font-size: var(--t1); line-height: var(--l1); max-width: 80ch; }
+.ev-row details.ev-detail p.ev-sub { margin: var(--s4) 0 var(--s1); color: var(--ink);
+  font-weight: 600; }
+.ev-row .ev-same { color: var(--muted); }
+.pg-claim p.ev-said { margin: var(--s3) 0 0; max-width: none; font-size: var(--t1);
+  line-height: var(--l1); color: var(--muted); }
+.pg-claim p.ev-said strong { color: var(--ink); }
+@media (max-width: 600px) {
+  .pg-claim .ev-row { grid-template-columns: minmax(0, 1fr); gap: var(--s1); }
+  .ev-row .ev-tags { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0; }
+  .ev-row .ev-tags .badge + .badge::before { content: "·"; }
+}
 
 /* a decision's form: the reason field and its buttons on one line */
 .pg-claim form.box, .pg-evidence form.box { display: flex; flex-wrap: wrap; align-items: center;

@@ -11,13 +11,14 @@ from dataclasses import replace
 
 import pytest
 
+from core.audit.context import ContextLine
 from core.casework import cases
 from core.contracts import ProvenanceTier
 from core.db import connect
 from core.report.html import record_line
 from core.report.restore import context_table
 from core.restore.view import Line, context_view
-from core.review.status import claim_state
+from core.review.status import ClaimState, claim_state
 from eval import demo
 from ui import records
 from ui.app import App, Request
@@ -217,6 +218,18 @@ def test_an_attachments_fold_gives_its_messages_exported_time(app, conn) -> None
     fold = pages._carrier_line(conn, row)
     assert record_line(conn, msg) in fold and f"<span class='mono'>{msg}</span>" in fold
     assert pages._carrier_line(conn, records.record_rows(conn, [msg])[0]) == ""
+    # with no time read for its message, the fold keeps that message's exported line and
+    # does not speak of a time the row does not show
+    assert records.CARRIED_TIME_NOTE in fold
+    bare = pages._carrier_line(conn, replace(row, local="time unknown"))
+    assert records.CARRIED_TIME_NOTE not in bare and record_line(conn, msg) in bare
+    # a value the source printed for the message, not read as a time, is still the message's
+    unread = replace(row, local="time unknown (source shows '3/15/2026 25:61')")
+    assert records.CARRIED_TIME_NOTE in pages._carrier_line(conn, unread)
+    assert records.CARRIED_TIME_NOTE in records.table([unread], records.Sources(conn))
+    assert records.CARRIED_TIME_NOTE not in records.table(
+        [replace(row, local="time unknown")], records.Sources(conn)
+    )
     # on its evidence card, the fold under the attachment's own line carries it
     item = conn.execute("SELECT id FROM evidence_items WHERE record_id = ? LIMIT 1", (att,))
     item = item.fetchone()
@@ -381,6 +394,28 @@ def test_rows_that_differ_in_tier_or_file_say_so_in_each_row(conn) -> None:
     assert 'item2.xlsx</span>, <span class="q">Chats</span> sheet, Excel row 918' in out
 
 
+def test_a_source_that_is_not_an_excel_report_gives_a_place_not_a_row(conn) -> None:
+    """Only an Excel report has rows. Any other source's locator is a place in the file, and a
+    table cell under that heading does not start with "at"."""
+    conn.execute("UPDATE sources SET kind = 'ufdr' WHERE id = 'item1'")
+    try:
+        sources = records.Sources(conn)
+        rows = records.record_rows(conn, [M948, "msg:item1:Chats!949"], sources=sources)
+        out = records.table(rows, sources)
+        assert "<th>Place in the file</th>" in out
+        assert "Excel row" not in out and "Row in the file" not in out
+        assert "<td class='src'><span class='mono'>Chats!948</span></td>" in out
+        # the one-line form is a phrase, so it keeps the "at"
+        assert "at <span class='mono'>Chats!948</span>" in sources.row("item1", "Chats!948")
+        # rows from two files name each file, then the place
+        two = records.record_rows(conn, [M948, "msg:item2:Chats!918"], sources=sources)
+        mixed = records.table(two, sources)
+        assert "<th>Place in the file</th>" in mixed
+        assert "item1.xlsx</span>, at <span class='mono'>Chats!948</span>" in mixed
+    finally:
+        conn.rollback()
+
+
 def test_a_record_that_is_gone_keeps_its_row(conn) -> None:
     gone = "msg:item1:Chats!999999"
     (row,) = records.record_rows(conn, [gone])
@@ -453,17 +488,26 @@ def test_the_cited_records_are_a_table_and_their_exported_values_fold_under_it(a
         assert f"<span class='mono'>{rid}</span>" in fold
 
 
-def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_fold(
-    app, conn
-) -> None:
-    body = _get(app, "/claim", id="C03")
-    items = [x for x in claim_state(conn, "C03").evidence if x.stance.value != "irrelevant"]
+def _card(body: str, item_id: str) -> str:
+    return body.split(f"<div class='item' id='{item_id}'>", 1)[1].split("<div class='item'", 1)[0]
+
+
+def _decided(st: ClaimState) -> set[str]:
+    return {
+        x.id
+        for x in st.evidence
+        if st.last_reviewer.get(x.id) == "expert" and x.status.value != "open"
+    }
+
+
+def test_an_open_card_says_the_record_once_and_keeps_the_report_line_in_its_fold(app, conn) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    decided = _decided(st)
+    items = [x for x in st.evidence if x.stance.value != "irrelevant" and x.id not in decided]
     assert items
     for item in items:
-        card = body.split(f"<div class='item' id='{item.id}'>", 1)[1].split("<div class='item'", 1)[
-            0
-        ]
-        visible, fold = card.split("<details class='more'>", 1)
+        visible, fold = _card(body, item.id).split("<details class='more'>", 1)
         assert "<p class='ev-rec'>" in visible and "Excel row" in visible
         assert "UTC 20" not in visible and "as printed" not in visible
         assert "<summary>Exported values and model note</summary>" in fold
@@ -472,11 +516,129 @@ def test_an_evidence_card_says_the_record_once_and_keeps_the_report_line_in_its_
         assert item.record_id in fold
     evidence = body.split("<h2 id='evidence'>Evidence</h2>", 1)[1].split("<div class='item'", 1)[0]
     sources = records.Sources(conn)
-    how = records.note(records.record_rows(conn, [x.record_id for x in items]), sources)
+    carded = [x.record_id for x in st.evidence if x.stance.value != "irrelevant"]
+    how = records.note(records.record_rows(conn, carded), sources)
     assert "(America/New_York)" in how and _text(how).endswith(records.EXCEL_ROW_NOTE)
     assert how in evidence
     # every tier badge is still on its card
     assert body.count("<div class='ev-tags'>") >= len(items)
+
+
+def test_a_decided_item_is_one_row_and_its_details_keep_everything_the_card_had(app, conn) -> None:
+    body = _get(app, "/claim", id="C03")
+    st = claim_state(conn, "C03")
+    items = [x for x in st.evidence if x.id in _decided(st)]
+    assert len(items) == 12
+    for item in items:
+        card = _card(body, item.id)
+        assert card.startswith("<div class='ev-row'>")
+        visible, fold = card.split("<details class='ev-detail'><summary>Details</summary>", 1)
+        # in view: stance, tier, the quote and the record in short
+        assert "<div class='ev-tags'>" in visible and "confirmed: accepted by an expert" in visible
+        assert "Excel row" in visible and "UTC 20" not in visible
+        # folded: the review (the group says it above, so the row does not), the decision
+        # form, the values as exported, the ids, the model note
+        assert fold.count("<strong>Review:</strong>") == 1 and "name='status' value='open'" in fold
+        assert "dismissed by an expert" not in visible  # accepted: its tier says so
+        assert record_line(conn, item.record_id) in fold
+        assert "spreadsheet row" in fold and "not the report's # column" in fold
+        assert item.record_id in fold and "Labeled " in fold
+        assert "Open this item on its own page" in fold
+
+
+def test_a_decided_row_marks_a_quote_that_is_part_of_its_message(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    decided = _decided(claim_state(conn, "C03"))
+
+    def rows() -> list[str]:
+        body = _get(app, "/claim", id="C03")
+        return [_card(body, i).split("<details class='ev-detail'>", 1)[0] for i in decided]
+
+    # the demo's quotes are whole messages: no mark
+    assert all("Quoted:" not in r for r in rows())
+    real = pages.build_context
+
+    def longer(*args: object, **kw: object) -> list[ContextLine]:
+        return [replace(ln, body=ln.body + " and more") for ln in real(*args, **kw)]
+
+    monkeypatch.setattr(pages, "build_context", longer)
+    assert all("<p class='ev-q'><span class='muted'>Quoted:</span> " in r for r in rows())
+
+    # a message alone in its thread is judged the same way: one line is enough
+    def alone(*args: object, **kw: object) -> list[ContextLine]:
+        return [ln for ln in longer(*args, **kw) if ln.is_target]
+
+    monkeypatch.setattr(pages, "build_context", alone)
+    assert all("<p class='ev-q'><span class='muted'>Quoted:</span> " in r for r in rows())
+
+
+def test_a_call_or_an_attachment_whose_quote_is_its_whole_text_is_not_marked_quoted(
+    app, conn
+) -> None:
+    seen = set()
+    for claim in ("C09", "C20"):
+        st = claim_state(conn, claim)
+        body = _get(app, "/claim", id=claim)
+        for x in st.evidence:
+            if x.id in _decided(st) and not x.record_id.startswith("msg:"):
+                assert "Quoted:" not in _card(body, x.id).split("<details", 1)[0]
+                seen.add(x.record_id.split(":", 1)[0])
+    assert {"call", "att"} <= seen
+
+
+def test_a_review_every_decided_row_shares_is_said_once(app, conn) -> None:
+    body = _get(app, "/claim", id="C03")
+    group = body.split("Evidence the expert already decided", 1)[1]
+    assert "<strong>Review, all 12:</strong> Accepted by" in group.split("<div class='item'", 1)[0]
+    for i in _decided(claim_state(conn, "C03")):
+        visible = _card(body, i).split("<details class='ev-detail'>", 1)[0]
+        assert "<strong>Review:</strong>" not in visible
+
+
+def test_a_dismissed_row_says_so_when_the_group_says_the_review_once(app, conn) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    gone = [x for x in st.evidence if x.id in _decided(st) and x.status.value == "dismissed"]
+    assert gone
+    for x in gone:
+        visible = _card(body, x.id).split("<details class='ev-detail'>", 1)[0]
+        assert "<span class='badge b-dismissed'>dismissed by an expert</span>" in visible
+        assert "confirmed: accepted by an expert" not in visible
+
+
+def test_the_same_message_under_another_assumption_points_up_instead_of_repeating(
+    app, conn
+) -> None:
+    body = _get(app, "/claim", id="C16")
+    st = claim_state(conn, "C16")
+    by_record: dict[str, list[str]] = {}
+    for x in st.evidence:
+        if x.id in _decided(st):
+            by_record.setdefault(x.record_id, []).append(x.id)
+    repeats = {rid: ids for rid, ids in by_record.items() if len(ids) > 1}
+    assert repeats
+    for rid, ids in repeats.items():
+        drawn = [i for i in ids if "The same message as <a" not in _card(body, i)]
+        assert len(drawn) == 1  # drawn once; every other row points up to it
+        assert "The messages around it" in _card(body, drawn[0])
+        for i in ids:
+            card = _card(body, i)
+            assert record_line(conn, rid) in card  # each keeps its exported values
+            # the review once: in view, or in the fold when the group says it above
+            assert card.count("<strong>Review:</strong>") == 1
+            assert "name='status' value='open'" in card
+            if i != drawn[0]:  # the conversation is in the first row's fold only
+                assert "The messages around it" not in card and "class='thread mini'" not in card
+
+
+def test_a_repeated_call_is_not_called_a_message(app, conn) -> None:
+    body = _get(app, "/claim", id="C09")
+    st = claim_state(conn, "C09")
+    calls = [x for x in st.evidence if x.id in _decided(st) and x.record_id.startswith("call:")]
+    cards = [_card(body, x.id) for x in calls]
+    assert any("The same call as <a" in c for c in cards)  # the demo decides one call twice
+    assert not any("The same message" in c for c in cards)
 
 
 def test_an_irrelevant_row_is_short_and_opens_the_item_with_its_exported_values(app, conn) -> None:
@@ -597,11 +759,54 @@ def test_a_cited_account_or_thread_is_not_called_a_missing_record(app, conn, mon
     above, table = block.split("<table class='recs'>", 1)
     above = html.unescape(above)
     assert "2 of the 3 are an account or a thread, not a record." in above
+    assert "; the message is from" in above and "the messages are" not in above  # one message
     assert "not among the case's records" not in above
     table = table.split("</table>", 1)[0]
     assert "record not found" not in table
     assert f"<span class='mono'>{acct}</span> is an account, not a record" in table
     assert f"<span class='mono'>{thread}</span> is a thread, not a record" in table
+    # the fold counts the one record and says what the two other ids are
+    fold = block.split("<details class='exported'>", 1)[1].split("</details>", 1)[0]
+    assert "Exported values for this record" in fold and "record not found" not in fold
+    assert f"<li><span class='mono'>{acct}</span> is an account, not a record</li>" in fold
+
+
+def test_a_list_of_accounts_and_threads_alone_is_not_called_records(app, conn, monkeypatch) -> None:
+    from ui import pages
+
+    acct = conn.execute("SELECT id FROM accounts LIMIT 1").fetchone()[0]
+    thread = conn.execute("SELECT id FROM threads LIMIT 1").fetchone()[0]
+    real = pages.screen_records.record_rows
+    cited: list[str] = [acct, thread]
+    monkeypatch.setattr(
+        pages.screen_records, "record_rows", lambda conn, ids, **kw: real(conn, cited, **kw)
+    )
+
+    def block(heading: str) -> str:
+        body = _get(app, "/claim", id="C11")
+        assert "Records the failed check cites" not in body
+        return body.split(f"{heading} the failed check cites", 1)[1].split("<h2", 1)[0]
+
+    def above(heading: str) -> str:
+        note = block(heading).split("<p class='muted cited-note'>")[-1].split("</p>", 1)[0]
+        return html.unescape(re.sub(r"<[^>]+>", "", note))
+
+    assert above("Accounts or threads").startswith(
+        "The 2 cited ids are accounts or threads, not records."
+    )
+    assert "of the 2" not in above("Accounts or threads")
+    assert "Record" not in above("Accounts or threads")
+    # the column is not headed Record, and no fold offers exported values for ids that have none
+    both = block("Accounts or threads")
+    assert "<th>Cited id</th>" in both and "<th>Record</th>" not in both
+    # an account or a thread has no tier and no place in a file: neither column is drawn empty
+    assert "<th>Tier</th>" not in both and "in the file</th>" not in both
+    assert "<td class='tier'>" not in both and "<td class='src'>" not in both
+    assert "record not found" not in both and "Exported values for" not in both
+    cited.pop()
+    assert above("Account or thread").startswith(
+        "The cited id is an account or a thread, not a record."
+    )
 
 
 def test_a_date_too_far_to_move_into_the_phones_zone_reads_as_time_unknown(conn) -> None:
